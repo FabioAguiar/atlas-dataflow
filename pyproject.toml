@@ -1,0 +1,20 @@
+[project]
+name = "atlas-dataflow"
+version = "0.1.0"
+description = "Contract-driven, traceable and deterministic data pipeline framework"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+]

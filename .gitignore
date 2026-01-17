@@ -2,9 +2,11 @@
 # Python — bytecode, caches, builds
 # =====================================================
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+
 .pytest_cache/
 .mypy_cache/
 .coverage
@@ -27,7 +29,7 @@ dist/
 *.egg-info/
 
 # =====================================================
-# PyCharm / VSCode / IDEs
+# IDEs / Editors
 # =====================================================
 .idea/
 .vscode/
@@ -44,7 +46,7 @@ dist/
 Thumbs.db
 
 # =====================================================
-# Logs / temp
+# Logs / temporary files
 # =====================================================
 *.log
 tmp/
@@ -52,24 +54,24 @@ temp/
 
 # =====================================================
 # Atlas DataFlow — artefatos de execução
-# (existem no repo, mas conteúdo não deve ser versionado)
+# (diretórios versionados, conteúdo ignorado)
 # =====================================================
 artifacts/*
 reports/*
 
-# Mantém as pastas versionadas
+# Mantém os diretórios no repositório
 !artifacts/.gitkeep
 !reports/.gitkeep
 
 # =====================================================
-# Config local (override)
+# Configuração local (override — nunca versionar)
 # =====================================================
 local.yaml
 local.yml
 local.json
 
 # =====================================================
-# Outros
+# Outros arquivos temporários
 # =====================================================
 *.swp
 *.bak

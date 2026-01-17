@@ -1,10 +1,35 @@
+# src/atlas_dataflow/core/config/merge.py
 """
-Atlas DataFlow — Deep Merge Utility
+Utilitário canônico de deep-merge de configuração.
 
-Implementa a política canônica de deep-merge para configurações:
-- dict: merge recursivo
-- list: sobrescrita total
-- conflito de tipos: erro explícito
+Este módulo implementa a política oficial de deep-merge utilizada pelo
+Atlas DataFlow para resolver a configuração final a partir de uma
+configuração base (defaults) e overrides explícitos.
+
+Política de merge (v1):
+    - dict → merge recursivo por chave
+    - list → sobrescrita total (sem merge elemento a elemento)
+    - escalar → sobrescrita direta
+    - conflito de tipos → erro estrutural explícito
+
+Princípios fundamentais:
+    - O merge é determinístico e puramente funcional
+    - Nenhum input é mutado durante o processo
+    - Não existem heurísticas implícitas ou mágicas
+
+Invariantes:
+    - A mesma entrada sempre produz a mesma saída
+    - Chaves não sobrescritas são preservadas
+    - Conflitos estruturais interrompem o merge
+
+Limites explícitos:
+    - Não carrega arquivos de configuração
+    - Não valida semântica de domínio
+    - Não realiza coerção de tipos
+    - Não interage com Engine ou Pipeline
+
+Este módulo existe para garantir previsibilidade,
+segurança estrutural e rastreabilidade na resolução de configuração.
 """
 
 from copy import deepcopy
@@ -15,13 +40,47 @@ from .errors import ConfigTypeConflictError
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Merge profundo determinístico entre dois dicionários.
+    Realiza um deep-merge determinístico entre dois dicionários de configuração.
 
-    Regras:
-    - dict + dict -> merge recursivo
-    - list -> sobrescrita total
-    - conflito de tipos -> ConfigTypeConflictError
-    - inputs nunca são mutados
+    Esta função combina uma configuração base com um conjunto de overrides
+    explícitos, produzindo uma nova estrutura resultante sem mutar
+    nenhum dos inputs.
+
+    Política de merge (v1):
+        - dict + dict → merge recursivo por chave
+        - list        → sobrescrita total (sem merge elemento a elemento)
+        - escalar     → sobrescrita direta pelo override
+        - conflito de tipos → erro estrutural explícito
+
+    Decisões arquiteturais:
+        - O merge é puramente funcional (inputs não são mutados)
+        - Não existem heurísticas implícitas para listas
+        - Conflitos estruturais são tratados como falha fatal
+        - A política é simples, previsível e documentada
+
+    Invariantes:
+        - A estrutura retornada é sempre um novo dicionário
+        - Chaves não presentes no override são preservadas da base
+        - O mesmo par (base, override) sempre produz o mesmo resultado
+
+    Limites explícitos:
+        - Não valida semântica de domínio
+        - Não resolve conflitos automaticamente
+        - Não realiza coerção de tipos
+        - Não carrega arquivos ou fontes externas
+
+    Args:
+        base (Dict[str, Any]): Configuração base (ex.: defaults).
+        override (Dict[str, Any]): Overrides explícitos da configuração.
+
+    Returns:
+        Dict[str, Any]: Nova configuração resultante do deep-merge.
+
+    Raises:
+        ConfigTypeConflictError: Se ocorrer conflito de tipo entre base e override.
+
+    Esta função existe para garantir previsibilidade,
+    segurança estrutural e rastreabilidade na resolução de configuração.
     """
 
     if not isinstance(base, dict) or not isinstance(override, dict):

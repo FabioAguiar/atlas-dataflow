@@ -1,3 +1,37 @@
+# tests/traceability/test_manifest_round_trip.py
+"""
+Testes de persistência e round-trip do Manifest (traceability).
+
+Este módulo valida que o Manifest do Atlas DataFlow pode ser
+serializado, persistido e recarregado sem perda estrutural,
+garantindo rastreabilidade forense entre execuções.
+
+Os testes asseguram que:
+- o Manifest pode ser salvo em formato JSON
+- a estrutura semântica principal é preservada após reload
+- campos críticos de identificação e inputs permanecem intactos
+- o Manifest carregado é estruturalmente utilizável
+
+Decisões arquiteturais:
+    - A persistência do Manifest é explícita e controlada
+    - O formato de armazenamento é JSON determinístico
+    - APIs de persistência são separadas da lógica de execução
+    - O Manifest pode existir como objeto ou representação dict
+
+Invariantes:
+    - `run_id` é preservado entre save/load
+    - `config_hash` e `contract_hash` não sofrem mutação
+    - `events` é sempre uma lista após reload
+    - `steps` é sempre um dicionário após reload
+
+Limites explícitos:
+    - Não valida compatibilidade entre versões diferentes de schema
+    - Não valida ordenação detalhada de eventos
+    - Não valida integração com engine ou pipeline
+
+Este módulo existe para garantir que a rastreabilidade
+forense do Atlas DataFlow sobreviva à persistência em disco.
+"""
 import json
 import pytest
 from datetime import datetime, timezone
@@ -19,6 +53,35 @@ else:
 
 
 def _require_imports():
+    """
+    Garante que as APIs de persistência do Manifest estejam disponíveis para os testes.
+
+    Esta função atua como uma pré-condição explícita para os testes de
+    round-trip do Manifest, falhando imediatamente quando as funções
+    canônicas de persistência (`save_manifest`, `load_manifest`) não
+    estão implementadas ou não podem ser importadas.
+
+    Decisões arquiteturais:
+        - Falha antecipada e explícita em caso de APIs ausentes
+        - Mensagem de erro orienta exatamente quais contratos precisam
+          ser implementados
+        - Evita que testes falhem de forma indireta ou ambígua
+
+    Invariantes:
+        - Se as APIs existem, a função não produz efeitos colaterais
+        - Se alguma API estiver ausente, o teste falha imediatamente
+        - Não realiza fallback nem lógica alternativa
+
+    Limites explícitos:
+        - Não valida comportamento das APIs
+        - Não executa serialização ou desserialização
+        - Não substitui testes funcionais de persistência
+
+    Usado para garantir:
+        - Alinhamento entre testes e Issue de persistência do Manifest
+        - Feedback claro durante desenvolvimento incremental
+        - Cumprimento explícito do contrato de traceability
+    """
     if _IMPORT_ERR is not None:
         pytest.fail(
             "Missing manifest persistence APIs. Implement:\n"
@@ -29,6 +92,37 @@ def _require_imports():
 
 
 def test_round_trip_save_load(tmp_path: Path):
+    """
+    Verifica a integridade do round-trip de persistência do Manifest.
+
+    Este teste valida que um Manifest pode ser:
+    - serializado em JSON via `save_manifest`
+    - persistido em disco
+    - recarregado via `load_manifest`
+    sem perda estrutural ou corrupção de dados essenciais.
+
+    Decisões arquiteturais:
+        - A persistência do Manifest é determinística
+        - A representação em disco é JSON canônico
+        - A API de load preserva a estrutura semântica do Manifest
+          (run, inputs, events, steps)
+
+    Invariantes:
+        - `run_id` permanece idêntico após save/load
+        - `config_hash` é preservado integralmente
+        - `events` é sempre uma lista
+        - `steps` é sempre um dicionário
+
+    Limites explícitos:
+        - Não valida conteúdo detalhado dos events
+        - Não valida ordenação interna além da estrutura
+        - Não valida compatibilidade entre versões diferentes de schema
+
+    Usado para garantir:
+        - Confiabilidade da persistência forense
+        - Segurança contra regressões em serialização
+        - Reprodutibilidade de execuções a partir de Manifest salvo
+    """
     _require_imports()
     m = create_manifest(
         run_id="run-004",

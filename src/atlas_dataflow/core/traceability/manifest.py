@@ -49,10 +49,16 @@ auditoria confiável e reprodutibilidade das execuções.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Tuple
+
+try:
+    # StepResult é o tipo canônico produzido pelo Engine (core/pipeline)
+    from atlas_dataflow.core.pipeline.types import StepResult
+except Exception:  # pragma: no cover
+    StepResult = None  # type: ignore
 
 
 def _ensure_tzaware_utc(dt: datetime) -> datetime:
@@ -502,12 +508,33 @@ def step_started(
         manifest.update(m.to_dict())
 
 
+def _normalize_step_result(result: Union[Dict[str, Any], Any]) -> Dict[str, Any]:
+    """Normaliza StepResult (dataclass) ou dict para um payload dict canônico.
+
+    Mantém retrocompatibilidade: callers antigos podem enviar dict.
+    O Engine envia StepResult.
+    """
+    if isinstance(result, dict):
+        return result
+
+    if StepResult is not None and isinstance(result, StepResult):
+        data = asdict(result)
+        # normaliza enums (StepStatus/StepKind) para value, quando aplicável
+        for k, v in list(data.items()):
+            if hasattr(v, "value"):
+                data[k] = v.value
+        return data
+
+    raise TypeError(f"Unsupported result type for step_finished: {type(result)}")
+
+
+
 def step_finished(
     manifest: Union[AtlasManifest, Dict[str, Any]],
     *,
     step_id: str,
     ts: datetime,
-    result: Dict[str, Any],
+    result: Union[Dict[str, Any], StepResult],
 ) -> None:
     """
     Registra a conclusão de execução de um Step no Manifest.
@@ -561,16 +588,17 @@ def step_finished(
     else:
         started_dt = ts
 
-    status = result.get("status", "success")
+    payload = _normalize_step_result(result)
+    status = payload.get("status", "success")
     s.update(
         {
             "status": status,
             "finished_at": _iso(ts),
             "duration_ms": _ms_between(started_dt, ts),
-            "summary": result.get("summary"),
-            "metrics": result.get("metrics", {}) or {},
-            "warnings": result.get("warnings", []) or [],
-            "artifacts": result.get("artifacts", {}) or {},
+            "summary": payload.get("summary"),
+            "metrics": payload.get("metrics", {}) or {},
+            "warnings": payload.get("warnings", []) or [],
+            "artifacts": payload.get("artifacts", {}) or {},
         }
     )
 

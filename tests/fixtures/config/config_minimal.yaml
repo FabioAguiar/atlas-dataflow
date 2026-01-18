@@ -1,0 +1,10 @@
+engine:
+  fail_fast: true
+
+steps:
+  dummy.ingest:
+    enabled: true
+  dummy.transform:
+    enabled: true
+  dummy.export:
+    enabled: true

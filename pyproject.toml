@@ -5,7 +5,11 @@ description = "Contract-driven, traceable and deterministic data pipeline framew
 readme = "README.md"
 requires-python = ">=3.10"
 
-dependencies = []
+# Dependências mínimas do core
+# - PyYAML: parsing YAML (config e contrato)
+dependencies = [
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 dev = [

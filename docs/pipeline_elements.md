@@ -95,7 +95,7 @@ Payloads são:
 #### `ingest.load`
 - **Kind**: diagnostic
 - **Responsabilidade**: carregar dataset bruto
-- **Outputs**: `raw_dataframe`
+- **Outputs**: `data.raw_rows`
 - **Auditoria**:
   - origem do dado
   - hash/checksum
@@ -107,33 +107,40 @@ Payloads são:
 
 #### `audit.profile_baseline`
 - **Kind**: diagnostic
-- **Outputs**: `profile_report`
 - **Auditoria**:
-  - linhas, colunas
-  - missing global
-  - cardinalidade
+  - linhas e colunas
+  - missing values globais
+  - cardinalidade básica
+  - tipos inferidos (visão geral)
+
+---
 
 #### `audit.schema_types`
 - **Kind**: diagnostic
-- **Outputs**: `schema_types_report`
 - **Auditoria**:
   - dtype inferido por coluna (pandas)
-  - tipo semântico básico (numeric | categorical | temporal | other)
-  - nulos por coluna (count/ratio)
-  - cardinalidade por coluna (unique_values / is_constant)
+  - tipo semântico básico (`numeric | categorical | temporal | other`)
+  - nulos por coluna (count / ratio)
+  - cardinalidade por coluna (`unique_values / is_constant`)
   - exemplos representativos (até 5, serializáveis)
+- **Notas**:
+  - observacional puro
+  - não valida contrato
+  - não realiza coerções
 
-#### `audit.schema_types`
-- **Kind**: diagnostic
-- **Auditoria**:
-  - dtype por coluna
-  - divergências vs contrato
+---
 
 #### `audit.duplicates`
 - **Kind**: diagnostic
 - **Auditoria**:
-  - contagem de duplicados
-  - chaves afetadas
+  - número absoluto de linhas duplicadas
+  - percentual de duplicidade no dataset
+  - flag de detecção (`detected`)
+  - política diagnóstica de tratamento (informativa)
+- **Notas**:
+  - duplicidade avaliada por linha completa
+  - nenhuma mutação ou marcação de registros
+  - prepara etapas futuras de deduplicação
 
 ---
 
@@ -141,10 +148,12 @@ Payloads são:
 
 #### `transform.cast_types_safe`
 - **Kind**: transform
-- **Responsabilidade**: coerção segura de tipos
+- **Responsabilidade**: coerção segura de tipos conforme contrato
 - **Auditoria**:
   - valores impactados
-  - novos nulos
+  - novos nulos introduzidos
+
+---
 
 #### `transform.apply_defaults`
 - **Kind**: transform
@@ -152,10 +161,15 @@ Payloads são:
   - defaults aplicados
   - colunas afetadas
 
+---
+
 #### `transform.deduplicate`
 - **Kind**: transform
 - **Auditoria**:
   - linhas removidas
+  - critérios utilizados
+- **Dependência típica**:
+  - `audit.duplicates`
 
 ---
 
@@ -166,19 +180,23 @@ Payloads são:
 - **Outputs**: `X_train`, `X_test`, `y_train`, `y_test`
 - **Auditoria**:
   - seed
-  - proporção
+  - proporção de split
+
+---
 
 #### `transform.impute_missing`
 - **Kind**: transform
 - **Auditoria**:
   - estratégia por coluna
-  - impacto
+  - impacto quantitativo
+
+---
 
 #### `transform.categorical_standardize`
 - **Kind**: transform
 - **Auditoria**:
-  - mapeamentos
-  - categorias novas
+  - mapeamentos aplicados
+  - categorias novas detectadas
 
 ---
 
@@ -189,7 +207,7 @@ Payloads são:
 - **Outputs**: `X_train_rep`, `X_test_rep`
 - **Auditoria**:
   - colunas finais
-  - encoders/scalers usados
+  - encoders e scalers utilizados
 
 ---
 
@@ -198,16 +216,18 @@ Payloads são:
 #### `train.single`
 - **Kind**: train
 - **Auditoria**:
-  - modelo
-  - parâmetros
-  - métricas
+  - modelo treinado
+  - hiperparâmetros
+  - métricas principais
+
+---
 
 #### `train.search`
 - **Kind**: train
 - **Auditoria**:
-  - grid/random
+  - estratégia de busca
   - melhor estimador
-  - métricas
+  - métricas comparativas
 
 ---
 
@@ -218,6 +238,8 @@ Payloads são:
 - **Auditoria**:
   - métricas padrão
   - matriz de confusão
+
+---
 
 #### `evaluate.model_selection`
 - **Kind**: evaluate
@@ -235,8 +257,8 @@ Payloads são:
   - pipeline final
   - contrato congelado
 - **Auditoria**:
-  - paths
-  - hashes
+  - paths de saída
+  - hashes de artefatos
 
 ---
 
@@ -244,8 +266,8 @@ Payloads são:
 
 - Novos Steps exigem:
   - atualização deste documento
-  - nova issue
-  - testes dedicados
+  - issue dedicada
+  - testes associados
 - Steps não podem ser removidos sem depreciação explícita
 - Mudanças semânticas exigem bump de versão
 

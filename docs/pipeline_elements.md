@@ -165,10 +165,13 @@ Payloads são:
 
 #### `transform.deduplicate`
 - **Kind**: transform
+- **Responsabilidade**: deduplicação controlada e declarativa
 - **Auditoria**:
+  - modo aplicado (`full_row | key_based`)
+  - colunas-chave (quando aplicável)
+  - linhas antes/depois
   - linhas removidas
-  - critérios utilizados
-- **Dependência típica**:
+- **Dependência obrigatória**:
   - `audit.duplicates`
 
 ---

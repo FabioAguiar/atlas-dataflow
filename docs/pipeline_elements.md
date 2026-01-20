@@ -115,6 +115,16 @@ Payloads são:
 
 #### `audit.schema_types`
 - **Kind**: diagnostic
+- **Outputs**: `schema_types_report`
+- **Auditoria**:
+  - dtype inferido por coluna (pandas)
+  - tipo semântico básico (numeric | categorical | temporal | other)
+  - nulos por coluna (count/ratio)
+  - cardinalidade por coluna (unique_values / is_constant)
+  - exemplos representativos (até 5, serializáveis)
+
+#### `audit.schema_types`
+- **Kind**: diagnostic
 - **Auditoria**:
   - dtype por coluna
   - divergências vs contrato

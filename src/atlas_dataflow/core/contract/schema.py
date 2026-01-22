@@ -1,4 +1,5 @@
-"""Schema canônico — Internal Contract v1.
+"""
+Schema canônico — Internal Contract v1.
 
 Alinhado a `docs/spec/internal_contract.v1.md`.
 
@@ -9,7 +10,7 @@ o core leve durante os milestones iniciais.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 from .errors import ContractValidationError
 
@@ -19,6 +20,12 @@ _ALLOWED_TARGET_DTYPES = {"int", "float", "category", "bool"}
 _ALLOWED_FEATURE_ROLES = {"numerical", "categorical", "boolean", "text", "other"}
 _ALLOWED_FEATURE_DTYPES = {"int", "float", "category", "bool", "string"}
 _ALLOWED_NORM_TYPES = {"map", "lower", "upper", "none"}
+_ALLOWED_IMPUTE_STRATEGIES = {
+    "mean",
+    "median",
+    "most_frequent",
+    "constant",
+}
 
 
 def _is_non_empty_str(x: Any) -> bool:
@@ -55,17 +62,7 @@ class InternalContractV1:
 
 
 def validate_internal_contract_v1(data: Any) -> InternalContractV1:
-    """Valida e materializa um Internal Contract v1.
-
-    Args:
-        data: dicionário carregado de YAML/JSON.
-
-    Returns:
-        InternalContractV1: contrato validado.
-
-    Raises:
-        ContractValidationError: se inválido.
-    """
+    """Valida e materializa um Internal Contract v1."""
     _expect(isinstance(data, dict), "Internal Contract must be a mapping/dict")
 
     cv = data.get("contract_version")
@@ -77,20 +74,18 @@ def validate_internal_contract_v1(data: Any) -> InternalContractV1:
     _expect(_is_non_empty_str(problem.get("name")), "problem.name is required")
     ptype = problem.get("type")
     _expect(_is_non_empty_str(ptype), "problem.type is required")
-    _expect(ptype in _ALLOWED_PROBLEM_TYPES, f"problem.type must be one of {sorted(_ALLOWED_PROBLEM_TYPES)}")
+    _expect(ptype in _ALLOWED_PROBLEM_TYPES, f"problem.type must be one of {_ALLOWED_PROBLEM_TYPES}")
 
     target = data.get("target")
     _expect(isinstance(target, dict), "target must be a mapping")
     _expect(_is_non_empty_str(target.get("name")), "target.name is required")
     tdtype = target.get("dtype")
     _expect(_is_non_empty_str(tdtype), "target.dtype is required")
-    _expect(tdtype in _ALLOWED_TARGET_DTYPES, f"target.dtype must be one of {sorted(_ALLOWED_TARGET_DTYPES)}")
-    allowed_null = target.get("allowed_null")
-    _expect(allowed_null is False, "target.allowed_null must be false in v1")
+    _expect(tdtype in _ALLOWED_TARGET_DTYPES, f"target.dtype must be one of {_ALLOWED_TARGET_DTYPES}")
+    _expect(target.get("allowed_null") is False, "target.allowed_null must be false in v1")
 
     features = data.get("features")
-    _expect(isinstance(features, list), "features must be a list")
-    _expect(len(features) > 0, "features must not be empty")
+    _expect(isinstance(features, list) and features, "features must be a non-empty list")
 
     seen_names: set[str] = set()
     normalized_features: List[Dict[str, Any]] = []
@@ -102,16 +97,14 @@ def validate_internal_contract_v1(data: Any) -> InternalContractV1:
         seen_names.add(name)
 
         role = f.get("role")
-        _expect(_is_non_empty_str(role), f"features[{i}].role is required")
-        _expect(role in _ALLOWED_FEATURE_ROLES, f"features[{i}].role must be one of {sorted(_ALLOWED_FEATURE_ROLES)}")
+        _expect(role in _ALLOWED_FEATURE_ROLES, f"features[{i}].role must be one of {_ALLOWED_FEATURE_ROLES}")
 
         dtype = f.get("dtype")
-        _expect(_is_non_empty_str(dtype), f"features[{i}].dtype is required")
-        _expect(dtype in _ALLOWED_FEATURE_DTYPES, f"features[{i}].dtype must be one of {sorted(_ALLOWED_FEATURE_DTYPES)}")
+        _expect(dtype in _ALLOWED_FEATURE_DTYPES, f"features[{i}].dtype must be one of {_ALLOWED_FEATURE_DTYPES}")
 
         required = f.get("required")
-        _expect(isinstance(required, bool), f"features[{i}].required must be boolean")
         allowed_null_f = f.get("allowed_null")
+        _expect(isinstance(required, bool), f"features[{i}].required must be boolean")
         _expect(isinstance(allowed_null_f, bool), f"features[{i}].allowed_null must be boolean")
 
         normalized_features.append(
@@ -126,7 +119,7 @@ def validate_internal_contract_v1(data: Any) -> InternalContractV1:
 
     defaults = data.get("defaults") or {}
     _expect(isinstance(defaults, dict), "defaults must be a mapping")
-    for col in defaults.keys():
+    for col in defaults:
         _expect(col in seen_names, f"defaults references unknown feature: {col}")
 
     categories = data.get("categories") or {}
@@ -137,22 +130,36 @@ def validate_internal_contract_v1(data: Any) -> InternalContractV1:
         allowed = spec.get("allowed")
         _expect(isinstance(allowed, list), f"categories.{col}.allowed must be a list")
         norm = spec.get("normalization")
-        if norm is not None:
+        if norm:
             _expect(isinstance(norm, dict), f"categories.{col}.normalization must be a mapping")
             ntype = norm.get("type", "none")
-            _expect(_is_non_empty_str(ntype), f"categories.{col}.normalization.type must be a string")
-            _expect(ntype in _ALLOWED_NORM_TYPES, f"normalization.type must be one of {sorted(_ALLOWED_NORM_TYPES)}")
+            _expect(ntype in _ALLOWED_NORM_TYPES, f"normalization.type must be one of {_ALLOWED_NORM_TYPES}")
             if ntype == "map":
-                mapping = norm.get("mapping")
-                _expect(isinstance(mapping, dict), f"categories.{col}.normalization.mapping must be a mapping when type=map")
+                _expect(isinstance(norm.get("mapping"), dict), "normalization.mapping must be a mapping")
 
     imputation = data.get("imputation") or {}
     _expect(isinstance(imputation, dict), "imputation must be a mapping")
+
     for col, spec in imputation.items():
         _expect(col in seen_names, f"imputation references unknown feature: {col}")
         _expect(isinstance(spec, dict), f"imputation.{col} must be a mapping")
-        allowed = spec.get("allowed")
-        _expect(isinstance(allowed, bool), f"imputation.{col}.allowed must be boolean")
+
+        # Novo schema M3
+        if "strategy" in spec:
+            strategy = spec.get("strategy")
+            _expect(strategy in _ALLOWED_IMPUTE_STRATEGIES, f"invalid imputation strategy: {strategy}")
+            mandatory = spec.get("mandatory")
+            _expect(isinstance(mandatory, bool), f"imputation.{col}.mandatory must be boolean")
+
+            if strategy == "constant":
+                _expect("value" in spec, f"imputation.{col}.value required for constant strategy")
+
+        # Compatibilidade legado
+        elif "allowed" in spec:
+            _expect(isinstance(spec.get("allowed"), bool), f"imputation.{col}.allowed must be boolean")
+
+        else:
+            raise ContractValidationError(f"imputation.{col} must declare strategy or allowed")
 
     return InternalContractV1(
         contract_version=str(cv),

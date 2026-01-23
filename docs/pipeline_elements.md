@@ -1,286 +1,195 @@
-# Atlas DataFlow — Pipeline Elements Canonical Catalog
+# 📘 Pipeline Elements — Catálogo Canônico do Atlas DataFlow
 
-## 1. Propósito do Documento
+Este documento cataloga todos os **elementos canônicos do pipeline** do **Atlas DataFlow**,
+organizados por tipo e milestone, servindo como **fonte única de verdade** para:
 
-Este documento define o **catálogo canônico de elementos do pipeline** do **Atlas DataFlow**.  
-Ele descreve **etapas (steps)**, seus papéis semânticos, contratos de entrada/saída e **payloads de auditoria**.
+- quais Steps existem
+- qual o papel de cada Step
+- quais invariantes eles mantêm
+- quais artefatos produzem ou consomem
 
-Este documento deve ser tratado como **fonte de verdade operacional** para:
-- implementação do core do pipeline
-- definição de use cases internos
-- desenho de APIs e adapters
-- validação de testes e manifest
-
-Qualquer elemento implementado que **não esteja descrito aqui** deve ser considerado **incompleto ou experimental**.
+Nenhum Step fora deste catálogo deve existir sem documentação explícita.
 
 ---
 
-## 2. Conceitos Fundamentais
+## 🧱 Tipos de Elementos
 
-### 2.1 Step
-
-Um **Step** é a menor unidade executável do pipeline.
-
-Cada Step possui:
-- identidade semântica estável (`step_id`)
-- responsabilidade única
-- entradas e saídas explícitas
-- payload de auditoria obrigatório
-
-Steps **não compartilham estado implícito**.
+- **Ingest** — entrada controlada de dados
+- **Audit** — observação diagnóstica (não muta dados)
+- **Transform** — transformação declarada e rastreável
+- **Builder** — construção de representações e objetos canônicos
+- **Train** — treinamento explícito de modelos
+- **Evaluate** — avaliação e decisão baseada em métricas
+- **Registry** — catálogos determinísticos (modelos, grids, etc.)
+- **Persistence** — armazenamento de artefatos versionados
 
 ---
 
-### 2.2 Classificação de Steps
+## 🗂️ Milestone M5 — Modelagem & Avaliação
 
-| Kind | Descrição |
-|-----|-----------|
-| `diagnostic` | Inspeção reversível, sem mutação |
-| `transform` | Mutação irreversível do dataset |
-| `train` | Ajuste de modelos |
-| `evaluate` | Avaliação e comparação |
-| `export` | Persistência e empacotamento |
+O Milestone M5 fecha o ciclo supervisionado do Atlas, indo da
+**representação** até a **decisão final de modelo campeão**, de forma:
 
----
-
-## 3. Contrato de um Step
-
-Todo Step deve declarar explicitamente:
-
-```text
-step_id: string (slug estável)
-kind: diagnostic | transform | train | evaluate | export
-depends_on: [step_id]
-inputs: [artefatos]
-outputs: [artefatos]
-payload: auditoria estruturada
-```
-
-Nenhum Step pode:
-- inferir silenciosamente dados
-- acessar filesystem diretamente (exceto `export`)
-- depender da ordem física do notebook
+- explícita
+- determinística
+- auditável
+- comparável entre execuções
 
 ---
 
-## 4. Payload Canônico de Auditoria
+### 🔧 Builders & Registries
 
-Todo Step deve produzir um payload com a seguinte estrutura mínima:
+#### `representation.preprocess` (Builder)
+Constrói o `ColumnTransformer` canônico a partir do contrato.
 
+- Numéricas: scaler explícito
+- Categóricas: encoder explícito
+- Nenhuma inferência automática de colunas
+- Usado por todos os Steps de treino
+
+---
+
+#### `ModelRegistry` (Registry)
+Catálogo explícito de modelos suportados.
+
+- Modelos iniciais:
+  - Logistic Regression
+  - Random Forest
+  - KNN
+- Define:
+  - classe do estimador
+  - parâmetros default
+  - parâmetros expostos para UI
+- Extensível via `register()`, sem inferência
+
+---
+
+#### `DefaultSearchGrids` (Registry)
+Catálogo canônico de grids de busca por modelo.
+
+- Grids conservadores e seguros
+- Scoring explícito
+- Estratégia de CV explícita e determinística
+- Fonte padrão para `train.search`
+
+---
+
+### 🏋️ Training
+
+#### `train.single` (Step — kind: train)
+Treinamento simples e determinístico de um único modelo.
+
+- Usa apenas `default params`
+- Sem busca de hiperparâmetros
+- Seed explícita
+- Gera métricas padrão
+- Serve como baseline confiável
+
+**Artefatos produzidos:**
+- `model.trained`
+- métricas no Manifest
+
+---
+
+#### `train.search` (Step — kind: train)
+Treinamento com busca explícita de hiperparâmetros.
+
+- Suporta:
+  - `GridSearchCV`
+  - `RandomizedSearchCV`
+- Nenhuma inferência automática de estratégia
+
+**Fontes explícitas de grid (Grid Source):**
+- `default` — via `DefaultSearchGrids`
+- `paste` — grid fornecido diretamente na config
+- `bank` — GridBank file-based (arquivo explícito)
+
+**Determinismo:**
+- seed explícita
+- CV explícito
+- scoring registrado
+
+**Artefatos produzidos:**
+- `model.best_estimator`
+- resumo serializável de `cv_results_`
+- registro completo no Manifest (grid source, scoring, cv, seed)
+
+---
+
+### 📊 Evaluation
+
+#### `evaluate.metrics` (Step — kind: evaluate)
+Avaliação padronizada de modelos treinados.
+
+**Métricas obrigatórias:**
+- accuracy
+- precision
+- recall
+- f1
+
+**Condicional:**
+- `roc_auc` (somente quando aplicável)
+
+**Outros outputs:**
+- confusion matrix serializável
+- métricas comparáveis entre modelos
+
+**Artefatos produzidos:**
+- `eval.metrics`
+- registro no Manifest
+
+---
+
+#### `evaluate.model_selection` (Step — kind: evaluate)
+Seleção explícita do modelo campeão.
+
+- Métrica alvo configurável (ex.: f1, roc_auc)
+- Direção explícita (`maximize | minimize`)
+- Ranking completo e determinístico
+- Regra de desempate documentada (ex.: ordem estável por `model_id`)
+
+**Payload de decisão:**
 ```yaml
-step_id: audit.schema_types
-kind: diagnostic
-status: success | skipped | failed
-summary: string
-metrics:
-  key: value
-warnings:
-  - string
-artifacts:
-  - name: string
-    path: string
+selection:
+  metric: string
+  direction: maximize | minimize
+  champion_model_id: string
+  champion_score: float
+  ranking:
+    - model_id: string
+      score: float
 ```
 
-Payloads são:
-- serializáveis
-- agregáveis no manifest
-- consumíveis por UI e relatórios
+**Artefatos produzidos:**
+- `eval.model_selection`
+- decisão registrada no Manifest
 
 ---
 
-## 5. Catálogo Canônico de Steps (v1)
+## 🚦 Princípios Globais do Pipeline
 
-### 5.1 Ingestão
-
-#### `ingest.load`
-- **Kind**: diagnostic
-- **Responsabilidade**: carregar dataset bruto
-- **Outputs**: `data.raw_rows`
-- **Auditoria**:
-  - origem do dado
-  - hash/checksum
-  - shape inicial
+- Nada é inferido automaticamente
+- Toda decisão é:
+  - declarada
+  - rastreável
+  - serializável
+- Determinismo é obrigatório
+- Steps são composáveis, mas nunca implícitos
 
 ---
 
-### 5.2 Qualidade Estrutural
+## 🔮 Extensões Futuras (não implementadas)
 
-#### `audit.profile_baseline`
-- **Kind**: diagnostic
-- **Auditoria**:
-  - linhas e colunas
-  - missing values globais
-  - cardinalidade básica
-  - tipos inferidos (visão geral)
+- Inference / Serving
+- Exportação de modelos
+- Leaderboards persistentes
+- Comparação multi-métrica
+- Explainability (SHAP, etc.)
 
----
-
-#### `audit.schema_types`
-- **Kind**: diagnostic
-- **Auditoria**:
-  - dtype inferido por coluna (pandas)
-  - tipo semântico básico (`numeric | categorical | temporal | other`)
-  - nulos por coluna (count / ratio)
-  - cardinalidade por coluna (`unique_values / is_constant`)
-  - exemplos representativos (até 5, serializáveis)
-- **Notas**:
-  - observacional puro
-  - não valida contrato
-  - não realiza coerções
+Essas extensões não fazem parte do **M5** e devem ser introduzidas em milestones próprios.
 
 ---
 
-#### `audit.duplicates`
-- **Kind**: diagnostic
-- **Auditoria**:
-  - número absoluto de linhas duplicadas
-  - percentual de duplicidade no dataset
-  - flag de detecção (`detected`)
-  - política diagnóstica de tratamento (informativa)
-- **Notas**:
-  - duplicidade avaliada por linha completa
-  - nenhuma mutação ou marcação de registros
-  - prepara etapas futuras de deduplicação
+📌 **Nota final**
 
----
-
-### 5.3 Transformações Estruturais
-
-#### `transform.cast_types_safe`
-- **Kind**: transform
-- **Responsabilidade**: coerção segura de tipos conforme contrato
-- **Auditoria**:
-  - valores impactados
-  - novos nulos introduzidos
-
----
-
-#### `transform.apply_defaults`
-- **Kind**: transform
-- **Auditoria**:
-  - defaults aplicados
-  - colunas afetadas
-
----
-
-#### `transform.deduplicate`
-- **Kind**: transform
-- **Responsabilidade**: deduplicação controlada e declarativa
-- **Auditoria**:
-  - modo aplicado (`full_row | key_based`)
-  - colunas-chave (quando aplicável)
-  - linhas antes/depois
-  - linhas removidas
-- **Dependência obrigatória**:
-  - `audit.duplicates`
-
----
-
-### 5.4 Preparação Supervisionada
-
-#### `split.train_test`
-- **Kind**: transform
-- **Outputs**: `X_train`, `X_test`, `y_train`, `y_test`
-- **Auditoria**:
-  - seed
-  - proporção de split
-
----
-
-#### `transform.impute_missing`
-- **Kind**: transform
-- **Auditoria**:
-  - estratégia por coluna
-  - impacto quantitativo
-
----
-
-#### `transform.categorical_standardize`
-- **Kind**: transform
-- **Auditoria**:
-  - mapeamentos aplicados
-  - categorias novas detectadas
-
----
-
-### 5.5 Representação
-
-#### `representation.preprocess`
-- **Kind**: transform
-- **Outputs**: `X_train_rep`, `X_test_rep`
-- **Auditoria**:
-  - colunas finais
-  - encoders e scalers utilizados
-
----
-
-### 5.6 Modelagem
-
-#### `train.single`
-- **Kind**: train
-- **Auditoria**:
-  - modelo treinado
-  - hiperparâmetros
-  - métricas principais
-
----
-
-#### `train.search`
-- **Kind**: train
-- **Auditoria**:
-  - estratégia de busca
-  - melhor estimador
-  - métricas comparativas
-
----
-
-### 5.7 Avaliação
-
-#### `evaluate.metrics`
-- **Kind**: evaluate
-- **Auditoria**:
-  - métricas padrão
-  - matriz de confusão
-
----
-
-#### `evaluate.model_selection`
-- **Kind**: evaluate
-- **Auditoria**:
-  - critério de escolha
-  - modelo campeão
-
----
-
-### 5.8 Exportação
-
-#### `export.inference_bundle`
-- **Kind**: export
-- **Outputs**:
-  - pipeline final
-  - contrato congelado
-- **Auditoria**:
-  - paths de saída
-  - hashes de artefatos
-
----
-
-## 6. Regras de Evolução
-
-- Novos Steps exigem:
-  - atualização deste documento
-  - issue dedicada
-  - testes associados
-- Steps não podem ser removidos sem depreciação explícita
-- Mudanças semânticas exigem bump de versão
-
----
-
-## 7. Regra de Ouro
-
-Se um Step:
-- não está neste catálogo
-- não produz payload
-- não aparece no manifest
-
-**ele não existe para o Atlas DataFlow.**
+Se um elemento não estiver neste catálogo, ele **não existe oficialmente no Atlas**.

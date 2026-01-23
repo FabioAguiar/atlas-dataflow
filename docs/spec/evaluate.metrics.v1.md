@@ -7,7 +7,7 @@ Esta spec define o Step **evaluate.metrics v1** do **Atlas DataFlow**, responsá
 **consistentes, comparáveis e auditáveis** ao longo do pipeline.
 
 No Atlas, avaliação **não é implícita nem acoplada ao treino**: ela ocorre em um Step
-dedicado, com payload estável e regras explícitas.
+dedicado, com **payload estável** e regras explícitas.
 
 ---
 
@@ -15,6 +15,7 @@ dedicado, com payload estável e regras explícitas.
 
 - Calcular métricas padronizadas de classificação
 - Gerar confusion matrix estruturada
+- (Quando aplicável) calcular `roc_auc`
 - Garantir consistência entre execuções
 - Registrar resultados de avaliação no Manifest
 
@@ -34,8 +35,21 @@ dedicado, com payload estável e regras explícitas.
 O Step depende semanticamente de:
 
 - `train.single` **ou** `train.search`
-- Modelo treinado disponível no RunContext
+- **Modelo treinado disponível no RunContext**
+- **Preprocess persistido** (artefato joblib)
 - Dataset de avaliação (test/validation)
+
+### Artifacts esperados (entrada)
+
+- **Modelo** (um dos dois, com preferência por `train.search`):
+  - `model.best_estimator` *(preferencial)*
+  - `model.trained` *(fallback)*
+- **Dados de avaliação**:
+  - `data.test`: `list[dict]` (linhas já serializadas)
+- **Preprocess persistido**:
+  - `artifacts/preprocess.joblib` (via `PreprocessStore` no `run_dir`)
+
+> Nota: o Step **não** recalcula preprocess. Ele apenas **carrega** e aplica `transform()`.
 
 ---
 
@@ -60,12 +74,21 @@ Nenhum parâmetro opcional é inferido implicitamente.
 - `recall`
 - `f1`
 
+Regras:
+- métricas calculadas de forma determinística para dataset fixo
+- `zero_division=0` em métricas que exigem divisão (evita exceções por classe ausente)
+
 ### Condicional
 
 - `roc_auc`
   - calculada **apenas quando aplicável**
   - classificação binária
-  - scores/probabilidades disponíveis
+  - **scores/probabilidades disponíveis**, via:
+    - `predict_proba` (preferencial) **ou**
+    - `decision_function`
+
+> Importante: `roc_auc` **não deve** ser inferida silenciosamente.  
+> Quando não aplicável, o campo **pode ser omitido** do payload (preferencial) ou ser `null`.
 
 ---
 
@@ -75,7 +98,7 @@ O Step deve gerar:
 
 - matriz de confusão completa
 - formato serializável
-- labels explícitos
+- labels explícitos e estáveis
 
 Formato mínimo esperado:
 
@@ -93,25 +116,32 @@ confusion_matrix:
 
 ```yaml
 payload:
+  model_artifact: string  # "model.best_estimator" | "model.trained"
   metrics:
     accuracy: float
     precision: float
     recall: float
     f1: float
-    roc_auc: float | null
+    roc_auc: float | null  # condicional (pode ser omitido)
   confusion_matrix:
     labels: list
     matrix: list[list[int]]
 ```
 
+### Artifact produzido (saída)
+
+- `eval.metrics`: payload serializável (igual ao payload acima)
+
 ---
 
 ## Invariantes
 
-- Métricas sempre presentes (exceto `roc_auc`)
+- Métricas obrigatórias sempre presentes
+- `roc_auc` apenas quando aplicável
 - Nomes e formatos estáveis
-- Nenhuma métrica inferida automaticamente
+- Nenhuma métrica adicional inferida automaticamente
 - Nenhuma mutação de dados ou modelo
+- Sem treino/retreino; sem recálculo de preprocess
 
 ---
 
@@ -119,9 +149,10 @@ payload:
 
 O Step deve falhar quando:
 
-- modelo treinado não existir
-- dados de avaliação não estiverem disponíveis
-- formatos de input forem inválidos
+- modelo treinado não existir (`model.best_estimator` e `model.trained` ausentes)
+- `data.test` não estiver disponível ou estiver em formato inválido
+- preprocess persistido não existir no `run_dir`
+- coluna target não existir nos dados de avaliação (conforme contrato)
 
 ---
 
@@ -130,8 +161,8 @@ O Step deve falhar quando:
 Os testes unitários devem cobrir:
 
 - presença das métricas obrigatórias
-- ausência de `roc_auc` quando não aplicável
 - cálculo correto da confusion matrix
+- `roc_auc` presente apenas quando aplicável
 - payload serializável e consistente
 - falha explícita para inputs inválidos
 
@@ -140,9 +171,9 @@ Os testes unitários devem cobrir:
 ## Fora de Escopo (v1)
 
 - Curvas ROC / PR
-- Métricas customizadas
+- Métricas customizadas por domínio
 - Visualizações
-- Persistência de resultados
+- Persistência de resultados (além do registro canônico no Manifest)
 
 ---
 
@@ -161,6 +192,8 @@ Possíveis extensões:
 
 - `docs/spec/train.single.v1.md`
 - `docs/spec/train.search.v1.md`
+- `docs/spec/representation.preprocess.v1.md`
+- `docs/spec/persistence.preprocess.v1.md`
 - `docs/pipeline_elements.md`
 - `docs/engine.md`
 - `docs/traceability.md`

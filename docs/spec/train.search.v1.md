@@ -2,12 +2,12 @@
 
 ## Visão Geral
 
-Esta spec define o Step **train.search v1** do **Atlas DataFlow**, responsável por executar
-**busca explícita de hiperparâmetros** utilizando `GridSearchCV` ou `RandomizedSearchCV`,
-de forma **determinística, auditável e reprodutível**.
+Esta spec define o Step **`train.search v1`** do **Atlas DataFlow**, responsável por executar
+**busca explícita e controlada de hiperparâmetros** utilizando **GridSearchCV** ou
+**RandomizedSearchCV**, garantindo **determinismo**, **auditabilidade** e **rastreabilidade**.
 
-O Step evolui naturalmente após `train.single`, mantendo o rigor do Atlas:
-nenhuma busca ocorre sem grids, scoring e CV previamente declarados.
+No Atlas, **a busca nunca é implícita**: estratégia, grid, scoring e cross-validation
+devem ser declarados de forma explícita.
 
 ---
 
@@ -15,9 +15,9 @@ nenhuma busca ocorre sem grids, scoring e CV previamente declarados.
 
 - Executar busca de hiperparâmetros de forma controlada
 - Suportar GridSearch e RandomizedSearch
-- Produzir `best_estimator` e métricas resumidas
-- Garantir reprodutibilidade via seed explícita
-- Registrar resultados no Manifest
+- Permitir múltiplas fontes explícitas de grid
+- Produzir resultados auditáveis
+- Garantir reprodutibilidade
 
 ---
 
@@ -26,7 +26,7 @@ nenhuma busca ocorre sem grids, scoring e CV previamente declarados.
 - **ID:** `train.search`
 - **Kind:** `train`
 - **Milestone:** M5 — Modelagem & Avaliação
-- **Caráter:** Transformacional (gera modelo treinado)
+- **Caráter:** Transformacional (gera modelo treinado via search)
 
 ---
 
@@ -37,75 +37,104 @@ O Step depende semanticamente de:
 - `ModelRegistry v1`
 - `DefaultSearchGrids v1`
 - `representation.preprocess`
-- Dataset dividido (train / validation)
+- Dataset já dividido (train/test)
+
+Nenhuma dessas dependências pode ser inferida automaticamente.
 
 ---
 
-## Configuração Esperada
+## Fontes de Grid (Grid Source)
+
+O Step suporta **somente fontes explícitas**, definidas via configuração.
+
+### 1) `default`
+- Usa o grid retornado por:
+  ```python
+  DefaultSearchGrids.get(model_id)
+  ```
+
+### 2) `paste`
+- Usa grid fornecido diretamente via config (YAML/JSON)
+- O conteúdo colado é considerado **fonte única de verdade**
+
+### 3) `bank` (GridBank file-based)
+- Usa grid carregado de arquivo declarativo
+- Arquivo referenciado explicitamente por nome
+- Nenhuma descoberta automática é permitida
+
+---
+
+## Execução da Busca
+
+O Step deve:
+
+1. Resolver o estimador via `ModelRegistry`
+2. Resolver o grid conforme a fonte configurada
+3. Executar explicitamente:
+   - `GridSearchCV`, ou
+   - `RandomizedSearchCV`
+4. Ajustar (`fit`) **somente** nos dados de treino
+
+O Step **não deve**:
+- inferir grids
+- modificar grids
+- persistir modelos treinados (v1)
+
+---
+
+## Resultados Produzidos
+
+O Step deve produzir, no mínimo:
+
+- `best_estimator`
+- `best_params`
+- `best_score`
+- resumo serializável de `cv_results_`, contendo:
+  - `mean_test_score`
+  - `std_test_score`
+  - `rank_test_score`
+  - `params`
+
+---
+
+## Determinismo
+
+Para garantir reprodutibilidade, o Step deve:
+
+- aceitar `seed` explícita
+- usar CV com seed fixa (quando aplicável)
+- registrar no Manifest:
+  - seed
+  - scoring
+  - CV
+  - fonte do grid utilizada
+
+---
+
+## Configuração Canônica (exemplo)
 
 ```yaml
 steps:
   train.search:
     enabled: true
     model_id: random_forest
-    search_type: grid   # grid | random
+    search_type: grid        # grid | random
+    grid_source: bank        # default | paste | bank
+    grid_bank:
+      root_dir: grids
+      grid_name: rf_small_v1.yaml
     seed: 42
 ```
 
-Campos obrigatórios:
-- `model_id`
-- `search_type`
-- `seed`
-
 ---
 
-## Comportamento Canônico
+## Invariantes
 
-O Step deve:
-
-1. Validar `model_id` no `ModelRegistry`
-2. Obter grid, scoring e CV do `DefaultSearchGrids`
-3. Instanciar o estimador base
-4. Executar:
-   - `GridSearchCV` ou
-   - `RandomizedSearchCV` (conforme configuração)
-5. Ajustar o search nos dados de treino
-6. Extrair:
-   - `best_estimator`
-   - `best_params`
-   - `best_score`
-7. Gerar resumo serializável de `cv_results_`
-8. Registrar tudo no Manifest
-
----
-
-## Resultados Esperados
-
-### Payload mínimo
-
-```yaml
-payload:
-  model_id: string
-  search_type: grid | random
-  seed: int
-  best_params: dict
-  best_score: float
-  cv_results_summary:
-    - params: dict
-      mean_test_score: float
-      std_test_score: float
-      rank_test_score: int
-```
-
----
-
-## Determinismo
-
-Regras:
-
-- Seed obrigatória
-- CV com shuffle e random_state fixo
-- Resultados idênticos para dataset fixo
+- Nenhuma inferência automática
+- Grid sempre explícito
+- Execução determinística
+- Resultados auditáveis
+- Falhas explícitas
 
 ---
 
@@ -113,11 +142,10 @@ Regras:
 
 O Step deve falhar quando:
 
-- `model_id` não existir
-- `search_type` for inválido
-- grids não estiverem definidos
-- preprocess não estiver disponível
-- dados de treino não existirem
+- `model_id` inválido
+- grid inexistente
+- grid com parâmetros inválidos
+- configuração ambígua ou incompleta
 
 ---
 
@@ -125,11 +153,12 @@ O Step deve falhar quando:
 
 Os testes unitários devem cobrir:
 
-- execução em dataset pequeno
+- execução com dataset pequeno
 - produção de `best_estimator`
-- estrutura válida de `cv_results_summary`
+- resumo correto de `cv_results_`
 - determinismo com seed fixa
-- falha explícita para configuração inválida
+- uso de grid default / paste / bank
+- falha explícita para configurações inválidas
 
 ---
 
@@ -137,19 +166,9 @@ Os testes unitários devem cobrir:
 
 - AutoML
 - Busca bayesiana
-- Persistência do modelo treinado
-- Avaliação avançada (curvas, explicabilidade)
-
----
-
-## Evolução Futura
-
-Possíveis extensões:
-
-- Suporte a regressão
-- Hyperband / Successive Halving
-- Persistência integrada
-- Visualização de resultados
+- Hyperband
+- Persistência de modelos treinados
+- Visualização avançada
 
 ---
 
@@ -161,4 +180,5 @@ Possíveis extensões:
 - `docs/pipeline_elements.md`
 - `docs/engine.md`
 - `docs/traceability.md`
+- `docs/manifest.schema.v1.md`
 - `docs/testing.md`

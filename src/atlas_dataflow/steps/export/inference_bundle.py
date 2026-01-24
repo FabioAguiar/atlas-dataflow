@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 
 import hashlib
 import json
@@ -37,16 +37,11 @@ from atlas_dataflow.core.contract.schema import validate_internal_contract_v1
 from atlas_dataflow.core.pipeline.context import RunContext
 from atlas_dataflow.core.pipeline.step import Step
 from atlas_dataflow.core.pipeline.types import StepKind, StepResult, StepStatus
-from atlas_dataflow.persistence.preprocess_store import PreprocessStore
 from atlas_dataflow.deployment.inference_bundle import (
     InferenceBundleV1,
     save_inference_bundle_v1,
 )
-
-try:
-    import joblib  # type: ignore
-except Exception:  # pragma: no cover
-    joblib = None  # type: ignore
+from atlas_dataflow.persistence.preprocess_store import PreprocessStore
 
 
 def _get_step_cfg(ctx: RunContext, step_id: str) -> Dict[str, Any]:
@@ -144,6 +139,7 @@ class ExportInferenceBundleStep(Step):
             # ---- contrato (congelado) ----
             contract_dict = ctx.contract
             validate_internal_contract_v1(contract_dict)  # falha explícita se inválido
+            contract_version = str(contract_dict.get("contract_version", ""))
 
             # ---- decisão do campeão ----
             sel_payload = _require_selection(ctx)
@@ -173,7 +169,7 @@ class ExportInferenceBundleStep(Step):
                 "format": "joblib",
                 "bundle_version": "v1",
                 "champion_model_id": champion_model_id,
-                "contract_version": str(contract_dict.get("contract_version", "")),
+                "contract_version": contract_version,
                 "hashes": {
                     "contract_sha256": _sha256_json(contract_dict),
                 },
@@ -188,13 +184,14 @@ class ExportInferenceBundleStep(Step):
             )
 
             save_meta = save_inference_bundle_v1(bundle=bundle, path=bundle_path)
-            meta["hashes"]["bundle_sha256"] = save_meta["bundle_hash"]
+            bundle_sha256 = save_meta["bundle_hash"]
+            meta["hashes"]["bundle_sha256"] = bundle_sha256
 
             payload: Dict[str, Any] = {
                 "bundle_path": bundle_rel_path,
-                "bundle_hash": save_meta["bundle_hash"],
+                "bundle_hash": bundle_sha256,
                 "model_id": champion_model_id,
-                "contract_version": str(contract_dict.get("contract_version", "")),
+                "contract_version": contract_version,
             }
 
             ctx.set_artifact("export.inference_bundle", payload)
@@ -204,9 +201,19 @@ class ExportInferenceBundleStep(Step):
                 level="info",
                 message="export.inference_bundle completed",
                 bundle_path=bundle_rel_path,
-                bundle_hash=save_meta["bundle_hash"],
+                bundle_hash=bundle_sha256,
                 model_id=champion_model_id,
             )
+
+            # Enriquecimento canônico de artifacts para consumo do Model Card (M6-02 / Issue #30)
+            artifacts: Dict[str, Any] = {
+                "bundle_path": bundle_rel_path,
+                "bundle_sha256": bundle_sha256,
+                "format": "joblib",
+                "bundle_version": "v1",
+                "champion_model_id": champion_model_id,
+                "contract_version": contract_version,
+            }
 
             return StepResult(
                 step_id=self.id,
@@ -215,9 +222,7 @@ class ExportInferenceBundleStep(Step):
                 summary="export.inference_bundle completed",
                 metrics={},
                 warnings=[],
-                artifacts={
-                    "bundle": bundle_rel_path,
-                },
+                artifacts=artifacts,
                 payload=payload,
             )
 

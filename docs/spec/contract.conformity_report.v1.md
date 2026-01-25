@@ -2,14 +2,19 @@
 
 ## 1. Propósito
 
-Este documento define a **especificação formal e canônica do Step `contract.conformity_report` (v1)** no Atlas DataFlow.
+Este documento define a **especificação formal e canônica do Step `contract.conformity_report` (v1)**
+no Atlas DataFlow.
 
-O objetivo deste Step é **avaliar a conformidade entre o dataset efetivo e o Internal Contract**, produzindo um **relatório diagnóstico explícito**, sem realizar qualquer mutação nos dados.
+O objetivo deste Step é **avaliar a conformidade entre o dataset efetivo e o Internal Contract**,
+produzindo um **relatório diagnóstico explícito**, estruturado e auditável, **sem realizar qualquer
+mutação nos dados**.
 
 Este Step estabelece a base para:
-- decisões explícitas
-- coerções seguras
+
+- decisões explícitas (*decision required*)
+- coerções seguras (em Steps posteriores)
 - auditoria semântica
+- erros acionáveis e padronizados
 - evolução controlada do pipeline
 
 ---
@@ -25,6 +30,7 @@ O Step `contract.conformity_report`:
   - contrato validado no `RunContext`
 - **não modifica** o dataset
 - **não corrige** divergências
+- **não falha automaticamente o pipeline**
 
 ---
 
@@ -73,7 +79,8 @@ Para cada coluna declarada:
 
 - comparar dtype real × dtype esperado
 - identificar divergências
-- não tentar coerção
+- **não tentar coerção**
+- **não inferir conversões**
 
 ---
 
@@ -83,12 +90,14 @@ Para colunas categóricas:
 
 - identificar categorias fora do domínio declarado
 - reportar categorias novas ou inválidas
+- preservar valores observados para rastreabilidade
 
 ---
 
-## 6. Payload de Saída
+## 6. Payload de Saída (Diagnóstico)
 
-O Step deve produzir um payload estruturado contendo, no mínimo:
+O Step deve produzir um payload **estruturado, serializável e determinístico**
+contendo, no mínimo:
 
 ```yaml
 summary:
@@ -113,57 +122,79 @@ decisions_required:
     description: string
     affected_columns: []
     suggested_actions: []
+    decision_required: true
 ```
 
-Regras:
-- `severity = error` indica potencial bloqueio do pipeline
+### Regras
+
+- `severity = error` indica **potencial bloqueio do pipeline**
+- todo item em `decisions_required` **DEVE ter `decision_required = true`**
 - nenhuma decisão é tomada automaticamente
+- nenhuma correção é aplicada neste Step
 
 ---
 
-## 7. Integração com Manifest
+## 7. Integração com Schema de Erros
+
+Quando aplicável, o payload de conformidade **DEVE ser compatível**
+com o schema definido em:
+
+- `docs/spec/errors.schema.v1.md`
+
+Este Step **não levanta exceções**, mas fornece dados suficientes para que
+o Engine ou Steps posteriores possam:
+
+- falhar explicitamente
+- solicitar decisão humana
+- registrar erros acionáveis no Manifest
+
+---
+
+## 8. Integração com Manifest
 
 O Step deve registrar no Manifest:
 
 - status do Step
-- payload de conformidade
-- warnings e erros (se houver)
+- payload completo de conformidade
+- warnings e erros diagnósticos
 - timestamps e duração
 
 Eventos esperados:
+
 - `step_started`
 - `step_finished`
 
 ---
 
-## 8. Política de Falha
+## 9. Política de Falha
 
 - O Step **não falha o pipeline automaticamente**
-- Divergências são reportadas como dados
-- Bloqueio do pipeline é decisão do Engine/config em versões futuras
+- Divergências são reportadas como **dados diagnósticos**
+- Bloqueio do pipeline é responsabilidade do Engine/config
+- Qualquer correção automática **viola o domínio do Atlas**
 
 ---
 
-## 9. Testes Obrigatórios
+## 10. Testes Obrigatórios
 
-Implementações devem possuir testes para:
+Implementações devem possuir testes cobrindo, no mínimo:
 
 1. coluna obrigatória ausente
 2. coluna extra
 3. dtype divergente
 4. categoria fora do domínio
-5. payload `decisions_required` consistente
+5. payload `decisions_required` consistente e determinístico
+6. compatibilidade com `errors.schema.v1`
 
 ---
 
-## 10. Integração com Outros Documentos
+## 11. Integração com Outros Documentos
 
 Este documento deve ser usado em conjunto com:
 
 - `docs/spec/internal_contract.v1.md`
 - `docs/spec/contract.load.v1.md`
-- `docs/contract.md`
-- `docs/config.md`
+- `docs/spec/errors.schema.v1.md`
 - `docs/engine.md`
 - `docs/traceability.md`
 - `docs/manifest.schema.v1.md`
@@ -171,11 +202,13 @@ Este documento deve ser usado em conjunto com:
 
 ---
 
-## 11. Regra de Ouro
+## 12. Regra de Ouro
 
 Se divergências semânticas:
+
 - não forem detectadas,
 - não forem explicitadas,
+- não forem marcadas como *decision required*,
 - ou forem corrigidas silenciosamente,
 
 **o pipeline viola o domínio do Atlas DataFlow.**

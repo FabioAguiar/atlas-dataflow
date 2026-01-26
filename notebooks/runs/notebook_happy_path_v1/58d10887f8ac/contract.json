@@ -1,0 +1,61 @@
+{
+  "contract_version": "1.0",
+  "problem": {
+    "name": "template_demo",
+    "type": "classification"
+  },
+  "target": {
+    "name": "target",
+    "dtype": "int",
+    "allowed_null": false
+  },
+  "features": [
+    {
+      "name": "age",
+      "role": "numerical",
+      "dtype": "int",
+      "required": true,
+      "allowed_null": false
+    },
+    {
+      "name": "plan",
+      "role": "categorical",
+      "dtype": "category",
+      "required": true,
+      "allowed_null": false
+    },
+    {
+      "name": "active",
+      "role": "boolean",
+      "dtype": "bool",
+      "required": true,
+      "allowed_null": false
+    }
+  ],
+  "defaults": {},
+  "categories": {
+    "plan": {
+      "allowed": [
+        "basic",
+        "premium"
+      ],
+      "normalization": {
+        "type": "lower"
+      }
+    }
+  },
+  "imputation": {
+    "age": {
+      "strategy": "median",
+      "mandatory": false
+    },
+    "plan": {
+      "strategy": "most_frequent",
+      "mandatory": false
+    },
+    "active": {
+      "strategy": "most_frequent",
+      "mandatory": false
+    }
+  }
+}

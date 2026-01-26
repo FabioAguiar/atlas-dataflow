@@ -1,0 +1,276 @@
+{
+  "events": [
+    {
+      "event_type": "run_started",
+      "payload": {
+        "run_dir": "runs\\notebook_happy_path_v1\\58d10887f8ac"
+      },
+      "timestamp": "2026-01-26T10:08:52.738134+00:00"
+    },
+    {
+      "event_type": "step_started",
+      "payload": {
+        "kind": "diagnostic"
+      },
+      "step_id": "contract.load",
+      "timestamp": "2026-01-26T10:08:54.248273+00:00"
+    },
+    {
+      "event_type": "step_finished",
+      "payload": {
+        "duration_ms": 473,
+        "status": "success"
+      },
+      "step_id": "contract.load",
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    },
+    {
+      "event_type": "step_started",
+      "payload": {
+        "kind": "diagnostic"
+      },
+      "step_id": "contract.conformity_report",
+      "timestamp": "2026-01-26T10:08:54.248273+00:00"
+    },
+    {
+      "event_type": "step_failed",
+      "payload": {
+        "error": "No tabular dataset found in RunContext artifacts (expected data.raw_rows or data.transformed_rows)"
+      },
+      "step_id": "contract.conformity_report",
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    },
+    {
+      "event_type": "step_started",
+      "payload": {
+        "kind": "diagnostic"
+      },
+      "step_id": "ingest.load",
+      "timestamp": "2026-01-26T10:08:54.248273+00:00"
+    },
+    {
+      "event_type": "step_finished",
+      "payload": {
+        "duration_ms": 473,
+        "status": "success"
+      },
+      "step_id": "ingest.load",
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    },
+    {
+      "event_type": "step_started",
+      "payload": {
+        "kind": "diagnostic"
+      },
+      "step_id": "audit.profile_baseline",
+      "timestamp": "2026-01-26T10:08:54.248273+00:00"
+    },
+    {
+      "event_type": "step_finished",
+      "payload": {
+        "duration_ms": 473,
+        "status": "success"
+      },
+      "step_id": "audit.profile_baseline",
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    },
+    {
+      "event_type": "step_started",
+      "payload": {
+        "kind": "diagnostic"
+      },
+      "step_id": "audit.duplicates",
+      "timestamp": "2026-01-26T10:08:54.248273+00:00"
+    },
+    {
+      "event_type": "step_finished",
+      "payload": {
+        "duration_ms": 473,
+        "status": "success"
+      },
+      "step_id": "audit.duplicates",
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    },
+    {
+      "event_type": "step_started",
+      "payload": {
+        "kind": "diagnostic"
+      },
+      "step_id": "audit.schema_types",
+      "timestamp": "2026-01-26T10:08:54.248273+00:00"
+    },
+    {
+      "event_type": "step_finished",
+      "payload": {
+        "duration_ms": 473,
+        "status": "success"
+      },
+      "step_id": "audit.schema_types",
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    },
+    {
+      "event_type": "step_started",
+      "payload": {
+        "kind": "transform"
+      },
+      "step_id": "transform.cast_types_safe",
+      "timestamp": "2026-01-26T10:08:54.248273+00:00"
+    },
+    {
+      "event_type": "step_finished",
+      "payload": {
+        "duration_ms": 473,
+        "status": "skipped"
+      },
+      "step_id": "transform.cast_types_safe",
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    },
+    {
+      "event_type": "run_finished",
+      "payload": {
+        "duration_ms": 473
+      },
+      "timestamp": "2026-01-26T10:08:54.721622+00:00"
+    }
+  ],
+  "inputs": {
+    "config_hash": "09b8cc5d0c5fb9359151f22ca279a4223f1c71c7b408ab469ed36ee9c980dd72",
+    "contract_hash": "4ab45d989778291a3d2a05ddb2e9aa2c7138e371395a7767519008c6fcbbb023"
+  },
+  "run": {
+    "atlas_version": "0.1.0",
+    "run_id": "58d10887f8ac",
+    "started_at": "2026-01-26T10:08:52.738134+00:00"
+  },
+  "steps": {
+    "audit.duplicates": {
+      "artifacts": {
+        "payload_meta": {
+          "payload_bytes": 125,
+          "payload_sha256": "ad8ff2cc78890e1c551d70fcccc149653f7a11b969c06376e72afdf458daeed5"
+        }
+      },
+      "duration_ms": 473,
+      "finished_at": "2026-01-26T10:08:54.721622+00:00",
+      "kind": "diagnostic",
+      "metrics": {
+        "duplicates": 0,
+        "ratio": 0.0,
+        "rows": 3
+      },
+      "started_at": "2026-01-26T10:08:54.248273+00:00",
+      "status": "success",
+      "step_id": "audit.duplicates",
+      "summary": "duplicates audit computed",
+      "warnings": []
+    },
+    "audit.profile_baseline": {
+      "artifacts": {
+        "payload_meta": {
+          "payload_bytes": 824,
+          "payload_sha256": "21d3bcbeb736b540ee4d3ff6faf4da6b40cc0229d67de948c1e7ab3f32dad5c0"
+        }
+      },
+      "duration_ms": 473,
+      "finished_at": "2026-01-26T10:08:54.721622+00:00",
+      "kind": "diagnostic",
+      "metrics": {
+        "columns": 4,
+        "rows": 3
+      },
+      "started_at": "2026-01-26T10:08:54.248273+00:00",
+      "status": "success",
+      "step_id": "audit.profile_baseline",
+      "summary": "baseline profile computed",
+      "warnings": []
+    },
+    "audit.schema_types": {
+      "artifacts": {
+        "payload_meta": {
+          "payload_bytes": 765,
+          "payload_sha256": "cd0ef12aa6d2fd3531e4b3c0dc551672c37c2d34f81a0f1638f5eb28d8c98c78"
+        }
+      },
+      "duration_ms": 473,
+      "finished_at": "2026-01-26T10:08:54.721622+00:00",
+      "kind": "diagnostic",
+      "metrics": {
+        "columns": 4,
+        "rows": 3
+      },
+      "started_at": "2026-01-26T10:08:54.248273+00:00",
+      "status": "success",
+      "step_id": "audit.schema_types",
+      "summary": "schema types audit computed",
+      "warnings": []
+    },
+    "contract.conformity_report": {
+      "error": "No tabular dataset found in RunContext artifacts (expected data.raw_rows or data.transformed_rows)",
+      "finished_at": "2026-01-26T10:08:54.721622+00:00",
+      "kind": "diagnostic",
+      "started_at": "2026-01-26T10:08:54.248273+00:00",
+      "status": "failed",
+      "step_id": "contract.conformity_report"
+    },
+    "contract.load": {
+      "artifacts": {
+        "payload_meta": {
+          "payload_bytes": 186,
+          "payload_sha256": "77672320cbd05493fd98fa9313613a66dc97b37271a46b46a8410c78d73521ba"
+        }
+      },
+      "duration_ms": 473,
+      "finished_at": "2026-01-26T10:08:54.721622+00:00",
+      "kind": "diagnostic",
+      "metrics": {
+        "features_count": 3
+      },
+      "started_at": "2026-01-26T10:08:54.248273+00:00",
+      "status": "success",
+      "step_id": "contract.load",
+      "summary": "contract loaded and validated",
+      "warnings": []
+    },
+    "ingest.load": {
+      "artifacts": {
+        "payload_meta": {
+          "payload_bytes": 249,
+          "payload_sha256": "11d6ecf3babe0cb860492fd9f6bd2e7f23731f39e7301aeeaa3683636bf848eb"
+        },
+        "source_bytes": 78,
+        "source_path": "C:\\Users\\fabio\\Projetos DEV\\ATLAS\\atlas-dataflow\\notebooks\\runs\\notebook_happy_path_v1\\58d10887f8ac\\input.csv",
+        "source_sha256": "d2040e791587de46b69247f49693d4a4c51b6eb0182ce079473b5c277620bee2",
+        "source_type": "csv"
+      },
+      "duration_ms": 473,
+      "finished_at": "2026-01-26T10:08:54.721622+00:00",
+      "kind": "diagnostic",
+      "metrics": {
+        "bytes": 78,
+        "rows": 3
+      },
+      "started_at": "2026-01-26T10:08:54.248273+00:00",
+      "status": "success",
+      "step_id": "ingest.load",
+      "summary": "dataset loaded",
+      "warnings": []
+    },
+    "transform.cast_types_safe": {
+      "artifacts": {
+        "payload_meta": {
+          "payload_bytes": 2,
+          "payload_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        }
+      },
+      "duration_ms": 473,
+      "finished_at": "2026-01-26T10:08:54.721622+00:00",
+      "kind": "transform",
+      "metrics": {},
+      "started_at": "2026-01-26T10:08:54.248273+00:00",
+      "status": "skipped",
+      "step_id": "transform.cast_types_safe",
+      "summary": "skipped due to failed dependency",
+      "warnings": []
+    }
+  }
+}

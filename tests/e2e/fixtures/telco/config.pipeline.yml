@@ -1,0 +1,17 @@
+steps:
+  ingest.load:
+    path: telco_like.csv
+    format: csv
+  contract.load:
+    path: contract.internal.v1.json
+  contract.validate: {}
+  split.train_test:
+    test_size: 0.2
+    random_state: 42
+  train.single:
+    estimator: logistic_regression
+    params:
+      max_iter: 200
+  evaluate.metrics: {}
+  export.inference_bundle: {}
+  report.generate: {}

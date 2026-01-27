@@ -105,6 +105,69 @@ Todo projeto Atlas DataFlow deve possuir ao menos:
 
 ---
 
+## 6.3 E2E Suite: Telco-like e Bank-like via config
+
+A suíte E2E canônica do Atlas DataFlow inclui **dois cenários de domínio
+representativos**, executados **exclusivamente via configuração**:
+
+- **Telco-like**
+- **Bank-like**
+
+O objetivo desta suíte é **provar que o mesmo core**:
+
+- suporta múltiplos domínios,
+- respeita contratos distintos,
+- mantém invariantes,
+- sem qualquer alteração de código.
+
+### Características obrigatórias
+
+- Execução 100% **config-driven**
+- Mesmo conjunto de Steps e builders
+- Variação apenas de:
+  - dataset
+  - contrato
+  - parâmetros de config
+
+### Isolamento por `run_dir`
+
+Cada cenário E2E deve:
+
+- criar seu próprio `run_dir`
+- não compartilhar paths, arquivos ou estado
+- ser executável de forma independente
+
+A execução de um cenário **não pode poluir** outro.
+
+### Fixtures sintéticas
+
+Os testes E2E devem utilizar:
+
+- datasets **sintéticos**
+- contratos versionados
+- configs explícitas
+
+É proibido:
+
+- uso de dados reais sensíveis
+- dependência de serviços externos
+- dependência de infraestrutura específica
+
+### Artefatos esperados
+
+Cada execução E2E **DEVE gerar**:
+
+- preprocess persistido (`preprocess.joblib`)
+- modelo treinado
+- métricas finais
+- bundle de inferência (`inference_bundle.joblib`)
+- relatório consolidado (`report.md`)
+- entradas correspondentes no Manifest
+
+A ausência de qualquer artefato **deve falhar o teste**.
+
+---
+
 ## 7. Organização dos Testes
 
 Estrutura recomendada:
@@ -113,11 +176,13 @@ Estrutura recomendada:
 tests/
  ├── unit/
  ├── integration/
- ├── e2e/
- └── fixtures/
-     ├── data/
-     ├── config/
-     └── steps/
+ └── e2e/
+     ├── _helpers.py
+     ├── test_pipeline_telco_like.py
+     ├── test_pipeline_bank_like.py
+     └── fixtures/
+         ├── telco/
+         └── bank/
 ```
 
 ---
@@ -169,6 +234,7 @@ Este documento deve ser usado em conjunto com:
 - `docs/traceability.md`
 - `docs/manifest.schema.v1.md`
 - `docs/run_result.md`
+- `docs/spec/e2e.pipeline.v1.md`
 
 ---
 

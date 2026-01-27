@@ -3,14 +3,15 @@
 ## 1. Propósito do Documento
 
 Este documento define as **regras canônicas de rastreabilidade** do Atlas DataFlow.  
-Ele estabelece como **manifest**, **artefatos** e **auditorias** devem ser produzidos, persistidos e consumidos.
+Ele estabelece como **manifest**, **artefatos**, **auditorias** e **relatórios**
+devem ser produzidos, persistidos e consumidos **ao longo de uma execução completa (full run)**.
 
 Este documento é **fonte de verdade** para:
 - implementação do manifest e event log
 - persistência de artefatos (modelos, preprocess, relatórios)
 - critérios de auditoria por step
 - integração com APIs e adapters
-- definição de testes de qualidade e reprodutibilidade
+- definição de testes de qualidade, reprodutibilidade e **E2E**
 
 ---
 
@@ -18,12 +19,13 @@ Este documento é **fonte de verdade** para:
 
 ### 2.1 Manifest
 
-O **manifest** é o registro forense de uma execução do pipeline.
+O **manifest** é o registro forense de uma execução completa do pipeline (**full run**).
 
 Ele contém:
 - identidade do run
 - snapshot de config e contrato
-- lista de steps executados
+- lista ordenada de steps executados
+- builders obrigatórios executados
 - decisões registradas
 - warnings e erros
 - artefatos gerados
@@ -32,13 +34,17 @@ O manifest deve permitir:
 - reproduzir a execução
 - explicar resultados
 - depurar falhas
-- auditar decisões
+- auditar decisões de ponta a ponta
 
 ---
 
 ### 2.2 Auditoria
 
-Auditoria é a evidência estruturada produzida por cada step.
+Auditoria é a evidência estruturada produzida por cada etapa do pipeline.
+
+Ela pode ser gerada por:
+- **Steps canônicos**
+- **Builders obrigatórios** (quando não existe Step)
 
 Toda auditoria deve:
 - ser serializável
@@ -50,88 +56,133 @@ Toda auditoria deve:
 
 ### 2.3 Artefatos
 
-Artefatos são arquivos persistidos produzidos pelo pipeline, como:
+Artefatos são arquivos persistidos produzidos durante um run, como:
 - preprocessadores
 - modelos treinados
 - bundles de inferência
-- métricas e resultados de busca
+- métricas e resultados
 - relatórios MD/PDF
 
+Todo artefato **só é considerado válido** se estiver:
+- persistido em diretório do run
+- referenciado no manifest
+- com hash/checksum registrado
+
 ---
 
-## 3. Regras Canônicas do Manifest
+## 3. Rastreabilidade Full Run
 
-### 3.1 Identidade do Run
+### 3.1 Definição de Full Run
 
-Todo run deve ter:
+Um **full run** é uma execução que:
+
+- inicia na ingestão de dados
+- percorre todas as etapas declaradas do pipeline
+- executa builders obrigatórios intermediários
+- produz artefatos finais consumíveis
+- gera um manifest completo e consistente
+
+A rastreabilidade **full run** garante que **nenhuma decisão crítica**
+ocorra fora do escopo auditável.
+
+---
+
+### 3.2 Papel da Suíte E2E
+
+A suíte de testes **End-to-End (E2E)** é o mecanismo canônico que **prova**
+a rastreabilidade full run.
+
+Os testes E2E devem garantir que:
+- o manifest final existe
+- todos os steps executados estão registrados
+- builders obrigatórios estão representados
+- todos os artefatos finais estão referenciados
+- não existem gaps de auditoria
+
+Sem E2E, a rastreabilidade é considerada **incompleta**.
+
+---
+
+## 4. Regras Canônicas do Manifest
+
+### 4.1 Identidade do Run
+
+Todo run deve possuir:
 - `run_id` único
 - timestamp de início e fim
-- versão do Atlas DataFlow (semântica)
+- versão do Atlas DataFlow
 - hash do contrato e da config
-- origem do dataset (e hash/checksum)
+- origem do dataset (path lógico + hash)
 
 ---
 
-### 3.2 Registro de Steps
+### 4.2 Registro de Steps e Builders
 
-Para cada step executado, o manifest deve registrar:
+Para cada **Step** executado, o manifest deve registrar:
 - `step_id`
 - `kind`
 - `status` (success | skipped | failed)
-- timestamps (start/end) e duração
-- resumo (`summary`)
-- warnings e erros (se aplicável)
-- paths e hashes de artefatos gerados
-- referência ao payload de auditoria
+- timestamps e duração
+- summary
+- warnings e erros
+- artefatos gerados
+
+Para cada **Builder obrigatório** (ex.: preprocess):
+- identificação explícita no manifest
+- etapa lógica no pipeline (before/after)
+- artefatos produzidos
+- hash correspondente
 
 ---
 
-### 3.3 Snapshot de Config e Contrato
+### 4.3 Snapshot de Config e Contrato
 
 O manifest deve conter:
-- referência ao arquivo de config efetivo (defaults + local merge)
-- referência ao contrato efetivo
+- config efetiva (após merge)
+- contrato efetivo
 - hashes dos conteúdos
-- (opcional) cópia congelada no diretório de artifacts
+- versões associadas
 
 ---
 
-## 4. Estrutura Canônica do Diretório de Execução
+## 5. Estrutura Canônica do Diretório de Execução
 
-O pipeline deve produzir um diretório por run:
+Cada full run deve produzir um diretório isolado:
 
 ```text
-artifacts/
- └── runs/
-     └── <run_id>/
-         ├── manifest.json
-         ├── config.effective.json
-         ├── contract.frozen.yaml
-         ├── payloads/
-         │   ├── ingest.load.json
-         │   ├── audit.profile_baseline.json
-         │   └── ...
-         ├── models/
-         ├── preprocess/
-         ├── metrics/
-         └── reports/
+<run_dir>/
+ ├── manifest.json
+ ├── config.effective.json
+ ├── contract.frozen.yaml
+ ├── artifacts/
+ │   ├── preprocess.joblib
+ │   ├── model.joblib
+ │   ├── inference_bundle.joblib
+ │   ├── metrics.json
+ │   └── report.md
+ └── payloads/
+     ├── ingest.load.json
+     ├── contract.validate.json
+     ├── train.single.json
+     └── ...
 ```
 
-Regra:
-- Nenhum run deve sobrescrever outro.
-- Artefatos devem ser determinísticos e referenciáveis.
+Regras:
+- nenhum run sobrescreve outro
+- todos os paths são relativos ao run
+- todo arquivo relevante é rastreável
 
 ---
 
-## 5. Regras Canônicas de Auditoria
+## 6. Regras Canônicas de Auditoria
 
-### 5.1 Payload mínimo obrigatório
+### 6.1 Payload mínimo obrigatório
 
-Todo step deve produzir um payload com campos mínimos:
+Toda auditoria deve conter:
 
 ```yaml
 step_id: string
-kind: string
+kind: step | builder
 status: success | skipped | failed
 summary: string
 metrics: {}
@@ -139,65 +190,33 @@ warnings: []
 artifacts: []
 ```
 
-### 5.2 Transformações exigem before/after
+### 6.2 Transformações exigem before/after
 
-Steps `transform` devem registrar:
+Etapas que transformam dados devem registrar:
 - shape antes e depois
 - colunas afetadas
-- contagens antes/depois (missing, duplicados, etc.)
-- descrição da regra aplicada
+- contagens relevantes
+- regra aplicada
 
 ---
 
-## 6. Regras Canônicas de Artefatos
+## 7. Integração com Testes E2E
 
-### 6.1 Persistência obrigatória
+Os testes E2E devem validar explicitamente que:
+- o manifest final existe
+- todos os artefatos esperados estão listados no manifest
+- hashes correspondem aos arquivos reais
+- não existem steps ou builders executados fora do manifest
 
-Artefatos obrigatórios em runs completos:
-- preprocessador persistido (quando aplicável)
-- modelo persistido (quando aplicável)
-- bundle de inferência (quando aplicável)
-- contrato congelado
-- manifest final completo
-
-### 6.2 Hash e integridade
-
-Todo artefato persistido deve ter:
-- path relativo ao run
-- hash/checksum
-- tipo (model, preprocess, report, metrics)
+Falhas em qualquer ponto **invalidam a rastreabilidade**.
 
 ---
 
-## 7. Integração com Use Cases e APIs
-
-APIs futuras devem ser capazes de:
-- carregar bundles de inferência
-- validar payload externo usando contrato congelado
-- registrar predição em logs compatíveis
-
-O design de rastreabilidade do Atlas DataFlow garante que:
-- inferência é reprodutível
-- decisões do modelo são explicáveis a partir do run manifest
-
----
-
-## 8. Testes de Rastreabilidade
-
-O projeto deve possuir testes para:
-- criação e atualização do manifest
-- persistência sem sobrescrita de runs
-- presença de payloads por step
-- round-trip load de artefatos (model/preprocess)
-- consistência de hashes e paths
-
----
-
-## 9. Regra de Ouro
+## 8. Regra de Ouro
 
 Se:
-- um artefato não está referenciado no manifest,
-- um step não possui payload de auditoria,
-- uma decisão não está registrada,
+- um artefato não está no manifest,
+- um builder obrigatório não está registrado,
+- um step executou sem auditoria,
 
-**não existe rastreabilidade no Atlas DataFlow.**
+**a execução não é rastreável e deve ser considerada inválida.**

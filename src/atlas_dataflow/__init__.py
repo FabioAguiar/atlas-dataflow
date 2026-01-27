@@ -31,3 +31,7 @@ Limites explícitos:
 Este módulo existe para estabelecer o contrato conceitual e o namespace
 do Atlas DataFlow, servindo como ponto de entrada lógico do framework.
 """
+# src/atlas_dataflow/__init__.py
+from .notebook_ui import render_payload, RenderResult
+
+__all__ = ["render_payload", "RenderResult", "notebook_ui"]

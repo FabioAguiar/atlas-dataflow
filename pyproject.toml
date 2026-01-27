@@ -22,3 +22,14 @@ addopts = "-q"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')"
 ]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["atlas_dataflow*"]

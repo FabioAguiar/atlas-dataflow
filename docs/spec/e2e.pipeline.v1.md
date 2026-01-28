@@ -217,6 +217,86 @@ Cada teste deve:
 
 ---
 
+
+
+---
+
+## Contrato do Teste E2E (Normativo)
+
+Esta seção define **explicitamente** o contrato que todo teste E2E do Atlas DataFlow
+DEVE respeitar. Ela é **normativa** e funciona como fonte de verdade para a escrita,
+manutenção e validação da suíte E2E.
+
+### Estrutura esperada dos artefatos
+
+Ao final de **cada execução E2E**, os seguintes artefatos **DEVEM existir** no `run_dir`:
+
+```
+run_dir/
+ ├── artifacts/
+ │   ├── preprocess.joblib
+ │   ├── inference_bundle.joblib
+ │   ├── report.md
+ │   └── (opcional) report.pdf
+ ├── metrics/
+ │   ├── eval.metrics.json
+ │   └── eval.model_selection.json
+ ├── models/
+ │   └── <model_id>.joblib
+ └── manifest.json
+```
+
+A ausência de qualquer um desses artefatos **DEVE causar falha imediata** do teste.
+
+---
+
+### O que os helpers E2E validam
+
+Os helpers definidos em `tests/e2e/_helpers.py` são a **implementação canônica**
+do contrato E2E. Em particular:
+
+- `assert_core_artifacts(run_dir)` valida:
+  - existência de todos os artefatos obrigatórios
+  - coerência estrutural do `manifest.json`
+  - presença de preprocess, modelo, métricas e bundle
+
+- `assert_reports_equal(run_dir_a, run_dir_b)` valida:
+  - determinismo lógico do `report.md`
+  - normalização de campos voláteis, incluindo:
+    - hashes
+    - payload_bytes
+    - paths absolutos ou específicos de execução
+  - equivalência semântica entre execuções (Run A vs Run B)
+
+Nenhum teste E2E deve reimplementar essas validações manualmente.
+
+---
+
+### Padrão canônico de teste (Telco-like e Bank-like)
+
+Os cenários **Telco-like** e **Bank-like** seguem exatamente o mesmo padrão estrutural,
+sendo este o **template canônico** para qualquer novo cenário E2E:
+
+1. Criar `run_dir` isolado
+2. Materializar dataset sintético no `run_dir`
+3. Materializar contrato versionado no `run_dir`
+4. Materializar config explícita e determinística no `run_dir`
+5. Executar o pipeline completo via `run_pipeline(...)`
+6. Validar artefatos com `assert_core_artifacts(...)`
+7. Reexecutar o mesmo cenário (Run B)
+8. Validar determinismo com `assert_reports_equal(...)`
+
+Este padrão garante que:
+
+- o **mesmo core** suporta múltiplos domínios
+- variações ocorrem apenas via config e contrato
+- invariantes do Atlas DataFlow são preservados
+- regressões são detectadas imediatamente
+
+Qualquer novo teste E2E **DEVE partir deste padrão**, sem exceções.
+
+---
+
 ## Versionamento
 
 - Esta especificação define o **e2e.pipeline v1**

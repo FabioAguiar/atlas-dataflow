@@ -197,6 +197,63 @@ Além disso, ao menos 1 teste E2E deve:
 
 ---
 
+
+
+---
+
+## 13. E2E como Evidência de Rastreabilidade
+
+A suíte **End-to-End (E2E)** funciona como a evidência final de que o Engine
+cumpre corretamente seu papel dentro do Atlas DataFlow.
+
+Enquanto testes unitários validam regras internas (DAG, status, políticas),
+e testes de integração validam colaboração entre componentes,
+apenas o E2E comprova que o Engine:
+
+- executa um **DAG completo de ponta a ponta**
+- respeita dependências reais entre Steps
+- aciona builders obrigatórios quando aplicável
+- emite rastreabilidade completa no manifest
+- produz artefatos finais auditáveis
+
+Sem um E2E passando, a execução do Engine não pode ser considerada validada
+em nível de sistema.
+
+### Onde ficam os artefatos no `run_dir`
+
+Durante uma execução E2E, o Engine opera sempre dentro de um `run_dir` isolado,
+no qual ficam centralizadas todas as evidências da execução:
+
+- `manifest.json` — registro forense do DAG executado
+- `artifacts/` — preprocess, modelos, bundles e relatórios
+- `metrics/` — métricas finais e seleção de modelos
+- `payloads/` — auditorias detalhadas por Step e Builder
+
+Essa estrutura garante que cada execução do Engine seja:
+- isolada
+- auditável
+- reproduzível
+
+### Por que o `report.md` precisa de normalização
+
+O `report.md` é derivado do manifest e dos payloads emitidos pelo Engine.
+Algumas informações presentes no relatório são **inerentemente voláteis**,
+como:
+
+- hashes
+- tamanhos de payload
+- paths dependentes do `run_dir`
+
+Para que o E2E valide **determinismo lógico** do Engine,
+essas informações precisam ser normalizadas antes da comparação.
+
+A normalização não elimina evidência:
+ela separa dados **semânticos estáveis** de detalhes **operacionais variáveis**,
+permitindo provar que múltiplas execuções do Engine produzem
+o **mesmo resultado lógico**.
+
+---
+
 ## 12. Regra de Ouro
 
 Se a execução:

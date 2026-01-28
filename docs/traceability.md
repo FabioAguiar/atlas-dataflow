@@ -212,6 +212,56 @@ Falhas em qualquer ponto **invalidam a rastreabilidade**.
 
 ---
 
+
+
+---
+
+## 9. E2E como Evidência de Rastreabilidade
+
+A suíte **End-to-End (E2E)** é a evidência operacional de que as regras de
+rastreabilidade definidas neste documento são **realmente cumpridas pelo sistema**.
+
+Enquanto testes unitários e de integração validam componentes isolados,
+apenas o E2E comprova que o Atlas DataFlow:
+
+- executa um **full run completo**
+- registra todas as decisões no manifest
+- produz artefatos finais auditáveis
+- mantém coerência entre execução, artefatos e relatório
+
+Sem uma suíte E2E válida, a rastreabilidade deve ser considerada **incompleta**.
+
+### Onde ficam os artefatos no `run_dir`
+
+Durante um E2E, todos os artefatos relevantes são persistidos dentro do
+diretório isolado de execução (`run_dir`), incluindo:
+
+- `manifest.json` — registro forense do run
+- `artifacts/` — preprocess, modelos, bundles e relatórios
+- `metrics/` — métricas finais e seleção de modelos
+- `payloads/` — auditorias detalhadas por step e builder
+
+Essa organização garante que **toda evidência necessária para auditoria**
+esteja contida em um único escopo rastreável.
+
+### Por que o `report.md` precisa de normalização
+
+O `report.md` consolida informações provenientes do manifest e dos payloads,
+incluindo campos **voláteis por natureza**, como:
+
+- hashes
+- tamanhos de payload
+- paths absolutos ou específicos de execução
+
+Para permitir validação de **determinismo lógico** entre execuções equivalentes,
+os testes E2E utilizam normalização desses campos antes da comparação.
+
+Essa normalização **não reduz a rastreabilidade**:
+ela separa o que é **evidência semântica** do que é **variável de execução**,
+permitindo provar que dois runs distintos representam o **mesmo resultado lógico**.
+
+---
+
 ## 8. Regra de Ouro
 
 Se:

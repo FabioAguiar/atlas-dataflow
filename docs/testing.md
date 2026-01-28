@@ -168,6 +168,55 @@ A ausência de qualquer artefato **deve falhar o teste**.
 
 ---
 
+
+
+---
+
+## 6.4 Como Executar a Suite E2E (M9 — Qualidade & Empacotamento)
+
+Esta seção descreve **como executar** e **o que a suíte E2E garante** no Atlas DataFlow.
+
+### Como rodar
+
+```bash
+pytest -q tests/e2e/test_pipeline_telco_like.py
+pytest -q tests/e2e/test_pipeline_bank_like.py
+pytest -q
+```
+
+### O que os testes garantem
+
+- **Mesmo core / múltiplos domínios via config**  
+  O pipeline executa cenários Telco-like e Bank-like sem qualquer alteração no core,
+  variando exclusivamente dataset, contrato e configuração.
+
+- **Determinismo (Run A vs Run B)**  
+  Execuções repetidas com a mesma configuração produzem os mesmos artefatos lógicos,
+  incluindo `report.md` (após normalização).
+
+- **Isolamento total entre cenários**  
+  A execução de um cenário não afeta o outro. Cada teste possui `run_dir` próprio
+  e não compartilha estado, paths ou artefatos.
+
+### Regras que não podem ser quebradas
+
+- **Seeds explícitos**  
+  Steps como `split.train_test` e `train.single` devem declarar `seed` explicitamente.
+
+- **`target_metric` obrigatório no `evaluate.model_selection`**  
+  A métrica alvo deve existir em `eval.metrics` e ser declarada de forma explícita.
+
+- **Paths relativos ao `run_dir` (quando aplicável)**  
+  Configs e contratos usados em E2E devem ser resolvidos a partir do diretório de execução
+  para garantir reprodutibilidade e isolamento.
+
+- **`assert_reports_equal` como verificador oficial de determinismo**  
+  A igualdade entre relatórios deve ser validada exclusivamente por este helper,
+  que normaliza hashes, paths e payloads voláteis.
+
+Esta seção consolida as regras aprendidas durante a estabilização da suíte E2E
+e passa a ser **normativa** para qualquer novo cenário end-to-end no Atlas DataFlow.
+
 ## 7. Organização dos Testes
 
 Estrutura recomendada:

@@ -154,3 +154,76 @@ def test_train_single_fails_for_invalid_model_id(tmp_path):
 
     assert result.status.value == "failed"
     assert "unknown model_id" in (result.summary or "") or "unknown" in (result.summary or "")
+
+
+def test_train_single_with_string_labels(tmp_path):
+    """Regression: CSV ingest produces string labels ('0'/'1'); train.single must not fail on metrics."""
+    from atlas_dataflow.core.pipeline.context import RunContext
+    from atlas_dataflow.steps.train.single import TrainSingleStep
+    from atlas_dataflow.persistence.preprocess_store import PreprocessStore
+
+    # Minimal config
+    cfg = {
+        "steps": {
+            "train.single": {"enabled": True, "model_id": "logistic_regression", "seed": 42},
+        }
+    }
+    contract = {
+        "target": {"name": "churn"},
+    }
+    ctx = RunContext(
+        run_id="t1",
+        created_at="2020-01-01T00:00:00Z",
+        config=cfg,
+        contract=contract,
+        meta={"run_dir": str(tmp_path)},
+    )
+
+    # Minimal preprocess persisted (identity-like) using representation.preprocess builder API
+    # Use the same builder the project exposes to avoid inventing objects.
+    from atlas_dataflow.builders.representation.preprocess import build_representation_preprocess
+
+    cfg_rep = {
+        "representation": {
+            "preprocess": {
+                "numeric": {"columns": ["tenure", "monthly_charges"], "scaler": "standard"},
+                "categorical": {"columns": ["contract_type"], "encoder": "onehot", "handle_unknown": "ignore"},
+            }
+        }
+    }
+    # merge into ctx.config for builder
+    ctx.config.update(cfg_rep)
+
+    preprocess = build_representation_preprocess(
+        contract={
+            "target": {"name": "churn"},
+            "features": [
+                {"name": "tenure", "role": "numerical"},
+                {"name": "monthly_charges", "role": "numerical"},
+                {"name": "contract_type", "role": "categorical"},
+            ],
+        },
+        config=ctx.config,
+    )
+    PreprocessStore(run_dir=str(tmp_path)).save(preprocess=preprocess)
+
+    # Provide artifacts expected by train.single (already split)
+    ctx.set_artifact(
+        "data.train",
+        [
+            {"tenure": 1, "monthly_charges": 51.0, "contract_type": "a", "churn": "0"},
+            {"tenure": 2, "monthly_charges": 52.0, "contract_type": "b", "churn": "1"},
+            {"tenure": 3, "monthly_charges": 53.0, "contract_type": "a", "churn": "0"},
+            {"tenure": 4, "monthly_charges": 54.0, "contract_type": "b", "churn": "1"},
+        ],
+    )
+    ctx.set_artifact(
+        "data.test",
+        [
+            {"tenure": 5, "monthly_charges": 55.0, "contract_type": "a", "churn": "0"},
+            {"tenure": 6, "monthly_charges": 56.0, "contract_type": "b", "churn": "1"},
+        ],
+    )
+
+    sr = TrainSingleStep().run(ctx)
+    assert sr.status.value == "success", sr.summary

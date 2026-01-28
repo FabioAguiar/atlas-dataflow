@@ -127,6 +127,36 @@ def _apply_seed_if_supported(estimator: Any, seed: int) -> Any:
     return estimator
 
 
+def _select_pos_label(cfg: Dict[str, Any], y_true: Any) -> Any:
+    """Escolhe pos_label de forma determinística.
+
+    Motivação:
+    - ingest.load (CSV) produz strings (ex.: '0'/'1')
+    - sklearn precision/recall/f1 default usa pos_label=1 (int), o que falha com labels string
+
+    Regras:
+    - Se config informar `pos_label`, usa exatamente esse valor
+    - Caso contrário:
+      - Se labels contêm '1' (string) e NÃO contêm 1 (int), usa '1'
+      - Senão usa 1 (default histórico)
+    """
+    if isinstance(cfg, dict) and "pos_label" in cfg:
+        return cfg.get("pos_label")
+
+    try:
+        # pandas Series -> unique()
+        labels = set(getattr(y_true, "unique")())
+    except Exception:
+        try:
+            labels = set(y_true)
+        except Exception:
+            labels = set()
+
+    if "1" in labels and 1 not in labels:
+        return "1"
+    return 1
+
+
 @dataclass
 class TrainSingleStep(Step):
     """Treino simples (baseline) com seed explícita e métricas padrão."""
@@ -199,6 +229,8 @@ class TrainSingleStep(Step):
 
             # fit only on train
             preprocess.fit(X_train)
+            # Persist fitted preprocess so downstream steps (e.g., evaluate.metrics) can transform deterministically
+            store.save(preprocess=preprocess)
             Xtr = preprocess.transform(X_train)
             Xte = preprocess.transform(X_test)
 
@@ -221,9 +253,10 @@ class TrainSingleStep(Step):
                 raise RuntimeError("scikit-learn is required for train.single") from e
 
             acc = float(accuracy_score(y_test, y_pred))
-            prec = float(precision_score(y_test, y_pred, zero_division=0))
-            rec = float(recall_score(y_test, y_pred, zero_division=0))
-            f1 = float(f1_score(y_test, y_pred, zero_division=0))
+            pos_label = _select_pos_label(cfg, y_test)
+            prec = float(precision_score(y_test, y_pred, pos_label=pos_label, zero_division=0))
+            rec = float(recall_score(y_test, y_pred, pos_label=pos_label, zero_division=0))
+            f1 = float(f1_score(y_test, y_pred, pos_label=pos_label, zero_division=0))
 
             # ---- artifacts ----
             ctx.set_artifact("model.trained", estimator)

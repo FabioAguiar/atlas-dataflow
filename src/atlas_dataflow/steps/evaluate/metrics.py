@@ -108,6 +108,57 @@ def _target_col_from_contract(contract: Dict[str, Any]) -> str:
     return name.strip()
 
 
+
+
+
+
+def _resolve_model_id(ctx: Any, cfg: Dict[str, Any]) -> str:
+    """Resolve model_id for eval.metrics payload.
+
+    evaluate.model_selection expects each entry in `eval.metrics` to carry `model_id`.
+    Prefer explicit config if present; otherwise fall back to training config.
+    """
+    # 1) explicit evaluate.metrics config
+    if isinstance(cfg, dict) and "model_id" in cfg and cfg["model_id"]:
+        return str(cfg["model_id"])
+    # 2) training config
+    try:
+        steps = getattr(ctx, "config", {}).get("steps", {})
+        tr = steps.get("train.single", {}) or {}
+        mid = tr.get("model_id")
+        if mid:
+            return str(mid)
+    except Exception:
+        pass
+    # 3) last resort
+    return "unknown"
+def _select_pos_label(cfg: Dict[str, Any], y_true: Any) -> Any:
+    """Escolhe pos_label de forma determinística para classificação binária.
+
+    Motivação:
+    - ingest.load (CSV) produz strings (ex.: '0'/'1')
+    - sklearn precision/recall/f1 default usa pos_label=1 (int), o que falha com labels string
+
+    Regras:
+    - Se config informar `pos_label`, usa exatamente esse valor
+    - Caso contrário:
+      - Se labels contêm '1' (string) e NÃO contêm 1 (int), usa '1'
+      - Senão usa 1 (default histórico)
+    """
+    if isinstance(cfg, dict) and "pos_label" in cfg:
+        return cfg.get("pos_label")
+
+    try:
+        labels = set(getattr(y_true, "unique")())
+    except Exception:
+        try:
+            labels = set(y_true)
+        except Exception:
+            labels = set()
+
+    if "1" in labels and 1 not in labels:
+        return "1"
+    return 1
 def _binary_roc_auc_if_applicable(estimator: Any, Xte: Any, y_true: Any) -> Optional[float]:
     """Calcula ROC AUC apenas quando aplicável (binário + score/prob)."""
     try:
@@ -233,9 +284,10 @@ class EvaluateMetricsStep(Step):
                 raise RuntimeError("scikit-learn is required for evaluate.metrics") from e
 
             acc = float(accuracy_score(y_true, y_pred))
-            prec = float(precision_score(y_true, y_pred, zero_division=0))
-            rec = float(recall_score(y_true, y_pred, zero_division=0))
-            f1 = float(f1_score(y_true, y_pred, zero_division=0))
+            pos_label = _select_pos_label(cfg, y_true)
+            prec = float(precision_score(y_true, y_pred, pos_label=pos_label, zero_division=0))
+            rec = float(recall_score(y_true, y_pred, pos_label=pos_label, zero_division=0))
+            f1 = float(f1_score(y_true, y_pred, pos_label=pos_label, zero_division=0))
 
             # labels explícitos e estáveis
             try:
@@ -250,8 +302,7 @@ class EvaluateMetricsStep(Step):
 
             roc_auc = _binary_roc_auc_if_applicable(estimator, Xte, y_true)
 
-            metrics: Dict[str, Any] = {
-                "accuracy": acc,
+            metrics: Dict[str, Any] = {"model_id": _resolve_model_id(ctx, cfg), "accuracy": acc,
                 "precision": prec,
                 "recall": rec,
                 "f1": f1,
@@ -260,6 +311,7 @@ class EvaluateMetricsStep(Step):
                 metrics["roc_auc"] = roc_auc
 
             payload: Dict[str, Any] = {
+                "model_id": _resolve_model_id(ctx, cfg),
                 "model_artifact": model_key,
                 "metrics": metrics,
                 "confusion_matrix": {

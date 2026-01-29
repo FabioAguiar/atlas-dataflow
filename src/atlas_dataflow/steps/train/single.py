@@ -43,6 +43,7 @@ Referências:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from atlas_dataflow.core.pipeline.context import RunContext
@@ -50,6 +51,18 @@ from atlas_dataflow.core.pipeline.step import Step
 from atlas_dataflow.core.pipeline.types import StepKind, StepResult, StepStatus
 from atlas_dataflow.modeling.model_registry import ModelRegistry
 from atlas_dataflow.persistence.preprocess_store import PreprocessStore
+from atlas_dataflow.core.errors import AtlasErrorPayload, PREPROCESS_NOT_FOUND
+
+
+def _mk_error_payload(*, type_: str, message: str, details: Dict[str, Any], hint: Optional[str] = None, decision_required: bool = False) -> Dict[str, Any]:
+    """Cria um payload de erro canônico sem quebrar compatibilidade (payload['error'])."""
+    return AtlasErrorPayload(
+        type=type_,
+        message=message,
+        details=details,
+        hint=hint,
+        decision_required=decision_required,
+    ).to_dict()
 
 
 def _get_step_cfg(ctx: RunContext, step_id: str) -> Dict[str, Any]:
@@ -225,6 +238,30 @@ class TrainSingleStep(Step):
 
             # ---- preprocess ----
             store = PreprocessStore(run_dir=run_dir)
+            expected_path = Path(str(run_dir)) / "artifacts" / "preprocess.joblib"
+            if not expected_path.exists():
+                err = _mk_error_payload(
+                    type_=PREPROCESS_NOT_FOUND,
+                    message="Preprocess não encontrado para a etapa dependente",
+                    details={
+                        "expected_path": str(expected_path),
+                        "run_dir": str(run_dir),
+                        "artifact": "artifacts/preprocess.joblib",
+                    },
+                    hint="Execute a etapa de preprocess antes do treino",
+                    decision_required=False,
+                )
+                return StepResult(
+                    step_id=self.id,
+                    kind=self.kind,
+                    status=StepStatus.FAILED,
+                    summary=err.get("message") or "preprocess not found",
+                    metrics={},
+                    warnings=[],
+                    artifacts={},
+                    payload={"error": err},
+                )
+
             preprocess = store.load()
 
             # fit only on train
@@ -325,7 +362,15 @@ class TrainSingleStep(Step):
                 metrics={},
                 warnings=[],
                 artifacts={},
-                payload={"error": {"type": e.__class__.__name__, "message": str(e) or "error"}},
+                payload={
+                    "error": _mk_error_payload(
+                        type_=e.__class__.__name__,
+                        message=str(e) or "error",
+                        details={},
+                        hint=None,
+                        decision_required=False,
+                    )
+                },
             )
 
 

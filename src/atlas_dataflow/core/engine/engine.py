@@ -13,6 +13,11 @@ Ajustes (M1):
     - merge de warnings do RunContext
     - incorporação de `impact` (quando presente no RunContext) no payload
     - metadados leves do payload (bytes + sha256) em artifacts
+
+Ajustes (M9-02 — Quality/Guardrails):
+- Capturar falhas e converter exceções em AtlasErrorPayload (serializável e acionável).
+- Persistir erro (via StepResult.payload["error"]) para consumo de manifest/reports.
+- Retornar FAILED com payload estruturado (sem stack trace cru para o operador).
 """
 
 from __future__ import annotations
@@ -26,6 +31,13 @@ import json
 from atlas_dataflow.core.pipeline.context import RunContext
 from atlas_dataflow.core.pipeline.step import Step
 from atlas_dataflow.core.pipeline.types import StepKind, StepResult, StepStatus
+
+from atlas_dataflow.core.errors import (
+    AtlasErrorPayload,
+    ENGINE_CONFIGURATION_ERROR,
+    ENGINE_EXECUTION_ERROR,
+)
+from atlas_dataflow.core.exceptions import AtlasException
 
 from .planner import plan_execution
 
@@ -53,6 +65,76 @@ class Engine:
     def _fail_fast(self) -> bool:
         engine_cfg = (self.ctx.config or {}).get("engine", {}) or {}
         return bool(engine_cfg.get("fail_fast", True))
+
+    # ------------------------------------------------------------------
+    # Guardrails (M9-02): exceção -> AtlasErrorPayload
+    # ------------------------------------------------------------------
+
+    def _exception_to_error(self, exc: Exception) -> AtlasErrorPayload:
+        """Converte exceções em AtlasErrorPayload (serializável, acionável).
+
+        Regras:
+        - AtlasException: já vem com message/details/hint/decision_required.
+        - Outras exceções: encapsular como ENGINE_EXECUTION_ERROR sem expor stack trace.
+        """
+        if isinstance(exc, AtlasException):
+            # O tipo do erro é responsabilidade do chamador/mapeador externo.
+            # Aqui, por padrão, usamos o nome da classe como código estável.
+            return AtlasErrorPayload(
+                type=exc.__class__.__name__,
+                message=str(exc) or "Erro de execução",
+                details=dict(getattr(exc, "details", {}) or {}),
+                hint=getattr(exc, "hint", None),
+                decision_required=bool(getattr(exc, "decision_required", False)),
+            )
+
+        # Fallback genérico
+        return AtlasErrorPayload(
+            type=ENGINE_EXECUTION_ERROR,
+            message=str(exc) or "Erro inesperado durante execução",
+            details={
+                "exception_class": exc.__class__.__name__,
+            },
+            hint="Verifique o log técnico e a configuração do pipeline",
+            decision_required=False,
+        )
+
+    def _persist_step_result_for_manifest(self, step_result: StepResult) -> None:
+        """Persistência best-effort para Manifest.
+
+        O Engine não é dono do schema do Manifest aqui, mas garante que:
+        - StepResult carregue payload["error"] quando houver falha
+        - Caso o RunContext ofereça um writer/registrador de manifest, o Engine tenta usá-lo
+
+        Importante: a persistência é *best-effort* para não quebrar compatibilidade.
+        """
+        # Padrões comuns no projeto (tentativas seguras)
+        try:
+            manifest = getattr(self.ctx, "manifest", None)
+            if manifest is not None:
+                if hasattr(manifest, "record_step_result"):
+                    manifest.record_step_result(step_result)  # type: ignore[attr-defined]
+                    return
+                if hasattr(manifest, "add_step_result"):
+                    manifest.add_step_result(step_result)  # type: ignore[attr-defined]
+                    return
+                if hasattr(manifest, "update_step"):
+                    manifest.update_step(step_result.step_id, step_result)  # type: ignore[attr-defined]
+                    return
+
+            store = getattr(self.ctx, "store", None)
+            if store is not None:
+                m = getattr(store, "manifest", None)
+                if m is not None:
+                    if hasattr(m, "record_step_result"):
+                        m.record_step_result(step_result)  # type: ignore[attr-defined]
+                        return
+                    if hasattr(m, "save_step_result"):
+                        m.save_step_result(step_result)  # type: ignore[attr-defined]
+                        return
+        except Exception:
+            # Nunca deixar persistência de manifest quebrar execução
+            return
 
     # ------------------------------------------------------------------
     # Rastreamento (forense): helpers para enriquecer StepResult
@@ -138,7 +220,10 @@ class Engine:
             artifacts=dict(artifacts or {}),
             payload=dict(payload or {}),
         )
-        return self._enrich_step_result(step_id=step_id, step=step, result=r)
+        enriched = self._enrich_step_result(step_id=step_id, step=step, result=r)
+        # best-effort persistência para manifest
+        self._persist_step_result_for_manifest(enriched)
+        return enriched
 
     def run(self) -> RunResult:
         ordered = plan_execution(self.steps)
@@ -171,15 +256,39 @@ class Engine:
                 if not isinstance(step_result, StepResult):
                     raise TypeError("Step.run(ctx) must return StepResult")
 
-                results[sid] = self._enrich_step_result(step_id=sid, step=step, result=step_result)
+                enriched = self._enrich_step_result(step_id=sid, step=step, result=step_result)
+                results[sid] = enriched
+                self._persist_step_result_for_manifest(enriched)
 
             except Exception as e:
-                results[sid] = self._mk_result(
+                atlas_error = self._exception_to_error(e)
+
+                # Se for erro de configuração do próprio Engine (ex.: Step.run retornou tipo errado),
+                # marcamos com código estável de configuração/execução do engine.
+                if isinstance(e, TypeError) and "must return StepResult" in (str(e) or ""):
+                    atlas_error = AtlasErrorPayload(
+                        type=ENGINE_CONFIGURATION_ERROR,
+                        message="Step retornou tipo inválido",
+                        details={
+                            "step_id": sid,
+                            "expected": "StepResult",
+                            "received": e.__class__.__name__,
+                        },
+                        hint="Ajuste o Step para retornar StepResult",
+                        decision_required=False,
+                    )
+
+                failed = self._mk_result(
                     step_id=sid,
                     step=step,
                     status=StepStatus.FAILED,
-                    summary=str(e) or "failed",
+                    summary=atlas_error.message,
+                    payload={
+                        "error": atlas_error.to_dict(),
+                    },
                 )
+                results[sid] = failed
+
                 if self._fail_fast():
                     break
 

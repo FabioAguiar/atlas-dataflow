@@ -1,0 +1,15 @@
+{
+  "decision_required": true,
+  "details": {
+    "conflict": "<conflict_description>",
+    "contract_section": "<contract_section>",
+    "options": [
+      "<option_1>",
+      "<option_2>"
+    ],
+    "step": "<step_name>"
+  },
+  "hint": "Declare explicitamente a decisão no contrato ou configuração indicada antes de reexecutar o pipeline.",
+  "message": "Conflito de contrato requer decisão explícita",
+  "type": "CONTRACT_DECISION_REQUIRED"
+}

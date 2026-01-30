@@ -1,0 +1,13 @@
+{
+  "decision_required": false,
+  "details": {
+    "actual_dtype": "<actual_dtype>",
+    "column": "<column_name>",
+    "contract_section": "features.dtypes",
+    "expected_dtype": "<expected_dtype>",
+    "step": "<step_name>"
+  },
+  "hint": "Ajuste o tipo da coluna no dataset ou atualize o contrato para refletir o dtype correto.",
+  "message": "Tipo de dado incompatível com o contrato",
+  "type": "CONTRACT_INVALID_DTYPE"
+}

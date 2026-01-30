@@ -1,0 +1,10 @@
+{
+  "decision_required": false,
+  "details": {
+    "artifact": "artifacts/preprocess.joblib",
+    "expected_path": "<path>"
+  },
+  "hint": "Execute a etapa de preprocess antes do treino",
+  "message": "Preprocess não encontrado para a etapa dependente",
+  "type": "PREPROCESS_NOT_FOUND"
+}

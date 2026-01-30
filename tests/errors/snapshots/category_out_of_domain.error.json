@@ -1,0 +1,17 @@
+{
+  "decision_required": false,
+  "details": {
+    "allowed_categories": [
+      "<allowed_value>"
+    ],
+    "column": "<column_name>",
+    "contract_section": "features.domain",
+    "invalid_categories": [
+      "<category_value>"
+    ],
+    "step": "<step_name>"
+  },
+  "hint": "Ajuste os valores categóricos no dataset ou atualize o domínio permitido no contrato.",
+  "message": "Categoria fora do domínio permitido pelo contrato",
+  "type": "CONTRACT_CATEGORY_OUT_OF_DOMAIN"
+}

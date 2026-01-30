@@ -1,0 +1,12 @@
+{
+  "decision_required": false,
+  "details": {
+    "artifact_namespace": "run_dir",
+    "expected_artifact": "manifest",
+    "required_by": "<dependent_step>",
+    "step": "<step_name>"
+  },
+  "hint": "Garanta que o pipeline foi inicializado corretamente e que o manifest foi gerado antes da execução deste Step.",
+  "message": "Manifest canônico não encontrado para execução",
+  "type": "MANIFEST_NOT_FOUND"
+}

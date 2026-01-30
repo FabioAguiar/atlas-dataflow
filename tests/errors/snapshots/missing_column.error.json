@@ -1,0 +1,13 @@
+{
+  "decision_required": false,
+  "details": {
+    "contract_section": "features.required",
+    "missing_columns": [
+      "<column_name>"
+    ],
+    "step": "<step_name>"
+  },
+  "hint": "Declare a coluna ausente no contrato ou ajuste o dataset para conter a feature obrigatória.",
+  "message": "Coluna obrigatória ausente no dataset",
+  "type": "CONTRACT_MISSING_COLUMN"
+}

@@ -18,6 +18,11 @@ Ajustes (M9-02 — Quality/Guardrails):
 - Capturar falhas e converter exceções em AtlasErrorPayload (serializável e acionável).
 - Persistir erro (via StepResult.payload["error"]) para consumo de manifest/reports.
 - Retornar FAILED com payload estruturado (sem stack trace cru para o operador).
+
+Nota (padronização máxima):
+- Quando a exceção for um AtlasException, o Engine tenta mapear `error_type`
+  (ou atributo equivalente) para o catálogo canônico em `core/errors.py`
+  em vez de depender de `exc.__class__.__name__`.
 """
 
 from __future__ import annotations
@@ -70,18 +75,31 @@ class Engine:
     # Guardrails (M9-02): exceção -> AtlasErrorPayload
     # ------------------------------------------------------------------
 
+    def _atlas_exception_type(self, exc: AtlasException) -> str:
+        """Resolve o `type` canônico para AtlasException.
+
+        Preferências (do mais canônico para o mais legado):
+        1) `exc.error_type` (recomendado: já deve ser um código do catálogo)
+        2) `exc.type` (alguns estilos usam `type` no objeto)
+        3) `exc.code` (se existir)
+        4) fallback: nome da classe (compat)
+        """
+        for attr in ("error_type", "type", "code"):
+            val = getattr(exc, attr, None)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return exc.__class__.__name__
+
     def _exception_to_error(self, exc: Exception) -> AtlasErrorPayload:
         """Converte exceções em AtlasErrorPayload (serializável, acionável).
 
         Regras:
-        - AtlasException: já vem com message/details/hint/decision_required.
+        - AtlasException: usa catálogo canônico quando possível (error_type/type/code).
         - Outras exceções: encapsular como ENGINE_EXECUTION_ERROR sem expor stack trace.
         """
         if isinstance(exc, AtlasException):
-            # O tipo do erro é responsabilidade do chamador/mapeador externo.
-            # Aqui, por padrão, usamos o nome da classe como código estável.
             return AtlasErrorPayload(
-                type=exc.__class__.__name__,
+                type=self._atlas_exception_type(exc),
                 message=str(exc) or "Erro de execução",
                 details=dict(getattr(exc, "details", {}) or {}),
                 hint=getattr(exc, "hint", None),
@@ -108,7 +126,6 @@ class Engine:
 
         Importante: a persistência é *best-effort* para não quebrar compatibilidade.
         """
-        # Padrões comuns no projeto (tentativas seguras)
         try:
             manifest = getattr(self.ctx, "manifest", None)
             if manifest is not None:
@@ -133,7 +150,6 @@ class Engine:
                         m.save_step_result(step_result)  # type: ignore[attr-defined]
                         return
         except Exception:
-            # Nunca deixar persistência de manifest quebrar execução
             return
 
     # ------------------------------------------------------------------
@@ -163,13 +179,9 @@ class Engine:
         }
 
     def _enrich_step_result(self, *, step_id: str, step: Step, result: StepResult) -> StepResult:
-        """Retorna uma NOVA instância StepResult enriquecida para rastreabilidade.
-
-        Importante: StepResult é frozen. Não mutar campos.
-        """
+        """Retorna uma NOVA instância StepResult enriquecida para rastreabilidade."""
         desired_kind = getattr(result, "kind", None) or getattr(step, "kind", StepKind.DIAGNOSTIC) or StepKind.DIAGNOSTIC
 
-        # warnings (ctx + result) — sem duplicatas
         existing = list(getattr(result, "warnings", []) or [])
         ctx_w = self._ctx_warnings_for(step_id)
         merged_w: List[str] = []
@@ -179,13 +191,11 @@ class Engine:
                 merged_w.append(msg)
                 seen.add(msg)
 
-        # payload + impact
         payload = dict(getattr(result, "payload", {}) or {})
         impact = self._ctx_impact_for(step_id)
         if impact is not None and "impact" not in payload:
             payload["impact"] = impact
 
-        # artifacts + payload_meta
         artifacts = dict(getattr(result, "artifacts", {}) or {})
         artifacts.setdefault("payload_meta", self._payload_meta(payload))
 
@@ -221,7 +231,6 @@ class Engine:
             payload=dict(payload or {}),
         )
         enriched = self._enrich_step_result(step_id=step_id, step=step, result=r)
-        # best-effort persistência para manifest
         self._persist_step_result_for_manifest(enriched)
         return enriched
 
@@ -263,8 +272,7 @@ class Engine:
             except Exception as e:
                 atlas_error = self._exception_to_error(e)
 
-                # Se for erro de configuração do próprio Engine (ex.: Step.run retornou tipo errado),
-                # marcamos com código estável de configuração/execução do engine.
+                # Erro de configuração do Engine (ex.: Step.run retornou tipo errado)
                 if isinstance(e, TypeError) and "must return StepResult" in (str(e) or ""):
                     atlas_error = AtlasErrorPayload(
                         type=ENGINE_CONFIGURATION_ERROR,

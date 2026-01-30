@@ -1,0 +1,12 @@
+{
+  "decision_required": false,
+  "details": {
+    "artifact_namespace": "artifacts",
+    "expected_artifact": "model.best_estimator",
+    "required_by": "export.inference_bundle",
+    "step": "export.inference_bundle"
+  },
+  "hint": "Execute o Step de treino/seleção de modelo ou ajuste o pipeline para produzir o artefato esperado antes da inferência.",
+  "message": "Modelo treinado não encontrado para inferência",
+  "type": "MODEL_NOT_FOUND"
+}

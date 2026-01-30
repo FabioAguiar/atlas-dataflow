@@ -1,0 +1,13 @@
+{
+  "decision_required": false,
+  "details": {
+    "contract_section": "features.forbidden",
+    "extra_columns": [
+      "<column_name>"
+    ],
+    "step": "<step_name>"
+  },
+  "hint": "Remova a coluna extra do dataset ou ajuste o contrato para permitir explicitamente essa feature.",
+  "message": "Coluna não permitida presente no dataset",
+  "type": "CONTRACT_EXTRA_COLUMN"
+}

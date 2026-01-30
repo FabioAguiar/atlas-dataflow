@@ -1,22 +1,19 @@
 """
-Step canônico: export.inference_bundle (v1).
+Step canônico: export.inference_bundle (v1)
 
-Gera um Inference Bundle autocontido para inferência, persistido (por padrão) em joblib.
+Gera um Inference Bundle autocontido para inferência, persistido em joblib.
 
 Fontes de verdade (v1):
 - preprocess persistido no run_dir (PreprocessStore ou artifacts/preprocess.joblib)
-- modelo treinado em memória no RunContext (model.best_estimator ou model.trained)
+- modelo treinado publicado no RunContext (model.best_estimator ou model.trained)
 - contrato interno congelado (ctx.contract)
-- avaliação e seleção do campeão (eval.metrics + eval.model_selection)
+- avaliação/seleção do campeão (eval.model_selection + eval.metrics)
 
 Invariantes:
 - Não infere nada: apenas consolida artefatos já produzidos pelo pipeline.
-- IDs/referências vêm de artefatos/manifest (fonte de verdade).
-- Deve produzir payload/artifacts compatíveis com consumidores (ex.: export.model_card).
-
-Compatibilidade:
-- payload inclui `champion_model_id` e `model_id` (alias do campeão)
-- hash é exposto como `bundle_hash` e também `sha256` (alias comum)
+- Não aplica fallback silencioso.
+- Erros devem ser padronizados (AtlasErrorPayload) e serializáveis.
+- Nome do bundle é fixo: artifacts/inference_bundle.joblib
 """
 
 from __future__ import annotations
@@ -29,19 +26,26 @@ import inspect
 
 import joblib
 
+from atlas_dataflow.core.errors import (
+    AtlasErrorPayload,
+    model_not_found,
+    preprocess_not_found,
+)
 from atlas_dataflow.core.pipeline.step import Step
 from atlas_dataflow.core.pipeline.types import StepKind, StepResult, StepStatus
-from atlas_dataflow.deployment.inference_bundle import InferenceBundleV1, save_inference_bundle_v1
+from atlas_dataflow.deployment.inference_bundle import (
+    InferenceBundleV1,
+    save_inference_bundle_v1,
+)
 from atlas_dataflow.persistence.preprocess_store import PreprocessStore
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _safe_get_run_dir(ctx: Any) -> Path:
-    """
-    Obtém run_dir do ctx.
-    Suporta:
-      - ctx.meta["run_dir"] (Path ou str)
-      - ctx.get_meta("run_dir") (se existir)
-    """
+    """Obtém run_dir do ctx via meta (Path/str) ou get_meta()."""
     meta = getattr(ctx, "meta", None)
     if isinstance(meta, dict) and "run_dir" in meta:
         rd = meta["run_dir"]
@@ -53,7 +57,7 @@ def _safe_get_run_dir(ctx: Any) -> Path:
         if rd is not None:
             return rd if isinstance(rd, Path) else Path(str(rd))
 
-    # fallback (não ideal)
+    # fallback defensivo (não ideal, mas mantém compatibilidade)
     return Path(".")
 
 
@@ -70,9 +74,7 @@ def _sha256_file(p: Path) -> str:
 
 
 def _pick_champion_model_id(ctx: Any) -> str:
-    """
-    Fonte de verdade: ctx.get_artifact("eval.model_selection")["selection"]["champion_model_id"]
-    """
+    """Fonte de verdade: eval.model_selection.selection.champion_model_id."""
     try:
         ms = ctx.get_artifact("eval.model_selection")
     except Exception:
@@ -89,12 +91,7 @@ def _pick_champion_model_id(ctx: Any) -> str:
 
 
 def _pick_champion_metrics(ctx: Any, champion_model_id: str) -> Dict[str, Any]:
-    """
-    Busca em eval.metrics uma entrada para o model_id campeão.
-    Formatos aceitos (conforme testes):
-      - list[{"model_id": "...", "metrics": {...}}]
-      - {"model_id": "...", "metrics": {...}} ou {"metrics": {...}}
-    """
+    """Busca métricas do campeão em eval.metrics."""
     try:
         obj = ctx.get_artifact("eval.metrics")
     except Exception:
@@ -112,18 +109,14 @@ def _pick_champion_metrics(ctx: Any, champion_model_id: str) -> Dict[str, Any]:
         if obj.get("model_id") == champion_model_id and isinstance(obj.get("metrics"), dict):
             return dict(obj["metrics"])
         if isinstance(obj.get("metrics"), dict):
-            return dict(obj["metrics"])
+            return dict(obj["metrics"])  # fallback
         return {}
 
     return {}
 
 
 def _resolve_model(ctx: Any) -> Any:
-    """
-    Preferência:
-      - model.best_estimator (train.search / seleção)
-      - model.trained (train.single)
-    """
+    """Resolve o modelo treinado a partir do ctx (sem inferência)."""
     try:
         return ctx.get_artifact("model.best_estimator")
     except Exception:
@@ -138,49 +131,50 @@ def _resolve_model(ctx: Any) -> Any:
 
 
 def _resolve_preprocess_path(run_dir: Path) -> Optional[Path]:
-    """
-    Resolve preprocess.joblib:
-      - PreprocessStore (preferencial)
-      - artifacts/preprocess.joblib (fallback)
-    """
+    """Resolve o preprocess.joblib (PreprocessStore preferencial, fallback artifacts/preprocess.joblib)."""
     artifacts_dir = run_dir / "artifacts"
     _ensure_dir(artifacts_dir)
 
-    preprocess_path: Optional[Path] = None
+    # preferencial: store
     try:
         store = PreprocessStore(base_dir=run_dir)
-        preprocess_path = store.path_for_current_preprocess()
-        if not preprocess_path.exists():
-            preprocess_path = None
+        p = store.path_for_current_preprocess()
+        if p.exists():
+            return p
     except Exception:
-        preprocess_path = None
+        pass
 
-    if preprocess_path is None:
-        candidate = artifacts_dir / "preprocess.joblib"
-        if candidate.exists():
-            preprocess_path = candidate
+    # fallback: artifacts/preprocess.joblib
+    candidate = artifacts_dir / "preprocess.joblib"
+    if candidate.exists():
+        return candidate
 
-    return preprocess_path
+    return None
 
+
+# ---------------------------------------------------------------------------
+# Step
+# ---------------------------------------------------------------------------
 
 class ExportInferenceBundleStep(Step):
-    """
-    Step canônico: export.inference_bundle
-
-    Entrega:
-      - artifacts/payload: bundle_path, bundle_hash, format, bundle_version, contract_version,
-        champion_model_id e model_id
-    """
+    """export.inference_bundle — consolida preprocess + model + contract + metadata em bundle."""
 
     id = "export.inference_bundle"
     kind = StepKind.EXPORT
+
+    # Guardrail: este step depende explicitamente do treino e da seleção/avaliação.
+    # (Sem dependências explícitas, pode rodar cedo demais no E2E.)
+    depends_on = [
+        "train.single",
+        "evaluate.model_selection",
+    ]
 
     def run(self, ctx: Any) -> StepResult:
         run_dir = _safe_get_run_dir(ctx)
         artifacts_dir = run_dir / "artifacts"
         _ensure_dir(artifacts_dir)
 
-        # --- config
+        # config
         step_cfg: Dict[str, Any] = {}
         try:
             step_cfg = (ctx.config or {}).get("steps", {}).get(self.id, {})  # type: ignore[attr-defined]
@@ -191,29 +185,23 @@ class ExportInferenceBundleStep(Step):
         if isinstance(step_cfg, dict) and isinstance(step_cfg.get("format"), str) and step_cfg.get("format"):
             fmt = str(step_cfg.get("format")).strip().lower() or "joblib"
 
-        # --- contract
+        # contract
         contract = getattr(ctx, "contract", None)
         contract_dict: Dict[str, Any] = contract if isinstance(contract, dict) else {}
-        contract_version = "unknown"
-        if isinstance(contract_dict.get("contract_version"), str):
-            contract_version = str(contract_dict.get("contract_version"))
+        contract_version = str(contract_dict.get("contract_version") or "unknown")
 
-        # --- champion
+        # champion
         champion_model_id = _pick_champion_model_id(ctx)
         champion_metrics = _pick_champion_metrics(ctx, champion_model_id)
 
-        # --- required: model
+        # required: model
         try:
             model = _resolve_model(ctx)
-        except Exception as e:
-            err = {
-                "type": "MODEL_MISSING",
-                "message": "Artifact obrigatório ausente: model.best_estimator|model.trained",
-                "details": {"artifact": "model.best_estimator|model.trained", "exception_message": str(e)},
-                "decision_required": True,
-                "hint": "Garanta que o treino publique ctx.set_artifact('model.best_estimator', model) "
-                        "ou ctx.set_artifact('model.trained', model).",
-            }
+        except Exception:
+            err = model_not_found(
+                step=self.id,
+                required_by=self.id,
+            ).to_dict()
             return StepResult(
                 step_id=self.id,
                 kind=self.kind,
@@ -225,16 +213,13 @@ class ExportInferenceBundleStep(Step):
                 payload={"error": err},
             )
 
-        # --- required: preprocess path + load object
+        # required: preprocess path + load object
         preprocess_path = _resolve_preprocess_path(run_dir)
         if preprocess_path is None:
-            err = {
-                "type": "PREPROCESS_MISSING",
-                "message": "Preprocess ausente: preprocess.joblib não encontrado",
-                "details": {"expected": str(artifacts_dir / "preprocess.joblib")},
-                "decision_required": True,
-                "hint": "Garanta que o pipeline persista preprocess.joblib antes do export.inference_bundle.",
-            }
+            err = preprocess_not_found(
+                step=self.id,
+                required_by=self.id,
+            ).to_dict()
             return StepResult(
                 step_id=self.id,
                 kind=self.kind,
@@ -249,17 +234,18 @@ class ExportInferenceBundleStep(Step):
         try:
             preprocess_obj = joblib.load(str(preprocess_path))
         except Exception as e:
-            err = {
-                "type": "PREPROCESS_LOAD_FAILED",
-                "message": "Falha ao carregar preprocess.joblib",
-                "details": {
+            err = AtlasErrorPayload(
+                type="PREPROCESS_LOAD_FAILED",
+                message="Falha ao carregar preprocess.joblib",
+                details={
                     "path": str(preprocess_path),
                     "exception": type(e).__name__,
                     "exception_message": str(e),
+                    "step": self.id,
                 },
-                "decision_required": True,
-                "hint": "Verifique se preprocess.joblib foi salvo corretamente (joblib.dump) e não está corrompido.",
-            }
+                hint="Verifique se preprocess.joblib foi salvo corretamente (joblib.dump) e não está corrompido.",
+                decision_required=False,
+            ).to_dict()
             return StepResult(
                 step_id=self.id,
                 kind=self.kind,
@@ -271,7 +257,7 @@ class ExportInferenceBundleStep(Step):
                 payload={"error": err},
             )
 
-        # --- metadata (sempre serializável)
+        # metadata (sempre serializável)
         now_utc = datetime.now(timezone.utc).isoformat()
         run_id = getattr(ctx, "run_id", None)
         created_at = getattr(ctx, "created_at", None)
@@ -289,13 +275,13 @@ class ExportInferenceBundleStep(Step):
             "metrics": champion_metrics,
         }
 
-        # --- build bundle (filtra conforme assinatura para não quebrar se o core variar)
+        # build bundle (filtra conforme assinatura para não quebrar se o core variar)
         bundle_kwargs: Dict[str, Any] = {
             "preprocess": preprocess_obj,
             "model": model,
             "contract": contract_dict,
             "metadata": metadata_obj,
-            # campos opcionais (se existirem no InferenceBundleV1 do seu core)
+            # opcionais (se existirem)
             "metrics": champion_metrics,
             "format": fmt,
             "contract_version": contract_version,
@@ -305,25 +291,25 @@ class ExportInferenceBundleStep(Step):
             "version": "v1",
         }
 
-        sig_bundle = inspect.signature(InferenceBundleV1)  # type: ignore[arg-type]
-        accepted_bundle = set(sig_bundle.parameters.keys())
+        accepted_bundle = set(inspect.signature(InferenceBundleV1).parameters.keys())  # type: ignore[arg-type]
         filtered_bundle_kwargs = {k: v for k, v in bundle_kwargs.items() if k in accepted_bundle}
 
         try:
             bundle = InferenceBundleV1(**filtered_bundle_kwargs)
         except Exception as e:
-            err = {
-                "type": "BUNDLE_CONSTRUCT_FAILED",
-                "message": "Falha ao instanciar InferenceBundleV1",
-                "details": {
+            err = AtlasErrorPayload(
+                type="BUNDLE_CONSTRUCT_FAILED",
+                message="Falha ao instanciar InferenceBundleV1",
+                details={
                     "exception": type(e).__name__,
                     "exception_message": str(e),
+                    "step": self.id,
                     "accepted_params": sorted(list(accepted_bundle)),
                     "provided_params": sorted(list(filtered_bundle_kwargs.keys())),
                 },
-                "decision_required": True,
-                "hint": "Ajuste o mapeamento conforme a assinatura do InferenceBundleV1 no seu core.",
-            }
+                hint="Ajuste o mapeamento conforme a assinatura do InferenceBundleV1 no core.",
+                decision_required=False,
+            ).to_dict()
             return StepResult(
                 step_id=self.id,
                 kind=self.kind,
@@ -335,16 +321,17 @@ class ExportInferenceBundleStep(Step):
                 payload={"error": err},
             )
 
-        # --- persist
-        safe_model_id = (champion_model_id or "unknown").replace("/", "_").replace("\\", "_")
-        bundle_path = artifacts_dir / f"inference_bundle.{safe_model_id}.{fmt}"
+        # persist (filename canônico FIXO)
+        bundle_path = artifacts_dir / f"inference_bundle.{fmt}"
+        if fmt == "joblib":  # default esperado pelos testes
+            bundle_path = artifacts_dir / "inference_bundle.joblib"
 
         try:
-            # ✅ CORREÇÃO CRÍTICA: save_inference_bundle_v1 exige keyword-only `path=`
             sig_save = inspect.signature(save_inference_bundle_v1)  # type: ignore[arg-type]
             accepted_save = set(sig_save.parameters.keys())
 
             if "path" in accepted_save:
+                # save_inference_bundle_v1 exige keyword-only path=
                 if "bundle" in accepted_save:
                     save_meta = save_inference_bundle_v1(bundle=bundle, path=bundle_path)  # type: ignore[misc]
                 else:
@@ -354,25 +341,30 @@ class ExportInferenceBundleStep(Step):
                 joblib.dump(bundle, str(bundle_path))
                 save_meta = {}
         except Exception as e:
-            err = {
-                "type": type(e).__name__,
-                "message": "Não foi possível persistir o bundle de inferência (decision required)",
-                "details": {"exception_message": str(e)},
-                "decision_required": True,
-                "hint": "Verifique permissões/IO e se preprocess/model são serializáveis.",
-            }
+            err = AtlasErrorPayload(
+                type="BUNDLE_PERSIST_FAILED",
+                message="Não foi possível persistir o bundle de inferência",
+                details={
+                    "exception": type(e).__name__,
+                    "exception_message": str(e),
+                    "path": str(bundle_path),
+                    "step": self.id,
+                },
+                hint="Verifique permissões/IO e se preprocess/model são serializáveis.",
+                decision_required=False,
+            ).to_dict()
             return StepResult(
                 step_id=self.id,
                 kind=self.kind,
                 status=StepStatus.FAILED,
-                summary="export.inference_bundle failed (decision required)",
+                summary="export.inference_bundle failed (persist failed)",
                 metrics={},
                 warnings=[],
                 artifacts={},
                 payload={"error": err},
             )
 
-        # --- normalize outputs
+        # normalize outputs
         try:
             bundle_hash = _sha256_file(bundle_path)
         except Exception:

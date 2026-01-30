@@ -192,7 +192,7 @@ class TrainSingleStep(Step):
                 return StepResult(
                     step_id=self.id,
                     kind=self.kind,
-                    status=StepStatus.SUCCESS,
+                    status=StepStatus.SKIPPED,
                     summary="train.single skipped (disabled in config)",
                     metrics={},
                     warnings=[],

@@ -58,22 +58,67 @@ def _is_non_empty_str(x: Any) -> bool:
     return isinstance(x, str) and bool(x.strip())
 
 
+def _role_from_dtype(dtype: Any) -> str:
+    """Mapeia dtype declarado no contrato interno para papel semântico (v1)."""
+    if not _is_non_empty_str(dtype):
+        return "categorical"
+    d = str(dtype).lower()
+    # Numéricos comuns
+    if d.startswith("int") or d.startswith("float") or d in {"number", "numeric"}:
+        return "numerical"
+    # bool pode ser tratado como categórico (binário)
+    if d in {"bool", "boolean"}:
+        return "categorical"
+    # strings / categorias
+    return "categorical"
+
+
+
 def _expect(cond: bool, msg: str) -> None:
     if not cond:
         raise ValueError(msg)
 
 
 def _extract_features_roles(contract: Dict[str, Any]) -> Dict[str, str]:
+    """Extrai papéis (roles) das features do contrato.
+
+    Compat:
+    - Contratos antigos: contract["features"] é list[{"name":..., "role":...}]
+    - Contrato internal.v1: contract["features"] é dict {"required":[...], "optional":[...]}
+      onde cada feature declara {"name":..., "dtype":...}. Neste caso, o role é derivado de dtype.
+    """
     features = contract.get("features")
-    _expect(isinstance(features, list), "Invalid contract: features must be a list")
+
     roles: Dict[str, str] = {}
-    for i, f in enumerate(features):
-        _expect(isinstance(f, dict), f"Invalid contract: features[{i}] must be a mapping")
-        name = f.get("name")
-        role = f.get("role")
-        _expect(_is_non_empty_str(name), f"Invalid contract: features[{i}].name is required")
-        _expect(_is_non_empty_str(role), f"Invalid contract: features[{i}].role is required")
-        roles[str(name)] = str(role)
+
+    # Legacy: lista com role explícito
+    if isinstance(features, list):
+        for i, f in enumerate(features):
+            _expect(isinstance(f, dict), f"Invalid contract: features[{i}] must be a mapping")
+            name = f.get("name")
+            role = f.get("role")
+            _expect(_is_non_empty_str(name), f"Invalid contract: features[{i}].name is required")
+            _expect(_is_non_empty_str(role), f"Invalid contract: features[{i}].role is required")
+            roles[str(name)] = str(role)
+        return roles
+
+    # internal.v1: dict com required/optional e dtype
+    if isinstance(features, dict):
+        req = features.get("required", [])
+        opt = features.get("optional", [])
+        _expect(isinstance(req, list), "Invalid contract: features.required must be a list")
+        _expect(isinstance(opt, list), "Invalid contract: features.optional must be a list")
+
+        for group_name, group in (("required", req), ("optional", opt)):
+            for i, f in enumerate(group):
+                _expect(isinstance(f, dict), f"Invalid contract: features.{group_name}[{i}] must be a mapping")
+                name = f.get("name")
+                dtype = f.get("dtype")
+                _expect(_is_non_empty_str(name), f"Invalid contract: features.{group_name}[{i}].name is required")
+                roles[str(name)] = _role_from_dtype(dtype)
+        return roles
+
+    _expect(False, "Invalid contract: features must be a list or a mapping")
     return roles
 
 
@@ -94,6 +139,18 @@ def _normalize_spec(contract: Dict[str, Any], config: Dict[str, Any]) -> Preproc
 
     num_cols = numeric.get("columns")
     cat_cols = categorical.get("columns")
+
+    # Compat: permitir str|None e normalizar para list (sem inferência de conteúdo)
+    if num_cols is None:
+        num_cols = []
+    elif isinstance(num_cols, str):
+        num_cols = [num_cols]
+
+    if cat_cols is None:
+        cat_cols = []
+    elif isinstance(cat_cols, str):
+        cat_cols = [cat_cols]
+
     _expect(isinstance(num_cols, list), "Invalid config: representation.preprocess.numeric.columns must be a list")
     _expect(isinstance(cat_cols, list), "Invalid config: representation.preprocess.categorical.columns must be a list")
 

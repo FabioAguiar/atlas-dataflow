@@ -78,7 +78,7 @@ def test_contract_load_missing_path() -> None:
 
     sr = ContractLoadStep().run(ctx)
     assert sr.status == StepStatus.FAILED
-    assert sr.payload["error"]["type"] == "ContractPathMissingError"
+    assert sr.payload["error"]["type"] == "CONTRACT_PATH_MISSING"
 
 
 def test_contract_load_file_not_found(tmp_path: Path) -> None:

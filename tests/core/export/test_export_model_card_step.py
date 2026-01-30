@@ -129,6 +129,11 @@ def test_export_model_card_generates_file_and_has_min_sections(tmp_path: Path):
 
     # Gera o bundle
     sr_bundle = ExportInferenceBundleStep().run(ctx)
+    print("STATUS:", sr_bundle.status)
+    print("SUMMARY:", sr_bundle.summary)
+    print("PAYLOAD:", sr_bundle.payload)
+    assert sr_bundle.status == StepStatus.SUCCESS
+
     assert sr_bundle.status == StepStatus.SUCCESS
 
     # --- Monta Manifest (fonte de verdade do Model Card) ---

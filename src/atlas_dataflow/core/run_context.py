@@ -40,6 +40,7 @@ class RunContext:
     - created_at: timestamp UTC de criação do contexto
     - config: configuração efetiva (defaults + local deep-merge)
     - contract: contrato efetivo (após `contract.load`) — pode ser None antes do Step
+    - meta: metadados de execução (ex.: run_dir, paths, info do runner)
     - warnings: warnings por step_id
     - events: log estruturado de eventos
     - _artifacts: store de artefatos intermediários (key -> value)

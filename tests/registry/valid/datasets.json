@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../registry/schema",
+  "schema_version": "atlas.dataflow.registry.v1",
+  "conventions": {
+    "dataset_slug": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Public dataset identity. Use lowercase ASCII letters, digits, and single hyphen separators."
+    },
+    "release_id": {
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "description": "Published release identifier formatted as release-YYYYMMDD-NNN."
+    },
+    "active_release": {
+      "description": "Each published dataset must declare exactly one active_release value."
+    }
+  },
+  "datasets": [
+    {
+      "dataset_slug": "example-dataset",
+      "active_release": "release-20260616-001",
+      "public_metadata": {
+        "title": "Example Dataset",
+        "summary": "Fixture registry entry used to validate the first-cycle registry structure.",
+        "domain": "example",
+        "visibility": "public",
+        "tags": ["example", "fixture"]
+      }
+    }
+  ]
+}

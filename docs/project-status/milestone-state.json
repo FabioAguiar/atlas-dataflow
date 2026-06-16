@@ -1,145 +1,155 @@
 {
-"schema_version": "milestone_state.v1",
-"artifact_type": "milestone_state",
-"project_id": "atlas-dataflow",
-"source_of_truth": {
-"milestones_document": "docs/milestones.md",
-"formal_issue_source": "support_workspace",
-"architecture_document": "docs/architecture.md",
-"vision_document": "docs/vision.md",
-"operational_state_document": "docs/project-status/milestone-state.json"
-},
-"formal_issue_location": {
-"workspace_alias": "project_support_root",
-"project_support_subpath": "atlas-dataflow",
-"formal_issues_index_pattern": "issues/{milestone_id}/formal-issues-index.json",
-"formal_issue_json_pattern": "issues/{milestone_id}/{issue_id}/formal-issue.json",
-"formal_issue_markdown_pattern": "issues/{milestone_id}/{issue_id}/issue.md",
-"github_role": "publication_target_or_human_reference"
-},
-"current_milestone": {
-"id": "M2",
-"title": "Minimal Public Technical Bootstrap",
-"status": "active"
-},
-"last_completed_milestone": {
-"id": "M1",
-"title": "Documented Foundation and Initial Technical Scope",
-"status": "completed"
-},
-"completed_milestones": [
-{
-"id": "M1",
-"title": "Documented Foundation and Initial Technical Scope",
-"status": "completed"
-}
-],
-"locked_completed_milestones": [
-{
-"id": "M1",
-"title": "Documented Foundation and Initial Technical Scope",
-"status": "locked"
-}
-],
-"reopen_records": [],
-"regression_policy": {
-"allow_return_to_completed_milestone": false,
-"requires_explicit_reopen_record": true
-},
-"validation_rules": {
-"current_milestone_must_exist_in_milestones_document": true,
-"current_milestone_must_not_be_completed": true,
-"current_milestone_must_not_be_locked": true,
-"completed_milestone_reopen_requires_record": true,
-"milestones_document_is_planning_not_operational_state": true,
-"implementation_documentation_strategy_is_not_defined_here": true
-},
-"implementation_documentation_boundary": {
-"strategy_source": "docs/architecture.md",
-"reflected_by": "docs/milestones.md",
-"selected_strategy": "milestones-only",
-"state_file_role": "This file records the operational milestone cursor only and does not create, update, or authorize implementation documentation."
-},
-"operational_boundary": {
-"state": "This file records the observable operational milestone state for the atlas-dataflow project.",
-"intent": "Project goals, milestone planning, architecture, and implementation documentation evaluation remain in project documents such as docs/vision.md, docs/architecture.md, and docs/milestones.md.",
-"control": "Workflows and scripts may validate this state before continuing the pipeline; this file does not execute work, define workflow logic, publish issues, or authorize implementation."
-},
-"known_milestones": [
-{
-"id": "M1",
-"title": "Documented Foundation and Initial Technical Scope",
-"status": "completed"
-},
-{
-"id": "M2",
-"title": "Minimal Public Technical Bootstrap",
-"status": "active"
-},
-{
-"id": "M3",
-"title": "File-Based Registry and Publication Model",
-"status": "planned"
-},
-{
-"id": "M4",
-"title": "Contracts and Contract-First Validation",
-"status": "planned"
-},
-{
-"id": "M5",
-"title": "Internal Publisher and Release Candidate",
-"status": "planned"
-},
-{
-"id": "M6",
-"title": "Inference Runtime by Dataset and Active Release",
-"status": "planned"
-},
-{
-"id": "M7",
-"title": "First Public Dataset Experience",
-"status": "planned"
-},
-{
-"id": "M8",
-"title": "Containerized Public Deployment and Minimum Security",
-"status": "planned"
-},
-{
-"id": "M9",
-"title": "First Public Cycle Closure",
-"status": "planned"
-},
-{
-"id": "M10",
-"title": "Initial Private Internal Administration",
-"status": "planned"
-},
-{
-"id": "M11",
-"title": "Controlled Expansion to a Second Dataset",
-"status": "planned"
-}
-],
-"notes": [
-"This file records operational milestone state only.",
-"M2 is the current active milestone for establishing the minimal public technical bootstrap of Atlas DataFlow.",
-"M1 is marked as completed because the documented foundation and initial technical scope cycle has been completed.",
-"M1 is locked as a completed milestone and must not be reopened without an explicit reopen record.",
-"M2 should be validated against docs/milestones.md before workflow continuation.",
-"Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
-"docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
-"docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
-"Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
-"This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-"The current milestone points to M2 because the next implementation focus is establishing the minimal public technical bootstrap."
-],
-"documentation_boundary": {
-"vision_document": "docs/vision.md",
-"architecture_document": "docs/architecture.md",
-"milestones_document": "docs/milestones.md",
-"implementation_documentation": "Defined by docs/architecture.md and reflected by docs/milestones.md when applicable; not decided by this state file.",
-"state_document": "docs/project-status/milestone-state.json"
-}
+  "schema_version": "milestone_state.v1",
+  "artifact_type": "milestone_state",
+  "project_id": "atlas-dataflow",
+  "source_of_truth": {
+    "milestones_document": "docs/milestones.md",
+    "formal_issue_source": "support_workspace",
+    "architecture_document": "docs/architecture.md",
+    "vision_document": "docs/vision.md",
+    "operational_state_document": "docs/project-status/milestone-state.json"
+  },
+  "formal_issue_location": {
+    "workspace_alias": "project_support_root",
+    "project_support_subpath": "atlas-dataflow",
+    "formal_issues_index_pattern": "issues/{milestone_id}/formal-issues-index.json",
+    "formal_issue_json_pattern": "issues/{milestone_id}/{issue_id}/formal-issue.json",
+    "formal_issue_markdown_pattern": "issues/{milestone_id}/{issue_id}/issue.md",
+    "github_role": "publication_target_or_human_reference"
+  },
+  "current_milestone": {
+    "id": "M3",
+    "title": "File-Based Registry and Publication Model",
+    "status": "active"
+  },
+  "last_completed_milestone": {
+    "id": "M2",
+    "title": "Minimal Public Technical Bootstrap",
+    "status": "completed"
+  },
+  "completed_milestones": [
+    {
+      "id": "M1",
+      "title": "Documented Foundation and Initial Technical Scope",
+      "status": "completed"
+    },
+    {
+      "id": "M2",
+      "title": "Minimal Public Technical Bootstrap",
+      "status": "completed"
+    }
+  ],
+  "locked_completed_milestones": [
+    {
+      "id": "M1",
+      "title": "Documented Foundation and Initial Technical Scope",
+      "status": "locked"
+    },
+    {
+      "id": "M2",
+      "title": "Minimal Public Technical Bootstrap",
+      "status": "locked"
+    }
+  ],
+  "reopen_records": [],
+  "regression_policy": {
+    "allow_return_to_completed_milestone": false,
+    "requires_explicit_reopen_record": true
+  },
+  "validation_rules": {
+    "current_milestone_must_exist_in_milestones_document": true,
+    "current_milestone_must_not_be_completed": true,
+    "current_milestone_must_not_be_locked": true,
+    "completed_milestone_reopen_requires_record": true,
+    "milestones_document_is_planning_not_operational_state": true,
+    "implementation_documentation_strategy_is_not_defined_here": true
+  },
+  "implementation_documentation_boundary": {
+    "strategy_source": "docs/architecture.md",
+    "reflected_by": "docs/milestones.md",
+    "selected_strategy": "milestones-only",
+    "state_file_role": "This file records the operational milestone cursor only and does not create, update, or authorize implementation documentation."
+  },
+  "operational_boundary": {
+    "state": "This file records the observable operational milestone state for the atlas-dataflow project.",
+    "intent": "Project goals, milestone planning, architecture, and implementation documentation evaluation remain in project documents such as docs/vision.md, docs/architecture.md, and docs/milestones.md.",
+    "control": "Workflows and scripts may validate this state before continuing the pipeline; this file does not execute work, define workflow logic, publish issues, or authorize implementation."
+  },
+  "known_milestones": [
+    {
+      "id": "M1",
+      "title": "Documented Foundation and Initial Technical Scope",
+      "status": "completed"
+    },
+    {
+      "id": "M2",
+      "title": "Minimal Public Technical Bootstrap",
+      "status": "completed"
+    },
+    {
+      "id": "M3",
+      "title": "File-Based Registry and Publication Model",
+      "status": "active"
+    },
+    {
+      "id": "M4",
+      "title": "Contracts and Contract-First Validation",
+      "status": "planned"
+    },
+    {
+      "id": "M5",
+      "title": "Internal Publisher and Release Candidate",
+      "status": "planned"
+    },
+    {
+      "id": "M6",
+      "title": "Inference Runtime by Dataset and Active Release",
+      "status": "planned"
+    },
+    {
+      "id": "M7",
+      "title": "First Public Dataset Experience",
+      "status": "planned"
+    },
+    {
+      "id": "M8",
+      "title": "Containerized Public Deployment and Minimum Security",
+      "status": "planned"
+    },
+    {
+      "id": "M9",
+      "title": "First Public Cycle Closure",
+      "status": "planned"
+    },
+    {
+      "id": "M10",
+      "title": "Initial Private Internal Administration",
+      "status": "planned"
+    },
+    {
+      "id": "M11",
+      "title": "Controlled Expansion to a Second Dataset",
+      "status": "planned"
+    }
+  ],
+  "notes": [
+    "This file records operational milestone state only.",
+    "M3 is the current active milestone for establishing the file-based registry and publication model of Atlas DataFlow.",
+    "M2 is marked as completed because the minimal public technical bootstrap cycle has been completed.",
+    "M1 and M2 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M3 should be validated against docs/milestones.md before workflow continuation.",
+    "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
+    "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
+    "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
+    "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
+    "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
+    "The current milestone points to M3 because the next implementation focus is the file-based registry and publication model."
+  ],
+  "documentation_boundary": {
+    "vision_document": "docs/vision.md",
+    "architecture_document": "docs/architecture.md",
+    "milestones_document": "docs/milestones.md",
+    "implementation_documentation": "Defined by docs/architecture.md and reflected by docs/milestones.md when applicable; not decided by this state file.",
+    "state_document": "docs/project-status/milestone-state.json"
+  }
 }

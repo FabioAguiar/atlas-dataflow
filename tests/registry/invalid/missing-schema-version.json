@@ -1,0 +1,29 @@
+{
+  "_invalid_reason": "schema_version field is absent — expected error: MISSING_SCHEMA_VERSION",
+  "conventions": {
+    "dataset_slug": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Public dataset identity."
+    },
+    "release_id": {
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "description": "Published release identifier."
+    },
+    "active_release": {
+      "description": "Each published dataset must declare exactly one active_release value."
+    }
+  },
+  "datasets": [
+    {
+      "dataset_slug": "example-dataset",
+      "active_release": "release-20260616-001",
+      "public_metadata": {
+        "title": "Example Dataset",
+        "summary": "Fixture entry.",
+        "domain": "example",
+        "visibility": "public",
+        "tags": ["example"]
+      }
+    }
+  ]
+}

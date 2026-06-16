@@ -1,0 +1,41 @@
+{
+  "_invalid_reason": "Two dataset entries share the same dataset_slug — expected error: DUPLICATE_DATASET_SLUG",
+  "schema_version": "atlas.dataflow.registry.v1",
+  "conventions": {
+    "dataset_slug": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Public dataset identity."
+    },
+    "release_id": {
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "description": "Published release identifier."
+    },
+    "active_release": {
+      "description": "Each published dataset must declare exactly one active_release value."
+    }
+  },
+  "datasets": [
+    {
+      "dataset_slug": "example-dataset",
+      "active_release": "release-20260616-001",
+      "public_metadata": {
+        "title": "Example Dataset",
+        "summary": "Fixture entry.",
+        "domain": "example",
+        "visibility": "public",
+        "tags": ["example"]
+      }
+    },
+    {
+      "dataset_slug": "example-dataset",
+      "active_release": "release-20260616-002",
+      "public_metadata": {
+        "title": "Example Dataset Duplicate",
+        "summary": "Duplicate slug — must be rejected.",
+        "domain": "example",
+        "visibility": "public",
+        "tags": ["example"]
+      }
+    }
+  ]
+}

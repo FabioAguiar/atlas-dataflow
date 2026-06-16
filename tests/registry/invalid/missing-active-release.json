@@ -1,0 +1,29 @@
+{
+  "_invalid_reason": "active_release field is absent from the dataset entry — expected error: MISSING_ACTIVE_RELEASE",
+  "schema_version": "atlas.dataflow.registry.v1",
+  "conventions": {
+    "dataset_slug": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Public dataset identity."
+    },
+    "release_id": {
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "description": "Published release identifier."
+    },
+    "active_release": {
+      "description": "Each published dataset must declare exactly one active_release value."
+    }
+  },
+  "datasets": [
+    {
+      "dataset_slug": "example-dataset",
+      "public_metadata": {
+        "title": "Example Dataset",
+        "summary": "Fixture entry missing active_release.",
+        "domain": "example",
+        "visibility": "public",
+        "tags": ["example"]
+      }
+    }
+  ]
+}

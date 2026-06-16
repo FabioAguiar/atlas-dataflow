@@ -20,6 +20,43 @@ This document does not execute implementation, does not publish issues, does not
 - The out-of-scope items declared in each milestone must be respected to prevent uncontrolled growth.
 - Registered gaps must not be resolved by inference during issue derivation.
 
+## Per-Issue Derivation Criteria
+
+This section defines what each individual future bootstrap issue must satisfy before it is formalized or implemented. These criteria are distinct from the milestone-level derivability criteria declared in each milestone section, which describe when a milestone as a whole is ready to start generating issues.
+
+Each derived issue must individually satisfy all of the following:
+
+### Traceability
+
+- The issue must be traceable to at least one accepted decision or boundary established in `docs/vision.md`, `docs/architecture.md`, or `docs/milestones.md`.
+- The issue must not rely on pending decisions listed in those documents without an explicit prior resolution of the pending item.
+- The issue must not infer architecture, stack, dataset, or publication behavior from absent or undecided information.
+
+### Scope and Type Separation
+
+Issues must belong to one of the following types, defined by what the issue is authorized to change — not by expected complexity:
+
+- **Documentation issue**: authorized to change only foundational documents (`docs/vision.md`, `docs/architecture.md`, `docs/milestones.md`). Must not start implementation.
+- **Decision issue**: authorized to resolve a specific pending decision and record it in an appropriate foundational document. Must not execute implementation or derive secondary decisions not explicitly scoped.
+- **Bootstrap issue**: authorized to create, modify, or delete implementation artifacts (code, configuration, schemas, tests). Must reference accepted decisions and must not introduce scope outside the current milestone's authorized boundaries.
+
+An issue must not conflate types. A documentation issue must not introduce bootstrap scope; a bootstrap issue must not resolve undocumented decisions by inference.
+
+### Out-of-Scope Validation
+
+Before formalization, each issue must confirm the following are absent from its scope:
+
+- Registry, publisher, inference, deployment, or administration capabilities not authorized for the current milestone.
+- Architecture changes not supported by accepted decisions in `docs/architecture.md`.
+- GitHub publication, issue backlog creation, or Implementation Map creation not explicitly authorized.
+- Commands, code, patches, branches, commits, or pull requests during documentation or decision formalization stages.
+
+### Derivation Boundary
+
+- An issue must not resolve a pending decision that is outside its declared type scope.
+- If formalizing or implementing an issue would require resolving an undocumented decision, the issue must declare a blocker rather than inferring a resolution.
+- An issue must not become an implementation plan. Its deliverable must be traceable to one of: a documentary change, a recorded decision, or an authorized implementation artifact.
+
 ## Relationship with docs/vision.md
 
 `docs/vision.md` defines the high-level direction of Atlas DataFlow: a platform for transforming data studies into web-based predictive experiences that can be published per dataset.

@@ -12,6 +12,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
     RegistryInvalidError,
@@ -27,10 +28,25 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/datasets")
+def list_datasets_endpoint():
+    try:
+        datasets = list_datasets()
+    except RegistryInvalidError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "REGISTRY_UNAVAILABLE",
+                "message": "The registry is not currently available.",
+            },
+        )
+    return {"datasets": [d._asdict() for d in datasets]}
+
+
 @app.get("/datasets/{dataset_slug}")
 def get_dataset(dataset_slug: str):
     try:
-        resolved = resolve_dataset(dataset_slug)
+        resolve_dataset(dataset_slug)
     except DatasetUnavailableError:
         return JSONResponse(
             status_code=404,
@@ -55,7 +71,33 @@ def get_dataset(dataset_slug: str):
                 "message": "The registry is not currently available.",
             },
         )
-    return {"dataset_slug": resolved.dataset_slug, "active_release": resolved.active_release}
+    try:
+        all_listed = list_datasets()
+    except RegistryInvalidError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "REGISTRY_UNAVAILABLE",
+                "message": "The registry is not currently available.",
+            },
+        )
+    for listed in all_listed:
+        if listed.dataset_slug == dataset_slug:
+            return {
+                "dataset_slug": listed.dataset_slug,
+                "title": listed.title,
+                "summary": listed.summary,
+                "domain": listed.domain,
+                "visibility": listed.visibility,
+                "tags": listed.tags,
+            }
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "DATASET_UNAVAILABLE",
+            "message": "The requested dataset is not available.",
+        },
+    )
 
 
 if __name__ == "__main__":

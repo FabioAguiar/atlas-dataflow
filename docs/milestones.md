@@ -202,6 +202,164 @@ Before implementation, it is necessary to ensure that the foundational documents
 - Gap: final technical stack may remain pending.
 - Gap: first dataset may remain pending, as long as it does not block structural bootstrap.
 
+### Classified Pending Decisions
+
+The following pending decisions are identified from `docs/vision.md` and `docs/architecture.md`. No item was resolved by inference. All retain pending status until an explicit source document or human decision resolves them. None blocks M2 structural bootstrap.
+
+**First dataset (which dataset will be published first)**
+- Status: pending.
+- Source: `docs/vision.md` (Pending Decisions); `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2. M2 scope explicitly excludes choosing the initial dataset.
+- Required before: M7 at latest; potentially M6 for inference validation with a real model.
+
+**Final technical stack (API and web)**
+- Status: pending.
+- Source: `docs/vision.md` (Risks and Uncertainties, Pending Decisions); `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2 as a final decision. M2 requires a working initial choice; final lock-in is not required before bootstrap begins.
+- Required before: a preliminary choice must be made before M2 begins; the final definition can be deferred.
+
+**Exact registry format**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M3.
+
+**Release manifest schema**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M5.
+
+**Public contract format**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M4.
+
+**Runtime contract format**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M4.
+
+**Minimum format of published metrics**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M5 at latest.
+
+**Model card standard**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M5 at latest; required before M7.
+
+**`dataset_slug` convention**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M3.
+
+**`release_id` convention**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M5.
+
+**Final directory structure for published artifacts**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M5.
+
+**Operational backup strategy for releases**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M8.
+
+**Minimum log policy**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M8.
+
+**Exact access mechanism for future internal administration**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M10.
+
+**Publisher exposure mode (CLI only or also internal service)**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M5 for the first decision; revisited at M10.
+
+**Visualization approach (static, derived from artifacts, or served by API)**
+- Status: pending.
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M7.
+
+**Initial persistence or storage approach for published artifacts**
+- Status: pending.
+- Source: `docs/vision.md` (Pending Decisions).
+- Bootstrap classification: nonblocking for M2. File-based storage is the accepted first-cycle direction from the architecture.
+- Required before: M3 at latest.
+
+**Versioning strategy for dataset publications**
+- Status: pending.
+- Source: `docs/vision.md` (Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M5.
+
+**Initial model for public domain, routes, and URLs**
+- Status: pending.
+- Source: `docs/vision.md` (Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M8.
+
+**Minimum level of operational documentation for deployment and maintenance**
+- Status: pending.
+- Source: `docs/vision.md` (Pending Decisions).
+- Bootstrap classification: nonblocking for M2.
+- Required before: M8–M9.
+
+### Classified Nonblocking Gaps
+
+The following known gaps are identified from `docs/architecture.md` (Gaps and Pending Decisions). None blocks M2 structural bootstrap. They remain open until a future issue or human decision resolves them.
+
+**Expected scale of datasets not yet defined**
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Status: open.
+- Bootstrap impact: does not block M2. Relevant from M11 onward.
+
+**Expected inference volume not yet defined**
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Status: open.
+- Bootstrap impact: does not block M2. Relevant from M6–M8 for sizing and load considerations.
+
+**Future need for a database not yet confirmed**
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Status: open.
+- Bootstrap impact: does not block M2. File-based registry is accepted for the first cycle; database is an architectural non-objective for M1–M9.
+
+**Way public visualizations will be generated not yet defined**
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Status: open.
+- Bootstrap impact: does not block M2. Relevant before M7.
+
+**Observability strategy not yet made proportional**
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Status: open.
+- Bootstrap impact: does not block M2. Relevant before M8.
+
+**Semantic versioning policy for schemas not yet detailed**
+- Source: `docs/architecture.md` (Gaps and Pending Decisions).
+- Status: open.
+- Bootstrap impact: does not block M2. Relevant before M3–M4 for registry and contract schemas.
+
 ### Derivability Criteria
 
 The milestone will be ready to derive issues when:

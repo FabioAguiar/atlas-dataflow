@@ -620,6 +620,28 @@ Keeping admin outside the public surface reduces risk, but requires operation th
 
 Avoiding a complete administrative framework keeps the focus on runtime and publisher. Future adoption can be reevaluated if requirements emerge for persistent CRUD, multi-user operation, permissions, and frequent manual management.
 
+## Accepted First-Cycle Architectural Decisions
+
+The following decisions are accepted for the first public cycle and define boundaries for later bootstrap issues. They are documentation-level architectural decisions, not implementation steps.
+
+- Atlas starts as a dataset-centric, contract-first, release-oriented platform for publishing predictive experiences.
+- The first public cycle supports one public experience per dataset and one active release per dataset.
+- The public runtime resolves publications by `dataset_slug` and `active_release`.
+- The initial registry remains file-based, explicit, and validatable.
+- Published releases are immutable packages that connect dataset, contract, predictive bundle, metrics, model card, context, and manifest.
+- Traceability between dataset, contract, model, metrics, release, and publication is mandatory.
+- Pipeline, publisher, public runtime, public web experience, contracts, and published artifacts remain separate responsibilities.
+- The internal publisher validates completeness, calculates hashes, generates the manifest, and promotes releases explicitly before any web administration exists.
+- The public surface exposes only public experiences, public contracts, public metadata, metrics, and inference endpoints required for application consumption.
+- Internal tooling, publisher operations, pipeline work, sensitive logs, operational tools, databases, volumes, infrastructure, and future administration remain outside the public surface.
+- No public administration exists in the first public cycle.
+- Future internal administration, if introduced, must use a private surface and orchestrate existing publisher operations instead of duplicating publication logic.
+- The first public cycle does not require a database, multi-user operation, marketplace, public upload, public retraining, or complex administration.
+- Public deployment is considered part of the initial path and must preserve secure boundaries around secrets, internal services, logs, and runtime artifacts.
+- The implementation documentation strategy for the initial stage is `milestones-only`; a dedicated Implementation Map is deferred until concrete implementation complexity justifies it.
+
+Pending product and technical choices remain outside this accepted list. In particular, the first dataset, final API and web stack, exact registry and contract formats, release manifest schema, dataset and release naming conventions, published artifact directory structure, backup strategy, log policy, visualization approach, and future internal administration access mechanism still require explicit decisions.
+
 ## Gaps and Pending Decisions
 
 Pending decisions:

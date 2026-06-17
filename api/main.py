@@ -3,8 +3,7 @@ import sys
 from pathlib import Path
 
 import uvicorn
-from fastapi import Body, FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import Body, FastAPI, Request
 
 # Ensure the repository root is on the Python path so registry/ is importable
 # when main.py is invoked from the api/ subdirectory.
@@ -14,6 +13,20 @@ if str(_REPO_ROOT) not in sys.path:
 
 from contract_loader import ContractUnavailableError, load_contract  # noqa: E402
 from payload_validator import TYPE_MISMATCH, ValidationFailure, validate_payload  # noqa: E402
+from public_errors import (  # noqa: E402
+    CONTRACT_UNAVAILABLE,
+    DATASET_NOT_FOUND,
+    PUBLIC_CONTRACT_UNAVAILABLE,
+    REGISTRY_UNAVAILABLE,
+    RELEASE_UNAVAILABLE,
+    UNEXPECTED_ERROR,
+    public_error_response,
+    validation_error_response,
+)
+from public_contract_loader import (  # noqa: E402
+    PublicContractUnavailableError,
+    load_public_contract,
+)
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
@@ -25,27 +38,9 @@ from registry.resolve import (  # noqa: E402
 app = FastAPI()
 
 
-def _public_error(
-    status_code: int,
-    error_code: str,
-    message: str,
-    error_type: str = "contract_error",
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "error_type": error_type,
-            "error_code": error_code,
-            "message": message,
-        },
-    )
-
-
-def _validation_error_response(failures: list[ValidationFailure]) -> JSONResponse:
-    first = failures[0]
-    content = first.as_public_error()
-    content["errors"] = [failure.as_public_error() for failure in failures]
-    return JSONResponse(status_code=422, content=content)
+@app.exception_handler(Exception)
+async def unexpected_error_handler(_request: Request, _exc: Exception):
+    return public_error_response(UNEXPECTED_ERROR)
 
 
 @app.get("/health")
@@ -58,11 +53,7 @@ def list_datasets_endpoint():
     try:
         datasets = list_datasets()
     except RegistryInvalidError:
-        return _public_error(
-            status_code=503,
-            error_code="REGISTRY_UNAVAILABLE",
-            message="The registry is not currently available.",
-        )
+        return public_error_response(REGISTRY_UNAVAILABLE)
     return {"datasets": [d._asdict() for d in datasets]}
 
 
@@ -71,31 +62,15 @@ def get_dataset(dataset_slug: str):
     try:
         resolve_dataset(dataset_slug)
     except DatasetUnavailableError:
-        return _public_error(
-            status_code=404,
-            error_code="DATASET_UNAVAILABLE",
-            message="The requested dataset is not available.",
-        )
+        return public_error_response(DATASET_NOT_FOUND)
     except ReleaseUnavailableError:
-        return _public_error(
-            status_code=503,
-            error_code="NO_ACTIVE_RELEASE",
-            message="No active release is available for this dataset.",
-        )
+        return public_error_response(RELEASE_UNAVAILABLE)
     except RegistryInvalidError:
-        return _public_error(
-            status_code=503,
-            error_code="REGISTRY_UNAVAILABLE",
-            message="The registry is not currently available.",
-        )
+        return public_error_response(REGISTRY_UNAVAILABLE)
     try:
         all_listed = list_datasets()
     except RegistryInvalidError:
-        return _public_error(
-            status_code=503,
-            error_code="REGISTRY_UNAVAILABLE",
-            message="The registry is not currently available.",
-        )
+        return public_error_response(REGISTRY_UNAVAILABLE)
     for listed in all_listed:
         if listed.dataset_slug == dataset_slug:
             return {
@@ -106,11 +81,29 @@ def get_dataset(dataset_slug: str):
                 "visibility": listed.visibility,
                 "tags": listed.tags,
             }
-    return _public_error(
-        status_code=404,
-        error_code="DATASET_UNAVAILABLE",
-        message="The requested dataset is not available.",
-    )
+    return public_error_response(DATASET_NOT_FOUND)
+
+
+@app.get("/datasets/{dataset_slug}/contract")
+def get_public_contract(dataset_slug: str):
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        public_contract = load_public_contract(resolved.active_release)
+    except PublicContractUnavailableError:
+        return public_error_response(PUBLIC_CONTRACT_UNAVAILABLE)
+
+    return {
+        "dataset_slug": resolved.dataset_slug,
+        "contract": public_contract,
+    }
 
 
 @app.post("/datasets/{dataset_slug}/inference")
@@ -119,7 +112,7 @@ def validate_dataset_inference_payload(
     payload=Body(...),
 ):
     if not isinstance(payload, dict):
-        return _validation_error_response(
+        return validation_error_response(
             [
                 ValidationFailure(
                     error_code=TYPE_MISMATCH,
@@ -133,36 +126,20 @@ def validate_dataset_inference_payload(
     try:
         resolved = resolve_dataset(dataset_slug)
     except DatasetUnavailableError:
-        return _public_error(
-            status_code=404,
-            error_code="DATASET_UNAVAILABLE",
-            message="The requested dataset is not available.",
-        )
+        return public_error_response(DATASET_NOT_FOUND)
     except ReleaseUnavailableError:
-        return _public_error(
-            status_code=503,
-            error_code="NO_ACTIVE_RELEASE",
-            message="No active release is available for this dataset.",
-        )
+        return public_error_response(RELEASE_UNAVAILABLE)
     except RegistryInvalidError:
-        return _public_error(
-            status_code=503,
-            error_code="REGISTRY_UNAVAILABLE",
-            message="The registry is not currently available.",
-        )
+        return public_error_response(REGISTRY_UNAVAILABLE)
 
     try:
         runtime_contract = load_contract(resolved.active_release)
     except ContractUnavailableError:
-        return _public_error(
-            status_code=503,
-            error_code="CONTRACT_UNAVAILABLE",
-            message="The active contract for this dataset is temporarily unavailable.",
-        )
+        return public_error_response(CONTRACT_UNAVAILABLE)
 
     validation_failures = validate_payload(payload, runtime_contract)
     if validation_failures:
-        return _validation_error_response(validation_failures)
+        return validation_error_response(validation_failures)
 
     return {
         "status": "validated",

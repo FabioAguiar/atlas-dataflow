@@ -1,0 +1,30 @@
+{
+  "_example_note": "Demonstration artifact. Derived from the M4-01 runtime contract example (contracts/examples/runtime-contract.example.json) by applying the M4-02 projection rules. Domain constraints (min, max, categorical values) have been stripped. Rendering hints (label, input_type, optional, display_order) have been added. Does not represent a specific real dataset.",
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "age",
+      "label": "Age",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 1,
+      "description": "Age of the subject in years."
+    },
+    {
+      "name": "education_level",
+      "label": "Education Level",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 2,
+      "description": "Highest completed level of education."
+    },
+    {
+      "name": "employed",
+      "label": "Currently Employed",
+      "input_type": "checkbox",
+      "optional": true,
+      "display_order": 3,
+      "description": "Whether the subject is currently employed. Optional feature — may be absent from inference payloads without triggering validation failure."
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Public Contract",
+  "description": "Minimum public contract schema for Atlas DataFlow. Defines the safe projection of the runtime contract for the web experience. Carries field identifiers and form rendering hints while excluding all domain bounds, internal validation rules, and inference-specific constraints. This schema is the source of truth for guided form rendering only — canonical payload validation always happens against the runtime contract.",
+  "type": "object",
+  "required": ["schema_version", "features"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Public Contract Schema Version",
+      "description": "Semantic version of the public contract schema structure in MAJOR.MINOR.PATCH format (e.g., \"1.0.0\"). Required. Independent from the runtime contract schema_version — each contract type versions its own schema structure separately. Used by M4-03 structural validation to detect version incompatibilities. The first cycle uses \"1.0.0\"."
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "title": "Public Contract Features",
+      "description": "Non-empty list of public contract features. Each feature is a projection of a runtime contract feature and carries only what the web experience needs for guided form rendering: a field identifier, a display label, an input type hint, an optional indicator, a display order, and an optional description. Domain bounds are never included.",
+      "items": {
+        "$ref": "#/definitions/public_feature"
+      }
+    },
+    "_example_note": {
+      "type": "string",
+      "title": "Example Annotation",
+      "description": "Optional annotation for demonstration artifacts only. Must not appear in a production public contract. Marks the document as a non-authoritative example that does not represent a specific real dataset."
+    }
+  },
+  "definitions": {
+    "public_feature": {
+      "type": "object",
+      "required": ["name", "label", "input_type", "optional", "display_order"],
+      "additionalProperties": false,
+      "title": "Public Contract Feature",
+      "description": "A single public contract feature. Derived from a runtime contract feature by applying explicit projection rules. Required fields: name (CARRIED), label (FRESH), input_type (DERIVED), optional (INVERTED), display_order (FRESH). Optional field: description (OPTIONAL-CARRIED). The runtime contract fields type and domain_constraints are never included.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Feature Name",
+          "description": "Projection rule CARRIED: name is carried directly from the runtime contract feature.name unchanged. Must match the feature identifier used in the runtime contract and in inference payloads."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Display Label",
+          "description": "Projection rule FRESH: label has no runtime contract equivalent and must be independently authored when producing the public contract. Intended as the human-readable display name for the form field shown to the user. Must not be derived from the runtime contract description field — description is documentation text; label is a concise form field display name."
+        },
+        "input_type": {
+          "type": "string",
+          "enum": ["number", "select", "checkbox"],
+          "title": "Input Type Hint",
+          "description": "Projection rule DERIVED: input_type is derived from the runtime feature type using the mapping numeric → 'number', categorical → 'select', boolean → 'checkbox'. This field is a form input widget descriptor only — it describes the expected widget class for rendering. It does not encode domain bounds, accepted value ranges, or enumerated value lists. For 'select': indicates a choice input widget; the accepted values are defined exclusively in the runtime contract domain_constraints.values and must not appear in the public contract. The runtime contract type field is not included in the public contract feature."
+        },
+        "optional": {
+          "type": "boolean",
+          "title": "Optional Indicator",
+          "description": "Projection rule INVERTED: optional is the boolean negation of the runtime contract feature required field. When the runtime feature required is true or absent (default is true), optional is false — the field is required in the form. When the runtime feature required is false, optional is true — the field may be left empty. This inversion makes form rendering semantics immediately readable: the web experience checks optional to determine whether to render the field as required or optional."
+        },
+        "display_order": {
+          "type": "integer",
+          "minimum": 1,
+          "title": "Display Order",
+          "description": "Projection rule FRESH: display_order has no runtime contract equivalent and must be independently authored when producing the public contract. Positive integer indicating the relative rendering position of this feature in the form. Lower values are rendered first. Values should be unique within a public contract — duplicate values create ambiguous ordering. Uniqueness is not enforced structurally by this schema in the first cycle."
+        },
+        "description": {
+          "type": "string",
+          "title": "Feature Description",
+          "description": "Projection rule OPTIONAL-CARRIED: description is carried from the runtime contract feature.description if present. It is safe to expose — carries no domain constraints or validation semantics. It is plain documentation text and may be displayed by the web experience as supplementary field context. May be omitted when the runtime contract feature has no description."
+        }
+      }
+    }
+  }
+}

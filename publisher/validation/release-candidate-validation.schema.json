@@ -1,0 +1,659 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/publisher/validation/release-candidate-validation.schema.json",
+  "title": "Atlas DataFlow Release Candidate Completeness Validation",
+  "description": "Internal publisher validation result contract for deterministic release candidate completeness checks before promotion or registry mutation. This schema defines accept and reject evidence shape; it does not train models, execute notebooks, regenerate artifacts, rebuild candidates, expose public endpoints, promote releases, or update the registry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "validation_kind",
+    "candidate_identity",
+    "source_candidate",
+    "validation_outcome",
+    "required_artifact_role_results",
+    "identifier_consistency",
+    "schema_compatibility",
+    "rejection",
+    "promotion_gate",
+    "evidence_safety",
+    "publisher_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "release-candidate-validation.v1"
+    },
+    "validation_kind": {
+      "type": "string",
+      "const": "release_candidate_completeness"
+    },
+    "candidate_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "release_id",
+        "release_version"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Explicit dataset identifier copied from the release candidate model. It must not be inferred from a local path."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$",
+          "description": "Explicit release identifier copied from the release candidate model. It must not be inferred from a local path."
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "source_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "candidate_kind",
+        "required_artifact_roles_observed"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "release-candidate.v1"
+        },
+        "candidate_kind": {
+          "type": "string",
+          "const": "release_candidate"
+        },
+        "required_artifact_roles_observed": {
+          "$ref": "#/$defs/required_artifact_role_list"
+        },
+        "candidate_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced candidate reference safe for evidence. Do not store raw file contents, sensitive local paths, logs, runtime payloads, or secrets."
+        }
+      }
+    },
+    "validation_outcome": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "rejected"
+      ]
+    },
+    "required_artifact_role_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contracts",
+        "predictive_bundle",
+        "metrics",
+        "model_card",
+        "public_context",
+        "manifest_input",
+        "candidate_metadata"
+      ],
+      "properties": {
+        "contracts": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "predictive_bundle": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "metrics": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "model_card": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "public_context": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "manifest_input": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "candidate_metadata": {
+          "$ref": "#/$defs/artifact_role_result"
+        }
+      }
+    },
+    "identifier_consistency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_identifier_consistent",
+        "release_identifier_consistent",
+        "checked_sources"
+      ],
+      "properties": {
+        "dataset_identifier_consistent": {
+          "type": "boolean"
+        },
+        "release_identifier_consistent": {
+          "type": "boolean"
+        },
+        "checked_sources": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "release_candidate.dataset_identity",
+              "release_candidate.release_identity",
+              "contracts",
+              "metrics",
+              "model_card",
+              "public_context",
+              "manifest_input",
+              "candidate_metadata"
+            ]
+          }
+        },
+        "mismatch_reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rejection_reason"
+          }
+        }
+      }
+    },
+    "schema_compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contracts",
+        "manifest_input",
+        "metrics",
+        "model_card",
+        "candidate_metadata"
+      ],
+      "properties": {
+        "contracts": {
+          "$ref": "#/$defs/schema_compatibility_result"
+        },
+        "manifest_input": {
+          "$ref": "#/$defs/schema_compatibility_result"
+        },
+        "metrics": {
+          "$ref": "#/$defs/schema_compatibility_result"
+        },
+        "model_card": {
+          "$ref": "#/$defs/schema_compatibility_result"
+        },
+        "candidate_metadata": {
+          "$ref": "#/$defs/schema_compatibility_result"
+        }
+      }
+    },
+    "rejection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rejected",
+        "reasons"
+      ],
+      "properties": {
+        "rejected": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rejection_reason"
+          }
+        }
+      }
+    },
+    "promotion_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promotion_allowed",
+        "registry_update_allowed"
+      ],
+      "properties": {
+        "promotion_allowed": {
+          "type": "boolean"
+        },
+        "registry_update_allowed": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "promotion_allowed": {
+                "const": false
+              }
+            },
+            "required": [
+              "promotion_allowed"
+            ]
+          },
+          "then": {
+            "properties": {
+              "registry_update_allowed": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "sensitive_local_paths_persisted",
+        "raw_file_contents_persisted"
+      ],
+      "properties": {
+        "reduced_evidence_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "sensitive_local_paths_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_file_contents_persisted": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "publisher_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "training_executed",
+        "notebooks_executed",
+        "artifacts_regenerated",
+        "candidate_rebuilt",
+        "runtime_payload_validation_performed",
+        "public_api_errors_implemented",
+        "public_endpoint_exposed",
+        "release_promoted",
+        "registry_updated"
+      ],
+      "properties": {
+        "training_executed": {
+          "type": "boolean",
+          "const": false
+        },
+        "notebooks_executed": {
+          "type": "boolean",
+          "const": false
+        },
+        "artifacts_regenerated": {
+          "type": "boolean",
+          "const": false
+        },
+        "candidate_rebuilt": {
+          "type": "boolean",
+          "const": false
+        },
+        "runtime_payload_validation_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "public_api_errors_implemented": {
+          "type": "boolean",
+          "const": false
+        },
+        "public_endpoint_exposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "release_promoted": {
+          "type": "boolean",
+          "const": false
+        },
+        "registry_updated": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "validation_outcome": {
+            "const": "accepted"
+          }
+        },
+        "required": [
+          "validation_outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "rejection": {
+            "properties": {
+              "rejected": {
+                "const": false
+              },
+              "reasons": {
+                "maxItems": 0
+              }
+            }
+          },
+          "promotion_gate": {
+            "properties": {
+              "promotion_allowed": {
+                "const": true
+              },
+              "registry_update_allowed": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "validation_outcome": {
+            "const": "rejected"
+          }
+        },
+        "required": [
+          "validation_outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "rejection": {
+            "properties": {
+              "rejected": {
+                "const": true
+              },
+              "reasons": {
+                "minItems": 1
+              }
+            }
+          },
+          "promotion_gate": {
+            "properties": {
+              "promotion_allowed": {
+                "const": false
+              },
+              "registry_update_allowed": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "required_artifact_role": {
+      "type": "string",
+      "enum": [
+        "contracts",
+        "predictive_bundle",
+        "metrics",
+        "model_card",
+        "public_context",
+        "manifest_input",
+        "candidate_metadata"
+      ]
+    },
+    "required_artifact_role_list": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/required_artifact_role"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "const": "contracts"
+          }
+        },
+        {
+          "contains": {
+            "const": "predictive_bundle"
+          }
+        },
+        {
+          "contains": {
+            "const": "metrics"
+          }
+        },
+        {
+          "contains": {
+            "const": "model_card"
+          }
+        },
+        {
+          "contains": {
+            "const": "public_context"
+          }
+        },
+        {
+          "contains": {
+            "const": "manifest_input"
+          }
+        },
+        {
+          "contains": {
+            "const": "candidate_metadata"
+          }
+        }
+      ]
+    },
+    "artifact_role_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "status",
+        "required",
+        "artifact_reference"
+      ],
+      "properties": {
+        "role": {
+          "$ref": "#/$defs/required_artifact_role"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "present",
+            "missing",
+            "incomplete",
+            "contradictory",
+            "unsafe"
+          ]
+        },
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "artifact_reference": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reduced package-relative reference. Null is allowed only when the artifact is missing."
+        },
+        "declared_sha256_present": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/rejection_reason"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "present"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "artifact_reference": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "missing"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "artifact_reference": {
+                "type": "null"
+              },
+              "reason": {
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "missing_runtime_contract",
+                      "missing_public_contract",
+                      "missing_predictive_bundle",
+                      "missing_metrics",
+                      "missing_model_card",
+                      "missing_public_context",
+                      "missing_manifest_input",
+                      "missing_candidate_metadata",
+                      "missing_required_artifact"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "schema_compatibility_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checked",
+        "compatible"
+      ],
+      "properties": {
+        "checked": {
+          "type": "boolean"
+        },
+        "compatible": {
+          "type": "boolean"
+        },
+        "schema_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced schema identifier or repository-relative reference. Do not store raw schema contents in validation evidence."
+        },
+        "reason": {
+          "$ref": "#/$defs/rejection_reason"
+        }
+      }
+    },
+    "rejection_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "missing_runtime_contract",
+            "missing_public_contract",
+            "missing_predictive_bundle",
+            "missing_metrics",
+            "missing_model_card",
+            "missing_public_context",
+            "missing_manifest_input",
+            "missing_candidate_metadata",
+            "missing_required_artifact",
+            "incomplete_required_artifact",
+            "contradictory_candidate_artifact",
+            "unsafe_candidate_artifact",
+            "dataset_identifier_mismatch",
+            "release_identifier_mismatch",
+            "contract_schema_incompatible",
+            "manifest_input_schema_incompatible",
+            "metrics_schema_incompatible",
+            "model_card_schema_incompatible",
+            "candidate_metadata_schema_incompatible",
+            "raw_logs_requested",
+            "raw_runtime_requested",
+            "raw_api_payload_requested",
+            "secret_material_requested",
+            "sensitive_local_path_requested"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_role": {
+          "$ref": "#/$defs/required_artifact_role"
+        },
+        "safe_detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced detail safe for evidence. Do not include raw logs, raw payloads, runtime data, secrets, raw file contents, or sensitive local paths."
+        }
+      }
+    }
+  }
+}

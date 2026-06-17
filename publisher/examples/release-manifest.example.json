@@ -1,0 +1,108 @@
+{
+  "schema_version": "release-manifest.v1",
+  "manifest_kind": "release_manifest",
+  "dataset_identity": {
+    "dataset_slug": "example-dataset",
+    "dataset_title": "Example Dataset"
+  },
+  "release_identity": {
+    "release_id": "example-dataset-2026.06.17",
+    "release_version": "2026.06.17",
+    "created_at": "2026-06-17T00:00:00Z"
+  },
+  "artifacts": [
+    {
+      "role": "contracts",
+      "reference": "contracts/runtime-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "1111111111111111111111111111111111111111111111111111111111111111",
+      "media_type": "application/json",
+      "required": true
+    },
+    {
+      "role": "predictive_bundle",
+      "reference": "bundles/model-bundle.tar.gz",
+      "hash_algorithm": "sha256",
+      "hash_value": "2222222222222222222222222222222222222222222222222222222222222222",
+      "media_type": "application/gzip",
+      "required": true
+    },
+    {
+      "role": "metrics",
+      "reference": "metrics/model-metrics.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "3333333333333333333333333333333333333333333333333333333333333333",
+      "media_type": "application/json",
+      "required": true
+    },
+    {
+      "role": "model_card",
+      "reference": "docs/model-card.md",
+      "hash_algorithm": "sha256",
+      "hash_value": "4444444444444444444444444444444444444444444444444444444444444444",
+      "media_type": "text/markdown",
+      "required": true
+    },
+    {
+      "role": "public_context",
+      "reference": "context/public-context.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "5555555555555555555555555555555555555555555555555555555555555555",
+      "media_type": "application/json",
+      "required": true
+    },
+    {
+      "role": "manifest_input",
+      "reference": "publisher/manifest-input.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "6666666666666666666666666666666666666666666666666666666666666666",
+      "media_type": "application/json",
+      "required": true
+    },
+    {
+      "role": "candidate_metadata",
+      "reference": "metadata/release-candidate.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "7777777777777777777777777777777777777777777777777777777777777777",
+      "media_type": "application/json",
+      "required": true
+    }
+  ],
+  "required_hash_coverage": {
+    "hash_algorithm": "sha256",
+    "required_artifact_roles": [
+      "contracts",
+      "predictive_bundle",
+      "metrics",
+      "model_card",
+      "public_context",
+      "manifest_input",
+      "candidate_metadata"
+    ],
+    "missing_required_hashes_reject_manifest": true
+  },
+  "validation_policy": {
+    "missing_schema_version_rejects": true,
+    "missing_required_hash_rejects": true,
+    "dataset_identity_mismatch_rejects": true,
+    "release_identity_mismatch_rejects": true,
+    "unsafe_reference_rejects": true
+  },
+  "safety_boundaries": {
+    "raw_artifact_contents_embedded": false,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "sensitive_local_paths_persisted": false,
+    "unstable_temporary_paths_persisted": false,
+    "hash_calculation_implemented": false,
+    "signing_or_key_management_implemented": false,
+    "storage_migration_implemented": false,
+    "runtime_loading_implemented": false,
+    "public_endpoint_exposed": false,
+    "release_promoted": false,
+    "registry_updated": false,
+    "github_publication_performed": false
+  }
+}

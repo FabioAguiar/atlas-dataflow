@@ -1,0 +1,115 @@
+{
+  "_artifact_note": "Demonstration artifact. This confirmation applies only to the demonstration runtime contract example while the first production dataset remains unconfirmed. It is not production validation evidence and must not promote any example contract to an active release without an explicit future promotion decision.",
+  "artifact_type": "structural_validation_confirmation",
+  "schema_version": "1.0.0",
+  "subject": {
+    "path": "contracts/examples/runtime-contract.example.json",
+    "artifact_role": "demonstration_runtime_contract_example"
+  },
+  "schema_reference": {
+    "path": "contracts/runtime-contract.schema.json",
+    "artifact_role": "runtime_contract_schema",
+    "read_only": true
+  },
+  "derivation_method": "analytical",
+  "execution_performed": false,
+  "validation_scope": {
+    "schema": "M4-01 runtime contract schema",
+    "ruleset": "M4-03 structural validation rules",
+    "runtime_contract_example_status": "demonstration_only"
+  },
+  "constraint_checks": [
+    {
+      "check_id": "schema_version_required",
+      "schema_constraint": "Top-level schema_version is required and must be a string matching semantic version format.",
+      "observed_value": "1.0.0",
+      "match": true
+    },
+    {
+      "check_id": "features_required_non_empty_array",
+      "schema_constraint": "Top-level features is required and must be an array with at least one item.",
+      "observed_feature_count": 3,
+      "match": true
+    },
+    {
+      "check_id": "feature_age_shape",
+      "schema_constraint": "Feature entries must include a non-empty name, an allowed type, and type-compatible optional domain_constraints.",
+      "observed_feature": {
+        "name": "age",
+        "type": "numeric",
+        "required": true,
+        "domain_constraints_shape": "numeric_min_max"
+      },
+      "match": true
+    },
+    {
+      "check_id": "feature_education_level_shape",
+      "schema_constraint": "Feature entries must include a non-empty name, an allowed type, and type-compatible optional domain_constraints.",
+      "observed_feature": {
+        "name": "education_level",
+        "type": "categorical",
+        "required": true,
+        "domain_constraints_shape": "categorical_values"
+      },
+      "match": true
+    },
+    {
+      "check_id": "feature_employed_shape",
+      "schema_constraint": "Boolean features must omit domain_constraints.",
+      "observed_feature": {
+        "name": "employed",
+        "type": "boolean",
+        "required": false,
+        "domain_constraints_shape": "absent"
+      },
+      "match": true
+    },
+    {
+      "check_id": "top_level_additional_properties",
+      "schema_constraint": "Top-level properties are limited to schema_version, features, and optional _example_note.",
+      "observed_top_level_properties": [
+        "_example_note",
+        "schema_version",
+        "features"
+      ],
+      "match": true
+    },
+    {
+      "check_id": "feature_additional_properties",
+      "schema_constraint": "Feature properties are limited to name, type, required, description, and domain_constraints where allowed by feature type.",
+      "observed_feature_property_sets": [
+        {
+          "feature": "age",
+          "properties": [
+            "name",
+            "type",
+            "required",
+            "description",
+            "domain_constraints"
+          ]
+        },
+        {
+          "feature": "education_level",
+          "properties": [
+            "name",
+            "type",
+            "required",
+            "description",
+            "domain_constraints"
+          ]
+        },
+        {
+          "feature": "employed",
+          "properties": [
+            "name",
+            "type",
+            "required",
+            "description"
+          ]
+        }
+      ],
+      "match": true
+    }
+  ],
+  "outcome": "PASS"
+}

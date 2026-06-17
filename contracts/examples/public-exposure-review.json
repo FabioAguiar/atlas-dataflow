@@ -1,0 +1,89 @@
+{
+  "_artifact_note": "Demonstration artifact. This review applies only to the demonstration public contract example while the first production dataset remains unconfirmed. It is not production release evidence and must not promote any example contract to an active public contract without an explicit future promotion decision.",
+  "artifact_type": "public_exposure_review",
+  "schema_version": "1.0.0",
+  "reviewed_artifact": {
+    "path": "contracts/examples/public-contract.example.json",
+    "artifact_role": "demonstration_public_contract_example"
+  },
+  "review_method": "analytical",
+  "execution_performed": false,
+  "exclusion_rules": [
+    {
+      "rule_id": "exclude_domain_constraints",
+      "excluded_field_class": "domain_constraints key or value",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_numeric_bounds",
+      "excluded_field_class": "numeric min or max bounds",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_categorical_values",
+      "excluded_field_class": "categorical values lists",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_inference_specific_fields",
+      "excluded_field_class": "inference-specific fields not present in public-contract.schema.json",
+      "result": "absent_from_reviewed_artifact"
+    }
+  ],
+  "allowed_public_feature_fields": [
+    "name",
+    "label",
+    "input_type",
+    "optional",
+    "display_order",
+    "description"
+  ],
+  "per_feature_observations": [
+    {
+      "feature": "age",
+      "observed_fields": [
+        "name",
+        "label",
+        "input_type",
+        "optional",
+        "display_order",
+        "description"
+      ],
+      "excluded_fields_observed": false
+    },
+    {
+      "feature": "education_level",
+      "observed_fields": [
+        "name",
+        "label",
+        "input_type",
+        "optional",
+        "display_order",
+        "description"
+      ],
+      "excluded_fields_observed": false
+    },
+    {
+      "feature": "employed",
+      "observed_fields": [
+        "name",
+        "label",
+        "input_type",
+        "optional",
+        "display_order",
+        "description"
+      ],
+      "excluded_fields_observed": false
+    }
+  ],
+  "non_exposure_confirmations": {
+    "domain_constraints_exposed": false,
+    "numeric_bounds_exposed": false,
+    "categorical_value_lists_exposed": false,
+    "inference_specific_fields_exposed": false,
+    "internal_paths_exposed": false,
+    "raw_runtime_data_exposed": false,
+    "secrets_exposed": false
+  },
+  "outcome": "PASS"
+}

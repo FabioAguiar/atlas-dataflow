@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/publisher/promotion/promotion-rules.schema.json",
+  "title": "Atlas DataFlow Promotion Rules",
+  "description": "Internal publisher promotion operation contract for the first public cycle. Defines the preconditions required before a release candidate may be promoted, the minimum release state vocabulary, overwrite prevention rules, and the safe registry update authorization boundary. This schema does not implement registry write operations, hash calculation, signing, queues, workers, databases, public endpoints, or web administration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "promotion_kind",
+    "candidate_identity",
+    "preconditions",
+    "release_state_transition",
+    "overwrite_prevention",
+    "registry_update_authorization",
+    "evidence_safety",
+    "promotion_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "promotion-rules.v1"
+    },
+    "promotion_kind": {
+      "type": "string",
+      "const": "explicit_publisher_promotion",
+      "description": "Distinguishes this promotion contract from a pipeline run, a direct registry write, or a public administration event."
+    },
+    "candidate_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "release_id",
+        "release_version"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier copied from the release candidate. It must not be inferred from a local path."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Stable release identifier copied from the release candidate. It must not be inferred from a local path."
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "preconditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completeness_validation_outcome",
+        "manifest_valid",
+        "all_required_hashes_present",
+        "candidate_state_is_valid",
+        "all_preconditions_met"
+      ],
+      "description": "All preconditions must be satisfied before the promotion operation may proceed. If any precondition is false, promotion must not occur.",
+      "properties": {
+        "completeness_validation_outcome": {
+          "type": "string",
+          "const": "accepted",
+          "description": "The release candidate completeness validation must have reached outcome 'accepted' per the release-candidate-validation schema. A candidate with validation_outcome 'rejected' cannot be promoted."
+        },
+        "manifest_valid": {
+          "type": "boolean",
+          "const": true,
+          "description": "The release manifest must be structurally valid per the release-manifest schema and must carry all required fields including schema_version, dataset_identity, and release_identity."
+        },
+        "all_required_hashes_present": {
+          "type": "boolean",
+          "const": true,
+          "description": "All required artifact roles in the release manifest must carry a valid sha256 hash value. A manifest with missing or invalid required hashes cannot be promoted."
+        },
+        "candidate_state_is_valid": {
+          "type": "boolean",
+          "const": true,
+          "description": "The candidate must be in 'candidate' state. Candidates already in 'rejected', 'promoted', or 'published' state cannot be re-promoted through this operation."
+        },
+        "all_preconditions_met": {
+          "type": "boolean",
+          "const": true,
+          "description": "Summary gate. Must be true only when all individual preconditions are satisfied. Promotion must not proceed if this is false."
+        }
+      }
+    },
+    "release_state_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from_state",
+        "to_state",
+        "release_states"
+      ],
+      "description": "Defines the valid state transition for a promotion operation and the minimum release state vocabulary.",
+      "properties": {
+        "from_state": {
+          "type": "string",
+          "const": "candidate",
+          "description": "The promotion operation accepts only a release in 'candidate' state."
+        },
+        "to_state": {
+          "type": "string",
+          "const": "promoted",
+          "description": "After a successful promotion operation the release moves to 'promoted' state and becomes the active release in the registry."
+        },
+        "release_states": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidate",
+            "rejected",
+            "promoted",
+            "published"
+          ],
+          "description": "Minimum release state vocabulary. States are defined only where they clarify the publisher promotion flow. A complex state machine is not required.",
+          "properties": {
+            "candidate": {
+              "type": "string",
+              "const": "Assembled and submitted to the publisher for completeness validation. Not yet accepted, rejected, or promoted.",
+              "description": "State meaning: assembled release package awaiting publisher validation."
+            },
+            "rejected": {
+              "type": "string",
+              "const": "Completeness validation failed. The candidate did not meet all required preconditions. It cannot be promoted without reassembly and resubmission.",
+              "description": "State meaning: failed publisher completeness validation; promotion is blocked."
+            },
+            "promoted": {
+              "type": "string",
+              "const": "All preconditions passed. The publisher executed the promotion operation and the release is now the active release in the registry for its dataset.",
+              "description": "State meaning: active release in the file-based registry after successful promotion."
+            },
+            "published": {
+              "type": "string",
+              "const": "Promoted state confirmed by public runtime resolution. The release has been successfully consumed by at least one public runtime resolution cycle.",
+              "description": "State meaning: promoted release confirmed by public runtime; consumed by the public surface."
+            }
+          }
+        }
+      }
+    },
+    "overwrite_prevention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previous_active_release_id",
+        "previous_release_preserved",
+        "silent_overwrite_prevented",
+        "promoted_release_not_re_promoted"
+      ],
+      "description": "Rules that prevent silent overwrite of existing releases and ensure previous release references remain available after promotion.",
+      "properties": {
+        "previous_active_release_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release_id that was active in the registry before this promotion, or null if this is the first promotion for the dataset. Must be explicitly recorded in the promotion result; must not be discarded."
+        },
+        "previous_release_preserved": {
+          "type": "boolean",
+          "const": true,
+          "description": "The previous active release package must remain available in its storage location after promotion. Promotion does not delete or overwrite the previous release package."
+        },
+        "silent_overwrite_prevented": {
+          "type": "boolean",
+          "const": true,
+          "description": "The promotion operation must explicitly record the previous active_release_id before updating the registry. A silent replacement that discards the previous release reference is rejected."
+        },
+        "promoted_release_not_re_promoted": {
+          "type": "boolean",
+          "const": true,
+          "description": "A release already in 'promoted' or 'published' state must not be silently replaced through a second promotion of the same release_id. Re-promotion requires an explicit corrective operation outside this schema."
+        }
+      }
+    },
+    "registry_update_authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_release_update_through_promotion_only",
+        "direct_registry_write_authorized",
+        "file_based_validity_preserved",
+        "one_active_release_per_dataset"
+      ],
+      "description": "Rules governing how the file-based registry may have its active_release field updated. The active release may only change through a controlled promotion operation.",
+      "properties": {
+        "active_release_update_through_promotion_only": {
+          "type": "boolean",
+          "const": true,
+          "description": "The active_release field in the registry may only be changed by a controlled promotion operation. Manual or silent writes to active_release are not authorized."
+        },
+        "direct_registry_write_authorized": {
+          "type": "boolean",
+          "const": false,
+          "description": "Direct manual edits to the registry active_release field outside the promotion operation are not authorized by this schema."
+        },
+        "file_based_validity_preserved": {
+          "type": "boolean",
+          "const": true,
+          "description": "After any promotion-driven active_release update the registry file must remain structurally valid per the published-dataset-registry schema."
+        },
+        "one_active_release_per_dataset": {
+          "type": "boolean",
+          "const": true,
+          "description": "The first public cycle supports exactly one active release per dataset. The promotion operation replaces the previous active release reference rather than appending a second active release."
+        }
+      }
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "sensitive_local_paths_persisted",
+        "raw_file_contents_persisted",
+        "raw_artifact_contents_embedded"
+      ],
+      "description": "Promotion result evidence must be reduced and sanitized. No raw operational material may be persisted.",
+      "properties": {
+        "reduced_evidence_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "sensitive_local_paths_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_file_contents_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_artifact_contents_embedded": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "promotion_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_write_implemented",
+        "hash_calculation_implemented",
+        "signing_or_key_management_implemented",
+        "queue_required",
+        "worker_required",
+        "database_required",
+        "public_endpoint_exposed",
+        "web_administration_required",
+        "concurrent_multi_user_management_required",
+        "github_mutation_performed"
+      ],
+      "description": "Operations that are explicitly excluded from this promotion contract.",
+      "properties": {
+        "registry_write_implemented": {
+          "type": "boolean",
+          "const": false,
+          "description": "This schema defines promotion rules and does not implement registry write operations."
+        },
+        "hash_calculation_implemented": {
+          "type": "boolean",
+          "const": false
+        },
+        "signing_or_key_management_implemented": {
+          "type": "boolean",
+          "const": false
+        },
+        "queue_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "worker_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "database_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "public_endpoint_exposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "web_administration_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "concurrent_multi_user_management_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "github_mutation_performed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  }
+}

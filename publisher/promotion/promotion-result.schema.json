@@ -1,0 +1,389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/publisher/promotion/promotion-result.schema.json",
+  "title": "Atlas DataFlow Promotion Result",
+  "description": "Internal publisher promotion result contract. Defines the reduced, sanitized evidence shape emitted after a promotion operation completes. The result records what preconditions were verified, which release became active, and what the previous active release was. This schema does not implement registry write operations, hash calculation, signing, queues, workers, databases, public endpoints, or web administration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "result_kind",
+    "candidate_identity",
+    "promotion_outcome",
+    "preconditions_verified",
+    "registry_update_record",
+    "evidence_safety",
+    "promotion_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "promotion-result.v1"
+    },
+    "result_kind": {
+      "type": "string",
+      "const": "promotion_result",
+      "description": "Distinguishes this result record from a release candidate, a manifest, a validation result, or a registry entry."
+    },
+    "candidate_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "release_id",
+        "release_version"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier from the promoted release candidate."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Stable release identifier from the promoted release candidate."
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "promotion_outcome": {
+      "type": "string",
+      "enum": [
+        "promoted",
+        "rejected"
+      ],
+      "description": "Outcome of the promotion operation. 'promoted' when all preconditions were met and the registry active release was updated. 'rejected' when any precondition failed and no registry change was made."
+    },
+    "preconditions_verified": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completeness_validation_outcome",
+        "manifest_valid",
+        "all_required_hashes_present",
+        "candidate_state_was_valid",
+        "all_preconditions_met"
+      ],
+      "description": "Reduced record of precondition checks performed before the promotion decision.",
+      "properties": {
+        "completeness_validation_outcome": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "manifest_valid": {
+          "type": "boolean"
+        },
+        "all_required_hashes_present": {
+          "type": "boolean"
+        },
+        "candidate_state_was_valid": {
+          "type": "boolean"
+        },
+        "all_preconditions_met": {
+          "type": "boolean"
+        },
+        "rejection_reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rejection_reason"
+          }
+        }
+      }
+    },
+    "registry_update_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "update_applied",
+        "new_active_release_id",
+        "previous_active_release_id",
+        "previous_release_preserved"
+      ],
+      "description": "Record of the registry active-release change produced by this promotion, or confirmation that no change was made when the promotion was rejected.",
+      "properties": {
+        "update_applied": {
+          "type": "boolean",
+          "description": "True when the promotion operation successfully updated the registry active_release field. False when the promotion was rejected and no registry change was made."
+        },
+        "new_active_release_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release_id that was set as active_release in the registry after this promotion. Null when promotion was rejected.",
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$"
+        },
+        "previous_active_release_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The release_id that was active in the registry before this promotion, or null if no previous active release existed. Must always be explicitly recorded; must not be discarded.",
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$"
+        },
+        "previous_release_preserved": {
+          "type": "boolean",
+          "const": true,
+          "description": "Confirmation that the previous active release package remains available in its storage location and was not deleted or overwritten by this promotion."
+        },
+        "promoted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the moment the promotion operation completed. Only present when update_applied is true."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "update_applied": {
+                "const": true
+              }
+            },
+            "required": [
+              "update_applied"
+            ]
+          },
+          "then": {
+            "required": [
+              "promoted_at"
+            ],
+            "properties": {
+              "new_active_release_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "update_applied": {
+                "const": false
+              }
+            },
+            "required": [
+              "update_applied"
+            ]
+          },
+          "then": {
+            "properties": {
+              "new_active_release_id": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "sensitive_local_paths_persisted",
+        "raw_file_contents_persisted",
+        "raw_artifact_contents_embedded"
+      ],
+      "properties": {
+        "reduced_evidence_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "sensitive_local_paths_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_file_contents_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_artifact_contents_embedded": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "promotion_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_write_implemented",
+        "hash_calculation_implemented",
+        "signing_or_key_management_implemented",
+        "queue_required",
+        "worker_required",
+        "database_required",
+        "public_endpoint_exposed",
+        "web_administration_required",
+        "github_mutation_performed"
+      ],
+      "properties": {
+        "registry_write_implemented": {
+          "type": "boolean",
+          "const": false,
+          "description": "This schema defines the promotion result shape and does not implement registry write operations."
+        },
+        "hash_calculation_implemented": {
+          "type": "boolean",
+          "const": false
+        },
+        "signing_or_key_management_implemented": {
+          "type": "boolean",
+          "const": false
+        },
+        "queue_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "worker_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "database_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "public_endpoint_exposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "web_administration_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "github_mutation_performed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "promotion_outcome": {
+            "const": "promoted"
+          }
+        },
+        "required": [
+          "promotion_outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "preconditions_verified": {
+            "properties": {
+              "all_preconditions_met": {
+                "const": true
+              }
+            }
+          },
+          "registry_update_record": {
+            "properties": {
+              "update_applied": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "promotion_outcome": {
+            "const": "rejected"
+          }
+        },
+        "required": [
+          "promotion_outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "preconditions_verified": {
+            "properties": {
+              "all_preconditions_met": {
+                "const": false
+              },
+              "rejection_reasons": {
+                "minItems": 1
+              }
+            }
+          },
+          "registry_update_record": {
+            "properties": {
+              "update_applied": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "rejection_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "completeness_validation_not_accepted",
+            "manifest_invalid",
+            "required_hash_missing",
+            "candidate_state_invalid",
+            "precondition_not_met"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sanitized message safe for evidence. Must not include raw logs, runtime data, secrets, sensitive local paths, or raw artifact contents."
+        },
+        "safe_detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional reduced detail safe for evidence. Must not include raw logs, runtime data, secrets, or sensitive local paths."
+        }
+      }
+    }
+  }
+}

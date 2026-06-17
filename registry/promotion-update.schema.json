@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/registry/promotion-update.schema.json",
+  "title": "Atlas DataFlow Registry Promotion Update",
+  "description": "Safe registry active-release update contract for the first public cycle. Defines the inputs and rules required to change the active_release field in the file-based registry through a controlled promotion operation. Direct writes to active_release outside the promotion path are not authorized by this contract. This schema does not implement registry write logic, hash calculation, signing, queues, workers, databases, public endpoints, or web administration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "update_kind",
+    "target_dataset",
+    "incoming_release_id",
+    "previous_active_release_id",
+    "update_rules",
+    "evidence_safety",
+    "update_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "registry-promotion-update.v1"
+    },
+    "update_kind": {
+      "type": "string",
+      "const": "promotion_driven_active_release_update",
+      "description": "Distinguishes this controlled registry update from a direct write, a manual edit, or a public administration event."
+    },
+    "target_dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier from the registry entry being updated. Must match an existing dataset_slug in the registry."
+        }
+      }
+    },
+    "incoming_release_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "description": "The release_id that will become the new active_release for the target dataset. Must have passed all promotion preconditions per the promotion-rules schema."
+    },
+    "previous_active_release_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "description": "The release_id that was active in the registry before this update, or null if the dataset has no previous active release. Must be explicitly recorded; must not be discarded or overwritten silently."
+    },
+    "update_rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_release_update_through_promotion_only",
+        "direct_registry_write_authorized",
+        "file_based_validity_preserved_before_update",
+        "file_based_validity_preserved_after_update",
+        "previous_release_reference_recorded",
+        "silent_overwrite_prevented",
+        "one_active_release_per_dataset"
+      ],
+      "description": "Rules that must be satisfied for this registry update to be considered safe.",
+      "properties": {
+        "active_release_update_through_promotion_only": {
+          "type": "boolean",
+          "const": true,
+          "description": "The active_release field in the registry may only be changed by a promotion operation that has verified all preconditions per the promotion-rules schema."
+        },
+        "direct_registry_write_authorized": {
+          "type": "boolean",
+          "const": false,
+          "description": "Direct manual writes to active_release outside the controlled promotion path are not authorized."
+        },
+        "file_based_validity_preserved_before_update": {
+          "type": "boolean",
+          "const": true,
+          "description": "The registry file must pass structural validation per the published-dataset-registry schema before the active_release field is updated."
+        },
+        "file_based_validity_preserved_after_update": {
+          "type": "boolean",
+          "const": true,
+          "description": "The registry file must pass structural validation per the published-dataset-registry schema after the active_release field is updated."
+        },
+        "previous_release_reference_recorded": {
+          "type": "boolean",
+          "const": true,
+          "description": "The previous_active_release_id must be explicitly recorded in the promotion result before the registry update is applied. It must not be discarded."
+        },
+        "silent_overwrite_prevented": {
+          "type": "boolean",
+          "const": true,
+          "description": "The promotion operation must record the previous active_release_id before applying the update. A silent replacement that discards the previous release reference is rejected."
+        },
+        "one_active_release_per_dataset": {
+          "type": "boolean",
+          "const": true,
+          "description": "Each dataset has exactly one active_release at any time for the first public cycle. The update replaces the existing active_release value rather than adding a second one."
+        }
+      }
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "sensitive_local_paths_persisted",
+        "raw_file_contents_persisted"
+      ],
+      "properties": {
+        "reduced_evidence_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "sensitive_local_paths_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_file_contents_persisted": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "update_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registry_write_implemented",
+        "concurrent_write_supported",
+        "queue_required",
+        "worker_required",
+        "database_required",
+        "public_endpoint_exposed",
+        "web_administration_required",
+        "github_mutation_performed"
+      ],
+      "description": "Operations that are explicitly excluded from this registry update contract.",
+      "properties": {
+        "registry_write_implemented": {
+          "type": "boolean",
+          "const": false,
+          "description": "This schema defines the registry update contract and does not implement registry write logic."
+        },
+        "concurrent_write_supported": {
+          "type": "boolean",
+          "const": false,
+          "description": "Concurrent multi-user registry writes are not supported in the first public cycle. The update assumes a single-user-at-a-time promotion flow."
+        },
+        "queue_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "worker_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "database_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "public_endpoint_exposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "web_administration_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "github_mutation_performed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  }
+}

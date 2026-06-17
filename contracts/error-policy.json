@@ -1,0 +1,155 @@
+{
+  "artifact_type": "error_policy",
+  "contract_version": "error_policy.v1",
+  "description": "Defines the minimum contract error policy for the public runtime API. Covers all foreseeable failure categories. Responses are structured, machine-readable, and non-leaking. Derived from the operational decisions of M4-04.",
+  "error_response_shape": {
+    "description": "All error responses from the runtime API are structured JSON objects. The fields below are the minimum required shape for every error response regardless of category.",
+    "required_fields": [
+      {
+        "field": "error_type",
+        "type": "string",
+        "enum": ["contract_error", "validation_error"],
+        "description": "Distinguishes contract-layer failures from payload validation failures. The web experience uses this field to select the appropriate UX flow."
+      },
+      {
+        "field": "error_code",
+        "type": "string",
+        "description": "Machine-readable identifier for the specific failure category. See contract_error_categories and validation_error_categories for the bounded enum per error_type."
+      },
+      {
+        "field": "message",
+        "type": "string",
+        "description": "Human-readable description of the failure category. Must communicate the violation category only. Must not reproduce specific contract internal values (see non_leaking_constraints)."
+      }
+    ],
+    "validation_error_additional_fields": [
+      {
+        "field": "field",
+        "type": "string",
+        "required": false,
+        "description": "The name of the contract feature that failed validation. Present for error_type 'validation_error'. Omitted for error_type 'contract_error'."
+      },
+      {
+        "field": "violation",
+        "type": "string",
+        "enum": ["missing_required_field", "type_mismatch", "domain_violation"],
+        "required": false,
+        "description": "Machine-readable violation category for this specific field failure. Present for error_type 'validation_error'. Omitted for error_type 'contract_error'."
+      }
+    ],
+    "notes": "For contract errors (error_type: 'contract_error'), no field-level detail is included. For payload validation errors (error_type: 'validation_error'), the field and violation properties may be included to allow the web experience to display actionable feedback."
+  },
+  "non_leaking_constraints": {
+    "prohibited_in_any_response": [
+      "internal contract file paths",
+      "model bundle locations",
+      "domain_constraints values (min/max numeric bounds, categorical accepted values lists)",
+      "stack traces",
+      "exception messages",
+      "internal service hostnames or port numbers",
+      "filesystem paths of any kind"
+    ],
+    "message_field_rule": "The message field communicates the violation category only. It must not reproduce specific constraint values from the contract. For example, a domain violation message may say 'Value is outside the accepted domain for this feature' but must not include the specific min/max bounds or the accepted values list. The web experience must fetch accepted values from the public contract rendering hints, not from error responses.",
+    "field_field_rule": "The field property may include the feature name that failed (e.g., 'age', 'education_level'). The feature name is not considered internal contract data — it is the payload key the caller used. Including it is required for actionable error feedback.",
+    "source": "C-M4-04-02; D-M4-04-07"
+  },
+  "distinguishability_requirement": "Contract errors and payload validation errors must be distinguishable by the error_type field. The web experience handles them with different UX flows: contract errors indicate a system-level problem (no model available, service degraded) that cannot be resolved by changing the payload; validation errors indicate a payload problem that the caller can resolve by correcting their input.",
+  "contract_error_categories": [
+    {
+      "error_code": "NO_ACTIVE_RELEASE",
+      "error_type": "contract_error",
+      "http_status": 404,
+      "meaning": "No published release exists for the requested dataset. The API cannot serve inference requests for this dataset because no active contract has been published.",
+      "field_level_detail_included": false,
+      "example_response": {
+        "error_type": "contract_error",
+        "error_code": "NO_ACTIVE_RELEASE",
+        "message": "No active release is available for this dataset."
+      }
+    },
+    {
+      "error_code": "CONTRACT_INVALID",
+      "error_type": "contract_error",
+      "http_status": 500,
+      "meaning": "The active release's contract file fails structural validation when the API attempts to load it at request time. This is a defensive check complementing the M4-03 publisher-time gate. If reached, it indicates an unexpected internal inconsistency requiring operator attention.",
+      "field_level_detail_included": false,
+      "example_response": {
+        "error_type": "contract_error",
+        "error_code": "CONTRACT_INVALID",
+        "message": "The active contract for this dataset is internally inconsistent and cannot be used."
+      }
+    },
+    {
+      "error_code": "CONTRACT_UNAVAILABLE",
+      "error_type": "contract_error",
+      "http_status": 503,
+      "meaning": "The contract file for the active release cannot be read due to a filesystem or I/O error. This is a transient condition that may resolve on retry.",
+      "field_level_detail_included": false,
+      "example_response": {
+        "error_type": "contract_error",
+        "error_code": "CONTRACT_UNAVAILABLE",
+        "message": "The active contract for this dataset is temporarily unavailable."
+      }
+    },
+    {
+      "error_code": "CONTRACT_LOAD_FAILED",
+      "error_type": "contract_error",
+      "http_status": 500,
+      "meaning": "Catch-all for unexpected contract load failures not matching the three primary categories (NO_ACTIVE_RELEASE, CONTRACT_INVALID, CONTRACT_UNAVAILABLE). Ensures the error policy covers the complete failure surface with no undefined categories.",
+      "field_level_detail_included": false,
+      "example_response": {
+        "error_type": "contract_error",
+        "error_code": "CONTRACT_LOAD_FAILED",
+        "message": "An unexpected error occurred while loading the contract for this dataset."
+      }
+    }
+  ],
+  "validation_error_categories": [
+    {
+      "error_code": "MISSING_REQUIRED_FIELD",
+      "error_type": "validation_error",
+      "http_status": 422,
+      "violation": "missing_required_field",
+      "meaning": "A contract feature with required: true (explicit or by default) has no corresponding key in the inference payload.",
+      "field_level_detail_included": true,
+      "example_response": {
+        "error_type": "validation_error",
+        "error_code": "MISSING_REQUIRED_FIELD",
+        "message": "A required field is missing from the inference payload.",
+        "field": "age",
+        "violation": "missing_required_field"
+      }
+    },
+    {
+      "error_code": "TYPE_MISMATCH",
+      "error_type": "validation_error",
+      "http_status": 422,
+      "violation": "type_mismatch",
+      "meaning": "A payload field is present but its JSON value type is incompatible with the contract feature type. Includes the case where the payload field value is JSON null, which fails type compatibility for all three feature types.",
+      "field_level_detail_included": true,
+      "example_response": {
+        "error_type": "validation_error",
+        "error_code": "TYPE_MISMATCH",
+        "message": "The value provided for this field is not the expected type.",
+        "field": "age",
+        "violation": "type_mismatch"
+      }
+    },
+    {
+      "error_code": "DOMAIN_VIOLATION",
+      "error_type": "validation_error",
+      "http_status": 422,
+      "violation": "domain_violation",
+      "meaning": "A payload field is present and correctly typed but its value falls outside the domain constraints declared in the runtime contract (numeric out-of-range, or categorical value not in the accepted values list).",
+      "field_level_detail_included": true,
+      "non_leaking_note": "The error response message must not reproduce the accepted values list for categorical features or the min/max bounds for numeric features. The message communicates the violation category only.",
+      "example_response": {
+        "error_type": "validation_error",
+        "error_code": "DOMAIN_VIOLATION",
+        "message": "The value provided for this field is outside the accepted domain.",
+        "field": "education_level",
+        "violation": "domain_violation"
+      }
+    }
+  ]
+}

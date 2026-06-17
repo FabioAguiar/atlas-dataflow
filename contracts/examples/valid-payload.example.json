@@ -1,0 +1,6 @@
+{
+  "_example_note": "Valid inference payload example. Derived from contracts/examples/runtime-contract.example.json. This payload passes all four M4-04 validation phases: Phase 1 (contract available), Phase 2 (required fields age and education_level are present), Phase 3 (age is a JSON integer satisfying the numeric type, education_level is a JSON string, employed is a JSON boolean), Phase 4 (age 35 is within [0, 120], education_level 'secondary' is in the accepted values list, employed is boolean with no domain check). Note: the 'employed' field is optional (required: false) but is included here to demonstrate boolean type acceptance.",
+  "age": 35,
+  "education_level": "secondary",
+  "employed": true
+}

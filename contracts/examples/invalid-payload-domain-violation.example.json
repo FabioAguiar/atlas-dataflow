@@ -1,0 +1,5 @@
+{
+  "_example_note": "Invalid inference payload example: domain constraint violation. Derived from contracts/examples/runtime-contract.example.json. The 'age' field is 35 (valid type JSON integer, valid domain [0, 120]). The 'education_level' field is the JSON string 'doctorate', which is the correct type but is not in the categorical domain values [primary, secondary, tertiary, postgraduate]. Both required fields are present (Phase 2 passes). Both fields are the correct JSON type (Phase 3 passes). Phase 4 fails for 'education_level' because 'doctorate' is not a member of domain_constraints.values. Note: the error response message must not reproduce the accepted values list — it communicates the violation category only (C-M4-04-02, non_leaking_constraints). Expected error response: { error_type: 'validation_error', error_code: 'DOMAIN_VIOLATION', message: 'The value provided for this field is outside the accepted domain.', field: 'education_level', violation: 'domain_violation' }",
+  "age": 35,
+  "education_level": "doctorate"
+}

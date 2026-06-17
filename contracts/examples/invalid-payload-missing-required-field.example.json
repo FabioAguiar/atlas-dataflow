@@ -1,0 +1,4 @@
+{
+  "_example_note": "Invalid inference payload example: missing required field. Derived from contracts/examples/runtime-contract.example.json. The 'age' field (required: true) is omitted. The 'education_level' field is present with a valid type and domain value. The 'employed' field is absent — but 'employed' has required: false, so its absence is correctly skipped by the optional field policy and does not produce an error. This payload fails Phase 2 (required field presence check) for feature 'age'. Expected error response: { error_type: 'validation_error', error_code: 'MISSING_REQUIRED_FIELD', message: 'A required field is missing from the inference payload.', field: 'age', violation: 'missing_required_field' }",
+  "education_level": "secondary"
+}

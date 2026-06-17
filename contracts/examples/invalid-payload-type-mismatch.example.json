@@ -1,0 +1,5 @@
+{
+  "_example_note": "Invalid inference payload example: type mismatch. Derived from contracts/examples/runtime-contract.example.json. The 'age' field is set to the JSON string 'thirty-five' instead of a JSON number. Both required fields are present (Phase 2 passes). Phase 3 fails for 'age' because 'thirty-five' is a JSON string, not a JSON number. Note: a JSON integer (e.g., 35) would satisfy the numeric type requirement and must NOT be used as the wrong-type value here — JSON integers are valid for numeric features (C-M4-04-07). The 'education_level' field is present with a valid type and domain value, so it passes all phases. Expected error response: { error_type: 'validation_error', error_code: 'TYPE_MISMATCH', message: 'The value provided for this field is not the expected type.', field: 'age', violation: 'type_mismatch' }",
+  "age": "thirty-five",
+  "education_level": "secondary"
+}

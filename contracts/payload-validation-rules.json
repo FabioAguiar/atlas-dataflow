@@ -1,0 +1,101 @@
+{
+  "artifact_type": "payload_validation_rules",
+  "contract_version": "payload_validation_rules.v1",
+  "source_schema": "contracts/runtime-contract.schema.json",
+  "description": "Defines the minimum payload validation rules applied by the public runtime API when receiving inference requests. All rules are derived exclusively from the runtime contract schema. Payload validation runs at API request time, after the active runtime contract has been loaded. It is strictly separated from structural contract validation (M4-03), which runs at publisher time.",
+  "check_sequence": [
+    {
+      "phase": 1,
+      "phase_id": "contract_availability_check",
+      "description": "Verify the active runtime contract is available and loadable before processing the payload. If this phase fails, return a contract error response immediately and do not proceed to payload checks.",
+      "checks": [
+        "An active release exists for the requested dataset (no published release triggers NO_ACTIVE_RELEASE).",
+        "The contract file for the active release is readable without filesystem or I/O error (I/O failure triggers CONTRACT_UNAVAILABLE).",
+        "The contract file passes structural validation against contracts/runtime-contract.schema.json on load (structural failure triggers CONTRACT_INVALID)."
+      ],
+      "action_on_failure": "Return a contract error response with the appropriate error_type: 'contract_error' and error_code. Stop — do not proceed to Phase 2.",
+      "notes": "A catch-all category (CONTRACT_LOAD_FAILED) covers any unexpected load failure not matching the three primary categories. See contracts/error-policy.json for the complete contract error category specifications."
+    },
+    {
+      "phase": 2,
+      "phase_id": "required_field_presence_check",
+      "description": "For each contract feature with required: true (explicit) or required absent (defaults to true per contracts/runtime-contract.schema.json properties.required.default), verify the corresponding key exists in the inference payload.",
+      "checks": [
+        "For each contract feature where required is true or absent: the payload must contain a key matching the feature name.",
+        "Features with required: false that are absent from the payload are excluded from this phase entirely (see optional_field_policy)."
+      ],
+      "action_on_failure": "Collect all presence failures across all required features. Return 422 with error_type: 'validation_error', error_code: 'MISSING_REQUIRED_FIELD'. One error entry per failing field.",
+      "notes": "All failures in this phase are collected before returning — do not stop at the first missing field."
+    },
+    {
+      "phase": 3,
+      "phase_id": "type_compatibility_check",
+      "description": "For each payload field that matches a contract feature name, verify the JSON value type is compatible with the declared feature type.",
+      "checks": [
+        "numeric feature: the payload value must be a JSON number. Both JSON integers and JSON floats satisfy the numeric type requirement. JSON strings, booleans, null, objects, and arrays do not.",
+        "categorical feature: the payload value must be a JSON string. JSON numbers, booleans, null, objects, and arrays do not.",
+        "boolean feature: the payload value must be a JSON boolean (true or false). JSON numbers, strings, null, objects, and arrays do not.",
+        "A payload field with value JSON null fails type compatibility for all three feature types."
+      ],
+      "action_on_failure": "Collect all type failures. Return 422 with error_type: 'validation_error', error_code: 'TYPE_MISMATCH'. One error entry per failing field.",
+      "notes": "Unknown payload fields (keys not matching any contract feature name) are silently ignored before and during this phase per the unknown_field_policy. Optional fields that are present in the payload are subject to this check regardless of their required value."
+    },
+    {
+      "phase": 4,
+      "phase_id": "domain_constraint_check",
+      "description": "For each payload field that passed Phase 3 type check, verify the value satisfies the domain constraints declared in the runtime contract for that feature.",
+      "checks": [
+        "numeric feature with domain_constraints.min declared: value must be >= min (inclusive).",
+        "numeric feature with domain_constraints.max declared: value must be <= max (inclusive).",
+        "numeric feature with no domain_constraints, or domain_constraints without min/max: passes automatically.",
+        "categorical feature with domain_constraints.values declared: value must be a member of the values array.",
+        "boolean feature: passes automatically — boolean features have no domain_constraints in the runtime contract schema."
+      ],
+      "action_on_failure": "Collect all domain failures. Return 422 with error_type: 'validation_error', error_code: 'DOMAIN_VIOLATION'. One error entry per failing field.",
+      "notes": "domain_constraints.min and domain_constraints.max are both optional for numeric features — only bounds that are explicitly declared in the contract are checked. Domain checks apply only to fields that have already passed Phase 3 type checks."
+    }
+  ],
+  "policies": {
+    "optional_field_policy": {
+      "rule": "If a contract feature has required: false and the corresponding field is absent from the inference payload, skip all validation for that field entirely. Presence, type, and domain checks are not applied to an absent optional field. If the field is present in the payload (regardless of its required value), apply Phase 3 type checks and Phase 4 domain checks.",
+      "source": "D-M4-04-01",
+      "rationale": "Prevents false positives for genuinely optional features. No default values are declared in the runtime contract schema, so there is no basis for applying type or domain checks to absent values."
+    },
+    "unknown_field_policy": {
+      "rule": "Fields in the inference payload whose keys do not match any feature name in the active runtime contract are silently ignored. They do not cause a validation failure and are not referenced in error responses.",
+      "source": "D-M4-04-03",
+      "rationale": "The inference engine selects only known contract features by name. Silent ignore allows future contract additions without breaking existing clients."
+    },
+    "null_value_policy": {
+      "rule": "A payload field that is present with a JSON null value is treated as a present field and undergoes Phase 3 type compatibility checks. JSON null fails type compatibility for all three feature types: null is not a JSON number (fails numeric), not a JSON string (fails categorical), and not a JSON boolean (fails boolean). The resulting error response uses error_type: 'validation_error', error_code: 'TYPE_MISMATCH', violation: 'type_mismatch'.",
+      "source": "D-M4-04-08",
+      "rationale": "The optional field policy applies only to absent fields. A present null value is not absent — it is a present value of an incompatible type."
+    },
+    "size_limit_policy": {
+      "rule": "No hard byte-level payload size limit is enforced at the API application layer in the first cycle. Byte-level enforcement is deferred to the infrastructure layer (reverse proxy, load balancer). The logical minimum content requirement — that required features must be present — is enforced by Phase 2 required field presence checks.",
+      "source": "D-M4-04-04",
+      "rationale": "A hard byte limit requires proportional analysis tied to the number of contract features and value sizes, which is not available at the first cycle formalization stage."
+    }
+  },
+  "type_compatibility": {
+    "numeric": {
+      "feature_type": "numeric",
+      "accepts": "JSON number — both integers (e.g., 35) and floats (e.g., 35.5) satisfy the numeric type requirement. A JSON integer is a valid numeric value.",
+      "rejects": "JSON string, JSON boolean, JSON null, JSON object, JSON array",
+      "source_schema_property": "contracts/runtime-contract.schema.json definitions.feature if/then: type 'numeric' → payload value must be JSON number",
+      "notes": "Rejecting JSON integers for numeric features is a false positive (C-M4-04-07). The type check is: payload value is a JSON number (integer or float). It is not: payload value is a JSON float only."
+    },
+    "categorical": {
+      "feature_type": "categorical",
+      "accepts": "JSON string",
+      "rejects": "JSON number, JSON boolean, JSON null, JSON object, JSON array",
+      "source_schema_property": "contracts/runtime-contract.schema.json definitions.feature else/if: type 'categorical' → payload value must be JSON string"
+    },
+    "boolean": {
+      "feature_type": "boolean",
+      "accepts": "JSON boolean (true or false)",
+      "rejects": "JSON number, JSON string, JSON null, JSON object, JSON array",
+      "source_schema_property": "contracts/runtime-contract.schema.json definitions.feature else/else: type 'boolean' → payload value must be JSON boolean"
+    }
+  }
+}

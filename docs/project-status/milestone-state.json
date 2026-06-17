@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M5",
-    "title": "Internal Publisher and Release Candidate",
+    "id": "M6",
+    "title": "Inference Runtime by Dataset and Active Release",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M4",
-    "title": "Contracts and Contract-First Validation",
+    "id": "M5",
+    "title": "Internal Publisher and Release Candidate",
     "status": "completed"
   },
   "completed_milestones": [
@@ -47,6 +47,11 @@
       "id": "M4",
       "title": "Contracts and Contract-First Validation",
       "status": "completed"
+    },
+    {
+      "id": "M5",
+      "title": "Internal Publisher and Release Candidate",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -68,6 +73,11 @@
     {
       "id": "M4",
       "title": "Contracts and Contract-First Validation",
+      "status": "locked"
+    },
+    {
+      "id": "M5",
+      "title": "Internal Publisher and Release Candidate",
       "status": "locked"
     }
   ],
@@ -119,12 +129,12 @@
     {
       "id": "M5",
       "title": "Internal Publisher and Release Candidate",
-      "status": "active"
+      "status": "completed"
     },
     {
       "id": "M6",
       "title": "Inference Runtime by Dataset and Active Release",
-      "status": "planned"
+      "status": "active"
     },
     {
       "id": "M7",
@@ -154,16 +164,16 @@
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M5 is the current active milestone for internal publisher and release candidate work in Atlas DataFlow.",
-    "M4 is marked as completed because the contracts and contract-first validation cycle has been completed.",
-    "M1, M2, M3, and M4 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M5 should be validated against docs/milestones.md before workflow continuation.",
+    "M6 is the current active milestone for inference runtime by dataset and active release in Atlas DataFlow.",
+    "M5 is marked as completed because the internal publisher and release candidate cycle has been completed.",
+    "M1, M2, M3, M4, and M5 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M6 should be validated against docs/milestones.md before workflow continuation.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "The current milestone points to M5 because the next implementation focus is the internal publisher and release candidate."
+    "The current milestone points to M6 because the next implementation focus is inference runtime by dataset and active release."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

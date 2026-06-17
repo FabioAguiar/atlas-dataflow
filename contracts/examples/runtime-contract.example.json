@@ -1,0 +1,31 @@
+{
+  "_example_note": "Demonstration artifact. This example does not represent a specific real dataset. It is provided to verify the runtime contract schema structure, demonstrate all three field types (numeric, categorical, boolean), and illustrate both domain constraint shapes (range and value list). The first real dataset contract will replace this example when the dataset is confirmed.",
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "age",
+      "type": "numeric",
+      "required": true,
+      "description": "Age of the subject in years.",
+      "domain_constraints": {
+        "min": 0,
+        "max": 120
+      }
+    },
+    {
+      "name": "education_level",
+      "type": "categorical",
+      "required": true,
+      "description": "Highest completed level of education.",
+      "domain_constraints": {
+        "values": ["primary", "secondary", "tertiary", "postgraduate"]
+      }
+    },
+    {
+      "name": "employed",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether the subject is currently employed. Optional feature — may be absent from inference payloads without triggering validation failure."
+    }
+  ]
+}

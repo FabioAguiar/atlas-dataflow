@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Runtime Contract",
+  "description": "Minimum runtime contract schema for Atlas DataFlow. Defines the accepted inference features, their types, domain constraints, and schema version for a published dataset release. This is the source of truth for payload validation and inference. It does not contain public-facing rendering hints, UI labels, display ordering, or input type hints — those belong exclusively to the public contract (M4-02).",
+  "type": "object",
+  "required": ["schema_version", "features"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Schema version identifier in MAJOR.MINOR.PATCH semantic version format (e.g., \"1.0.0\"). Required. Stable and explicit — not a timestamp, file hash, or implicit value. Used by M4-03 structural validation to detect version incompatibilities. The first cycle uses \"1.0.0\"."
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Non-empty list of accepted inference features. Each feature declares its identifier, type, optional payload presence requirement, optional domain constraints, and optional description.",
+      "items": {
+        "$ref": "#/definitions/feature"
+      }
+    },
+    "_example_note": {
+      "type": "string",
+      "description": "Optional annotation for example or demonstration artifacts only. Not used during payload validation or inference. Omit in production runtime contracts."
+    }
+  },
+  "definitions": {
+    "feature": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "description": "A single accepted inference feature. Required fields: name, type. Optional fields: required (payload presence, defaults to true if absent), domain_constraints (value bounds — shape depends on type), description.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Feature identifier. Must match the key used in inference payloads."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["numeric", "categorical", "boolean"],
+          "description": "Feature type. Vocabulary is bounded to the minimum needed for the first cycle: numeric (continuous or discrete numeric value), categorical (enumerated string value), boolean (true/false value). Extend only when a concrete dataset requires an additional type."
+        },
+        "required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this feature must be present in a valid inference payload. Defaults to true if absent. Features with required: false may be absent from an inference payload without triggering a validation failure in M4-04."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable description of this feature for documentation purposes only. Not used in validation or inference."
+        },
+        "domain_constraints": {
+          "type": "object",
+          "description": "Optional structural constraints on the accepted value domain. Shape is determined by the feature type: numeric_domain_constraints (min/max) for numeric features; categorical_domain_constraints (values list) for categorical features. Must be absent for boolean features."
+        }
+      },
+      "if": {
+        "properties": {"type": {"const": "numeric"}},
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "domain_constraints": {"$ref": "#/definitions/numeric_domain_constraints"}
+        }
+      },
+      "else": {
+        "if": {
+          "properties": {"type": {"const": "categorical"}},
+          "required": ["type"]
+        },
+        "then": {
+          "properties": {
+            "domain_constraints": {"$ref": "#/definitions/categorical_domain_constraints"}
+          }
+        },
+        "else": {
+          "properties": {
+            "domain_constraints": false
+          }
+        }
+      }
+    },
+    "numeric_domain_constraints": {
+      "type": "object",
+      "description": "Value domain constraints for numeric features. Defines the accepted range. At least one of min or max should be declared when domain_constraints is present. Both are optional to accommodate one-sided range constraints.",
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "type": "number",
+          "description": "Minimum accepted value (inclusive) for this numeric feature."
+        },
+        "max": {
+          "type": "number",
+          "description": "Maximum accepted value (inclusive) for this numeric feature."
+        }
+      }
+    },
+    "categorical_domain_constraints": {
+      "type": "object",
+      "required": ["values"],
+      "description": "Value domain constraints for categorical features. Defines the complete enumerated set of accepted string values.",
+      "additionalProperties": false,
+      "properties": {
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Non-empty list of accepted string values for this categorical feature. Only values in this list are considered valid in an inference payload.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

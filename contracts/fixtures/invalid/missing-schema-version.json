@@ -1,0 +1,29 @@
+{
+  "features": [
+    {
+      "name": "age",
+      "type": "numeric",
+      "required": true,
+      "description": "Age of the subject in years.",
+      "domain_constraints": {
+        "min": 0,
+        "max": 120
+      }
+    },
+    {
+      "name": "education_level",
+      "type": "categorical",
+      "required": true,
+      "description": "Highest completed level of education.",
+      "domain_constraints": {
+        "values": ["primary", "secondary", "tertiary", "postgraduate"]
+      }
+    },
+    {
+      "name": "employed",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether the subject is currently employed."
+    }
+  ]
+}

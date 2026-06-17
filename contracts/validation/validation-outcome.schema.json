@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Structural Validation Outcome",
+  "description": "Schema defining the structured outcome of structural validation for a runtime contract artifact. Produced by the publisher validation gate at publish time. Not invoked at API request time or during runtime contract loading. The publisher runs jsonschema Draft7Validator against contracts/runtime-contract.schema.json and normalizes errors into the named check IDs and failure categories declared here.",
+  "$comment": "Normalization rules (D-M4-03-02): schema_version missing → check_id: schema_version_present, failure_category: MISSING_REQUIRED_FIELD. schema_version pattern mismatch → check_id: schema_version_format, failure_category: INVALID_SCHEMA_VERSION_FORMAT. features missing → check_id: features_present, failure_category: MISSING_REQUIRED_FIELD. features minItems violation → check_id: features_non_empty, failure_category: EMPTY_FEATURES_ARRAY. features[*].name missing or minLength → check_id: feature_name_present, failure_category: MISSING_REQUIRED_FIELD. features[*].type missing or enum violation → check_id: feature_type_valid, failure_category: UNKNOWN_FEATURE_TYPE. features[*].domain_constraints if/then/else violation → check_id: domain_constraints_shape, failure_category: INVALID_DOMAIN_CONSTRAINTS_SHAPE (top-level path match takes precedence).",
+  "type": "object",
+  "required": ["valid", "checks", "failure_categories"],
+  "additionalProperties": false,
+  "properties": {
+    "valid": {
+      "type": "boolean",
+      "description": "Top-level pass/fail indicator. true if all checks passed; false if any check failed."
+    },
+    "checks": {
+      "type": "array",
+      "description": "Array of individual check results. One entry per declared structural check. Order is deterministic. When valid is true all checks have passed: true. When valid is false at least one check has passed: false and carries a failure_category.",
+      "items": {
+        "$ref": "#/definitions/check"
+      }
+    },
+    "failure_categories": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Deduplicated list of all failure_category values from failed checks. Empty array when valid is true. Enables the publisher to programmatically filter outcomes by failure class without iterating the full checks array.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "MISSING_REQUIRED_FIELD",
+          "INVALID_SCHEMA_VERSION_FORMAT",
+          "UNKNOWN_FEATURE_TYPE",
+          "INVALID_DOMAIN_CONSTRAINTS_SHAPE",
+          "EMPTY_FEATURES_ARRAY"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "check": {
+      "type": "object",
+      "required": ["check_id", "passed"],
+      "additionalProperties": false,
+      "description": "Result of a single structural check. When passed is false the failure_category field is required and carries a machine-readable failure class. When passed is true the failure_category field must be absent.",
+      "properties": {
+        "check_id": {
+          "type": "string",
+          "enum": [
+            "schema_version_present",
+            "schema_version_format",
+            "features_present",
+            "features_non_empty",
+            "feature_name_present",
+            "feature_type_valid",
+            "domain_constraints_shape"
+          ],
+          "description": "Machine-readable identifier for this structural check. Derived from the validation rules in contracts/runtime-contract.schema.json. schema_version_present: schema_version field exists. schema_version_format: schema_version matches ^\\d+\\.\\d+\\.\\d+$. features_present: features field exists. features_non_empty: features has at least one item. feature_name_present: each feature has a non-empty name string. feature_type_valid: each feature type is in [numeric, categorical, boolean]. domain_constraints_shape: domain_constraints shape matches the feature type."
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "true if this check passed; false if it failed."
+        },
+        "failure_category": {
+          "type": "string",
+          "enum": [
+            "MISSING_REQUIRED_FIELD",
+            "INVALID_SCHEMA_VERSION_FORMAT",
+            "UNKNOWN_FEATURE_TYPE",
+            "INVALID_DOMAIN_CONSTRAINTS_SHAPE",
+            "EMPTY_FEATURES_ARRAY"
+          ],
+          "description": "Machine-readable failure category for this check. Required when passed is false; must be absent when passed is true. Enables the publisher to reject or log contracts by failure class without parsing free-text error messages."
+        }
+      },
+      "if": {
+        "properties": {
+          "passed": {"const": false}
+        },
+        "required": ["passed"]
+      },
+      "then": {
+        "required": ["failure_category"]
+      }
+    }
+  }
+}

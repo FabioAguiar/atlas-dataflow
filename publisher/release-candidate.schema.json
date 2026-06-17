@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/publisher/release-candidate.schema.json",
+  "title": "Atlas DataFlow Release Candidate",
+  "description": "Internal publisher input model for an explicit release candidate package. A release candidate is assembled from pipeline-produced artifacts and submitted to the publisher for completeness validation before any promotion or registry update.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_kind",
+    "dataset_identity",
+    "release_identity",
+    "source_run",
+    "artifact_roles",
+    "candidate_metadata",
+    "state_boundaries"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "release-candidate.v1"
+    },
+    "candidate_kind": {
+      "type": "string",
+      "const": "release_candidate",
+      "description": "Distinguishes this package from a transient pipeline run and from a promoted published release."
+    },
+    "dataset_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier used by registry and runtime resolution. It must be explicit and must not be inferred from a local path."
+        },
+        "dataset_title": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "release_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_id",
+        "release_version",
+        "created_at"
+      ],
+      "properties": {
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$",
+          "description": "Stable candidate release identifier. It must be explicit and must not be inferred from a local path."
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version label for the candidate package before publisher promotion."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "source_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "producer"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier for the pipeline or manual assembly run that produced candidate artifacts. This does not make the run publishable by itself."
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "artifact_roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contracts",
+        "predictive_bundle",
+        "metrics",
+        "model_card",
+        "public_context",
+        "manifest_input",
+        "candidate_metadata"
+      ],
+      "properties": {
+        "contracts": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Runtime and public contract artifacts required by the publisher and public runtime."
+        },
+        "predictive_bundle": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Inference bundle produced by the artifact pipeline and consumed only after publication."
+        },
+        "metrics": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Model or dataset metrics required for traceability and public context."
+        },
+        "model_card": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Model card or equivalent model documentation artifact."
+        },
+        "public_context": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Public dataset context intended for the published experience."
+        },
+        "manifest_input": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Input used by the publisher to generate or validate the final release manifest."
+        },
+        "candidate_metadata": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Structured metadata describing the candidate package itself."
+        }
+      }
+    },
+    "candidate_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assembled_by",
+        "assembled_at",
+        "intended_publisher_action",
+        "completeness_validation"
+      ],
+      "properties": {
+        "assembled_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "assembled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "intended_publisher_action": {
+          "type": "string",
+          "const": "validate_candidate"
+        },
+        "completeness_validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required_artifact_roles",
+            "hash_policy",
+            "manifest_policy"
+          ],
+          "properties": {
+            "required_artifact_roles": {
+              "type": "array",
+              "minItems": 7,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "contracts",
+                  "predictive_bundle",
+                  "metrics",
+                  "model_card",
+                  "public_context",
+                  "manifest_input",
+                  "candidate_metadata"
+                ]
+              }
+            },
+            "hash_policy": {
+              "type": "string",
+              "enum": [
+                "publisher_calculates_hashes",
+                "publisher_verifies_declared_hashes"
+              ]
+            },
+            "manifest_policy": {
+              "type": "string",
+              "enum": [
+                "publisher_generates_manifest",
+                "publisher_validates_manifest_input"
+              ]
+            }
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "state_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pipeline_run_is_publishable",
+        "candidate_is_published_release",
+        "promotion_required",
+        "registry_update_allowed_in_candidate",
+        "public_upload_required",
+        "web_administration_required",
+        "database_publication_management_required",
+        "runtime_consumes_temporary_pipeline_output"
+      ],
+      "properties": {
+        "pipeline_run_is_publishable": {
+          "type": "boolean",
+          "const": false
+        },
+        "candidate_is_published_release": {
+          "type": "boolean",
+          "const": false
+        },
+        "promotion_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "registry_update_allowed_in_candidate": {
+          "type": "boolean",
+          "const": false
+        },
+        "public_upload_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "web_administration_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "database_publication_management_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "runtime_consumes_temporary_pipeline_output": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifact_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "path",
+        "required"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Candidate package-relative artifact path or URI. This path locates an artifact; it is not the public source of truth for dataset or release identity."
+        },
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "Optional declared hash. The publisher may calculate or verify hashes during validation."
+        }
+      }
+    }
+  }
+}

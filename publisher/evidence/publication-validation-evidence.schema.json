@@ -1,0 +1,434 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/publisher/evidence/publication-validation-evidence.schema.json",
+  "title": "Atlas DataFlow Publication Validation Evidence",
+  "description": "Minimum safe publication validation evidence shape for Atlas DataFlow. Defines six discrete named outcome fields covering the internal publisher flow: candidate validation, manifest validation, incomplete release rejection, promotion validation, previous release preservation, and public surface review. This schema defines the evidence shape only; it does not implement publisher execution logic, hash calculation, evidence collection automation, queues, workers, databases, public endpoints, or web administration. All fields store reduced, sanitized, human-readable summaries only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_kind",
+    "candidate_validation",
+    "manifest_validation",
+    "incomplete_release_rejection",
+    "promotion_validation",
+    "previous_release_preservation",
+    "public_surface_review",
+    "evidence_safety",
+    "authorization_boundary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "publication-validation-evidence.v1",
+      "description": "Schema version for this evidence document."
+    },
+    "evidence_kind": {
+      "type": "string",
+      "const": "publication_validation_evidence",
+      "description": "Distinguishes this evidence document from a release candidate, a manifest, a validation result, a promotion result, or a registry entry."
+    },
+    "candidate_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "release_id",
+        "validation_outcome",
+        "validated_at"
+      ],
+      "description": "Reduced evidence for the example release candidate validation step. Records which candidate was validated and the explicit outcome. Must not include raw logs, raw artifact contents, secrets, or runtime internals.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier from the validated release candidate."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Stable release identifier from the validated release candidate."
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "validation_outcome": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "rejected"
+          ],
+          "description": "Explicit candidate validation outcome. 'accepted' when all required artifact roles were present and complete. 'rejected' when one or more required artifact roles were missing or incomplete."
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the candidate validation step."
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Sanitized note safe for evidence. Must not include raw logs, runtime data, secrets, or sensitive local paths."
+          }
+        }
+      }
+    },
+    "manifest_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_schema_version",
+        "hash_coverage_outcome",
+        "manifest_valid"
+      ],
+      "description": "Reduced evidence for the manifest validation step. Records the manifest schema version used and the explicit hash coverage outcome. Must not include raw manifest contents, raw hashes, or raw artifact paths.",
+      "properties": {
+        "manifest_schema_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The manifest schema version declared in the validated release manifest (e.g. 'release-manifest.v1')."
+        },
+        "hash_coverage_outcome": {
+          "type": "string",
+          "enum": [
+            "all_required_hashes_present",
+            "missing_required_hashes"
+          ],
+          "description": "Explicit hash coverage outcome from manifest validation. 'all_required_hashes_present' when every required artifact role had a recorded hash. 'missing_required_hashes' when one or more required hashes were absent."
+        },
+        "manifest_valid": {
+          "type": "boolean",
+          "description": "True when the manifest passed structural schema validation and all required hashes were present."
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the manifest validation step."
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Sanitized note safe for evidence. Must not include raw manifest contents, raw hashes, or raw artifact paths."
+          }
+        }
+      }
+    },
+    "incomplete_release_rejection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_id",
+        "rejection_outcome",
+        "rejection_reasons"
+      ],
+      "description": "Reduced evidence for the incomplete release rejection step. Records an example case where a release candidate was rejected due to incompleteness, with at least one explicit rejection reason. Must not include raw validation logs, raw artifact contents, or runtime internals.",
+      "properties": {
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Stable release identifier of the rejected incomplete release candidate."
+        },
+        "rejection_outcome": {
+          "type": "string",
+          "const": "rejected",
+          "description": "Explicit rejection outcome. Always 'rejected' for an incomplete release rejection evidence record."
+        },
+        "rejection_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "description": "At least one explicit rejection reason. Must not be empty; a vague or empty reason is non-conformant.",
+          "items": {
+            "$ref": "#/$defs/rejection_reason"
+          }
+        },
+        "rejected_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the rejection."
+        }
+      }
+    },
+    "promotion_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_id",
+        "promotion_outcome",
+        "preconditions_met"
+      ],
+      "description": "Reduced evidence for the promotion validation step. Records whether all promotion preconditions were met and what the explicit promotion outcome was. Distinct from candidate_validation: candidate_validation covers artifact completeness; promotion_validation covers the promotion precondition check and its outcome. Must not include raw registry state, raw precondition logs, or runtime internals.",
+      "properties": {
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Stable release identifier of the candidate submitted for promotion."
+        },
+        "promotion_outcome": {
+          "type": "string",
+          "enum": [
+            "promoted",
+            "rejected"
+          ],
+          "description": "Explicit promotion outcome. 'promoted' when all preconditions were met and the registry active release was updated. 'rejected' when one or more preconditions failed and no registry change was made."
+        },
+        "preconditions_met": {
+          "type": "boolean",
+          "description": "True when all promotion preconditions (valid candidate state, accepted completeness validation, valid manifest, all required hashes present) were satisfied before the promotion decision."
+        },
+        "promoted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the promotion. Only present when promotion_outcome is 'promoted'."
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Sanitized note safe for evidence. Must not include raw registry state, raw logs, or runtime internals."
+          }
+        }
+      }
+    },
+    "previous_release_preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previous_active_release_id",
+        "previous_release_preserved"
+      ],
+      "description": "Reduced evidence confirming that the previous active release was preserved after promotion. Records the explicit previous_active_release_id so the preservation claim is traceable. Must not include raw registry file contents, raw artifact paths, or runtime internals.",
+      "properties": {
+        "previous_active_release_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "The release_id that was active before the current promotion, or null if no previous active release existed. Must always be explicitly recorded; must not be omitted or discarded."
+        },
+        "previous_release_preserved": {
+          "type": "boolean",
+          "const": true,
+          "description": "Confirmation that the previous active release package remains available in its storage location and was not deleted or overwritten by the promotion operation."
+        },
+        "confirmed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the preservation confirmation."
+        }
+      }
+    },
+    "public_surface_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewed_at",
+        "public_routes_reviewed",
+        "admin_endpoint_present",
+        "publication_endpoint_present",
+        "publisher_operations_exposed_publicly"
+      ],
+      "description": "Reduced evidence confirming the public surface review. Records the public routes confirmed to exist, and explicitly confirms no admin or publication endpoint is present. This is a mandatory, discrete evidence component; a general boundary note does not satisfy this requirement.",
+      "properties": {
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the public surface review."
+        },
+        "public_routes_reviewed": {
+          "type": "array",
+          "minItems": 1,
+          "description": "List of confirmed public routes reviewed. Only read-only, published-state-consuming routes are expected. Must not include admin, upload, publication, or publisher operation routes.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "method",
+              "path",
+              "classification"
+            ],
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": [
+                  "GET",
+                  "HEAD",
+                  "OPTIONS"
+                ],
+                "description": "HTTP method. Only read-only methods are expected in the public surface."
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Public route path pattern (e.g. '/datasets' or '/datasets/{dataset_slug}'). Must not be an admin, upload, or publisher operation path."
+              },
+              "classification": {
+                "type": "string",
+                "enum": [
+                  "public_read_only",
+                  "health_check"
+                ],
+                "description": "Classification of the route. 'public_read_only' for published-state-consuming routes. 'health_check' for operational health endpoints."
+              }
+            }
+          }
+        },
+        "admin_endpoint_present": {
+          "type": "boolean",
+          "const": false,
+          "description": "Explicit confirmation that no admin endpoint is present in the public surface. This field must always be false; the presence of an admin endpoint is a boundary violation."
+        },
+        "publication_endpoint_present": {
+          "type": "boolean",
+          "const": false,
+          "description": "Explicit confirmation that no publication endpoint is present in the public surface. This field must always be false; the presence of a publication endpoint is a boundary violation."
+        },
+        "publisher_operations_exposed_publicly": {
+          "type": "boolean",
+          "const": false,
+          "description": "Explicit confirmation that no publisher operation (validation, promotion, registry update) is exposed as a public endpoint. This field must always be false; public exposure of publisher operations is a boundary violation."
+        }
+      }
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "local_databases_persisted",
+        "volumes_persisted",
+        "sensitive_runtime_internals_persisted",
+        "raw_artifact_contents_embedded"
+      ],
+      "description": "Explicit safety constraints for this evidence document. All fields that must not be present are declared with const: false, making violations schema-detectable. These are explicit constraints, not implicit assumptions.",
+      "properties": {
+        "reduced_evidence_only": {
+          "type": "boolean",
+          "const": true,
+          "description": "This evidence document contains only reduced, sanitized, human-readable summaries. Raw operational content is explicitly excluded."
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw logs must not be persisted in this evidence document."
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw runtime state must not be persisted in this evidence document."
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw API payloads must not be persisted in this evidence document."
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Secrets, tokens, credentials, or keys must not be persisted in this evidence document."
+        },
+        "local_databases_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Local database dumps or contents must not be persisted in this evidence document."
+        },
+        "volumes_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Runtime volume contents must not be persisted in this evidence document."
+        },
+        "sensitive_runtime_internals_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Sensitive runtime internals (process state, memory, internal paths) must not be persisted in this evidence document."
+        },
+        "raw_artifact_contents_embedded": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw artifact file contents must not be embedded in this evidence document."
+        }
+      }
+    },
+    "authorization_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "github_mutation_authorized",
+        "github_issue_publication_authorized",
+        "release_promotion_authorized_by_this_evidence",
+        "implementation_authorized_by_this_evidence"
+      ],
+      "description": "Explicit authorization boundary declarations. This evidence document is not authorization to perform any of the listed actions. All fields are const: false, making violations schema-detectable.",
+      "properties": {
+        "github_mutation_authorized": {
+          "type": "boolean",
+          "const": false,
+          "description": "This evidence document does not authorize any GitHub mutation, including issue creation, publication, label changes, or repository changes."
+        },
+        "github_issue_publication_authorized": {
+          "type": "boolean",
+          "const": false,
+          "description": "This evidence document does not authorize publishing GitHub issues or creating GitHub publication records."
+        },
+        "release_promotion_authorized_by_this_evidence": {
+          "type": "boolean",
+          "const": false,
+          "description": "This evidence document records a past promotion outcome; it does not authorize a new release promotion. Promotions require a separate controlled publisher operation."
+        },
+        "implementation_authorized_by_this_evidence": {
+          "type": "boolean",
+          "const": false,
+          "description": "This evidence document does not authorize implementation of publisher execution logic, hash calculation, or registry write operations."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "rejection_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "missing_required_artifact_role",
+            "completeness_validation_not_accepted",
+            "manifest_invalid",
+            "required_hash_missing",
+            "candidate_state_invalid",
+            "precondition_not_met"
+          ],
+          "description": "Structured rejection reason code."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sanitized message safe for evidence. Must not include raw logs, runtime data, secrets, sensitive local paths, or raw artifact contents."
+        },
+        "safe_detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional reduced detail safe for evidence. Must not include raw logs, runtime data, secrets, or sensitive local paths."
+        }
+      }
+    }
+  }
+}

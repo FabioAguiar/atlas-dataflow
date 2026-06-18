@@ -4,6 +4,7 @@ import DatasetHeader from "../components/DatasetHeader";
 import MetricsDisplay from "../components/MetricsDisplay/MetricsDisplay";
 import ModelCard from "../components/ModelCard/ModelCard";
 import DatasetVisualizations, { VisualizationsPayload } from "../components/DatasetVisualizations/DatasetVisualizations";
+import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -40,6 +41,7 @@ export default function DatasetPage() {
   const [metricsState, setMetricsState] = useState<SectionState<MetricsData>>({ status: "loading" });
   const [modelCardState, setModelCardState] = useState<SectionState<ModelCardPayload>>({ status: "loading" });
   const [visualizationsState, setVisualizationsState] = useState<SectionState<VisualizationsPayload>>({ status: "loading" });
+  const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
 
   useEffect(() => {
     if (!slug) {
@@ -173,6 +175,38 @@ export default function DatasetPage() {
     return () => controller.abort();
   }, [slug]);
 
+  useEffect(() => {
+    if (!slug) {
+      setContractState({ status: "unavailable" });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/contract`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setContractState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<{ dataset_slug: string; contract: ContractPayload }>;
+      })
+      .then((data) => {
+        if (data) {
+          setContractState({ status: "ready", data: data.contract });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setContractState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug]);
+
   if (state.status === "loading") {
     return (
       <main className="app-shell">
@@ -220,6 +254,13 @@ export default function DatasetPage() {
       )}
       {visualizationsState.status === "unavailable" && (
         <p>Visualizations are currently unavailable.</p>
+      )}
+
+      {contractState.status === "ready" && (
+        <InferenceForm contract={contractState.data} />
+      )}
+      {contractState.status === "unavailable" && (
+        <p>Form inputs are currently unavailable.</p>
       )}
     </main>
   );

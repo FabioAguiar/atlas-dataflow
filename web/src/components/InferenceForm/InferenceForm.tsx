@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import InferenceResult, { PredictionResult } from "../InferenceResult/InferenceResult";
+import ErrorState from "../ErrorState/ErrorState";
 
 export type Feature = {
   name: string;
@@ -134,7 +135,7 @@ export default function InferenceForm({ contract, slug }: Props) {
         <InferenceResult result={submission.data} />
       )}
       {submission.status === "error" && (
-        <p role="alert">{submission.message}</p>
+        <ErrorState message={submission.message} />
       )}
     </section>
   );

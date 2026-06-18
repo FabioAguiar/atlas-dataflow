@@ -5,6 +5,8 @@ import MetricsDisplay from "../components/MetricsDisplay/MetricsDisplay";
 import ModelCard from "../components/ModelCard/ModelCard";
 import DatasetVisualizations, { VisualizationsPayload } from "../components/DatasetVisualizations/DatasetVisualizations";
 import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
+import LoadingState from "../components/LoadingState/LoadingState";
+import ErrorState from "../components/ErrorState/ErrorState";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -235,32 +237,36 @@ export default function DatasetPage() {
     <main className="app-shell">
       <DatasetHeader title={state.data.title} summary={state.data.summary} />
 
+      {metricsState.status === "loading" && <LoadingState />}
       {metricsState.status === "ready" && (
         <MetricsDisplay metrics={metricsState.data} />
       )}
       {metricsState.status === "unavailable" && (
-        <p>Metrics are currently unavailable.</p>
+        <ErrorState message="Metrics are temporarily unavailable." />
       )}
 
+      {modelCardState.status === "loading" && <LoadingState />}
       {modelCardState.status === "ready" && (
         <ModelCard modelCard={modelCardState.data} />
       )}
       {modelCardState.status === "unavailable" && (
-        <p>Model card is currently unavailable.</p>
+        <ErrorState message="The model card is temporarily unavailable." />
       )}
 
+      {visualizationsState.status === "loading" && <LoadingState />}
       {visualizationsState.status === "ready" && (
         <DatasetVisualizations visualizations={visualizationsState.data} />
       )}
       {visualizationsState.status === "unavailable" && (
-        <p>Visualizations are currently unavailable.</p>
+        <ErrorState message="Visualizations are temporarily unavailable." />
       )}
 
+      {contractState.status === "loading" && <LoadingState />}
       {contractState.status === "ready" && (
         <InferenceForm contract={contractState.data} slug={slug!} />
       )}
       {contractState.status === "unavailable" && (
-        <p>Form inputs are currently unavailable.</p>
+        <ErrorState message="The prediction form is temporarily unavailable." />
       )}
     </main>
   );

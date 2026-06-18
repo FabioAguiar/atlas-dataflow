@@ -1,0 +1,17 @@
+*
+
+!api/
+!api/Dockerfile
+!api/pyproject.toml
+!api/*.py
+api/validate_healthcheck.py
+
+!registry/
+!registry/**
+
+!runtime/
+!runtime/**
+
+**/__pycache__/
+**/*.pyc
+**/*.pyo

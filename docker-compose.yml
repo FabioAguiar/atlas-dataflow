@@ -1,7 +1,8 @@
 services:
   api:
     build:
-      context: ./api
+      context: .
+      dockerfile: api/Dockerfile
     environment:
       API_HOST: 0.0.0.0
       API_PORT: "8000"

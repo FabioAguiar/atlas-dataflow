@@ -257,7 +257,7 @@ export default function DatasetPage() {
       )}
 
       {contractState.status === "ready" && (
-        <InferenceForm contract={contractState.data} />
+        <InferenceForm contract={contractState.data} slug={slug!} />
       )}
       {contractState.status === "unavailable" && (
         <p>Form inputs are currently unavailable.</p>

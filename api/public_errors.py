@@ -39,7 +39,7 @@ RELEASE_UNAVAILABLE = PublicError(
 
 REGISTRY_UNAVAILABLE = PublicError(
     status_code=503,
-    error_type="release_unavailable",
+    error_type="registry_unavailable",
     error_code="REGISTRY_UNAVAILABLE",
     message="The registry is not currently available.",
 )

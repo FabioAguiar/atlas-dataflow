@@ -7,6 +7,8 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import Body, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Ensure the repository root is on the Python path so registry/ is importable
 # when main.py is invoked from the api/ subdirectory.
@@ -102,7 +104,45 @@ def _load_bundle(bundle_path: Path):
     raise BundleUnavailableError("Inference bundle could not be loaded.")
 
 
+_PAYLOAD_SIZE_LIMIT = 1_048_576  # 1 MB
+
+
+class PayloadSizeLimitMiddleware:
+    def __init__(self, app, max_size: int = _PAYLOAD_SIZE_LIMIT) -> None:
+        self.app = app
+        self.max_size = max_size
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            for name, value in scope.get("headers", []):
+                if name == b"content-length":
+                    try:
+                        if int(value) > self.max_size:
+                            response = JSONResponse(
+                                status_code=413,
+                                content={
+                                    "error_type": "invalid_payload",
+                                    "error_code": "PAYLOAD_TOO_LARGE",
+                                    "message": "The request payload exceeds the maximum allowed size.",
+                                },
+                            )
+                            await response(scope, receive, send)
+                            return
+                    except ValueError:
+                        pass
+                    break
+        await self.app(scope, receive, send)
+
+
 app = FastAPI()
+app.add_middleware(PayloadSizeLimitMiddleware, max_size=_PAYLOAD_SIZE_LIMIT)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[os.environ.get("CORS_ALLOWED_ORIGIN", "")],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 
 @app.exception_handler(Exception)

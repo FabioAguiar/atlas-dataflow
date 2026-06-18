@@ -1,0 +1,61 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+    expose:
+      - "8000"
+    networks:
+      - public_internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_API_BASE_URL: /api
+    expose:
+      - "80"
+    networks:
+      - public_internal
+    depends_on:
+      api:
+        condition: service_healthy
+
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - public_internal
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+networks:
+  public_internal:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:

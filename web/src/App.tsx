@@ -1,8 +1,10 @@
+import { Routes, Route } from "react-router-dom";
 import "./App.css";
+import DatasetPage from "./pages/DatasetPage";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
-function App() {
+function Home() {
   const apiConfigStatus = apiBaseUrl.trim().length > 0 ? "Configured" : "Not configured";
 
   return (
@@ -29,4 +31,11 @@ function App() {
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/dataset/:slug" element={<DatasetPage />} />
+      <Route path="/" element={<Home />} />
+    </Routes>
+  );
+}

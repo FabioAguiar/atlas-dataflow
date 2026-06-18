@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import DatasetHeader from "../components/DatasetHeader";
 import MetricsDisplay from "../components/MetricsDisplay/MetricsDisplay";
 import ModelCard from "../components/ModelCard/ModelCard";
+import DatasetVisualizations, { VisualizationsPayload } from "../components/DatasetVisualizations/DatasetVisualizations";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -38,6 +39,7 @@ export default function DatasetPage() {
   const [state, setState] = useState<PageState>({ status: "loading" });
   const [metricsState, setMetricsState] = useState<SectionState<MetricsData>>({ status: "loading" });
   const [modelCardState, setModelCardState] = useState<SectionState<ModelCardPayload>>({ status: "loading" });
+  const [visualizationsState, setVisualizationsState] = useState<SectionState<VisualizationsPayload>>({ status: "loading" });
 
   useEffect(() => {
     if (!slug) {
@@ -139,6 +141,38 @@ export default function DatasetPage() {
     return () => controller.abort();
   }, [slug]);
 
+  useEffect(() => {
+    if (!slug) {
+      setVisualizationsState({ status: "unavailable" });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/visualizations`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setVisualizationsState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<{ dataset_slug: string; visualizations: VisualizationsPayload }>;
+      })
+      .then((data) => {
+        if (data) {
+          setVisualizationsState({ status: "ready", data: data.visualizations });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setVisualizationsState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug]);
+
   if (state.status === "loading") {
     return (
       <main className="app-shell">
@@ -179,6 +213,13 @@ export default function DatasetPage() {
       )}
       {modelCardState.status === "unavailable" && (
         <p>Model card is currently unavailable.</p>
+      )}
+
+      {visualizationsState.status === "ready" && (
+        <DatasetVisualizations visualizations={visualizationsState.data} />
+      )}
+      {visualizationsState.status === "unavailable" && (
+        <p>Visualizations are currently unavailable.</p>
       )}
     </main>
   );

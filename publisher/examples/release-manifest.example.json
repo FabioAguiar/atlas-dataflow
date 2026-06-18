@@ -66,6 +66,14 @@
       "hash_value": "7777777777777777777777777777777777777777777777777777777777777777",
       "media_type": "application/json",
       "required": true
+    },
+    {
+      "role": "visualizations",
+      "reference": "visualizations/chart-data.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "8888888888888888888888888888888888888888888888888888888888888888",
+      "media_type": "application/json",
+      "required": true
     }
   ],
   "required_hash_coverage": {
@@ -77,7 +85,8 @@
       "model_card",
       "public_context",
       "manifest_input",
-      "candidate_metadata"
+      "candidate_metadata",
+      "visualizations"
     ],
     "missing_required_hashes_reject_manifest": true
   },

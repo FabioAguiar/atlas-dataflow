@@ -36,6 +36,10 @@ from public_model_card_loader import (  # noqa: E402
     PublicModelCardUnavailableError,
     load_public_model_card,
 )
+from public_visualizations_loader import (  # noqa: E402
+    PublicVisualizationsUnavailableError,
+    load_public_visualizations,
+)
 
 METRICS_UNAVAILABLE = PublicError(
     status_code=503,
@@ -49,6 +53,13 @@ MODEL_CARD_UNAVAILABLE = PublicError(
     error_type="model_card_unavailable",
     error_code="MODEL_CARD_UNAVAILABLE",
     message="The model card for this dataset is temporarily unavailable.",
+)
+
+VISUALIZATIONS_UNAVAILABLE = PublicError(
+    status_code=503,
+    error_type="visualizations_unavailable",
+    error_code="VISUALIZATIONS_UNAVAILABLE",
+    message="The visualizations for this dataset are temporarily unavailable.",
 )
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -212,6 +223,28 @@ def get_public_model_card(dataset_slug: str):
     return {
         "dataset_slug": resolved.dataset_slug,
         "model_card": model_card,
+    }
+
+
+@app.get("/datasets/{dataset_slug}/visualizations")
+def get_public_visualizations(dataset_slug: str):
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        visualizations = load_public_visualizations(resolved.active_release)
+    except PublicVisualizationsUnavailableError:
+        return public_error_response(VISUALIZATIONS_UNAVAILABLE)
+
+    return {
+        "dataset_slug": resolved.dataset_slug,
+        "visualizations": visualizations,
     }
 
 

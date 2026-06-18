@@ -17,6 +17,7 @@ from public_errors import (  # noqa: E402
     CONTRACT_UNAVAILABLE,
     DATASET_NOT_FOUND,
     PUBLIC_CONTRACT_UNAVAILABLE,
+    PublicError,
     REGISTRY_UNAVAILABLE,
     RELEASE_UNAVAILABLE,
     UNEXPECTED_ERROR,
@@ -26,6 +27,28 @@ from public_errors import (  # noqa: E402
 from public_contract_loader import (  # noqa: E402
     PublicContractUnavailableError,
     load_public_contract,
+)
+from public_metrics_loader import (  # noqa: E402
+    PublicMetricsUnavailableError,
+    load_public_metrics,
+)
+from public_model_card_loader import (  # noqa: E402
+    PublicModelCardUnavailableError,
+    load_public_model_card,
+)
+
+METRICS_UNAVAILABLE = PublicError(
+    status_code=503,
+    error_type="metrics_unavailable",
+    error_code="METRICS_UNAVAILABLE",
+    message="The metrics for this dataset are temporarily unavailable.",
+)
+
+MODEL_CARD_UNAVAILABLE = PublicError(
+    status_code=503,
+    error_type="model_card_unavailable",
+    error_code="MODEL_CARD_UNAVAILABLE",
+    message="The model card for this dataset is temporarily unavailable.",
 )
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -145,6 +168,50 @@ def validate_dataset_inference_payload(
         "status": "validated",
         "dataset_slug": resolved.dataset_slug,
         "next_step": "inference_execution",
+    }
+
+
+@app.get("/datasets/{dataset_slug}/metrics")
+def get_public_metrics(dataset_slug: str):
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        metrics = load_public_metrics(resolved.active_release)
+    except PublicMetricsUnavailableError:
+        return public_error_response(METRICS_UNAVAILABLE)
+
+    return {
+        "dataset_slug": resolved.dataset_slug,
+        "metrics": metrics,
+    }
+
+
+@app.get("/datasets/{dataset_slug}/model-card")
+def get_public_model_card(dataset_slug: str):
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        model_card = load_public_model_card(resolved.active_release)
+    except PublicModelCardUnavailableError:
+        return public_error_response(MODEL_CARD_UNAVAILABLE)
+
+    return {
+        "dataset_slug": resolved.dataset_slug,
+        "model_card": model_card,
     }
 
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import DatasetHeader from "../components/DatasetHeader";
+import MetricsDisplay from "../components/MetricsDisplay/MetricsDisplay";
+import ModelCard from "../components/ModelCard/ModelCard";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -13,15 +15,29 @@ type DatasetMetadata = {
   tags: string[];
 };
 
+type MetricsData = Record<string, unknown>;
+
+type ModelCardPayload = {
+  content: string;
+  format: "markdown";
+};
+
 type PageState =
   | { status: "loading" }
   | { status: "ready"; data: DatasetMetadata }
   | { status: "not_found" }
   | { status: "unavailable" };
 
+type SectionState<T> =
+  | { status: "loading" }
+  | { status: "ready"; data: T }
+  | { status: "unavailable" };
+
 export default function DatasetPage() {
   const { slug } = useParams<{ slug: string }>();
   const [state, setState] = useState<PageState>({ status: "loading" });
+  const [metricsState, setMetricsState] = useState<SectionState<MetricsData>>({ status: "loading" });
+  const [modelCardState, setModelCardState] = useState<SectionState<ModelCardPayload>>({ status: "loading" });
 
   useEffect(() => {
     if (!slug) {
@@ -59,6 +75,70 @@ export default function DatasetPage() {
     return () => controller.abort();
   }, [slug]);
 
+  useEffect(() => {
+    if (!slug) {
+      setMetricsState({ status: "unavailable" });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/metrics`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setMetricsState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<{ dataset_slug: string; metrics: MetricsData }>;
+      })
+      .then((data) => {
+        if (data) {
+          setMetricsState({ status: "ready", data: data.metrics });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setMetricsState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug]);
+
+  useEffect(() => {
+    if (!slug) {
+      setModelCardState({ status: "unavailable" });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/model-card`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setModelCardState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<{ dataset_slug: string; model_card: ModelCardPayload }>;
+      })
+      .then((data) => {
+        if (data) {
+          setModelCardState({ status: "ready", data: data.model_card });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setModelCardState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug]);
+
   if (state.status === "loading") {
     return (
       <main className="app-shell">
@@ -86,6 +166,20 @@ export default function DatasetPage() {
   return (
     <main className="app-shell">
       <DatasetHeader title={state.data.title} summary={state.data.summary} />
+
+      {metricsState.status === "ready" && (
+        <MetricsDisplay metrics={metricsState.data} />
+      )}
+      {metricsState.status === "unavailable" && (
+        <p>Metrics are currently unavailable.</p>
+      )}
+
+      {modelCardState.status === "ready" && (
+        <ModelCard modelCard={modelCardState.data} />
+      )}
+      {modelCardState.status === "unavailable" && (
+        <p>Model card is currently unavailable.</p>
+      )}
     </main>
   );
 }

@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M11",
-    "title": "Publisher Operational Release Flow",
+    "id": "M12",
+    "title": "First Real Dataset Release",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M10",
-    "title": "Initial Private Internal Administration",
+    "id": "M11",
+    "title": "Publisher Operational Release Flow",
     "status": "completed"
   },
   "completed_milestones": [
@@ -77,6 +77,11 @@
       "id": "M10",
       "title": "Initial Private Internal Administration",
       "status": "completed"
+    },
+    {
+      "id": "M11",
+      "title": "Publisher Operational Release Flow",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -128,6 +133,11 @@
     {
       "id": "M10",
       "title": "Initial Private Internal Administration",
+      "status": "locked"
+    },
+    {
+      "id": "M11",
+      "title": "Publisher Operational Release Flow",
       "status": "locked"
     }
   ],
@@ -209,12 +219,12 @@
     {
       "id": "M11",
       "title": "Publisher Operational Release Flow",
-      "status": "active"
+      "status": "completed"
     },
     {
       "id": "M12",
       "title": "First Real Dataset Release",
-      "status": "planned"
+      "status": "active"
     },
     {
       "id": "M13",
@@ -264,17 +274,18 @@
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M11 is the current active milestone for Publisher Operational Release Flow in Atlas DataFlow.",
+    "M12 is the current active milestone for First Real Dataset Release in Atlas DataFlow.",
+    "M11 is marked as completed because Publisher Operational Release Flow has been completed.",
     "M10 is marked as completed in the operational cursor because Initial Private Internal Administration was closed with documented deferral, not implemented as an admin surface.",
     "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, and M10 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M11 should be validated against docs/milestones.md before workflow continuation.",
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, and M11 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M12 should be validated against docs/milestones.md before workflow continuation.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "The current milestone points to M11 because the next implementation focus is Publisher Operational Release Flow."
+    "The current milestone points to M12 because the next implementation focus is First Real Dataset Release."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

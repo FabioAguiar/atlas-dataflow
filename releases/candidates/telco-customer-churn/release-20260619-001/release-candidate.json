@@ -1,0 +1,98 @@
+{
+  "schema_version": "release-candidate.v1",
+  "candidate_kind": "release_candidate",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "dataset_title": "Telco Customer Churn"
+  },
+  "release_identity": {
+    "release_id": "release-20260619-001",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-06-19T20:30:00Z"
+  },
+  "source_run": {
+    "run_id": "m12-02-manual-assembly-20260619",
+    "producer": "M12-02 external implementation",
+    "created_at": "2026-06-19T20:30:00Z"
+  },
+  "artifact_roles": {
+    "contracts": {
+      "role": "contracts",
+      "path": "contracts/runtime-contract.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "predictive_bundle": {
+      "role": "predictive_bundle",
+      "path": "predictions/bundle.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "metrics": {
+      "role": "metrics",
+      "path": "metrics/metrics.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "model_card": {
+      "role": "model_card",
+      "path": "model-card.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "public_context": {
+      "role": "public_context",
+      "path": "public-context.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "manifest_input": {
+      "role": "manifest_input",
+      "path": "manifest-input.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "candidate_metadata": {
+      "role": "candidate_metadata",
+      "path": "release-candidate.json",
+      "required": true,
+      "media_type": "application/json"
+    }
+  },
+  "candidate_metadata": {
+    "assembled_by": "M12-02 external implementation",
+    "assembled_at": "2026-06-19T20:30:00Z",
+    "intended_publisher_action": "validate_candidate",
+    "completeness_validation": {
+      "required_artifact_roles": [
+        "contracts",
+        "predictive_bundle",
+        "metrics",
+        "model_card",
+        "public_context",
+        "manifest_input",
+        "candidate_metadata"
+      ],
+      "hash_policy": "publisher_calculates_hashes",
+      "manifest_policy": "publisher_generates_manifest"
+    },
+    "notes": [
+      "Assembled for telco-customer-churn as the first real Atlas DataFlow release candidate.",
+      "Dataset identity confirmed from docs/project-status/first-real-dataset-decision.json (M12-01 decision, decision_status=approved).",
+      "All seven required publisher artifact roles are present.",
+      "Public contract (contracts/public-contract.json) is a safe projection of the runtime contract with no domain bounds.",
+      "Candidate is ready for publisher validation in M12-03.",
+      "Registry active-release has not been updated; promotion is deferred to a later M12 issue."
+    ]
+  },
+  "state_boundaries": {
+    "pipeline_run_is_publishable": false,
+    "candidate_is_published_release": false,
+    "promotion_required": true,
+    "registry_update_allowed_in_candidate": false,
+    "public_upload_required": false,
+    "web_administration_required": false,
+    "database_publication_management_required": false,
+    "runtime_consumes_temporary_pipeline_output": false
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "predictive-bundle.v1",
+  "dataset_slug": "telco-customer-churn",
+  "release_id": "release-20260619-001",
+  "bundle_kind": "inference_descriptor",
+  "problem_type": "binary_classification",
+  "prediction_target": "customer_churn",
+  "output_type": "binary",
+  "positive_class": true,
+  "positive_class_meaning": "customer will churn",
+  "threshold": 0.5,
+  "runtime_contract_reference": "contracts/runtime-contract.json",
+  "notes": "Predictive bundle descriptor for the telco-customer-churn release candidate. Describes the inference interface for the binary churn classification model. No raw model weights, private training artifacts, or raw scoring data are included in this public descriptor."
+}

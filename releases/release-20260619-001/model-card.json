@@ -1,0 +1,34 @@
+{
+  "schema_version": "model-card.v1",
+  "dataset_slug": "telco-customer-churn",
+  "release_id": "release-20260619-001",
+  "model_summary": "Binary classification model predicting customer churn for a telecommunications company.",
+  "problem_type": "binary_classification",
+  "prediction_target": "customer_churn",
+  "intended_use": "Demonstration of the Atlas DataFlow publisher release flow. Predicts whether a customer will churn (cancel service) based on account and service attributes.",
+  "input_features": [
+    "tenure",
+    "monthly_charges",
+    "total_charges",
+    "contract",
+    "internet_service",
+    "payment_method",
+    "tech_support",
+    "senior_citizen",
+    "partner",
+    "dependents",
+    "paperless_billing",
+    "phone_service"
+  ],
+  "output": {
+    "type": "binary",
+    "positive_class": true,
+    "positive_class_meaning": "customer will churn"
+  },
+  "limitations": [
+    "Model is assembled for demonstration purposes within the Atlas DataFlow first real release candidate cycle.",
+    "Predictions reflect patterns in the training dataset and should not be used for production customer-facing decisions without independent validation.",
+    "No sensitive personal data, raw model weights, or private training pipeline details are included in this public artifact."
+  ],
+  "data_notes": "Public-safe model card for the telco-customer-churn first real release candidate. Raw training data, private preprocessing steps, and model internals are excluded."
+}

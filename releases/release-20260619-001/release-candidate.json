@@ -54,7 +54,7 @@
     },
     "candidate_metadata": {
       "role": "candidate_metadata",
-      "path": "candidate.json",
+      "path": "release-candidate.json",
       "required": true,
       "media_type": "application/json"
     }

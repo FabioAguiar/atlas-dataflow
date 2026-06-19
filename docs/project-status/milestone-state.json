@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M8",
-    "title": "Containerized Public Deployment and Minimum Security",
+    "id": "M9",
+    "title": "First Public Cycle Closure",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M7",
-    "title": "First Public Dataset Experience",
+    "id": "M8",
+    "title": "Containerized Public Deployment and Minimum Security",
     "status": "completed"
   },
   "completed_milestones": [
@@ -62,6 +62,11 @@
       "id": "M7",
       "title": "First Public Dataset Experience",
       "status": "completed"
+    },
+    {
+      "id": "M8",
+      "title": "Containerized Public Deployment and Minimum Security",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -98,6 +103,11 @@
     {
       "id": "M7",
       "title": "First Public Dataset Experience",
+      "status": "locked"
+    },
+    {
+      "id": "M8",
+      "title": "Containerized Public Deployment and Minimum Security",
       "status": "locked"
     }
   ],
@@ -164,12 +174,12 @@
     {
       "id": "M8",
       "title": "Containerized Public Deployment and Minimum Security",
-      "status": "active"
+      "status": "completed"
     },
     {
       "id": "M9",
       "title": "First Public Cycle Closure",
-      "status": "planned"
+      "status": "active"
     },
     {
       "id": "M10",
@@ -184,16 +194,16 @@
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M8 is the current active milestone for containerized public deployment and minimum security in Atlas DataFlow.",
-    "M7 is marked as completed because the first public dataset experience cycle has been completed.",
-    "M1, M2, M3, M4, M5, M6, and M7 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M8 should be validated against docs/milestones.md before workflow continuation.",
+    "M9 is the current active milestone for the first public cycle closure in Atlas DataFlow.",
+    "M8 is marked as completed because the containerized public deployment and minimum security cycle has been completed.",
+    "M1, M2, M3, M4, M5, M6, M7, and M8 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M9 should be validated against docs/milestones.md before workflow continuation.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "The current milestone points to M8 because the next implementation focus is containerized public deployment and minimum security."
+    "The current milestone points to M9 because the next implementation focus is the first public cycle closure."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

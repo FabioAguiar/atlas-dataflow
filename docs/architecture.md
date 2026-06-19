@@ -640,35 +640,23 @@ The following decisions are accepted for the first public cycle and define bound
 - Public deployment is considered part of the initial path and must preserve secure boundaries around secrets, internal services, logs, and runtime artifacts.
 - The implementation documentation strategy for the initial stage is `milestones-only`; a dedicated Implementation Map is deferred until concrete implementation complexity justifies it.
 
-Pending product and technical choices remain outside this accepted list. In particular, the first dataset, final API and web stack, exact registry and contract formats, release manifest schema, dataset and release naming conventions, published artifact directory structure, backup strategy, log policy, visualization approach, and future internal administration access mechanism still require explicit decisions.
+Pending product and technical choices remain outside this accepted list.
 
 ## Gaps and Pending Decisions
 
 Pending decisions:
 
-- choose the first published dataset;
-- define the final technical stack for API and web;
-- define the exact registry format;
-- define the release manifest schema;
-- define the public contract format;
-- define the runtime contract format;
-- define the minimum format of published metrics;
-- define the model card standard;
-- define the `dataset_slug` convention;
-- define the `release_id` convention;
-- define the final directory structure for published artifacts;
 - define the operational backup strategy for releases;
 - define the minimum log policy;
 - define the exact access mechanism for future internal administration;
-- define whether the publisher will be exposed only as a CLI or also as an internal service in a later stage;
-- define whether visualizations will be static, derived from artifacts, or served by the API.
+- define whether the publisher will be exposed only as a CLI or also as an internal service in a later stage.
 
 Known gaps:
 
 - the expected scale of datasets is not yet defined;
 - the expected inference volume is not yet defined;
 - the future need for a database is not yet confirmed;
-- the way public visualizations will be generated still needs to be defined;
+
 - the observability strategy still needs to be made proportional;
 - the semantic versioning policy for schemas still needs to be detailed.
 

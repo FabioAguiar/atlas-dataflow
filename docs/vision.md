@@ -168,20 +168,12 @@ The initial vision will be considered well served when:
 - Risk that the public experience becomes too technical and not very understandable for external visitors.
 - Risk that the first published dataset does not demonstrate the value of Atlas well.
 - Uncertainty about the best way to store and version dataset publications.
-- Uncertainty about the final stack of the project.
-- Uncertainty about the ideal level of cumulative documentation to support continuity without generating documentation excess.
+
 - Uncertainty about how to balance initial simplicity and future multi-dataset capability.
 
 ## Pending Decisions
 
-- Confirm which dataset will be published first.
-- Define the final technical stack.
-- Define the initial persistence or storage approach for published artifacts.
-- Define the versioning strategy for dataset publications.
-- Define the initial model for public domain, routes, and URLs.
-- Define whether the first publication will have only one experience per dataset or whether it will already leave conceptual room for multiple future experiences.
 - Define the minimum level of operational documentation required for deployment and maintenance.
-- Define the future implementation documentation strategy if the project grows into multiple areas.
 - Define which conceptual capabilities should appear first.
 
 ## Anchors for Architecture
@@ -200,7 +192,7 @@ The future architecture should consider the following anchors:
 - avoid coupling between exploration, artifact generation, and public experience;
 - allow future evolution without requiring a complete redesign for each new dataset.
 
-These anchors do not define the final architecture. They should guide the future creation of `docs/architecture.md`.
+These anchors do not define the final architecture. They guided the creation of `docs/architecture.md`.
 
 ## Anchors for Milestones
 
@@ -217,7 +209,7 @@ Future milestones should follow these guidelines:
 - preserve compatibility with small, testable microphases that avoid regressions;
 - keep each step connected to the goal of publishing a demonstrable experience.
 
-These anchors are not milestones. They should guide the future creation of `docs/milestones.md`.
+These anchors are not milestones. They guided the creation of `docs/milestones.md`.
 
 ## Anchors for Implementation Documentation
 
@@ -235,13 +227,3 @@ Current signals suggest that `milestones-only` may be sufficient at the beginnin
 
 No implementation map should be created at this stage.
 
-## Notes for Next Steps
-
-Likely next documentation steps:
-
-- review and approve this `docs/vision.md`;
-- confirm essential gaps, especially the first dataset and initial stack;
-- generate `docs/architecture.md` from this vision;
-- generate `docs/milestones.md` only after the initial architecture is clear;
-- keep the scope of the first public cycle small, safe, and demonstrable;
-- avoid implementation before consolidating the main boundaries.

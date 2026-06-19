@@ -1,0 +1,53 @@
+{
+  "$schema": "https://atlas-dataflow.local/schemas/publisher/release-candidate.operational-note.schema.json",
+  "schema_version": "release-candidate.operational-note.v1",
+  "note_kind": "operational_note",
+  "companion_schema": "publisher/release-candidate.schema.json",
+  "milestone_scope": "M11",
+  "authoritative_for": ["M11-02", "M11-03", "M11-04", "M11-05", "M11-06"],
+  "purpose": "Selects concrete operational values for the release candidate input contract. The companion schema publisher/release-candidate.schema.json declares both hash_policy enum values and both manifest_policy enum values as structurally valid; this note commits to exactly one value for each, as required by the M11 release publisher flow.",
+  "hash_policy": "publisher_calculates_hashes",
+  "manifest_policy": "publisher_generates_manifest",
+  "candidate_directory_convention": {
+    "pattern": "releases/candidates/{dataset_slug}/{release_id}/",
+    "description": "Staging path for a release candidate package relative to the repository root. The second path segment 'candidates' is structurally distinct from a release_id (which matches ^release-[0-9]{8}-[0-9]{3}$), ensuring the staging area is unambiguously distinguishable from the promotion target path releases/{release_id}/ by path alone.",
+    "promotion_target_path": "releases/{release_id}/",
+    "path_disjoint_from_promotion_target": true
+  },
+  "artifact_roles": {
+    "count": 7,
+    "required": [
+      "contracts",
+      "predictive_bundle",
+      "metrics",
+      "model_card",
+      "public_context",
+      "manifest_input",
+      "candidate_metadata"
+    ],
+    "coverage_confirmed": true,
+    "coverage_confirmation_note": "All seven roles declared in publisher/release-candidate.schema.json are confirmed to cover the artifacts referenced in M11's scope per docs/milestones.md. No new roles are introduced by this operational note."
+  },
+  "policy_rationale": {
+    "hash_policy": "publisher_calculates_hashes is selected because publisher/promotion/promotion-rules.schema.json requires all_required_hashes_present: true as a non-negotiable promotion precondition. The publisher must be the entity that calculates hashes during its validation run to guarantee this precondition is always satisfied. publisher/examples/release-manifest.example.json confirms sha256 hash_value fields on all required artifact roles, consistent with publisher-side calculation.",
+    "manifest_policy": "publisher_generates_manifest is selected because publisher/release-manifest.schema.json defines the manifest as a structured publisher output, and the manifest_input artifact role in release-candidate.schema.json provides structured input to the publisher for generation. Generating the manifest from candidate inputs keeps the publisher as the authoritative source of the release manifest, consistent with the architecture's traceability and immutability requirements in docs/architecture.md."
+  },
+  "example_compatibility": {
+    "file": "publisher/examples/release-manifest.example.json",
+    "compatible": true,
+    "notes": "The example includes a supplementary 'visualizations' role beyond the seven required roles. This supplementary role is additive and does not conflict with publisher_calculates_hashes or publisher_generates_manifest. The selected policies are fully compatible with the example."
+  },
+  "safety_boundaries": {
+    "executable_code_present": false,
+    "publisher_cli_implemented": false,
+    "validation_logic_implemented": false,
+    "manifest_generation_code_present": false,
+    "hash_calculation_code_present": false,
+    "promotion_logic_present": false,
+    "implementation_authorized_by_this_note": false,
+    "schema_modified": false
+  },
+  "created_at": "2026-06-19T18:30:00Z",
+  "source_issue": "M11-01",
+  "source_handoff": "intents/M11/M11-01/implementation-handoff.json"
+}

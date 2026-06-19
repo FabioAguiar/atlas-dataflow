@@ -135,9 +135,19 @@ Conditions that may motivate a future review of the strategy:
 | M6 | Inference runtime by dataset and active release | Public prediction based on `dataset_slug` and `active_release` | Yes |
 | M7 | First public dataset experience | Published dataset with context, metrics, visualizations, and prediction | Yes |
 | M8 | Public deployment and minimum security | Atlas accessible through a public URL with a secure surface | Yes |
-| M9 | First public cycle closure | First demonstrable cycle stabilized and documented | Yes |
-| M10 | Initial private internal administration | Evaluation and possible introduction of a private control plane | With reservations |
-| M11 | Controlled expansion to a second dataset | Architecture validated beyond the first dataset | With reservations |
+| M9 | First public cycle closure | First demonstrable cycle reviewed, with production release gaps recorded | Yes |
+| M10 | Initial private internal administration | Internal admin explicitly deferred because publisher operation is not mature enough | Closed with documented deferral |
+| M11 | Publisher operational release flow | Publisher becomes an executable, repeatable release operation | Yes |
+| M12 | First real dataset release | First non-fixture dataset release is materialized and traceable | With reservations |
+| M13 | Contract artifact build pipeline foundation | Study/dataset inputs can produce governed contract artifacts | With reservations |
+| M14 | Run evidence and traceability layer | Runs, candidates, releases, and evidence become traceable | With reservations |
+| M15 | Controlled expansion to a second dataset | Architecture is validated beyond the first dataset | With reservations |
+| M16 | Published dataset context foundation | Published datasets gain governed semantic context | With reservations |
+| M17 | Published shell and dataset home experience | Published dataset experience becomes navigable and dataset-centered | With reservations |
+| M18 | Predict view foundation | Multiple governed prediction views can be associated with a dataset | With reservations |
+| M19 | Predict experience customization | Prediction experiences become configurable without duplicating contracts | With reservations |
+| M20 | Internal admin re-evaluation | Private administration is reconsidered after real operations exist | With reservations |
+| M21 | Publication stabilization and operational hardening | Publication layer is hardened for continued operation | With reservations |
 
 ## M1 — Documented Foundation and Initial Technical Scope
 
@@ -1402,122 +1412,605 @@ This milestone should close the first public cycle before starting a second data
 
 ### Objective
 
-Evaluate and, if justified, introduce a minimal internal administrative surface to operate publication and releases without exposing public administration.
+Evaluate whether Atlas should introduce a private internal administrative surface after the first public cycle, and record the decision without forcing premature implementation.
+
+### Outcome
+
+Status: `closed_with_documented_deferral`.
+
+M10 evaluated the need for a private internal administration layer and recorded the decision to defer it. The remaining issues in this milestone were conditional on the decision to create the admin surface. Because the recorded decision was `defer`, those dependent issues are considered non-executable for this milestone.
+
+This milestone is not treated as a normal implementation failure. It is treated as a valid decision milestone whose implementation branch was intentionally not taken.
 
 ### Problem or Gap
 
-Publication operations may become inconvenient if they depend only on manual tooling. An internal surface can improve operation, as long as it does not duplicate publisher logic and does not become part of the public surface.
+The project considered whether publication operations had become mature and repetitive enough to justify a private control plane. During the milestone, the observed state showed that the publisher is not yet a complete executable release operation. Without a mature publisher, an admin surface would either duplicate business rules, operate against incomplete publication mechanics, or create a false sense of operational readiness.
 
 ### Context
 
-The architecture defines that the internal publisher must exist before any web administration. Internal administration is optional, future-facing, and accessible only through a private surface, such as an SSH tunnel, private network, or equivalent mechanism.
+The architecture requires internal publisher capabilities before private web administration. The evaluation found that the next bottleneck is not a missing admin screen, but the absence of a fully operational publisher flow that can validate release candidates, generate manifests, promote releases, update the registry, and record evidence.
+
+The conditional downstream issues in this milestone depended on an explicit `decision=create`. Since the decision was `defer`, the correct continuation is to pause the admin branch and move the roadmap toward publisher operationalization.
 
 ### Core Scope
 
-- Evaluation of the real need for internal admin.
-- Definition of private access surface.
-- Querying releases and candidates, if applicable.
-- Controlled triggering of existing publisher operations.
-- Querying results or operational evidence.
-- Verification that admin is not publicly exposed.
+- Evaluate the real need for internal admin.
+- Decide whether to create or defer the admin surface.
+- Preserve the public/private boundary.
+- Record why private administration is premature.
+- Prevent conditional admin issues from being implemented when the creation condition is not satisfied.
+- Redirect the roadmap toward publisher operational maturity.
 
 ### Out of Scope
 
-- Public admin.
-- Complex multi-user login.
-- Broad relational CRUD.
-- Complete administrative framework as a mandatory requirement.
-- Public upload.
-- Public retraining.
-- Long and fragile pipeline execution in an HTTP request.
-- Duplication of publisher logic.
-- Replacing publisher with UI.
+- Creating a private admin UI after a `defer` decision.
+- Creating public admin.
+- Duplicating publisher logic in a web surface.
+- Introducing broad CRUD.
+- Creating release operations that bypass the publisher.
+- Treating deferred conditional issues as failed or incomplete implementation work.
+- Advancing to second-dataset expansion before publisher operation is mature.
 
 ### Expected Deliverables
 
-- Documented decision to create or defer internal admin.
-- If created, minimal and private internal surface.
-- Integration with existing publisher operations.
-- Guarantee of no public exposure.
-- Criteria for safe operation.
+- Recorded decision to defer internal admin.
+- Documentation that explains why the admin branch was not executed.
+- Explicit acknowledgement that conditional issues depending on `decision=create` are non-executable.
+- Continuity direction toward publisher operational release flow.
 
 ### Implementation Documentation
 
 - Applicable strategy: `milestones-only`.
-- Expected evaluation: review whether internal admin increases the need for operational documentation.
-- Candidate documents: short operational private access documentation, if authorized.
-- Criterion to create: create documentation only if there is operational risk without minimum instruction.
-- Criterion to update: update when the private access mechanism changes.
-- Criterion not to update: do not create an Implementation Map because of minimal admin existence.
+- Expected evaluation: document the deferral in this milestone rather than creating a separate implementation map.
+- Candidate documents: this document only, unless a future issue authorizes a dedicated operational decision record.
+- Criterion to create: do not create private admin documentation because admin was not created.
+- Criterion to update: update this milestone if the recorded decision or dependency interpretation changes.
+- Criterion not to update: do not document deferred issues as if they were implemented.
 
 ### Dependencies
 
-- M5 completed.
-- M9 completed or first public cycle stabilized.
-- Real operational need identified.
-- Private access mechanism decided.
+- M9 reviewed.
+- Initial publisher and release candidate concepts exist.
+- Evidence of operational gaps in publication is available.
+- Human decision accepts deferral.
 
 ### Components or Areas Affected
 
 - Future Internal Administration.
 - Internal Publisher.
-- Security.
-- Deployment and Operations.
-- Registry and Published Releases.
+- Published Releases.
+- Registry.
+- Roadmap continuity.
+- Security and operational boundaries.
 
 ### Expected Issues or Derivation Criteria
 
-- Criterion: publisher is already solid and manual operation has become a bottleneck.
-  - Possible issue type: private internal admin.
-  - Note: the issue must prove need before creating UI.
-- Criterion: private access needs to be validated.
-  - Possible issue type: security boundary.
-  - Note: admin cannot appear on the public internet.
-- Criterion: administrative operation needs to call publisher.
-  - Possible issue type: internal integration.
-  - Note: do not duplicate publication rules.
+- Criterion: admin need evaluation must be recorded.
+  - Possible issue type: decision.
+  - Note: if the decision is `defer`, dependent admin implementation issues must not execute.
+- Criterion: deferred downstream issues need interpretation.
+  - Possible issue type: documentation.
+  - Note: document that they were conditional and non-executable, not failed implementation.
+- Criterion: next roadmap segment needs realignment.
+  - Possible issue type: planning documentation.
+  - Note: prioritize publisher operationalization before admin or second dataset expansion.
 
 ### Definition of Done
 
-- Decision to create or defer internal admin is explicit.
-- If created, admin is accessible only through a private surface.
-- Admin calls publisher operations.
-- No public administrative route exists.
-- Long operations are not executed in a fragile way through public request.
-- Security of the internal surface was reviewed.
+- The admin decision is explicit.
+- The decision is recorded as `defer`.
+- Conditional downstream issues are understood as non-executable.
+- No private admin UI was created.
+- No public admin route was introduced.
+- The next roadmap segment is redirected toward publisher operational maturity.
 
 ### Minimum Evidence
 
-- Decision recorded.
-- Public surface review.
-- Private access validation, if created.
-- Publisher operation validation through admin, if created.
-- Confirmation that admin does not replace publisher.
+- Decision evidence for M10-01.
+- Confirmation that dependent M10 issues required `decision=create`.
+- Confirmation that the milestone is blocked by deferred conditional issues rather than implementation failure.
+- Confirmation that no admin surface was created.
+- Confirmation that the target repository was not modified by artificial markers or forced advancement.
 
 ### Risks and Gaps
 
-- Risk of admin growing into a complex panel too early.
-- Risk of exposing admin through deployment configuration.
-- Risk of duplicating publisher logic.
-- Risk of an HTTP request becoming an executor of a heavy pipeline.
-- Gap: real need for admin may not exist after M9.
-- Gap: exact private access mechanism depends on infrastructure.
+- Risk of interpreting deferral as failure instead of a valid planning decision.
+- Risk of forcing admin implementation without mature publisher operations.
+- Risk of advancing to second dataset while the publication operation remains incomplete.
+- Gap: publisher needs an executable release flow.
+- Gap: first real release still needs to be materialized and evidenced.
+
+### Derivability Criteria
+
+This milestone is already resolved as a decision milestone. Future issues should only be derived from M10 if they document the deferral, preserve the decision, or re-evaluate admin after later milestones create real operational need.
+
+### Continuity Notes
+
+M10 closes the initial administration branch as deferred. The next milestone should not be the previous second-dataset expansion. The project should first implement the publisher as a repeatable release operation.
+
+## M11 — Publisher Operational Release Flow
+
+### Objective
+
+Turn the publisher from a set of schemas and publication concepts into an executable, repeatable release operation.
+
+### Problem or Gap
+
+Atlas currently has a contract-first and release-oriented direction, but the publication operation is not yet mature enough to serve as the foundation for admin, multi-dataset expansion, or repeated public releases.
+
+A release must not depend on manual copying, inference, or loosely connected files. The system needs an internal operation that can validate a release candidate, generate a manifest, promote immutable artifacts, update the registry, and record evidence.
+
+### Context
+
+The M10 deferral showed that private administration is premature until the publisher is operational. The next step is to make publication executable and auditable through internal tooling, without exposing public administration and without creating a complex UI.
+
+### Core Scope
+
+- Define the operational release candidate input.
+- Validate release candidate structure and required artifacts.
+- Validate release candidate contracts against known schemas.
+- Calculate hashes for published artifacts.
+- Generate or validate `manifest.json`.
+- Promote a release candidate into `releases/{release_id}/`.
+- Update `registry/datasets.json` through a controlled operation.
+- Reject incomplete or inconsistent candidates.
+- Prevent silent overwrite of published releases.
+- Record publication evidence.
+
+### Out of Scope
+
+- Private admin UI.
+- Public admin.
+- Public dataset upload.
+- Multi-user operation.
+- Complete data science pipeline automation.
+- Second dataset publication.
+- Predict views.
+- Database-backed registry.
+- Marketplace behavior.
+
+### Expected Deliverables
+
+- Executable publisher command or internal script.
+- Release candidate validation rules.
+- Manifest generation or strict manifest validation.
+- Hash recording for promoted artifacts.
+- Controlled promotion into immutable release directory.
+- Registry update with active release control.
+- Evidence artifact for publication.
+- Tests for valid and invalid publication states.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: schemas, tests, and publisher evidence should be the primary technical sources.
+- Candidate documents: optional short publisher usage note only if future issue authorizes it.
+- Criterion to create: create operational notes only if command usage cannot be safely inferred from tests and CLI help.
+- Criterion to update: update architecture if publisher responsibility changes.
+- Criterion not to update: do not create a broad implementation map for a single operational flow.
+
+### Dependencies
+
+- M10 closed with deferral.
+- Registry model exists.
+- Contract and release artifact concepts exist.
+- File-based first-cycle publication remains accepted.
+
+### Components or Areas Affected
+
+- Internal Publisher.
+- Published Releases.
+- Registry.
+- Contract Layer.
+- Security and Traceability.
+- Tests and validations.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: release candidate format needs operational definition.
+  - Possible issue type: publisher contract.
+  - Note: must not infer required artifacts from filenames alone.
+- Criterion: promotion needs controlled implementation.
+  - Possible issue type: internal publisher operation.
+  - Note: must prevent overwrite and partial publication.
+- Criterion: registry update needs validation.
+  - Possible issue type: registry operation.
+  - Note: active release changes must be explicit and auditable.
+
+### Definition of Done
+
+- Publisher can validate a release candidate.
+- Publisher can reject incomplete or inconsistent candidates.
+- Publisher can promote a valid candidate into an immutable release directory.
+- Publisher can update the registry in a controlled way.
+- Manifest and hashes are present and verifiable.
+- Evidence is produced for publication.
+- No admin UI is introduced.
+
+### Minimum Evidence
+
+- Valid release candidate test.
+- Invalid release candidate tests.
+- Promotion test.
+- Registry update test.
+- Evidence artifact example.
+- Confirmation that published release directories are not silently overwritten.
+
+### Risks and Gaps
+
+- Risk of making publisher too broad and turning it into the full pipeline.
+- Risk of accepting incomplete release candidates.
+- Risk of registry mutation without traceability.
+- Gap: the first real dataset release still needs to be produced after the operation exists.
 
 ### Derivability Criteria
 
 The milestone will be ready to derive issues when:
 
-- publisher is completed and validated;
-- operational need is demonstrated;
-- public/internal boundary is clear;
-- private access mechanism is decided;
-- out of scope prevents complex admin.
+- required release candidate artifacts are identifiable;
+- publisher inputs and outputs are clear;
+- overwrite policy is explicit;
+- registry update semantics are defined;
+- tests can distinguish valid and invalid candidates.
 
 ### Continuity Notes
 
-This milestone is derivable with reservations. It should be deferred if the publisher CLI or internal tooling is sufficient to operate Atlas at the current stage.
+This milestone should create the operational foundation for publication. It should not attempt to solve data preparation, predict views, admin, or multi-dataset expansion.
 
-## M11 — Controlled Expansion to a Second Dataset
+## M12 — First Real Dataset Release
+
+### Objective
+
+Use the operational publisher to produce the first real, non-fixture dataset release.
+
+### Problem or Gap
+
+The project needs to move from structural examples and fixtures to a real published release with traceable artifacts. Without a real release, runtime and public experience validations remain incomplete demonstrations.
+
+### Context
+
+After M11, Atlas should have an executable publisher. M12 should use that publisher to materialize a real release and prove that the release-oriented architecture can support an actual public dataset publication.
+
+### Core Scope
+
+- Select or confirm the first real dataset for publication.
+- Assemble release candidate artifacts.
+- Include runtime contract and public contract.
+- Include model or runtime prediction artifact, if applicable.
+- Include metrics, model card, and safe public metadata.
+- Promote the candidate through the publisher.
+- Validate the resulting release through the registry and runtime.
+- Review the public experience against the real release.
+
+### Out of Scope
+
+- Second dataset.
+- Predict views.
+- Private admin.
+- Public upload.
+- Generalized pipeline for every dataset.
+- Complex model registry.
+- Marketplace or user accounts.
+
+### Expected Deliverables
+
+- First real release under `releases/{release_id}/` or equivalent accepted release path.
+- Updated registry pointing to the active release.
+- Manifest and hashes for release artifacts.
+- Runtime/public contracts linked to the release.
+- Public metadata and model card.
+- Evidence that the release was produced through the publisher.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: determine whether publisher usage is understandable from commands, tests, and evidence.
+- Candidate documents: optional first-release note if authorized by issue.
+- Criterion to create: create a short note only if the release process requires manual steps not captured elsewhere.
+- Criterion to update: update architecture or milestones if the real release reveals a boundary change.
+- Criterion not to update: do not turn this milestone into a general data science report.
+
+### Dependencies
+
+- M11 completed.
+- First dataset choice confirmed.
+- Required artifacts available or producible.
+- Public runtime can resolve active release.
+
+### Components or Areas Affected
+
+- Published Releases.
+- Registry.
+- Contract Layer.
+- Inference Runtime.
+- Public Web Experience.
+- Publisher Evidence.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: first real dataset needs confirmation.
+  - Possible issue type: decision.
+  - Note: dataset choice must not be inferred from fixture names.
+- Criterion: release candidate artifacts need assembly.
+  - Possible issue type: release preparation.
+  - Note: must preserve contract-first boundaries.
+- Criterion: release needs publication validation.
+  - Possible issue type: publisher validation.
+  - Note: must use M11 publisher operation.
+
+### Definition of Done
+
+- A real dataset release exists.
+- The release is not a structural fixture.
+- Registry resolves the dataset and active release.
+- Runtime can load required release artifacts.
+- Public experience uses the release data safely.
+- Publication evidence exists.
+- Traceability between dataset, contracts, model artifacts, metrics, and release is preserved.
+
+### Minimum Evidence
+
+- Publisher execution evidence.
+- Manifest and hash verification.
+- Registry validation.
+- Runtime resolution validation.
+- Public experience review.
+- Confirmation that fixture-only publication is no longer the sole example.
+
+### Risks and Gaps
+
+- Risk of treating a fixture as a production release.
+- Risk of manual artifact assembly bypassing publisher validation.
+- Risk of hardcoding the first real dataset.
+- Gap: generalized artifact build pipeline is still not complete.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- publisher flow is operational;
+- first dataset is selected;
+- required release artifacts are known;
+- runtime validation target is clear;
+- public exposure review criteria are defined.
+
+### Continuity Notes
+
+This milestone proves a real publication. The broader artifact build pipeline should come after this proof rather than before it.
+
+## M13 — Contract Artifact Build Pipeline Foundation
+
+### Objective
+
+Create the minimum governed pipeline for transforming dataset/study inputs into contract artifacts suitable for publication.
+
+### Problem or Gap
+
+The legacy draft showed useful capabilities around pipeline, contracts, model artifacts, and reports, but the current Atlas must recover those capabilities through contract-first boundaries instead of ad hoc data processing.
+
+Atlas needs a build stage that prepares candidate artifacts before publisher promotion, while keeping publisher and pipeline responsibilities separate.
+
+### Context
+
+M11 makes publication executable. M12 proves a real release. M13 should establish how future datasets produce compatible artifacts without manually assembling every release candidate.
+
+### Core Scope
+
+- Define the boundary between pipeline output and publisher input.
+- Define a minimum source or human-facing contract input.
+- Normalize or derive runtime contract artifacts.
+- Derive safe public contract artifacts.
+- Produce candidate artifacts for publisher validation.
+- Record build evidence.
+- Keep build artifacts separate from published immutable releases.
+
+### Out of Scope
+
+- Full notebook automation for every study type.
+- Public upload.
+- Online retraining.
+- Private admin UI.
+- Predict views.
+- Multi-dataset expansion as the main goal.
+- Publisher promotion logic.
+
+### Expected Deliverables
+
+- Minimum build pipeline entrypoint.
+- Defined candidate artifact layout.
+- Runtime/public contract derivation or validation.
+- Build evidence artifact.
+- Tests for successful and rejected builds.
+- Clear separation between build and publish.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: check whether pipeline and publisher now evolve independently enough to justify future navigation documentation.
+- Candidate documents: optional pipeline usage note if authorized.
+- Criterion to create: consider a small operational note only if multiple commands or directories are introduced.
+- Criterion to update: update architecture if pipeline responsibilities change.
+- Criterion not to update: do not create a full implementation map unless parallel areas become hard to navigate.
+
+### Dependencies
+
+- M11 completed.
+- M12 completed or sufficiently validated.
+- Contract formats stable enough for derivation.
+- Publisher input requirements known.
+
+### Components or Areas Affected
+
+- Data Pipeline.
+- Contract Layer.
+- Candidate Artifacts.
+- Publisher Boundary.
+- Evidence.
+- Tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: candidate artifact layout needs definition.
+  - Possible issue type: pipeline contract.
+  - Note: must be compatible with publisher validation.
+- Criterion: contract derivation needs implementation.
+  - Possible issue type: contract pipeline.
+  - Note: public projection must not expose internal details.
+- Criterion: build evidence needs persistence.
+  - Possible issue type: traceability.
+  - Note: evidence should link inputs to candidate artifacts.
+
+### Definition of Done
+
+- Pipeline can produce candidate artifacts.
+- Candidate artifacts can be consumed by publisher validation.
+- Runtime and public contracts are validated or derived predictably.
+- Build evidence is recorded.
+- Publisher does not become responsible for data transformation.
+- Tests cover valid and invalid build outputs.
+
+### Minimum Evidence
+
+- Build command or entrypoint validation.
+- Candidate artifact example.
+- Contract validation results.
+- Build evidence example.
+- Publisher compatibility validation.
+
+### Risks and Gaps
+
+- Risk of rebuilding the full legacy system too quickly.
+- Risk of mixing pipeline and publisher responsibilities.
+- Risk of accepting implicit contract generation without review.
+- Gap: model training automation may remain limited after this milestone.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- publisher input requirements are stable;
+- minimum pipeline inputs are defined;
+- contract derivation rules are known;
+- evidence requirements are clear;
+- build/publish boundary is explicit.
+
+### Continuity Notes
+
+This milestone should recover useful legacy pipeline ideas while preserving the new contract-first architecture.
+
+## M14 — Run Evidence and Traceability Layer
+
+### Objective
+
+Introduce a traceability layer that distinguishes runs, builds, release candidates, published releases, and active releases.
+
+### Problem or Gap
+
+As Atlas grows beyond a single manually assembled release, it needs a reliable way to understand how artifacts were produced and promoted. Without run-level evidence, debugging, audit, and future automation become fragile.
+
+### Context
+
+The legacy project included richer notions of runs and generated artifacts. The current architecture should recover that value in a simpler, release-oriented way.
+
+### Core Scope
+
+- Define run identity and minimum metadata.
+- Link run outputs to candidate artifacts.
+- Link candidates to release promotion evidence.
+- Link published releases to registry activation.
+- Provide a minimum run manifest or evidence record.
+- Validate traceability across build and publish stages.
+
+### Out of Scope
+
+- Full experiment tracking platform.
+- Database-backed run history.
+- Multi-user collaboration.
+- Public exposure of internal runs.
+- Admin UI.
+- Complex model comparison dashboard.
+
+### Expected Deliverables
+
+- Run or build evidence schema.
+- Traceability records linking run, candidate, release, and registry activation.
+- Validation of required traceability fields.
+- Tests for missing or inconsistent traceability.
+- Safe separation of internal evidence from public metadata.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: assess whether evidence formats and tests remain enough as source of truth.
+- Candidate documents: optional evidence format note if authorized.
+- Criterion to create: create documentation only if multiple evidence files become difficult to interpret.
+- Criterion to update: update architecture if traceability changes publication semantics.
+- Criterion not to update: do not expose internal run evidence as public documentation.
+
+### Dependencies
+
+- M13 completed or sufficiently advanced.
+- Publisher evidence exists.
+- Candidate artifacts can be linked to release artifacts.
+
+### Components or Areas Affected
+
+- Evidence Layer.
+- Data Pipeline.
+- Internal Publisher.
+- Published Releases.
+- Registry.
+- Security and Traceability.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: run evidence schema needs definition.
+  - Possible issue type: evidence contract.
+  - Note: keep it small and auditable.
+- Criterion: pipeline output needs linkage.
+  - Possible issue type: traceability integration.
+  - Note: run output must not be confused with published release.
+- Criterion: registry activation needs evidence.
+  - Possible issue type: publication traceability.
+  - Note: active release changes must be explainable.
+
+### Definition of Done
+
+- Runs, candidates, releases, and active releases are distinguishable.
+- Traceability records link the lifecycle stages.
+- Invalid or missing traceability is rejected where required.
+- Internal evidence is not exposed as public data by default.
+- Tests demonstrate the lifecycle links.
+
+### Minimum Evidence
+
+- Run/build evidence example.
+- Candidate-to-release traceability example.
+- Registry activation evidence example.
+- Validation of missing evidence cases.
+- Public exposure review.
+
+### Risks and Gaps
+
+- Risk of creating a heavy experiment tracking system too early.
+- Risk of exposing internal metadata publicly.
+- Risk of treating a run as a release.
+- Gap: long-term storage strategy remains file-based unless future evidence requires otherwise.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- build and publish stages exist;
+- required evidence fields are known;
+- internal/public metadata boundary is clear;
+- traceability failure behavior is defined.
+
+### Continuity Notes
+
+This milestone makes future growth safer by preserving provenance without turning Atlas into a full MLOps platform.
+
+## M15 — Controlled Expansion to a Second Dataset
 
 ### Objective
 
@@ -1525,121 +2018,805 @@ Validate that Atlas can publish more than one dataset without architectural rede
 
 ### Problem or Gap
 
-The first dataset may prove the public experience, but it does not by itself prove that the architecture supports multiple datasets. A second dataset helps validate the generality of the registry, contracts, publisher, and runtime.
+A single real release proves the basic publication path, but it does not prove the architecture can support more than one dataset. A second dataset should validate generality while staying controlled.
 
 ### Context
 
-The vision provides for evolution toward multiple datasets. The architecture requires that the first dataset not be treated as a special case and that resolution occur by `dataset_slug` and `active_release`.
+This milestone replaces the previous M11 position. It is intentionally delayed until publisher operation, first release, artifact build, and traceability have stronger foundations.
 
 ### Core Scope
 
-- Selection of a suitable second dataset.
-- Generation of candidate artifacts.
-- Contracts compatible with the architectural model.
-- Release candidate validated.
-- Publication via publisher.
-- Registry with multiple datasets.
-- Additional public experience.
-- Verification that runtime has no hardcode for the first dataset.
+- Define selection criteria for a second dataset.
+- Select a simple and suitable second dataset.
+- Build candidate artifacts through the governed pipeline.
+- Publish the second dataset through the publisher.
+- Validate registry with multiple datasets.
+- Validate runtime resolution by `dataset_slug` and `active_release`.
+- Confirm that the first dataset is not hardcoded.
 
 ### Out of Scope
 
-- Public upload.
 - Marketplace.
+- Public upload.
 - Multi-user operation.
-- Multiple experiences per dataset.
-- Predict views.
-- Complex admin.
-- Architecture rewrite.
-- Excessive generalization for any possible dataset.
+- Excessive generalization for every possible dataset.
+- Predict views as the main goal.
+- Private admin implementation.
+- Database migration.
 
 ### Expected Deliverables
 
-- Second dataset published.
-- Registry resolving multiple datasets.
-- Second release published and traceable.
-- Separate public experience.
-- Functional inference for both datasets, when applicable.
-- Review of couplings to the first dataset.
+- Second dataset release.
+- Registry with multiple valid datasets.
+- Active release per dataset.
+- Runtime validation for both datasets.
+- Public experience for each dataset.
+- Evidence that pipeline and publisher were used without special-case exceptions.
 
 ### Implementation Documentation
 
 - Applicable strategy: `milestones-only`.
-- Expected evaluation: review whether multiple implemented areas begin to justify `implementation-map-single`.
-- Candidate documents: possible documentation for publishing a new dataset, if authorized.
-- Criterion to create: consider cumulative documentation if publishing the second dataset requires navigation through many areas.
-- Criterion to update: update architecture or milestones if new boundaries appear.
-- Criterion not to update: do not create a map if the process remains simple and covered by publisher, contracts, and milestones.
+- Expected evaluation: review whether multi-dataset operations now justify a small publishing guide.
+- Candidate documents: optional publishing-new-dataset note, if authorized.
+- Criterion to create: create only if publishing requires multiple coordinated manual steps.
+- Criterion to update: update architecture if multi-dataset behavior changes registry or runtime assumptions.
+- Criterion not to update: do not create marketplace or onboarding documentation.
 
 ### Dependencies
 
-- M9 completed.
-- M5 functional.
-- M6 functional.
-- M7 functional.
-- Second dataset chosen.
-- First-cycle publication strategy validated.
+- M11 completed.
+- M12 completed.
+- M13 completed or sufficiently advanced.
+- M14 completed or sufficiently advanced.
+- Second dataset selected.
 
 ### Components or Areas Affected
 
 - Published Dataset Registry.
 - Published Releases.
+- Data Pipeline.
 - Contract Layer.
 - Internal Publisher.
 - Inference Runtime.
 - Public Web Experience.
-- Security and Traceability.
 
 ### Expected Issues or Derivation Criteria
 
-- Criterion: second dataset needs to be chosen.
-  - Possible issue type: dataset selection.
-  - Note: should evaluate demonstrative capability and simplicity.
-- Criterion: pipeline needs to generate compatible artifacts.
-  - Possible issue type: dataset publication.
-  - Note: must not create exceptions in the runtime.
-- Criterion: runtime needs to serve multiple datasets.
-  - Possible issue type: multi-dataset validation.
-  - Note: resolve through registry, not through hardcode.
+- Criterion: second dataset needs selection.
+  - Possible issue type: dataset decision.
+  - Note: prioritize simplicity and demonstrative value.
+- Criterion: second dataset needs artifact build.
+  - Possible issue type: pipeline application.
+  - Note: must not introduce dataset-specific runtime exceptions.
+- Criterion: multi-dataset registry needs validation.
+  - Possible issue type: registry/runtime validation.
+  - Note: resolution must remain explicit and deterministic.
 
 ### Definition of Done
 
 - Second dataset is published.
-- Registry contains more than one valid dataset.
+- Registry resolves both datasets.
 - Each dataset has an active release.
-- Each public experience is separately accessible.
-- Runtime resolves datasets by slug.
-- The first dataset is not a special case.
-- Traceability is preserved in both datasets.
-- Documentation strategy has been reevaluated.
+- Runtime resolves by dataset slug without hardcoding.
+- Public experience remains separated by dataset.
+- Traceability is preserved for both datasets.
+- No marketplace, public upload, or complex admin is introduced.
 
 ### Minimum Evidence
 
-- Registry validated with multiple datasets.
-- Publication of the second dataset validated.
-- Public experience of the second dataset reviewed.
-- Applicable prediction or interaction validated.
-- Absence of hardcode reviewed.
-- Documentation strategy evaluation recorded.
+- Second dataset selection rationale.
+- Build evidence.
+- Publication evidence.
+- Registry validation with multiple datasets.
+- Runtime validation for both datasets.
+- Public experience review.
+- Hardcode review.
 
 ### Risks and Gaps
 
-- Risk of excessive generalization after only two datasets.
-- Risk of choosing a dataset unsuitable for demonstrating value.
-- Risk of adapting runtime to the second dataset through exceptions.
-- Gap: selection criteria for the second dataset need to be defined.
-- Gap: documentation strategy may need review after multiple areas evolve.
+- Risk of choosing a dataset that forces premature generalization.
+- Risk of adapting runtime through exceptions.
+- Risk of expanding scope into marketplace behavior.
+- Gap: multiple experiences per dataset still need a later predict view foundation.
 
 ### Derivability Criteria
 
 The milestone will be ready to derive issues when:
 
-- first public cycle is closed;
-- publication process for the first dataset is clear;
-- second dataset has selection criteria;
-- boundaries between pipeline, publisher, and runtime are preserved;
-- need for additional documentation has been reevaluated.
+- first real release exists;
+- pipeline and publisher can be reused;
+- traceability is sufficient;
+- second dataset selection criteria are known;
+- multi-dataset validation cases are defined.
 
 ### Continuity Notes
 
-This milestone should validate multi-dataset capability in a controlled way. It must not automatically open the path to marketplace, public upload, or complex administration.
+This milestone should validate controlled multi-dataset operation, not platform marketplace ambitions.
+
+## M16 — Published Dataset Context Foundation
+
+### Objective
+
+Introduce a governed semantic context layer for published datasets, while keeping `dataset_slug` as the primary public identity.
+
+### Problem or Gap
+
+A public dataset experience needs more than contracts and prediction endpoints. It needs a safe, governed context that explains what the dataset represents, what the model does, and how users should understand the experience.
+
+### Context
+
+The legacy project contained richer published dataset context ideas. The current Atlas should recover that value in a way compatible with the release-oriented registry and active release model.
+
+### Core Scope
+
+- Define published dataset context fields.
+- Link context to dataset and active release.
+- Include title, description, domain, tags, and narrative metadata.
+- Separate public context from internal run evidence.
+- Validate context schema.
+- Expose safe context through public runtime.
+
+### Out of Scope
+
+- Replacing `dataset_slug` as identity.
+- Multiple predict views.
+- Public editing of context.
+- Private admin UI.
+- Rich CMS.
+- Multi-user content management.
+
+### Expected Deliverables
+
+- Published dataset context schema or contract.
+- Context example for existing dataset releases.
+- Runtime endpoint or payload including safe context.
+- Validation of required and optional context fields.
+- Public exposure review.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: verify whether context schemas are enough as source of truth.
+- Candidate documents: not required initially.
+- Criterion to create: create documentation only if context authoring becomes non-obvious.
+- Criterion to update: update architecture if dataset identity changes.
+- Criterion not to update: do not create CMS documentation.
+
+### Dependencies
+
+- M15 completed or at least one real dataset release available.
+- Public runtime can resolve dataset and release.
+- Public metadata exposure policy is understood.
+
+### Components or Areas Affected
+
+- Published Dataset Context.
+- Registry.
+- Public Runtime API.
+- Public Web Experience.
+- Security and Traceability.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: context schema needs definition.
+  - Possible issue type: public context contract.
+  - Note: must remain safe for public exposure.
+- Criterion: runtime needs context delivery.
+  - Possible issue type: public runtime projection.
+  - Note: must not expose internal evidence.
+- Criterion: UI needs context rendering.
+  - Possible issue type: public web experience.
+  - Note: rendering must be metadata-driven.
+
+### Definition of Done
+
+- Published dataset context is defined and validatable.
+- Context is associated with dataset/release without replacing registry identity.
+- Public runtime exposes only safe context.
+- Public web can render context predictably.
+- Internal evidence remains private.
+
+### Minimum Evidence
+
+- Context schema validation.
+- Context payload example.
+- Runtime response validation.
+- Public UI review.
+- Public exposure review.
+
+### Risks and Gaps
+
+- Risk of turning context into an uncontrolled CMS.
+- Risk of exposing internal evidence or data preparation details.
+- Risk of confusing `dataset_slug` with thematic grouping.
+- Gap: predict views still need a separate foundation.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- at least one real release exists;
+- public metadata needs are clear;
+- safe exposure rules are known;
+- context does not replace registry identity.
+
+### Continuity Notes
+
+This milestone makes the public dataset experience understandable before adding multiple prediction views.
+
+## M17 — Published Shell and Dataset Home Experience
+
+### Objective
+
+Create a clearer published shell and dataset home experience around the governed dataset context and release artifacts.
+
+### Problem or Gap
+
+A single prediction screen is not enough to communicate a published dataset experience. Atlas needs a public shell that organizes context, metrics, visualizations, model information, and prediction in a predictable dataset-centered way.
+
+### Context
+
+The legacy project explored multiple screens and published experience structure. The current Atlas should reintroduce this as a public shell after publication, context, and dataset identity are stable.
+
+### Core Scope
+
+- Define public dataset home structure.
+- Render dataset context.
+- Render safe metrics and model information.
+- Render safe visualizations when available.
+- Link to prediction experience.
+- Keep public shell separate from technical/internal shell.
+- Preserve contract-driven prediction behavior.
+
+### Out of Scope
+
+- Private admin.
+- Public editing.
+- Multiple predict views as a required feature.
+- User accounts.
+- Marketplace navigation.
+- Complex visualization builder.
+
+### Expected Deliverables
+
+- Public dataset home route or equivalent entrypoint.
+- Published shell layout.
+- Context, metrics, visualizations, and prediction navigation.
+- Safe fallback behavior when optional artifacts are absent.
+- Tests or reviews for public rendering.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: assess whether public routing and shell responsibilities are clear from code and tests.
+- Candidate documents: optional public routes note if authorized.
+- Criterion to create: create only if route structure becomes hard to infer.
+- Criterion to update: update architecture if public shell changes runtime responsibilities.
+- Criterion not to update: do not document visual design details as architecture.
+
+### Dependencies
+
+- M16 completed.
+- Public context available.
+- Runtime can expose safe public artifacts.
+- Web experience can consume public contract and context.
+
+### Components or Areas Affected
+
+- Public Web Experience.
+- Public Runtime API.
+- Published Dataset Context.
+- Published Releases.
+- Visualizations and Metrics.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: dataset home route needs definition.
+  - Possible issue type: public web routing.
+  - Note: routes must remain dataset-centered.
+- Criterion: public shell needs rendering.
+  - Possible issue type: web experience.
+  - Note: must not introduce business logic in UI.
+- Criterion: optional artifacts need safe rendering behavior.
+  - Possible issue type: runtime/web compatibility.
+  - Note: absent optional artifacts should not break the dataset home.
+
+### Definition of Done
+
+- Dataset home is accessible.
+- Public shell renders safe context and artifact summaries.
+- Prediction remains contract-driven.
+- Optional missing artifacts have predictable behavior.
+- No private/admin capability is exposed.
+
+### Minimum Evidence
+
+- Route validation.
+- Public rendering review.
+- Runtime payload validation.
+- Optional artifact fallback validation.
+- Public exposure review.
+
+### Risks and Gaps
+
+- Risk of mixing public shell with future admin shell.
+- Risk of duplicating runtime decisions in the frontend.
+- Risk of overbuilding visual navigation before predict views.
+- Gap: multiple prediction experiences remain future scope.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- dataset context exists;
+- public route model is clear;
+- safe artifact payloads are available;
+- UI/runtime boundaries are preserved.
+
+### Continuity Notes
+
+This milestone turns published datasets into navigable experiences without yet adding multiple prediction views.
+
+## M18 — Predict View Foundation
+
+### Objective
+
+Introduce the concept of governed predict views as multiple prediction experiences associated with a published dataset.
+
+### Problem or Gap
+
+A dataset may need more than one prediction experience, but those experiences must not duplicate or override the canonical runtime contract. Atlas needs a way to associate view-level presentation and intent with a dataset while preserving contract-first validation.
+
+### Context
+
+The legacy draft contained predict view concepts. The current Atlas should reintroduce them only after dataset context and published shell foundations exist.
+
+### Core Scope
+
+- Define predict view identity.
+- Associate predict views with dataset and active release or compatible release context.
+- Store view metadata.
+- Resolve view runtime through dataset context and contract artifacts.
+- List available views for a dataset.
+- Block views that reference invalid datasets, releases, or contracts.
+
+### Out of Scope
+
+- View marketplace.
+- Public view editor.
+- Private admin UI.
+- Arbitrary business logic per view.
+- Contract duplication.
+- Multiple model variants as a primary goal.
+
+### Expected Deliverables
+
+- Predict view contract or schema.
+- View registry or metadata location.
+- Runtime resolution for dataset/view.
+- Public listing of views.
+- Validation for invalid view bindings.
+- Tests for canonical dataset/contract precedence.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: consider whether view binding rules require a small reference note.
+- Candidate documents: optional predict view binding note if authorized.
+- Criterion to create: create only if binding rules become non-trivial.
+- Criterion to update: update architecture if predict views alter contract responsibilities.
+- Criterion not to update: do not document view content as implementation map.
+
+### Dependencies
+
+- M16 completed.
+- M17 completed.
+- Runtime/public contract separation stable.
+- Dataset/release resolution stable.
+
+### Components or Areas Affected
+
+- Predict Views.
+- Public Runtime API.
+- Public Web Experience.
+- Contract Layer.
+- Published Dataset Context.
+- Registry.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: predict view schema needs definition.
+  - Possible issue type: view contract.
+  - Note: views must not redefine runtime validation.
+- Criterion: view runtime needs resolution.
+  - Possible issue type: runtime binding.
+  - Note: dataset and contract precedence must be explicit.
+- Criterion: public web needs view listing.
+  - Possible issue type: web experience.
+  - Note: view rendering must be metadata-driven.
+
+### Definition of Done
+
+- Predict views are defined and validatable.
+- Views are associated with datasets without replacing dataset identity.
+- Runtime can resolve dataset/view safely.
+- Invalid bindings are rejected.
+- Public web can list or open available views.
+- Contracts remain the source of truth.
+
+### Minimum Evidence
+
+- Valid view example.
+- Invalid binding tests.
+- Runtime resolution tests.
+- Public listing/rendering review.
+- Contract precedence review.
+
+### Risks and Gaps
+
+- Risk of view metadata becoming a second contract system.
+- Risk of coupling view identity to one release too rigidly or too loosely.
+- Risk of reintroducing legacy complexity too quickly.
+- Gap: customization rules need a later milestone.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- dataset shell exists;
+- contract precedence is stable;
+- view identity and binding rules are defined;
+- invalid view behavior is known.
+
+### Continuity Notes
+
+This milestone introduces predict views as governed associations, not as arbitrary new applications.
+
+## M19 — Predict Experience Customization
+
+### Objective
+
+Allow prediction experiences to be customized through governed metadata while preserving canonical runtime validation.
+
+### Problem or Gap
+
+After predict views exist, Atlas needs a safe way to vary presentation, field grouping, text, and user guidance without duplicating business rules in the frontend or weakening runtime contracts.
+
+### Context
+
+The legacy project explored richer prediction experiences. The current Atlas should recover customization gradually and only through contract-compatible metadata.
+
+### Core Scope
+
+- Define customization metadata allowed for predict views.
+- Support field ordering and grouping when compatible with the public contract.
+- Support explanatory copy and context per view.
+- Support optional field visibility rules only when contract-safe.
+- Validate customization against the public contract.
+- Render customized prediction experiences in the public web.
+
+### Out of Scope
+
+- Runtime validation changes per view.
+- Arbitrary frontend scripts.
+- User-authored public customization.
+- Admin UI for editing.
+- Complex personalization.
+- Multiple models per view unless already supported by release contracts.
+
+### Expected Deliverables
+
+- Customization schema or extension for predict views.
+- Validation against public contract.
+- Public rendering of customized view metadata.
+- Rejection of customization that violates contract requirements.
+- Tests for field ordering, copy, and invalid customization.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: assess whether customization rules need a reference note.
+- Candidate documents: optional view customization note if authorized.
+- Criterion to create: create only if metadata authoring becomes ambiguous.
+- Criterion to update: update architecture if UI starts carrying business logic.
+- Criterion not to update: do not document view styling as core architecture.
+
+### Dependencies
+
+- M18 completed.
+- Public contract projection stable.
+- Public web supports view rendering.
+
+### Components or Areas Affected
+
+- Predict Views.
+- Public Web Experience.
+- Public Contract.
+- Public Runtime API.
+- Published Dataset Context.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: customization metadata needs definition.
+  - Possible issue type: view metadata contract.
+  - Note: must be validated against public contract.
+- Criterion: web rendering needs customization support.
+  - Possible issue type: public web experience.
+  - Note: must not encode business rules outside the contract.
+- Criterion: invalid customization needs rejection.
+  - Possible issue type: validation.
+  - Note: hidden or reordered fields must not break required input semantics.
+
+### Definition of Done
+
+- Predict views can carry safe customization metadata.
+- Customization is validated against the public contract.
+- Public web renders customized experiences.
+- Invalid customization is rejected.
+- Runtime validation remains canonical.
+- No arbitrary scripts or public editing are introduced.
+
+### Minimum Evidence
+
+- Valid customization example.
+- Invalid customization tests.
+- Public rendering review.
+- Contract compatibility review.
+- Confirmation that UI did not duplicate business rules.
+
+### Risks and Gaps
+
+- Risk of customization becoming hidden business logic.
+- Risk of hiding required fields unsafely.
+- Risk of growing into CMS/editor scope.
+- Gap: private admin for managing these artifacts remains deferred until re-evaluation.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- predict views exist;
+- public contract rules are stable;
+- allowed customization scope is clear;
+- invalid customization behavior is defined.
+
+### Continuity Notes
+
+This milestone makes Atlas more flexible for users while keeping contracts as the source of truth.
+
+## M20 — Internal Admin Re-Evaluation
+
+### Objective
+
+Re-evaluate private internal administration after publisher, real releases, multi-dataset operation, context, shell, and predict views create real operational needs.
+
+### Problem or Gap
+
+M10 deferred admin because it was premature. After later milestones, private administration may become justified for inspecting candidates, releases, evidence, views, and publication status. This milestone revisits the decision based on actual operations rather than speculation.
+
+### Context
+
+By this stage, Atlas should have enough internal operations to evaluate whether a minimal private surface improves safety and usability. The admin must remain private and must not duplicate publisher or pipeline logic.
+
+### Core Scope
+
+- Re-evaluate the need for private admin.
+- Identify concrete operational tasks that justify a private surface.
+- Define private access mechanism.
+- Allow read-only inspection of datasets, releases, candidates, evidence, and views if justified.
+- Allow controlled triggering of existing operations only if safe.
+- Preserve public/private boundary.
+
+### Out of Scope
+
+- Public admin.
+- Broad CRUD.
+- Multi-user administration.
+- Public upload.
+- Public retraining.
+- Replacing publisher or pipeline logic with UI.
+- Running long fragile operations inside public HTTP requests.
+
+### Expected Deliverables
+
+- Recorded decision to create, partially create, or defer admin again.
+- If created, minimal private internal surface.
+- Clear boundary between admin, publisher, and pipeline.
+- Private access validation.
+- Public exposure review.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, with possible review.
+- Expected evaluation: admin may justify small operational documentation.
+- Candidate documents: private access note or admin operation note, if implementation is authorized.
+- Criterion to create: create only if admin exists and operational misuse is likely without guidance.
+- Criterion to update: update architecture if private access model changes.
+- Criterion not to update: do not create user-facing public admin documentation.
+
+### Dependencies
+
+- M11 completed.
+- M12 completed.
+- M15 completed or multi-dataset operation validated.
+- M18 or M19 completed if views are part of admin needs.
+- Real operational need demonstrated.
+
+### Components or Areas Affected
+
+- Future Internal Administration.
+- Internal Publisher.
+- Data Pipeline.
+- Evidence Layer.
+- Predict Views.
+- Security and Operations.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: operational need is demonstrated.
+  - Possible issue type: decision.
+  - Note: admin must not be created merely because it was previously planned.
+- Criterion: private access needs definition.
+  - Possible issue type: security boundary.
+  - Note: public exposure must be impossible by design and deployment.
+- Criterion: safe operations need integration.
+  - Possible issue type: internal integration.
+  - Note: admin must call existing operations, not duplicate rules.
+
+### Definition of Done
+
+- Admin decision is explicit.
+- If created, admin is private.
+- Admin does not duplicate publisher or pipeline logic.
+- Public routes do not expose admin.
+- Operational tasks are concrete and justified.
+- Security review is recorded.
+
+### Minimum Evidence
+
+- Decision evidence.
+- Private access validation, if created.
+- Public exposure review.
+- Integration tests or manual validation for allowed operations, if created.
+- Confirmation that long operations are not run through unsafe public requests.
+
+### Risks and Gaps
+
+- Risk of admin growing beyond operational need.
+- Risk of private surface leaking publicly.
+- Risk of duplicating publisher rules.
+- Risk of turning admin into a general platform before product boundaries are mature.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- real operational tasks are known;
+- publisher and pipeline operations are mature;
+- private access mechanism can be validated;
+- out-of-scope admin expansion is explicit.
+
+### Continuity Notes
+
+This milestone intentionally revisits M10 after the system has enough real operations to justify or reject admin with better evidence.
+
+## M21 — Publication Stabilization and Operational Hardening
+
+### Objective
+
+Harden the publication layer and public dataset experience for continued operation after the second growth cycle.
+
+### Problem or Gap
+
+After publisher, real releases, pipeline, traceability, multi-dataset support, contexts, shell, and predict views, Atlas needs a stabilization milestone to reduce operational risk and prepare for sustained use.
+
+### Context
+
+This milestone closes the new roadmap segment. It should not introduce a major new product area. It should strengthen what already exists.
+
+### Core Scope
+
+- Review release immutability and backup assumptions.
+- Review minimum logging and error policy.
+- Harden public runtime errors.
+- Validate registry and release consistency across multiple datasets.
+- Validate public shell and predict views end to end.
+- Review security boundaries.
+- Review operational documentation needs.
+- Record remaining gaps for a future roadmap.
+
+### Out of Scope
+
+- Marketplace.
+- Public upload.
+- Complex user accounts.
+- Database migration unless a concrete blocker exists.
+- Major architecture rewrite.
+- New modeling capabilities as primary scope.
+- Public retraining.
+
+### Expected Deliverables
+
+- Stabilization review.
+- Hardened error behavior.
+- Multi-dataset publication validation.
+- Public experience regression validation.
+- Security and operations review.
+- Documentation strategy review.
+- Recorded next-roadmap gaps.
+
+### Implementation Documentation
+
+- Applicable strategy: review `milestones-only`.
+- Expected evaluation: determine whether Atlas now needs a small implementation map or operational guide.
+- Candidate documents: implementation navigation note, operational release guide, or public runtime guide, only if authorized.
+- Criterion to create: create documentation only if the project has enough parallel areas that milestones alone are no longer sufficient.
+- Criterion to update: update architecture and roadmap if stabilization reveals changed assumptions.
+- Criterion not to update: do not create documentation as a substitute for tests and evidence.
+
+### Dependencies
+
+- M11 through M19 completed or explicitly scoped as not applicable.
+- Public runtime and web experience operational.
+- Multiple datasets or multiple views available for regression validation.
+
+### Components or Areas Affected
+
+- Published Releases.
+- Registry.
+- Public Runtime API.
+- Public Web Experience.
+- Predict Views.
+- Evidence Layer.
+- Deployment and Operations.
+- Security and Traceability.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: release consistency needs validation.
+  - Possible issue type: stabilization.
+  - Note: validate across datasets and active releases.
+- Criterion: public errors need hardening.
+  - Possible issue type: runtime hardening.
+  - Note: errors must be safe and actionable.
+- Criterion: documentation strategy needs review.
+  - Possible issue type: documentation decision.
+  - Note: decide whether milestones-only remains enough.
+
+### Definition of Done
+
+- Publication invariants are reviewed.
+- Public runtime errors are safe and predictable.
+- Multi-dataset and/or multi-view scenarios are regression-tested.
+- Security boundary is reviewed.
+- Operational documentation strategy is evaluated.
+- Remaining gaps are recorded without becoming automatic scope.
+
+### Minimum Evidence
+
+- Stabilization test results.
+- Error behavior review.
+- Registry/release validation.
+- Public experience review.
+- Security review.
+- Documentation strategy decision.
+
+### Risks and Gaps
+
+- Risk of turning stabilization into a new feature milestone.
+- Risk of leaving operational risks undocumented.
+- Risk of delaying necessary architecture corrections.
+- Gap: future roadmap may require database, authentication, richer admin, or broader platform decisions.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- core publication flows exist;
+- multi-dataset or multi-view behavior is testable;
+- security and operations risks are identifiable;
+- stabilization can be separated from new feature development.
+
+### Continuity Notes
+
+This milestone should close the second roadmap block and prepare a future planning cycle based on evidence from real operation.

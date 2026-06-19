@@ -305,6 +305,24 @@ def test_release_unavailable_error_message_is_sanitized():
 
 
 # ---------------------------------------------------------------------------
+# Real-registry integration test (M12-04)
+# ---------------------------------------------------------------------------
+
+def test_real_telco_customer_churn_resolves_to_m12_release():
+    """
+    Real-registry integration: telco-customer-churn resolves to release-20260619-001.
+
+    Reads the actual registry/datasets.json (not a fixture) and asserts that
+    resolve_dataset returns active_release='release-20260619-001', confirming
+    the M12-03 registry update is present and discoverable.
+    """
+    result = resolve_dataset("telco-customer-churn")
+    assert isinstance(result, ResolvedDataset)
+    assert result.dataset_slug == "telco-customer-churn"
+    assert result.active_release == "release-20260619-001"
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 
@@ -324,6 +342,7 @@ if __name__ == "__main__":
         test_no_fallback_to_global_artifact_for_unknown_slug,
         test_dataset_unavailable_error_message_is_sanitized,
         test_release_unavailable_error_message_is_sanitized,
+        test_real_telco_customer_churn_resolves_to_m12_release,
     ]
     passed = 0
     failed = 0

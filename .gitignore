@@ -22,3 +22,16 @@ build/
 *.swo
 .idea/
 .vscode/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest/cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Atlas generated runtime evidence
+/evidence/

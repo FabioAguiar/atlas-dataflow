@@ -1,0 +1,78 @@
+{
+  "schema_version": "first_real_dataset_decision.v1",
+  "artifact_type": "first_real_dataset_decision",
+  "project_id": "atlas-dataflow",
+  "milestone_id": "M12",
+  "issue_id": "M12-01",
+  "decision_status": "approved",
+  "selected_dataset": {
+    "dataset_slug": "telco-customer-churn",
+    "public_title": "Telco Customer Churn",
+    "public_summary": "A binary classification dataset for demonstrating customer churn prediction in the first real Atlas DataFlow publication cycle.",
+    "display_name": "Telco Customer Churn",
+    "dataset_role": "first_real_publication_dataset",
+    "problem_type": "binary_classification",
+    "prediction_target": "customer_churn"
+  },
+  "non_fixture_confirmation": {
+    "confirmed": true,
+    "basis": "Human operational decision by the project owner selected Telco Customer Churn as the first real publication dataset for M12-01.",
+    "example_dataset_role": "fixture_or_compatibility_only",
+    "fixture_not_used_by_inference": true,
+    "do_not_delete_existing_fixtures": true,
+    "do_not_break_existing_tests_without_explicit_migration": true
+  },
+  "artifact_readiness": {
+    "runtime_contract": "required_for_m12_02",
+    "public_contract": "required_for_m12_02",
+    "prediction_artifact": "required_for_m12_02",
+    "metrics": "required_for_m12_02",
+    "model_card": "required_for_m12_02",
+    "public_metadata": "required_for_m12_02",
+    "known_blockers": []
+  },
+  "downstream_usage": {
+    "m12_02_dataset_identity_source": true,
+    "release_target_dataset_slug": "telco-customer-churn",
+    "notes": "M12-02 may use this decision as the source of dataset identity before assembling release candidate artifacts."
+  },
+  "decision_rationale": [
+    "The dataset is simple enough to validate the publisher release flow without introducing unnecessary product complexity.",
+    "The churn prediction use case is easy to explain in the public Atlas DataFlow experience.",
+    "The dataset replaces example-dataset as the first real publication target while preserving fixtures for tests and compatibility.",
+    "The dataset is suitable for demonstrating contract-first publication, registry activation, runtime inference, and publication evidence."
+  ],
+  "scope": {
+    "includes": [
+      "Use Telco Customer Churn as the first real dataset release target.",
+      "Prepare the minimum release artifacts required by the Atlas DataFlow publisher.",
+      "Publish one real immutable release for this dataset.",
+      "Update the registry active release for this dataset after successful publication.",
+      "Record publication evidence for the release."
+    ],
+    "excludes": [
+      "Second dataset expansion.",
+      "Private admin UI.",
+      "Marketplace behavior.",
+      "Multi-user operation.",
+      "Sensitive personal data ingestion.",
+      "Large-scale automated data science pipeline."
+    ]
+  },
+  "human_confirmation": {
+    "confirmed_by": "project_owner",
+    "confirmation_type": "human_operational_decision",
+    "implementation_authorized_for_issue": "M12-01"
+  },
+  "boundary_confirmations": {
+    "registry_updated": false,
+    "release_candidate_created": false,
+    "publisher_modules_run": false,
+    "public_upload_added": false,
+    "marketplace_added": false,
+    "user_accounts_added": false,
+    "model_retraining_added": false,
+    "second_dataset_selected": false,
+    "secrets_or_raw_data_persisted": false
+  }
+}

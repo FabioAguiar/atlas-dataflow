@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "tenure",
+      "type": "numeric",
+      "required": true,
+      "description": "Number of months the customer has stayed with the company.",
+      "domain_constraints": { "min": 0, "max": 72 }
+    },
+    {
+      "name": "monthly_charges",
+      "type": "numeric",
+      "required": true,
+      "description": "Monthly charge amount in USD.",
+      "domain_constraints": { "min": 0, "max": 200 }
+    },
+    {
+      "name": "total_charges",
+      "type": "numeric",
+      "required": true,
+      "description": "Total amount charged to the customer in USD.",
+      "domain_constraints": { "min": 0, "max": 10000 }
+    },
+    {
+      "name": "contract",
+      "type": "categorical",
+      "required": true,
+      "description": "The contract term of the customer.",
+      "domain_constraints": { "values": ["Month-to-month", "One year", "Two year"] }
+    },
+    {
+      "name": "internet_service",
+      "type": "categorical",
+      "required": true,
+      "description": "Customer internet service provider type.",
+      "domain_constraints": { "values": ["DSL", "Fiber optic", "No"] }
+    },
+    {
+      "name": "payment_method",
+      "type": "categorical",
+      "required": true,
+      "description": "The customer payment method.",
+      "domain_constraints": {
+        "values": [
+          "Electronic check",
+          "Mailed check",
+          "Bank transfer (automatic)",
+          "Credit card (automatic)"
+        ]
+      }
+    },
+    {
+      "name": "tech_support",
+      "type": "categorical",
+      "required": true,
+      "description": "Whether the customer has tech support.",
+      "domain_constraints": { "values": ["Yes", "No", "No internet service"] }
+    },
+    {
+      "name": "senior_citizen",
+      "type": "boolean",
+      "required": true,
+      "description": "Whether the customer is a senior citizen."
+    },
+    {
+      "name": "partner",
+      "type": "boolean",
+      "required": true,
+      "description": "Whether the customer has a partner."
+    },
+    {
+      "name": "dependents",
+      "type": "boolean",
+      "required": true,
+      "description": "Whether the customer has dependents."
+    },
+    {
+      "name": "paperless_billing",
+      "type": "boolean",
+      "required": true,
+      "description": "Whether the customer has paperless billing enabled."
+    },
+    {
+      "name": "phone_service",
+      "type": "boolean",
+      "required": true,
+      "description": "Whether the customer has phone service."
+    }
+  ]
+}

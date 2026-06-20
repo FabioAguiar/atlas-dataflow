@@ -1,0 +1,27 @@
+{
+  "schema_version": "promotion-evidence.v1",
+  "evidence_kind": "promotion_evidence",
+  "candidate_ref": {
+    "dataset_slug": "example-dataset",
+    "release_id": "release-20260620-001",
+    "candidate_traceability_ref": "pipeline/evidence/example-dataset/release-20260620-001/candidate-traceability.json"
+  },
+  "validation_result_ref": "publisher/evidence/example-dataset/release-20260620-001/publication-validation-evidence.json",
+  "manifest_ref": "releases/release-20260620-001/manifest.json",
+  "artifact_hashes_ref": "releases/release-20260620-001/manifest.json",
+  "promotion_outcome": "promoted",
+  "promotion_timestamp": "2026-06-20T10:00:00Z",
+  "evidence_safety": {
+    "reduced_evidence_only": true,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "raw_artifact_contents_embedded": false
+  },
+  "promotion_boundary_confirmations": {
+    "is_registry_activation_authorized": false,
+    "is_active_release_update": false,
+    "is_automatic_promotion": false
+  }
+}

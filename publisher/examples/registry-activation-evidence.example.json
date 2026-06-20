@@ -1,0 +1,24 @@
+{
+  "schema_version": "registry-activation-evidence.v1",
+  "evidence_kind": "registry_activation_evidence",
+  "dataset_ref": {
+    "dataset_slug": "example-dataset",
+    "new_active_release_id": "release-20260620-001",
+    "previous_active_release_id": "release-20260616-001"
+  },
+  "promotion_evidence_ref": "publisher/evidence/example-dataset/release-20260620-001/promotion-evidence.json",
+  "activation_timestamp": "2026-06-20T12:00:00Z",
+  "evidence_safety": {
+    "reduced_evidence_only": true,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "raw_artifact_contents_embedded": false
+  },
+  "activation_boundary_confirmations": {
+    "is_public_registry_entry": false,
+    "is_automatic_activation": false,
+    "exposes_internal_evidence_publicly": false
+  }
+}

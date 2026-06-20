@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/publisher/registry-activation-evidence.schema.json",
+  "title": "Atlas DataFlow Registry Activation Evidence",
+  "description": "M14 traceability-layer audit schema recording the registry active_release change for a dataset. This schema is the fourth and final link in the M14 traceability chain: M14-01 run evidence → M14-02 candidate traceability → M14-03 promotion evidence → M14-04 registry activation evidence. It captures dataset identity, the active release transition (previous → new), a path-pointer reference to the upstream M14-03 promotion evidence, and the activation timestamp. Activation evidence is internal only and must not be exposed through public registry metadata. It does not implement registry write operations, public administration, automatic activation logic, or any publisher execution behavior. All fields store reduced, sanitized, path-pointer-based references only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_kind",
+    "dataset_ref",
+    "promotion_evidence_ref",
+    "activation_timestamp",
+    "evidence_safety",
+    "activation_boundary_confirmations"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "registry-activation-evidence.v1",
+      "description": "Schema version for this evidence document."
+    },
+    "evidence_kind": {
+      "type": "string",
+      "const": "registry_activation_evidence",
+      "description": "Discriminator distinguishing this evidence document from promotion_evidence, publication_validation_evidence, run_evidence, and candidate_traceability records."
+    },
+    "dataset_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "new_active_release_id"
+      ],
+      "description": "Identity of the dataset and the active release transition. Field names and patterns align with registry/datasets.json vocabulary: dataset_slug pattern and active_release pattern are verbatim.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier. Identical pattern to registry/datasets.json dataset_slug convention."
+        },
+        "new_active_release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "The release being set as active in the registry. Identical pattern to registry/datasets.json active_release convention."
+        },
+        "previous_active_release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "The release that was previously active in the registry, if any. Optional — absent when this is a first-activation event for the dataset. Must not be null; omit entirely to signal first activation. Identical pattern to registry/datasets.json active_release convention."
+        }
+      }
+    },
+    "promotion_evidence_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path pointer to the upstream M14-03 promotion evidence instance that authorized this activation. String path pointer only — no embedded object, no raw M14-03 content. The referenced M14-03 instance carries a validation_result_ref, making a separate validation_result_ref field in this schema unnecessary."
+    },
+    "activation_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the registry activation event."
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "raw_artifact_contents_embedded"
+      ],
+      "description": "Explicit safety constraints for this evidence document. All raw-content flags are const: false, making violations schema-detectable. Follows the pattern established by publisher/evidence/publication-validation-evidence.schema.json and publisher/promotion-evidence.schema.json.",
+      "properties": {
+        "reduced_evidence_only": {
+          "type": "boolean",
+          "const": true,
+          "description": "This evidence document contains only reduced, sanitized, path-pointer-based references. Raw operational content is explicitly excluded."
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw publisher or activation logs must not be persisted in this evidence document."
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw runtime state must not be persisted in this evidence document."
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw API payloads must not be persisted in this evidence document."
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Secrets, tokens, credentials, or keys must not be persisted in this evidence document."
+        },
+        "raw_artifact_contents_embedded": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw artifact file contents must not be embedded in this evidence document."
+        }
+      }
+    },
+    "activation_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_public_registry_entry",
+        "is_automatic_activation",
+        "exposes_internal_evidence_publicly"
+      ],
+      "description": "Explicit confirmation that this evidence record is not a public registry entry, not an automatic activation, and does not expose internal evidence publicly. All fields are const: false, making violations schema-detectable. Mirrors the promotion_boundary_confirmations pattern in publisher/promotion-evidence.schema.json.",
+      "properties": {
+        "is_public_registry_entry": {
+          "type": "boolean",
+          "const": false,
+          "description": "This activation evidence record is not a public registry entry. registry/datasets.json is the public registry; this document is internal activation evidence only."
+        },
+        "is_automatic_activation": {
+          "type": "boolean",
+          "const": false,
+          "description": "Registry activation is an explicit, non-automatic step. This evidence record does not authorize or imply automatic activation."
+        },
+        "exposes_internal_evidence_publicly": {
+          "type": "boolean",
+          "const": false,
+          "description": "Internal activation evidence must not be exposed through public registry metadata. This record is for internal traceability only."
+        }
+      }
+    }
+  }
+}

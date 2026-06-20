@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/candidate-traceability.schema.json",
+  "title": "Atlas DataFlow Candidate Traceability",
+  "description": "Pipeline-side provenance link connecting run outputs (M14-01 run-evidence) to release candidate artifacts. Records the originating run reference, candidate artifact identities and hashes, and validation status. This schema is a pipeline-internal sidecar — it does not authorize promotion, registry activation, or any lifecycle transition. It records provenance state only. Internal run references must not appear in public metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_run_ref",
+    "candidate_identity",
+    "candidate_artifacts",
+    "validation_status",
+    "traceability_boundary_confirmations"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "candidate-traceability.v1",
+      "description": "Schema version for this candidate traceability record. The const value enables schema version discrimination across the M14 traceability layer."
+    },
+    "source_run_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "run_evidence_ref",
+        "producer"
+      ],
+      "description": "Reference to the originating pipeline run. Uses stable identifiers aligned with publisher/release-candidate.schema.json source_run vocabulary and pipeline/run-evidence.schema.json run_identity vocabulary. Must not embed raw run evidence content — only stable identifiers and a relative path pointer are permitted.",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable unique identifier for the originating run. Vocabulary anchor: publisher/release-candidate.schema.json#/properties/source_run/properties/run_id and pipeline/run-evidence.schema.json#/properties/run_identity/properties/run_id."
+        },
+        "run_evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative path pointer to the run-evidence artifact produced by this run. Pipeline-internal reference only — must not appear in public metadata or be exposed through public API surfaces."
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pipeline component or script that produced this run. Vocabulary anchor: publisher/release-candidate.schema.json#/properties/source_run/properties/producer and pipeline/run-evidence.schema.json#/properties/run_identity/properties/producer."
+        },
+        "run_type": {
+          "type": "string",
+          "enum": [
+            "pipeline_build",
+            "contract_derivation",
+            "candidate_assembly",
+            "validation_run",
+            "other"
+          ],
+          "description": "Optional category of the originating run. Vocabulary anchor: pipeline/run-evidence.schema.json#/properties/run_identity/properties/run_type. Pipeline-informational only."
+        }
+      }
+    },
+    "candidate_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "release_id"
+      ],
+      "description": "Identifies the candidate this traceability record belongs to. Field names and patterns anchor to publisher/release-candidate.schema.json dataset_identity and release_identity to prevent vocabulary drift.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier. Vocabulary anchor: publisher/release-candidate.schema.json#/properties/dataset_identity/properties/dataset_slug."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$",
+          "description": "Stable candidate release identifier. Vocabulary anchor: publisher/release-candidate.schema.json#/properties/release_identity/properties/release_id."
+        }
+      }
+    },
+    "candidate_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Array of artifact traceability entries. Each entry links a candidate artifact role and logical name to its originating run output via a required hash. artifact_hash is required (not optional) to enable hash-mismatch rejection at schema validation time.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "artifact_role",
+          "artifact_name",
+          "artifact_hash"
+        ],
+        "properties": {
+          "artifact_role": {
+            "type": "string",
+            "enum": [
+              "contracts",
+              "predictive_bundle",
+              "metrics",
+              "model_card",
+              "public_context",
+              "manifest_input",
+              "candidate_metadata"
+            ],
+            "description": "Artifact role. Vocabulary anchor: publisher/release-candidate.schema.json#/properties/artifact_roles vocabulary keys."
+          },
+          "artifact_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable logical name for the artifact."
+          },
+          "artifact_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 hash of the artifact. Required to enable hash-mismatch rejection at schema validation time. Pattern consistent with publisher/release-candidate.schema.json#/$defs/artifact_role/properties/sha256."
+          },
+          "contract_ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional relative path pointer to the JSON Schema contract that governs this artifact's structure."
+          }
+        }
+      }
+    },
+    "validation_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "publisher_validated",
+        "rejected"
+      ],
+      "description": "Current validation state of the candidate traceability record. Records state only — does not authorize any lifecycle transition. Promotion authority belongs to the publisher layer."
+    },
+    "traceability_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_promotion_authorized",
+        "is_active_release",
+        "is_published_release",
+        "raw_run_evidence_embedded"
+      ],
+      "description": "Explicit confirmation that this traceability record is a pipeline-side provenance link only. It does not authorize promotion, registry activation, or any lifecycle transition. Analogous to run_boundary_confirmations in pipeline/run-evidence.schema.json and state_boundaries in publisher/release-candidate.schema.json.",
+      "properties": {
+        "is_promotion_authorized": {
+          "type": "boolean",
+          "const": false,
+          "description": "This traceability record does not authorize candidate promotion. Promotion authority belongs to the publisher layer."
+        },
+        "is_active_release": {
+          "type": "boolean",
+          "const": false,
+          "description": "This candidate traceability record does not describe an active release."
+        },
+        "is_published_release": {
+          "type": "boolean",
+          "const": false,
+          "description": "This candidate traceability record does not describe a published release."
+        },
+        "raw_run_evidence_embedded": {
+          "type": "boolean",
+          "const": false,
+          "description": "Confirms that no raw run evidence content is embedded in this record. Only stable identifiers (run_id, run_evidence_ref as a path pointer, producer) are used as run references."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/publisher/promotion-evidence.schema.json",
+  "title": "Atlas DataFlow Promotion Evidence",
+  "description": "M14 traceability-layer audit schema recording the promotion of a validated release candidate to a published release. This schema is complementary to publisher/promotion/promotion-result.schema.json — the operational result records what the publisher did; this evidence schema records the chain-of-custody audit link for the M14 traceability layer. It does not implement registry write operations, hash calculation, signing, queues, workers, databases, public endpoints, or web administration. All fields store reduced, sanitized, path-pointer-based references only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_kind",
+    "candidate_ref",
+    "validation_result_ref",
+    "manifest_ref",
+    "artifact_hashes_ref",
+    "promotion_outcome",
+    "promotion_timestamp",
+    "evidence_safety",
+    "promotion_boundary_confirmations"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "promotion-evidence.v1",
+      "description": "Schema version for this evidence document."
+    },
+    "evidence_kind": {
+      "type": "string",
+      "const": "promotion_evidence",
+      "description": "Discriminator distinguishing this evidence document from publication_validation_evidence, run_evidence, and candidate_traceability records."
+    },
+    "candidate_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "release_id"
+      ],
+      "description": "Identity of the release candidate being promoted. Field names and patterns align with publisher/promotion/promotion-result.schema.json candidate_identity vocabulary.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier from the promoted release candidate. Identical semantics to promotion-result.schema.json candidate_identity.dataset_slug."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Stable release identifier from the promoted release candidate. Identical semantics to promotion-result.schema.json candidate_identity.release_id."
+        },
+        "candidate_traceability_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional path pointer to the M14-02 candidate traceability record instance (pipeline/candidate-traceability.schema.json instance). String path pointer only — no embedded candidate traceability content. When absent, the schema remains valid."
+        }
+      }
+    },
+    "validation_result_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path pointer to the validation result record that justified this promotion. String path pointer only — no embedded validation content."
+    },
+    "manifest_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path pointer to the release manifest for the published release. Follows the releases/<release_id>/manifest.json convention (e.g., releases/release-20260619-001/manifest.json). String path pointer only — no embedded manifest content."
+    },
+    "artifact_hashes_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path pointer to the release manifest, which is the canonical source of artifact hashes. String path pointer only — no embedded hash arrays. May be identical to manifest_ref in practice."
+    },
+    "promotion_outcome": {
+      "type": "string",
+      "enum": [
+        "promoted",
+        "rejected"
+      ],
+      "description": "Outcome of the promotion step. 'promoted' when all preconditions were met and the candidate was published as a release. 'rejected' when any precondition failed and no release was made active. Vocabulary identical to promotion-result.schema.json promotion_outcome."
+    },
+    "promotion_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the promotion event."
+    },
+    "rejection_reasons": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Required when promotion_outcome is 'rejected'. Provides explainable reduced evidence for why the promotion was rejected. Must not be present or may be empty when outcome is 'promoted'.",
+      "items": {
+        "$ref": "#/$defs/rejection_reason"
+      }
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "raw_artifact_contents_embedded"
+      ],
+      "description": "Explicit safety constraints for this evidence document. All raw-content flags are const: false, making violations schema-detectable.",
+      "properties": {
+        "reduced_evidence_only": {
+          "type": "boolean",
+          "const": true,
+          "description": "This evidence document contains only reduced, sanitized, path-pointer-based references. Raw operational content is explicitly excluded."
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw publisher logs must not be persisted in this evidence document."
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw runtime state must not be persisted in this evidence document."
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw API payloads must not be persisted in this evidence document."
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Secrets, tokens, credentials, or keys must not be persisted in this evidence document."
+        },
+        "raw_artifact_contents_embedded": {
+          "type": "boolean",
+          "const": false,
+          "description": "Raw artifact file contents must not be embedded in this evidence document."
+        }
+      }
+    },
+    "promotion_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_registry_activation_authorized",
+        "is_active_release_update",
+        "is_automatic_promotion"
+      ],
+      "description": "Explicit confirmation that this evidence record does not authorize registry activation, active release update, or automatic promotion. All fields are const: false, making violations schema-detectable.",
+      "properties": {
+        "is_registry_activation_authorized": {
+          "type": "boolean",
+          "const": false,
+          "description": "This promotion evidence record does not authorize registry activation. Promotion does not make a release active unless registry activation occurs separately."
+        },
+        "is_active_release_update": {
+          "type": "boolean",
+          "const": false,
+          "description": "This record does not update the active release state. Registry activation is a separate, explicit step."
+        },
+        "is_automatic_promotion": {
+          "type": "boolean",
+          "const": false,
+          "description": "Promotion is an explicit, non-automatic step. This evidence record does not authorize or imply automatic promotion."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "promotion_outcome": {
+            "const": "rejected"
+          }
+        },
+        "required": [
+          "promotion_outcome"
+        ]
+      },
+      "then": {
+        "required": [
+          "rejection_reasons"
+        ],
+        "properties": {
+          "rejection_reasons": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "rejection_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "completeness_validation_not_accepted",
+            "manifest_invalid",
+            "required_hash_missing",
+            "candidate_state_invalid",
+            "precondition_not_met"
+          ],
+          "description": "Structured rejection reason code. Vocabulary aligns with publisher/promotion/promotion-result.schema.json $defs/rejection_reason.code."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sanitized message safe for evidence. Must not include raw logs, runtime data, secrets, sensitive local paths, or raw artifact contents."
+        },
+        "safe_detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional reduced detail safe for evidence. Must not include raw logs, runtime data, secrets, or sensitive local paths."
+        }
+      }
+    }
+  }
+}

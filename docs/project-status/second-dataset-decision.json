@@ -1,0 +1,108 @@
+{
+  "schema_version": "second_dataset_decision.v1",
+  "artifact_type": "second_dataset_decision",
+  "project_id": "atlas-dataflow",
+  "milestone_id": "M15",
+  "issue_id": "M15-01",
+  "created_at": "2026-06-20T20:45:00Z",
+  "decision_status": "selected",
+  "selected_dataset": {
+    "dataset_slug": "bank-marketing",
+    "public_title": "Bank Marketing",
+    "public_summary": "Controlled second dataset for validating multi-dataset publication using a simple binary classification problem from the banking marketing domain.",
+    "domain": "banking-marketing",
+    "problem_type": "binary_classification",
+    "prediction_goal": "Predict whether a client subscribes to a term deposit offer in a bank marketing campaign."
+  },
+  "baseline_comparison": {
+    "first_dataset_slug": "telco-customer-churn",
+    "first_dataset_domain": "telco",
+    "domain_is_distinct_from_first_dataset": true,
+    "rationale": "Bank Marketing exercises a different business domain while preserving a simple supervised classification shape compatible with the existing Atlas publication model."
+  },
+  "selection_criteria_results": {
+    "sc-01_pipeline_compatibility": {
+      "status": "pass",
+      "rationale": "The dataset can be handled as a tabular supervised classification dataset without requiring custom pipeline stages."
+    },
+    "sc-02_contract_compatibility": {
+      "status": "pass",
+      "rationale": "The dataset can be represented through the existing contract-first publication model without adding new required contract fields."
+    },
+    "sc-03_no_runtime_exceptions": {
+      "status": "pass",
+      "rationale": "The dataset selection does not require dataset-specific runtime branches, fallbacks, or special-case inference behavior."
+    },
+    "sc-04_publisher_compatibility": {
+      "status": "pass",
+      "rationale": "The dataset is intended to be published through the same governed publisher path as the first dataset, without publisher-specific exceptions."
+    },
+    "sc-05_registry_compatibility": {
+      "status": "pass",
+      "rationale": "The slug `bank-marketing` follows the existing lowercase hyphenated registry convention."
+    },
+    "sc-06_domain_differentiation": {
+      "status": "pass",
+      "rationale": "The dataset domain is banking marketing, distinct from the first dataset domain, telco."
+    },
+    "sc-07_public_experience_support": {
+      "status": "pass",
+      "rationale": "The dataset supports a simple public dataset page and prediction narrative without requiring predict view foundations or a new public UI model."
+    },
+    "sc-08_publishability_and_safety": {
+      "status": "pass",
+      "rationale": "The selection records only public-safe metadata and does not persist raw data, private paths, secrets, logs, runtime state, or API payloads."
+    },
+    "sc-09_acceptable_metadata_not_runtime_exceptions": {
+      "status": "pass",
+      "rationale": "Dataset-specific title, summary, domain, tags, and slug are acceptable metadata. Dataset-specific runtime exceptions remain forbidden."
+    }
+  },
+  "metadata_vs_exceptions_confirmation": {
+    "dataset_specific_metadata_used": true,
+    "dataset_specific_runtime_exceptions_required": false,
+    "notes": "The selected dataset requires only dataset metadata and does not authorize runtime branching keyed on dataset_slug."
+  },
+  "rejected_candidates": [
+    {
+      "candidate": "iris",
+      "reason": "Too small and weak as a product-like predictive dataset for controlled multi-dataset validation."
+    },
+    {
+      "candidate": "wine-quality",
+      "reason": "May require additional regression or multiclass framing decisions not needed for the controlled second dataset."
+    },
+    {
+      "candidate": "adult-income",
+      "reason": "Higher sensitivity and interpretation risk than necessary for M15 controlled expansion."
+    },
+    {
+      "candidate": "titanic",
+      "reason": "Useful for study, but less aligned with the controlled publication/product validation goal."
+    }
+  ],
+  "downstream_usage": {
+    "m15_02_dataset_identity_source": true,
+    "notes": "M15-02 must treat this record as the source of the second dataset identity before candidate artifact build."
+  },
+  "boundary_confirmations": {
+    "registry_updated": false,
+    "release_candidate_created": false,
+    "publisher_modules_run": false,
+    "runtime_code_modified": false,
+    "pipeline_code_modified": false,
+    "public_upload_added": false,
+    "marketplace_added": false,
+    "predict_view_scope_added": false,
+    "private_admin_added": false,
+    "secrets_or_raw_data_persisted": false
+  },
+  "source_issue": "issues/M15/M15-01/formal-issue.json",
+  "source_handoff": "intents/M15/M15-01/implementation-handoff.json",
+  "human_confirmation": {
+    "confirmed_by": "project_owner",
+    "confirmation_type": "human_operational_decision",
+    "implementation_authorized_for_issue": "M15-01",
+    "authorized_output": "docs/project-status/second-dataset-decision.json only"
+  }
+}

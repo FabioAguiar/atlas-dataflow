@@ -159,23 +159,6 @@ def _build_release_candidate(
     }
 
 
-def _build_evidence(assembled_artifacts: list[str]) -> dict:
-    """Minimal build-evidence.json (pipeline-internal, not in publisher artifact_roles)."""
-    return {
-        "schema_version": "build-evidence.v1",
-        "producer": "pipeline/assemble_candidate.py",
-        "evidence_policy": {
-            "raw_logs_prohibited": True,
-            "raw_runtime_prohibited": True,
-            "raw_api_payloads_prohibited": True,
-            "secrets_prohibited": True,
-            "private_source_paths_prohibited": True,
-            "reduced_and_sanitized": True,
-        },
-        "assembled_artifacts": assembled_artifacts,
-    }
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Assemble a publisher-compatible candidate from build outputs."
@@ -276,16 +259,22 @@ def main() -> int:
         json.dumps(release_candidate, indent=2), encoding="utf-8"
     )
 
-    # Step 8: Write build-evidence.json (pipeline-internal; NOT in artifact_roles).
-    assembled = _REQUIRED_SOURCE_ARTIFACTS + ["release-candidate.json"]
-    (candidate_dir / "build-evidence.json").write_text(
-        json.dumps(_build_evidence(assembled), indent=2), encoding="utf-8"
-    )
-
-    # Step 9: Invoke publisher.validate.validate_candidate_file() via Python import.
+    # Step 8: Invoke publisher.validate.validate_candidate_file() via Python import.
     sys.path.insert(0, str(_REPO_ROOT))
     from publisher import validate  # noqa: PLC0415
     result = validate.validate_candidate_file(candidate_dir)
+
+    # Step 9: Write reduced build-evidence.json (pipeline-internal; NOT in artifact_roles).
+    from pipeline import evidence  # noqa: PLC0415
+    assembled = _REQUIRED_SOURCE_ARTIFACTS + ["release-candidate.json"]
+    build_evidence = evidence.build_build_evidence(
+        dataset_slug,
+        release_id,
+        args.source_input,
+        result,
+        assembled,
+    )
+    evidence.write_build_evidence(candidate_dir, build_evidence, _REPO_ROOT)
 
     # Steps 10-11: Emit result JSON and exit.
     if result.get("valid"):

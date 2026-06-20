@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/run-evidence.schema.json",
+  "title": "Atlas DataFlow Run Evidence",
+  "description": "Minimum internal run/build evidence schema for the M14 traceability layer. Records reduced identity, input, output, timestamp, status, hash, and failure fields for a technical execution. This schema is internal operational evidence only — run evidence must not be treated as a release candidate, published release, active release record, or public dataset metadata. Raw logs, raw runtime data, raw API payloads, secrets, and private local paths are prohibited.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_identity",
+    "run_inputs",
+    "run_outputs",
+    "run_timestamps",
+    "run_status",
+    "run_boundary_confirmations",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "run-evidence.v1",
+      "description": "Schema version for this reduced run/build evidence document."
+    },
+    "run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "run_type",
+        "producer"
+      ],
+      "description": "Stable identifier fields for the technical run. Must not expose private session details, raw execution identifiers, or secrets.",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable unique identifier for this run or build execution."
+        },
+        "run_type": {
+          "type": "string",
+          "enum": [
+            "pipeline_build",
+            "contract_derivation",
+            "candidate_assembly",
+            "validation_run",
+            "other"
+          ],
+          "description": "Category of the technical run. Must not expose raw execution mode labels."
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pipeline component or script that produced this run evidence. Must not expose private paths or secrets."
+        }
+      }
+    },
+    "run_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_ref"
+      ],
+      "description": "Reduced reference to the run's input artifacts. Must use path references or slugs only — not raw artifact content, not private local paths, not secrets.",
+      "properties": {
+        "input_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced reference to the primary input artifact or contract. Must not embed raw content or private absolute paths."
+        },
+        "input_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional integrity hash of the primary input artifact. Must not expose raw content."
+        }
+      }
+    },
+    "run_outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "output_ref"
+      ],
+      "description": "Reduced reference to the run's output artifacts. Must use path references or artifact role references only — not raw artifact content.",
+      "properties": {
+        "output_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced reference to the primary output artifact or directory. Must not embed raw artifact contents."
+        },
+        "output_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional integrity hash of the primary output artifact or manifest. Must not expose raw content."
+        }
+      }
+    },
+    "run_timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started_at",
+        "completed_at"
+      ],
+      "description": "ISO 8601 timestamps for run start and completion. Must not include raw process timing or raw runtime profiling data.",
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the run started."
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the run completed (success, rejection, or failure)."
+        }
+      }
+    },
+    "run_status": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "rejected",
+        "failed"
+      ],
+      "description": "Outcome of the run. Must not expose raw exit codes, raw runtime signals, or raw error payloads."
+    },
+    "failure_info": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional reduced failure or rejection information. Present only when run_status is rejected or failed. Must not include raw stack traces, raw log output, raw error payloads, or secrets.",
+      "properties": {
+        "failure_reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short reduced description of why the run failed. Must not embed raw log output or raw exception details."
+        },
+        "rejection_reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short reduced description of why the run was rejected. Must not embed raw validation payloads or raw error details."
+        }
+      }
+    },
+    "run_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_release_candidate",
+        "is_published_release",
+        "is_active_release"
+      ],
+      "description": "Explicit confirmation that this evidence record describes a technical run only. Run evidence must never be treated as or written to release candidate, published release, or active release records.",
+      "properties": {
+        "is_release_candidate": {
+          "type": "boolean",
+          "const": false,
+          "description": "Run evidence must never claim to be a release candidate record."
+        },
+        "is_published_release": {
+          "type": "boolean",
+          "const": false,
+          "description": "Run evidence must never claim to be a published release record."
+        },
+        "is_active_release": {
+          "type": "boolean",
+          "const": false,
+          "description": "Run evidence must never claim to be an active release record."
+        }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_logs_prohibited",
+        "raw_runtime_prohibited",
+        "raw_api_payloads_prohibited",
+        "secrets_prohibited",
+        "private_source_paths_prohibited",
+        "reduced_and_sanitized"
+      ],
+      "description": "Safety policy for reduced run/build evidence. All flags are required and fixed. Mirrors the M13 build-evidence.schema.json evidence_policy convention.",
+      "properties": {
+        "raw_logs_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_runtime_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_api_payloads_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "secrets_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "private_source_paths_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "reduced_and_sanitized": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  }
+}

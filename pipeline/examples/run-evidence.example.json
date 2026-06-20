@@ -1,0 +1,34 @@
+{
+  "schema_version": "run-evidence.v1",
+  "run_identity": {
+    "run_id": "run-20260620-001",
+    "run_type": "pipeline_build",
+    "producer": "pipeline/build.py"
+  },
+  "run_inputs": {
+    "input_ref": "contracts/telco-customer-churn/source-contract.json",
+    "input_hash": "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+  },
+  "run_outputs": {
+    "output_ref": "releases/candidates/telco-customer-churn/release-20260620-001",
+    "output_hash": "sha256:b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
+  },
+  "run_timestamps": {
+    "started_at": "2026-06-20T14:00:00Z",
+    "completed_at": "2026-06-20T14:02:30Z"
+  },
+  "run_status": "accepted",
+  "run_boundary_confirmations": {
+    "is_release_candidate": false,
+    "is_published_release": false,
+    "is_active_release": false
+  },
+  "evidence_policy": {
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "secrets_prohibited": true,
+    "private_source_paths_prohibited": true,
+    "reduced_and_sanitized": true
+  }
+}

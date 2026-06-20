@@ -1,0 +1,394 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/candidate-layout.schema.json",
+  "title": "Atlas DataFlow Build Pipeline Candidate Layout",
+  "description": "Contract defining the minimum candidate artifact structure emitted by the build pipeline before publisher promotion. This schema covers the build-output side of the build/publisher boundary. Artifacts that conform to this layout are intermediate build candidates and are not published releases. Publisher promotion is required before any artifact becomes an immutable published release.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_kind",
+    "dataset_identity",
+    "release_identity",
+    "source_run",
+    "artifact_roles",
+    "candidate_metadata",
+    "state_boundaries",
+    "publisher_compatibility"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "candidate-layout.v1",
+      "description": "Schema version for the build pipeline candidate layout contract."
+    },
+    "candidate_kind": {
+      "type": "string",
+      "const": "build_pipeline_candidate",
+      "description": "Identifies this artifact as a build pipeline candidate, distinct from a publisher-promoted release or an immutable published release."
+    },
+    "dataset_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_slug"],
+      "description": "Dataset identity fields compatible with publisher/release-candidate.schema.json#/properties/dataset_identity. Must not expose private source paths or be inferred from local filesystem paths.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier. Must match the publisher schema slug convention and must not be inferred from a local path or fixture name."
+        },
+        "dataset_title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Public-safe dataset title. Must not expose private source paths or internal metadata."
+        }
+      }
+    },
+    "release_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_id", "release_version", "created_at"],
+      "description": "Release identity fields compatible with publisher/release-candidate.schema.json#/properties/release_identity.",
+      "properties": {
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$",
+          "description": "Stable candidate release identifier. Must match the publisher release_id convention."
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version label for this candidate before publisher promotion."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when this candidate was assembled."
+        }
+      }
+    },
+    "source_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "producer"],
+      "description": "Build run reference compatible with publisher/release-candidate.schema.json#/properties/source_run. Must not include raw runtime data, private source paths, secrets, or raw logs.",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier for the pipeline or manual assembly run that produced candidate artifacts."
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifies the build tool, script, or process that produced the candidate. Must not include private paths or secrets."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "artifact_roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contracts",
+        "metrics",
+        "model_card",
+        "public_context",
+        "manifest_input",
+        "build_evidence"
+      ],
+      "description": "Named artifact roles emitted by the build pipeline. Required roles must be present for the candidate to be submitted to the publisher. Optional roles are included when applicable to the study type. Role names for publisher-visible artifacts match publisher/release-candidate.schema.json#/properties/artifact_roles to prevent naming drift.",
+      "properties": {
+        "contracts": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Runtime and public contract artifacts. Matches the 'contracts' role in publisher/release-candidate.schema.json. The build pipeline must produce both runtime-contract.json and public-contract.json; the publisher validates both through this role."
+        },
+        "metrics": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Model or dataset metrics artifact. Matches the 'metrics' role in publisher/release-candidate.schema.json."
+        },
+        "model_card": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Model card or equivalent dataset documentation artifact. Matches the 'model_card' role in publisher/release-candidate.schema.json."
+        },
+        "public_context": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Public dataset context artifact. Matches the 'public_context' role in publisher/release-candidate.schema.json."
+        },
+        "manifest_input": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Input used by the publisher to generate or validate the final release manifest. Matches the 'manifest_input' role in publisher/release-candidate.schema.json."
+        },
+        "build_evidence": {
+          "$ref": "#/$defs/build_evidence_role",
+          "description": "Reduced, safe build evidence artifact. This role is pipeline-only and is not forwarded to the publisher. Must not include raw logs, raw runtime data, raw API payloads, private source paths, or secrets. Full evidence schema design is deferred to M13-05."
+        },
+        "predictive_bundle": {
+          "$ref": "#/$defs/optional_artifact_role",
+          "description": "Inference bundle or prediction artifact. Optional — include only when the dataset study type produces a predictive model. Matches the 'predictive_bundle' role in publisher/release-candidate.schema.json."
+        }
+      }
+    },
+    "candidate_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assembled_by", "assembled_at", "intended_publisher_action", "completeness_validation"],
+      "description": "Candidate-level metadata compatible with publisher/release-candidate.schema.json#/properties/candidate_metadata. Must not expose secrets, raw logs, or raw runtime details.",
+      "properties": {
+        "assembled_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifies who or what assembled the candidate. Must not expose private paths or secrets."
+        },
+        "assembled_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "intended_publisher_action": {
+          "type": "string",
+          "const": "validate_candidate",
+          "description": "Constant declaring that the publisher should validate this candidate, not promote it directly."
+        },
+        "completeness_validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required_artifact_roles", "hash_policy", "manifest_policy"],
+          "properties": {
+            "required_artifact_roles": {
+              "type": "array",
+              "minItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "contracts",
+                  "metrics",
+                  "model_card",
+                  "public_context",
+                  "manifest_input",
+                  "predictive_bundle"
+                ]
+              },
+              "description": "Subset of publisher-visible artifact roles that must be present for completeness validation. build_evidence is pipeline-only and excluded."
+            },
+            "hash_policy": {
+              "type": "string",
+              "enum": ["publisher_calculates_hashes", "publisher_verifies_declared_hashes"]
+            },
+            "manifest_policy": {
+              "type": "string",
+              "enum": ["publisher_generates_manifest", "publisher_validates_manifest_input"]
+            }
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "state_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_is_intermediate_build_output",
+        "candidate_is_published_release",
+        "candidate_staging_path_prefix",
+        "published_release_path_prefix",
+        "pipeline_run_is_publishable",
+        "promotion_required",
+        "promotion_not_included_in_build_layout",
+        "registry_update_allowed_in_candidate",
+        "public_upload_required",
+        "web_administration_required",
+        "database_publication_management_required",
+        "runtime_consumes_temporary_pipeline_output"
+      ],
+      "description": "Explicit boundary declarations that distinguish build candidates from published releases. Compatible with publisher/release-candidate.schema.json#/properties/state_boundaries.",
+      "properties": {
+        "candidate_is_intermediate_build_output": {
+          "type": "boolean",
+          "const": true,
+          "description": "Declares that this candidate is an intermediate build artifact, not a promoted published release."
+        },
+        "candidate_is_published_release": {
+          "type": "boolean",
+          "const": false,
+          "description": "Matches publisher/release-candidate.schema.json: candidate_is_published_release must be false."
+        },
+        "candidate_staging_path_prefix": {
+          "type": "string",
+          "const": "releases/candidates/",
+          "description": "Candidate artifacts are staged under releases/candidates/ and must not be written to published release paths."
+        },
+        "published_release_path_prefix": {
+          "type": "string",
+          "const": "releases/",
+          "description": "Published immutable release paths begin with releases/ but not releases/candidates/. The build pipeline must never write candidate outputs to published release directories."
+        },
+        "pipeline_run_is_publishable": {
+          "type": "boolean",
+          "const": false,
+          "description": "Matches publisher/release-candidate.schema.json: a pipeline run alone does not make artifacts publishable."
+        },
+        "promotion_required": {
+          "type": "boolean",
+          "const": true,
+          "description": "Matches publisher/release-candidate.schema.json: publisher promotion is always required before a candidate becomes a published release."
+        },
+        "promotion_not_included_in_build_layout": {
+          "type": "boolean",
+          "const": true,
+          "description": "The build pipeline candidate layout must not include or invoke publisher promotion logic. Promotion is the publisher's responsibility."
+        },
+        "registry_update_allowed_in_candidate": {
+          "type": "boolean",
+          "const": false,
+          "description": "Matches publisher/release-candidate.schema.json: registry/datasets.json must not be updated as part of candidate assembly."
+        },
+        "public_upload_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "web_administration_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "database_publication_management_required": {
+          "type": "boolean",
+          "const": false
+        },
+        "runtime_consumes_temporary_pipeline_output": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "publisher_compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatible_with_schema", "compatibility_notes"],
+      "description": "Publisher compatibility declaration. Prevents drift from publisher/release-candidate.schema.json field vocabulary.",
+      "properties": {
+        "compatible_with_schema": {
+          "type": "string",
+          "const": "publisher/release-candidate.schema.json",
+          "description": "Declares that this candidate layout is designed to be compatible with the publisher release-candidate schema as the primary compatibility reference."
+        },
+        "compatibility_notes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "description": "Notes explaining field alignment and any intentional differences between the build layout and the publisher schema."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifact_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "required"],
+      "description": "Required artifact role definition. Matches the artifact_role shape in publisher/release-candidate.schema.json.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Candidate package-relative artifact path. Must not expose private source paths or secrets."
+        },
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "optional_artifact_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "required"],
+      "description": "Optional artifact role definition for roles applicable only to specific study types.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Candidate package-relative artifact path. Must not expose private source paths or secrets."
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "build_evidence_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "required", "evidence_policy"],
+      "description": "Pipeline-only build evidence role. Not forwarded to the publisher. Full evidence schema design is deferred to M13-05.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "const": "build_evidence"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Candidate package-relative path to the reduced build evidence artifact."
+        },
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "evidence_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "raw_logs_prohibited",
+            "raw_runtime_prohibited",
+            "raw_api_payloads_prohibited",
+            "secrets_prohibited",
+            "private_source_paths_prohibited",
+            "reduced_and_sanitized"
+          ],
+          "description": "Policy governing what may appear in the build_evidence artifact. All raw and sensitive content is prohibited.",
+          "properties": {
+            "raw_logs_prohibited": {"type": "boolean", "const": true},
+            "raw_runtime_prohibited": {"type": "boolean", "const": true},
+            "raw_api_payloads_prohibited": {"type": "boolean", "const": true},
+            "secrets_prohibited": {"type": "boolean", "const": true},
+            "private_source_paths_prohibited": {"type": "boolean", "const": true},
+            "reduced_and_sanitized": {"type": "boolean", "const": true}
+          }
+        }
+      }
+    }
+  }
+}

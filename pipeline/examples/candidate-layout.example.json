@@ -1,0 +1,117 @@
+{
+  "_note": "This is a representative example of the candidate-layout.schema.json contract. Values are safe, non-private examples intended for review and validation. No real release artifacts are included.",
+  "schema_version": "candidate-layout.v1",
+  "candidate_kind": "build_pipeline_candidate",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "dataset_title": "Telco Customer Churn"
+  },
+  "release_identity": {
+    "release_id": "release-20260620-001",
+    "release_version": "1.0.0-build.1",
+    "created_at": "2026-06-20T08:00:00Z"
+  },
+  "source_run": {
+    "run_id": "m13-pipeline-build-20260620-001",
+    "producer": "atlas-dataflow build pipeline",
+    "created_at": "2026-06-20T08:00:00Z"
+  },
+  "artifact_roles": {
+    "contracts": {
+      "role": "contracts",
+      "path": "contracts/runtime-contract.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "metrics": {
+      "role": "metrics",
+      "path": "metrics/metrics.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "model_card": {
+      "role": "model_card",
+      "path": "model-card.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "public_context": {
+      "role": "public_context",
+      "path": "public-context.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "manifest_input": {
+      "role": "manifest_input",
+      "path": "manifest-input.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "build_evidence": {
+      "role": "build_evidence",
+      "path": "build-evidence.json",
+      "required": true,
+      "evidence_policy": {
+        "raw_logs_prohibited": true,
+        "raw_runtime_prohibited": true,
+        "raw_api_payloads_prohibited": true,
+        "secrets_prohibited": true,
+        "private_source_paths_prohibited": true,
+        "reduced_and_sanitized": true
+      }
+    },
+    "predictive_bundle": {
+      "role": "predictive_bundle",
+      "path": "predictions/bundle.json",
+      "required": false,
+      "media_type": "application/json"
+    }
+  },
+  "candidate_metadata": {
+    "assembled_by": "atlas-dataflow build pipeline",
+    "assembled_at": "2026-06-20T08:00:00Z",
+    "intended_publisher_action": "validate_candidate",
+    "completeness_validation": {
+      "required_artifact_roles": [
+        "contracts",
+        "metrics",
+        "model_card",
+        "public_context",
+        "manifest_input"
+      ],
+      "hash_policy": "publisher_calculates_hashes",
+      "manifest_policy": "publisher_generates_manifest"
+    },
+    "notes": [
+      "This is a schema-consistency example, not a real release candidate.",
+      "build_evidence is pipeline-only and is not forwarded to the publisher.",
+      "predictive_bundle is optional and included here only as an example for study types that produce a model.",
+      "Publisher promotion is required before any candidate becomes a published release."
+    ]
+  },
+  "state_boundaries": {
+    "candidate_is_intermediate_build_output": true,
+    "candidate_is_published_release": false,
+    "candidate_staging_path_prefix": "releases/candidates/",
+    "published_release_path_prefix": "releases/",
+    "pipeline_run_is_publishable": false,
+    "promotion_required": true,
+    "promotion_not_included_in_build_layout": true,
+    "registry_update_allowed_in_candidate": false,
+    "public_upload_required": false,
+    "web_administration_required": false,
+    "database_publication_management_required": false,
+    "runtime_consumes_temporary_pipeline_output": false
+  },
+  "publisher_compatibility": {
+    "compatible_with_schema": "publisher/release-candidate.schema.json",
+    "compatibility_notes": [
+      "artifact_roles names (contracts, metrics, model_card, public_context, manifest_input, predictive_bundle) match publisher/release-candidate.schema.json to prevent naming drift.",
+      "dataset_identity.dataset_slug uses the same pattern as publisher schema: ^[a-z0-9]+(?:-[a-z0-9]+)*$.",
+      "release_identity.release_id uses the same pattern as publisher schema: ^[a-z0-9]+(?:[-._][a-z0-9]+)*$.",
+      "state_boundaries fields align with publisher schema: candidate_is_published_release=false, promotion_required=true, registry_update_allowed_in_candidate=false.",
+      "build_evidence is a pipeline-only role and does not appear in publisher/release-candidate.schema.json. It must not be forwarded to the publisher.",
+      "candidate_kind='build_pipeline_candidate' distinguishes this from the publisher's candidate_kind='release_candidate'."
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "public-context.v1",
+  "dataset_slug": "telco-customer-churn",
+  "release_id": "release-20260619-001",
+  "title": "Telco Customer Churn",
+  "summary": "A binary classification dataset for demonstrating customer churn prediction in the Atlas DataFlow first real publication cycle.",
+  "domain": "telecommunications",
+  "problem_type": "binary_classification",
+  "prediction_target_description": "Whether a customer will cancel their service (churn).",
+  "use_case": "Explore factors that influence customer churn and predict which customers are likely to leave their telecommunications provider.",
+  "visibility": "public",
+  "tags": ["churn", "binary-classification", "telecommunications", "customer-behavior"]
+}

@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "tenure",
+      "label": "Tenure (months)",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 1,
+      "description": "Number of months the customer has stayed with the company."
+    },
+    {
+      "name": "monthly_charges",
+      "label": "Monthly Charges (USD)",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 2,
+      "description": "Monthly charge amount in USD."
+    },
+    {
+      "name": "total_charges",
+      "label": "Total Charges (USD)",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 3,
+      "description": "Total amount charged to the customer in USD."
+    },
+    {
+      "name": "contract",
+      "label": "Contract Type",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 4,
+      "description": "The contract term of the customer."
+    },
+    {
+      "name": "internet_service",
+      "label": "Internet Service",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 5,
+      "description": "Customer internet service provider type."
+    },
+    {
+      "name": "payment_method",
+      "label": "Payment Method",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 6,
+      "description": "The customer payment method."
+    },
+    {
+      "name": "tech_support",
+      "label": "Tech Support",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 7,
+      "description": "Whether the customer has tech support."
+    },
+    {
+      "name": "senior_citizen",
+      "label": "Senior Citizen",
+      "input_type": "checkbox",
+      "optional": false,
+      "display_order": 8,
+      "description": "Whether the customer is a senior citizen."
+    },
+    {
+      "name": "partner",
+      "label": "Has Partner",
+      "input_type": "checkbox",
+      "optional": false,
+      "display_order": 9,
+      "description": "Whether the customer has a partner."
+    },
+    {
+      "name": "dependents",
+      "label": "Has Dependents",
+      "input_type": "checkbox",
+      "optional": false,
+      "display_order": 10,
+      "description": "Whether the customer has dependents."
+    },
+    {
+      "name": "paperless_billing",
+      "label": "Paperless Billing",
+      "input_type": "checkbox",
+      "optional": false,
+      "display_order": 11,
+      "description": "Whether the customer has paperless billing enabled."
+    },
+    {
+      "name": "phone_service",
+      "label": "Phone Service",
+      "input_type": "checkbox",
+      "optional": false,
+      "display_order": 12,
+      "description": "Whether the customer has phone service."
+    }
+  ]
+}

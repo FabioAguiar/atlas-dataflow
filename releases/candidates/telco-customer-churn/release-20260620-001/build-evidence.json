@@ -1,0 +1,22 @@
+{
+  "schema_version": "build-evidence.v1",
+  "producer": "pipeline/assemble_candidate.py",
+  "evidence_policy": {
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "secrets_prohibited": true,
+    "private_source_paths_prohibited": true,
+    "reduced_and_sanitized": true
+  },
+  "assembled_artifacts": [
+    "contracts/runtime-contract.json",
+    "contracts/public-contract.json",
+    "metrics/metrics.json",
+    "predictions/bundle.json",
+    "model-card.json",
+    "public-context.json",
+    "manifest-input.json",
+    "release-candidate.json"
+  ]
+}

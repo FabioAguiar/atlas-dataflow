@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0.0",
+  "_example_note": "Synthetic derived public contract example for telco-customer-churn. Not a real dataset. Derived from derived-runtime-contract.example.json using the projection rules in pipeline/contract_derivation.py. Labels and display order are pipeline-generated defaults — templates for study-author refinement, not production-ready UI strings.",
+  "features": [
+    {
+      "name": "tenure_months",
+      "label": "Tenure Months",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 1,
+      "description": "Number of months the customer has been with the provider."
+    },
+    {
+      "name": "contract_type",
+      "label": "Contract Type",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 2,
+      "description": "Type of subscription contract held by the customer."
+    },
+    {
+      "name": "paperless_billing",
+      "label": "Paperless Billing",
+      "input_type": "checkbox",
+      "optional": false,
+      "display_order": 3,
+      "description": "Whether the customer has opted for paperless billing."
+    },
+    {
+      "name": "monthly_charges",
+      "label": "Monthly Charges",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 4,
+      "description": "Current monthly charge amount in USD."
+    },
+    {
+      "name": "tech_support",
+      "label": "Tech Support",
+      "input_type": "select",
+      "optional": true,
+      "display_order": 5,
+      "description": "Whether the customer has tech support included in the plan."
+    }
+  ]
+}

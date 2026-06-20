@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0.0",
+  "_example_note": "Synthetic derived runtime contract example for telco-customer-churn. Not a real dataset. Demonstrates the artifact shape produced by pipeline/contract_derivation.py after validating a study-authored runtime contract against contracts/runtime-contract.schema.json.",
+  "features": [
+    {
+      "name": "tenure_months",
+      "type": "numeric",
+      "description": "Number of months the customer has been with the provider.",
+      "required": true,
+      "domain_constraints": {
+        "min": 0,
+        "max": 72
+      }
+    },
+    {
+      "name": "contract_type",
+      "type": "categorical",
+      "description": "Type of subscription contract held by the customer.",
+      "required": true,
+      "domain_constraints": {
+        "values": ["month-to-month", "one-year", "two-year"]
+      }
+    },
+    {
+      "name": "paperless_billing",
+      "type": "boolean",
+      "description": "Whether the customer has opted for paperless billing.",
+      "required": true
+    },
+    {
+      "name": "monthly_charges",
+      "type": "numeric",
+      "description": "Current monthly charge amount in USD.",
+      "required": true,
+      "domain_constraints": {
+        "min": 0,
+        "max": 200
+      }
+    },
+    {
+      "name": "tech_support",
+      "type": "categorical",
+      "description": "Whether the customer has tech support included in the plan.",
+      "required": false,
+      "domain_constraints": {
+        "values": ["yes", "no", "no-internet-service"]
+      }
+    }
+  ]
+}

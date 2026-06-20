@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/build-evidence.schema.json",
+  "title": "Atlas DataFlow Build Evidence",
+  "description": "Reduced build evidence for candidate artifact generation. This schema covers pipeline-side evidence only and must not include raw logs, raw runtime data, raw API payloads, secrets, private source paths, raw artifact contents, publisher promotion evidence, or registry mutation evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "producer",
+    "source_input",
+    "publisher_validation",
+    "build_boundary_confirmations",
+    "evidence_policy",
+    "assembled_artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "build-evidence.v1",
+      "description": "Schema version for this reduced build evidence document."
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pipeline component that produced the build evidence."
+    },
+    "source_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "release_id",
+        "path"
+      ],
+      "description": "Reduced identity of the source contract input used for candidate assembly.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset identifier from the source contract input."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Stable release identifier from the source contract input."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced source contract input path reference. Must not contain raw source content or private source path details."
+        }
+      }
+    },
+    "publisher_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valid",
+        "validation_outcome",
+        "validated_at"
+      ],
+      "description": "Reduced publisher compatibility validation status. Raw role results, identifier details, and schema compatibility details are intentionally excluded.",
+      "properties": {
+        "valid": {
+          "type": "boolean",
+          "description": "Reduced boolean status copied from the publisher validation result."
+        },
+        "validation_outcome": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "rejected"
+          ],
+          "description": "Reduced outcome derived from valid."
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when build evidence captured the validation status."
+        }
+      }
+    },
+    "build_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "promotion_occurred",
+        "registry_mutation_occurred"
+      ],
+      "description": "Pipeline-side boundary confirmations for candidate assembly.",
+      "properties": {
+        "promotion_occurred": {
+          "type": "boolean",
+          "const": false,
+          "description": "Candidate build evidence must never claim publisher promotion occurred."
+        },
+        "registry_mutation_occurred": {
+          "type": "boolean",
+          "const": false,
+          "description": "Candidate build evidence must never claim registry mutation occurred."
+        }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_logs_prohibited",
+        "raw_runtime_prohibited",
+        "raw_api_payloads_prohibited",
+        "secrets_prohibited",
+        "private_source_paths_prohibited",
+        "reduced_and_sanitized"
+      ],
+      "description": "Safety policy for reduced build evidence. All flags are required and fixed.",
+      "properties": {
+        "raw_logs_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_runtime_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_api_payloads_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "secrets_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "private_source_paths_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "reduced_and_sanitized": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "assembled_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Candidate package-relative artifact paths assembled for the release candidate, excluding build-evidence.json itself.",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "not": {
+          "const": "build-evidence.json"
+        },
+        "description": "Candidate package-relative path reference. Must not embed raw artifact contents."
+      }
+    }
+  }
+}

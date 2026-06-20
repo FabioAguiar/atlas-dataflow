@@ -11,9 +11,9 @@ function Home() {
     <main className="app-shell">
       <section className="intro" aria-labelledby="page-title">
         <p className="eyebrow">Atlas DataFlow</p>
-        <h1 id="page-title">Public web experience</h1>
+        <h1 id="page-title">Telco Customer Churn</h1>
         <p className="summary">
-          Minimal public web bootstrap for the Atlas DataFlow runtime surface.
+          Explore the real-release dataset — metrics, model card, prediction contract, and churn prediction form.
         </p>
       </section>
 

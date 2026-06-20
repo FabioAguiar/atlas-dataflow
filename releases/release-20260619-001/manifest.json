@@ -52,6 +52,12 @@
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
       "hash_value": "cda826b84b8cda51365a5205a0be0e1a7af9871352b9fb33b16ff3a9a79e3481"
+    },
+    {
+      "role": "public_contract",
+      "reference": "contracts/public-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "16dd976f5692292603d28b4d00fa155a72df9dd38784b656ad23eef3cb675778"
     }
   ],
   "required_hash_coverage": {

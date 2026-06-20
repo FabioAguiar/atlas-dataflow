@@ -101,6 +101,9 @@ def _load_bundle(bundle_path: Path):
     if name.endswith((".pkl", ".pickle")):
         with open(bundle_path, "rb") as f:
             return pickle.load(f)  # noqa: S301
+    if name.endswith(".json"):
+        with open(bundle_path, encoding="utf-8") as f:
+            return json.load(f)
     raise BundleUnavailableError("Inference bundle could not be loaded.")
 
 

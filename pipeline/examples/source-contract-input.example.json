@@ -1,0 +1,8 @@
+{
+  "schema_version": "source-contract-input.v1",
+  "dataset_slug": "telco-customer-churn",
+  "release_id": "release-20260620-001",
+  "source_contract_ref": "contracts/runtime-contract.schema.json",
+  "source_data_ref": "datasets/telco-customer-churn/v1",
+  "source_notebook_ref": "notebooks/telco-churn-study-v1.ipynb"
+}

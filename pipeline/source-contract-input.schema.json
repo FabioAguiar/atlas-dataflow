@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/source-contract-input.schema.json",
+  "title": "Atlas DataFlow Build Pipeline Source Contract Input",
+  "description": "Minimum controlled input accepted by the build pipeline before candidate artifact generation begins. This schema governs what the build entrypoint reads and validates before any derivation starts. Implicit local file paths, raw notebooks, secrets, and private paths are prohibited as input values. Fields in this schema map to dataset_identity, release_identity, and source_run in pipeline/candidate-layout.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "dataset_slug",
+    "release_id",
+    "source_contract_ref",
+    "source_data_ref"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "source-contract-input.v1",
+      "description": "Schema version for the source contract input. Used by the build entrypoint to verify input compatibility before validation begins."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Stable dataset identifier. Maps to pipeline/candidate-layout.schema.json#/properties/dataset_identity/properties/dataset_slug. Pattern matches the candidate layout slug convention exactly to prevent drift. Must not be inferred from a local filesystem path, fixture name, or directory name."
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$",
+      "description": "Release identifier for this candidate build. Maps to pipeline/candidate-layout.schema.json#/properties/release_identity/properties/release_id. Pattern matches the candidate layout release_id convention exactly."
+    },
+    "source_contract_ref": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]",
+      "description": "Explicit, reviewable reference to the human-authored source contract that governs the dataset study. Informs pipeline/candidate-layout.schema.json#/properties/source_run traceability. Must be a relative, reviewable reference — not an absolute path (paths starting with '/' are prohibited), a raw local path to a private file, or a runtime-generated path. Example of a safe value: 'contracts/runtime-contract.schema.json'."
+    },
+    "source_data_ref": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]",
+      "description": "Explicit reference to the source dataset or study used for this build. Informs pipeline/candidate-layout.schema.json#/properties/source_run traceability. Must be an explicit, reviewable identifier — not an implicit local filesystem path (paths starting with '/' are prohibited) or an unreviewed runtime reference."
+    },
+    "source_notebook_ref": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]",
+      "description": "Optional reference to a notebook that is the primary derivation source for this study. Include only when the study type produces derivation from a notebook. Informs pipeline/candidate-layout.schema.json#/properties/source_run traceability. Must be a safe, reviewable reference — absolute paths (starting with '/') are prohibited, and paths containing runtime-generated content or private directories must not be used."
+    }
+  }
+}

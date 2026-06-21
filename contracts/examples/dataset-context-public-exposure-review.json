@@ -1,0 +1,122 @@
+{
+  "_artifact_note": "Demonstrational artifact. This review applies to the M16-03 valid context example (contracts/examples/dataset-context.example.json). It confirms that no internal evidence fields, operational traceability identifiers, or private preparation details are exposed in the public-facing example payload.",
+  "artifact_type": "public_exposure_review",
+  "schema_version": "1.0.0",
+  "reviewed_artifact": {
+    "path": "contracts/examples/dataset-context.example.json",
+    "artifact_role": "valid_dataset_context_example"
+  },
+  "review_method": "analytical",
+  "execution_performed": false,
+  "public_boundary_reference": {
+    "schema_path": "contracts/dataset-context.schema.json",
+    "enforcement_mechanism": "additionalProperties: false",
+    "note": "The schema's additionalProperties: false constraint is the primary technical enforcement of the public boundary. Any field not declared in the schema properties is structurally prohibited from appearing in a valid payload."
+  },
+  "excluded_field_classes": [
+    {
+      "rule_id": "exclude_internal_run_identifiers",
+      "excluded_field_class": "Internal run or preparation identifiers (run_id, preparation_id, pipeline_id, batch_id)",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_raw_metrics",
+      "excluded_field_class": "Raw metrics or performance data (raw_metrics, accuracy, precision, recall, f1_score, auc)",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_operational_traceability",
+      "excluded_field_class": "Operational traceability fields (workflow_id, execution_id, release_trace, publication_trace)",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_internal_paths",
+      "excluded_field_class": "Internal file paths or system references",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_evidence_language",
+      "excluded_field_class": "Internal evidence language or preparation details copied from ASF evidence artifacts",
+      "result": "absent_from_reviewed_artifact"
+    },
+    {
+      "rule_id": "exclude_secrets",
+      "excluded_field_class": "Credentials, tokens, API keys, or secrets",
+      "result": "absent_from_reviewed_artifact"
+    }
+  ],
+  "per_field_observations": [
+    {
+      "field": "schema_version",
+      "value_type": "string",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Schema version string. Public metadata."
+    },
+    {
+      "field": "dataset_slug",
+      "value_type": "string",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Registry slug. Public identity. No internal routing semantics."
+    },
+    {
+      "field": "title",
+      "value_type": "string",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Human-readable display title. Suitable for public visitors."
+    },
+    {
+      "field": "description",
+      "value_type": "string",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Short public-safe description of the dataset and prediction task."
+    },
+    {
+      "field": "domain",
+      "value_type": "string",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Domain category for discovery. No internal routing semantics."
+    },
+    {
+      "field": "tags",
+      "value_type": "array_of_strings",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Public discovery tags. No internal identifiers."
+    },
+    {
+      "field": "short_narrative",
+      "value_type": "string",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Brief public narrative about the model and prediction experience. No internal evidence language."
+    },
+    {
+      "field": "long_narrative",
+      "value_type": "string",
+      "public_safe": true,
+      "internal_evidence_present": false,
+      "notes": "Extended public narrative about the dataset, its origin, and the model task. No raw metrics, run details, or operational traceability."
+    }
+  ],
+  "non_exposure_confirmations": {
+    "internal_run_identifiers_exposed": false,
+    "raw_metrics_exposed": false,
+    "operational_traceability_exposed": false,
+    "internal_paths_exposed": false,
+    "evidence_language_copied": false,
+    "secrets_exposed": false,
+    "synthetic_placeholder_content_present": false
+  },
+  "content_grounding_confirmation": {
+    "grounded_in_real_dataset": true,
+    "source_reference": "contracts/telco-customer-churn/dataset-context.json",
+    "note": "All field values are derived verbatim from the live telco-customer-churn dataset context instance created in M16-02. No placeholder content is present."
+  },
+  "outcome": "PASS",
+  "outcome_notes": "The valid dataset-context example contains only schema-declared public fields. No internal evidence fields, operational traceability identifiers, raw metrics, internal paths, or secrets appear in the payload. Content is grounded in real published dataset values. The example is suitable for public visitors."
+}

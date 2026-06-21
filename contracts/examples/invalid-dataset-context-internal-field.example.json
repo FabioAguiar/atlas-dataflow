@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "telco-customer-churn",
+  "title": "Telco Customer Churn",
+  "description": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
+  "domain": "telco",
+  "run_id": "run-20260621-m16-example-not-real"
+}

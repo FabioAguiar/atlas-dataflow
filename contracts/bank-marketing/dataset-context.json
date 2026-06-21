@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "bank-marketing",
+  "title": "Bank Marketing",
+  "description": "A binary classification dataset for predicting client subscription to a term deposit in a bank marketing campaign. Used to validate Atlas DataFlow multi-dataset publication mechanics.",
+  "domain": "banking-marketing",
+  "tags": ["banking", "binary-classification", "marketing-campaign", "subscription-prediction"],
+  "short_narrative": "This dataset supports a binary classification model that predicts whether a bank client will subscribe to a term deposit following a direct marketing campaign. The model is trained on client demographic and campaign interaction features.",
+  "long_narrative": "The Bank Marketing dataset originates from a Portuguese banking institution's direct marketing campaigns conducted via telephone calls. The prediction task is to determine whether a contacted client will subscribe to a term deposit (yes or no). Features include client demographics (age, job, marital status, education), financial indicators (default status, housing loan, personal loan), and campaign interaction data (contact type, number of contacts, outcome of previous campaigns). This dataset was used as the second published dataset in Atlas DataFlow to validate multi-dataset publication mechanics and registry management across concurrent active releases."
+}

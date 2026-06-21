@@ -1,0 +1,135 @@
+{
+  "_artifact_note": "Demonstrational artifact. This confirmation applies to the M16-03 dataset-context example artifacts. It is not production validation evidence and must not promote any example to an active association instance without an explicit future authorization.",
+  "artifact_type": "structural_validation_confirmation",
+  "schema_version": "1.0.0",
+  "subject_schema": {
+    "path": "contracts/dataset-context.schema.json",
+    "artifact_role": "dataset_context_schema",
+    "read_only": true,
+    "required_fields": ["schema_version", "dataset_slug", "title", "description", "domain"],
+    "optional_fields": ["tags", "short_narrative", "long_narrative"],
+    "additional_properties": false
+  },
+  "derivation_method": "analytical",
+  "execution_performed": false,
+  "supplementary_tool_available": "jsonschema 4.26.0 (available in project environment via registry/validate.py, publisher/evidence.py)",
+  "examples_reviewed": [
+    {
+      "path": "contracts/examples/dataset-context.example.json",
+      "role": "valid_example",
+      "expected_outcome": "PASS"
+    },
+    {
+      "path": "contracts/examples/invalid-dataset-context-missing-required.example.json",
+      "role": "invalid_counterexample_missing_required_field",
+      "expected_outcome": "FAIL",
+      "expected_failure_reason": "Required property 'domain' is missing."
+    },
+    {
+      "path": "contracts/examples/invalid-dataset-context-internal-field.example.json",
+      "role": "invalid_counterexample_additional_property",
+      "expected_outcome": "FAIL",
+      "expected_failure_reason": "Additional properties are not allowed. 'run_id' is not a declared property. Schema enforces additionalProperties: false."
+    }
+  ],
+  "valid_example_checks": [
+    {
+      "check_id": "schema_version_present_and_valid",
+      "schema_constraint": "schema_version is required and must be a string matching semver pattern ^\\d+\\.\\d+\\.\\d+$.",
+      "observed_value": "1.0.0",
+      "match": true
+    },
+    {
+      "check_id": "dataset_slug_present_and_valid",
+      "schema_constraint": "dataset_slug is required, must match ^[a-z0-9]+(?:-[a-z0-9]+)*$, and must correspond to a published registry slug.",
+      "observed_value": "telco-customer-churn",
+      "match": true
+    },
+    {
+      "check_id": "title_present_and_non_empty",
+      "schema_constraint": "title is required and must be a non-empty string.",
+      "observed_value": "Telco Customer Churn",
+      "match": true
+    },
+    {
+      "check_id": "description_present_and_non_empty",
+      "schema_constraint": "description is required and must be a non-empty string.",
+      "observed_value": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
+      "match": true
+    },
+    {
+      "check_id": "domain_present_and_non_empty",
+      "schema_constraint": "domain is required and must be a non-empty string.",
+      "observed_value": "telco",
+      "match": true
+    },
+    {
+      "check_id": "tags_optional_array_of_strings",
+      "schema_constraint": "tags is optional. When present, must be an array of non-empty strings.",
+      "observed_value": ["telco", "churn", "classification"],
+      "match": true
+    },
+    {
+      "check_id": "short_narrative_optional_non_empty",
+      "schema_constraint": "short_narrative is optional. When present, must be a non-empty string.",
+      "observed_present": true,
+      "match": true
+    },
+    {
+      "check_id": "long_narrative_optional_non_empty",
+      "schema_constraint": "long_narrative is optional. When present, must be a non-empty string.",
+      "observed_present": true,
+      "match": true
+    },
+    {
+      "check_id": "no_additional_properties",
+      "schema_constraint": "additionalProperties: false. Only schema_version, dataset_slug, title, description, domain, tags, short_narrative, long_narrative are permitted.",
+      "observed_top_level_properties": [
+        "schema_version",
+        "dataset_slug",
+        "title",
+        "description",
+        "domain",
+        "tags",
+        "short_narrative",
+        "long_narrative"
+      ],
+      "match": true
+    },
+    {
+      "check_id": "no_internal_evidence_fields",
+      "schema_constraint": "No internal evidence identifiers (run_id, preparation_id, pipeline_id, raw_metrics, batch_id) may appear in a valid example.",
+      "internal_fields_observed": [],
+      "match": true
+    },
+    {
+      "check_id": "content_grounded_in_real_dataset",
+      "schema_constraint": "Example content must be derived from real published dataset values, not synthetic placeholders.",
+      "source_reference": "contracts/telco-customer-churn/dataset-context.json",
+      "match": true
+    }
+  ],
+  "invalid_example_checks": [
+    {
+      "example_path": "contracts/examples/invalid-dataset-context-missing-required.example.json",
+      "check_id": "missing_required_field_domain",
+      "schema_constraint": "'domain' is listed in the schema's 'required' array. A payload that omits 'domain' must be rejected.",
+      "observed_fields_present": ["schema_version", "dataset_slug", "title", "description"],
+      "observed_fields_absent": ["domain"],
+      "expected_validation_result": "FAIL",
+      "expected_error": "Required property 'domain' is missing.",
+      "match": true
+    },
+    {
+      "example_path": "contracts/examples/invalid-dataset-context-internal-field.example.json",
+      "check_id": "additional_property_run_id",
+      "schema_constraint": "additionalProperties: false. 'run_id' is not declared in the schema's properties and must be rejected.",
+      "observed_additional_field": "run_id",
+      "expected_validation_result": "FAIL",
+      "expected_error": "Additional properties are not allowed ('run_id' was unexpected).",
+      "match": true
+    }
+  ],
+  "outcome": "PASS",
+  "outcome_notes": "The valid example (dataset-context.example.json) satisfies all schema constraints analytically. Both invalid counterexamples fail in their expected, distinct ways: the missing-required counterexample fails for an absent required field; the internal-field counterexample fails for an additional property prohibited by additionalProperties: false."
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Published Dataset Context",
+  "description": "Public context contract for a published Atlas DataFlow dataset. Defines the public-safe narrative and descriptive metadata associated with a dataset. This schema is not a CMS, authoring system, or admin interface. It does not carry internal run evidence, preparation details, metrics internals, publication evidence, or operational traceability fields. dataset_slug is the primary public identity and must match the registry slug pattern — it is not replaced or aliased by this contract.",
+  "type": "object",
+  "required": ["schema_version", "dataset_slug", "title", "description", "domain"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Context Schema Version",
+      "description": "Semantic version of this context schema structure in MAJOR.MINOR.PATCH format (e.g., \"1.0.0\"). Required. Independent from the runtime contract schema_version — each contract type versions its own schema structure separately."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "title": "Dataset Slug",
+      "description": "Primary public identity of the dataset. Must match the registry slug pattern: lowercase ASCII letters, digits, and single hyphen separators. Carried from the registry — do not encode local paths, private names, release details, or alternate routing semantics in this field."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Dataset Title",
+      "description": "Public-safe display title for the dataset. Required. Intended as the human-readable name shown to users in the public experience."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Dataset Description",
+      "description": "Public-safe short description of what the dataset represents and what the associated model predicts. Required. Must not include internal evidence, raw metrics, or pipeline details."
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Dataset Domain",
+      "description": "Domain category for the dataset (e.g., telco, finance, health, retail). Required. Used for public discovery and grouping. Must not introduce alternate routing semantics or replace dataset_slug as the primary identity."
+    },
+    "tags": {
+      "type": "array",
+      "title": "Dataset Tags",
+      "description": "Optional list of public-safe tags for discovery and grouping. Each tag must be a non-empty string. May be an empty array or absent.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "short_narrative": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Short Narrative",
+      "description": "Optional public-safe brief narrative explaining what the model does and how users should understand the prediction experience. Must not include internal evidence or operational details."
+    },
+    "long_narrative": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Long Narrative",
+      "description": "Optional public-safe extended narrative for richer dataset context pages. Must not include internal evidence, run details, or operational traceability."
+    }
+  }
+}

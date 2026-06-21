@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M15",
-    "title": "Controlled Expansion to a Second Dataset",
+    "id": "M16",
+    "title": "Published Dataset Context Foundation",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M14",
-    "title": "Run Evidence and Traceability Layer",
+    "id": "M15",
+    "title": "Controlled Expansion to a Second Dataset",
     "status": "completed"
   },
   "completed_milestones": [
@@ -97,6 +97,11 @@
       "id": "M14",
       "title": "Run Evidence and Traceability Layer",
       "status": "completed"
+    },
+    {
+      "id": "M15",
+      "title": "Controlled Expansion to a Second Dataset",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -168,6 +173,11 @@
     {
       "id": "M14",
       "title": "Run Evidence and Traceability Layer",
+      "status": "locked"
+    },
+    {
+      "id": "M15",
+      "title": "Controlled Expansion to a Second Dataset",
       "status": "locked"
     }
   ],
@@ -269,12 +279,12 @@
     {
       "id": "M15",
       "title": "Controlled Expansion to a Second Dataset",
-      "status": "active"
+      "status": "completed"
     },
     {
       "id": "M16",
       "title": "Published Dataset Context Foundation",
-      "status": "planned"
+      "status": "active"
     },
     {
       "id": "M17",
@@ -304,21 +314,22 @@
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M15 is the current active milestone for Controlled Expansion to a Second Dataset in Atlas DataFlow.",
+    "M16 is the current active milestone for Published Dataset Context Foundation in Atlas DataFlow.",
+    "M15 is marked as completed because Controlled Expansion to a Second Dataset has been completed.",
     "M14 is marked as completed because Run Evidence and Traceability Layer has been completed.",
     "M13 is marked as completed because Contract Artifact Build Pipeline Foundation has been completed.",
     "M12 is marked as completed because First Real Dataset Release has been completed.",
     "M11 is marked as completed because Publisher Operational Release Flow has been completed.",
     "M10 is marked as completed in the operational cursor because Initial Private Internal Administration was closed with documented deferral, not implemented as an admin surface.",
     "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, and M14 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M15 should be validated against docs/milestones.md before workflow continuation.",
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, and M15 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M16 should be validated against docs/milestones.md before workflow continuation.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "The current milestone points to M15 because the next implementation focus is Controlled Expansion to a Second Dataset."
+    "The current milestone points to M16 because the next implementation focus is Published Dataset Context Foundation."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

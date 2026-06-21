@@ -1,0 +1,145 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "age",
+      "type": "numeric",
+      "required": true,
+      "description": "Client age in years.",
+      "domain_constraints": {
+        "min": 17,
+        "max": 98
+      }
+    },
+    {
+      "name": "job",
+      "type": "categorical",
+      "required": true,
+      "description": "Type of job held by the client.",
+      "domain_constraints": {
+        "values": [
+          "admin.",
+          "blue-collar",
+          "entrepreneur",
+          "housemaid",
+          "management",
+          "retired",
+          "self-employed",
+          "services",
+          "student",
+          "technician",
+          "unemployed",
+          "unknown"
+        ]
+      }
+    },
+    {
+      "name": "marital",
+      "type": "categorical",
+      "required": true,
+      "description": "Client marital status.",
+      "domain_constraints": {
+        "values": [
+          "divorced",
+          "married",
+          "single"
+        ]
+      }
+    },
+    {
+      "name": "education",
+      "type": "categorical",
+      "required": true,
+      "description": "Client education level.",
+      "domain_constraints": {
+        "values": [
+          "primary",
+          "secondary",
+          "tertiary",
+          "unknown"
+        ]
+      }
+    },
+    {
+      "name": "balance",
+      "type": "numeric",
+      "required": true,
+      "description": "Average yearly balance in euros.",
+      "domain_constraints": {
+        "min": -8000,
+        "max": 100000
+      }
+    },
+    {
+      "name": "housing",
+      "type": "categorical",
+      "required": true,
+      "description": "Whether the client has a housing loan.",
+      "domain_constraints": {
+        "values": [
+          "no",
+          "yes"
+        ]
+      }
+    },
+    {
+      "name": "loan",
+      "type": "categorical",
+      "required": true,
+      "description": "Whether the client has a personal loan.",
+      "domain_constraints": {
+        "values": [
+          "no",
+          "yes"
+        ]
+      }
+    },
+    {
+      "name": "contact",
+      "type": "categorical",
+      "required": true,
+      "description": "Contact communication type used in the campaign.",
+      "domain_constraints": {
+        "values": [
+          "cellular",
+          "telephone",
+          "unknown"
+        ]
+      }
+    },
+    {
+      "name": "duration",
+      "type": "numeric",
+      "required": true,
+      "description": "Last contact duration in seconds.",
+      "domain_constraints": {
+        "min": 0,
+        "max": 4920
+      }
+    },
+    {
+      "name": "campaign",
+      "type": "numeric",
+      "required": true,
+      "description": "Number of contacts performed during this campaign for this client.",
+      "domain_constraints": {
+        "min": 1,
+        "max": 63
+      }
+    },
+    {
+      "name": "poutcome",
+      "type": "categorical",
+      "required": true,
+      "description": "Outcome of the previous marketing campaign.",
+      "domain_constraints": {
+        "values": [
+          "failure",
+          "other",
+          "success",
+          "unknown"
+        ]
+      }
+    }
+  ]
+}

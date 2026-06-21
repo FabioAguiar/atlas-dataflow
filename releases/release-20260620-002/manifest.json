@@ -1,0 +1,100 @@
+{
+  "schema_version": "release-manifest.v1",
+  "manifest_kind": "release_manifest",
+  "dataset_identity": {
+    "dataset_slug": "bank-marketing",
+    "dataset_title": "Bank Marketing"
+  },
+  "release_identity": {
+    "release_id": "release-20260620-002",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-06-20T21:23:21Z"
+  },
+  "artifacts": [
+    {
+      "role": "contracts",
+      "reference": "contracts/runtime-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "2c754bc1af4a13f4b1664574239f8c03a96ec26fe7dd62714f3d1d07cfb3bb65"
+    },
+    {
+      "role": "predictive_bundle",
+      "reference": "predictions/bundle.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "f32e791e8f16a8e056d9e1d72077ef5e133f2d8417db7c7c35168da5846b1653"
+    },
+    {
+      "role": "metrics",
+      "reference": "metrics/metrics.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "ddec49bd8f302ce1b9334ceb076fa3f87c66c677df20ead81d1808aac422203f"
+    },
+    {
+      "role": "model_card",
+      "reference": "model-card.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "2820b09b02536dc5937c96b1b29a1cca58c73d2562be1ce027545f9a36f43ff5"
+    },
+    {
+      "role": "public_context",
+      "reference": "public-context.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "2bd564867b894b28c00de2b84088707cb04fcabeb766fe155b8ab0c0104e4a7e"
+    },
+    {
+      "role": "manifest_input",
+      "reference": "manifest-input.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "fa84ec525ee43594e15462837bc531dbff6288ec1b8ad7eba5fdb1313246a0a5"
+    },
+    {
+      "role": "candidate_metadata",
+      "reference": "release-candidate.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "1b51f2e6b404c91431e2cd12f63167a74d5878dd84d3e1c8678dbf633e469141"
+    },
+    {
+      "role": "public_contract",
+      "reference": "contracts/public-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "094c501a401c928a22ef7bb13435ce84d04a3fa93c5f6d5239c85ce256d417c3"
+    }
+  ],
+  "required_hash_coverage": {
+    "hash_algorithm": "sha256",
+    "required_artifact_roles": [
+      "contracts",
+      "predictive_bundle",
+      "metrics",
+      "model_card",
+      "public_context",
+      "manifest_input",
+      "candidate_metadata"
+    ],
+    "missing_required_hashes_reject_manifest": true
+  },
+  "validation_policy": {
+    "missing_schema_version_rejects": true,
+    "missing_required_hash_rejects": true,
+    "dataset_identity_mismatch_rejects": true,
+    "release_identity_mismatch_rejects": true,
+    "unsafe_reference_rejects": true
+  },
+  "safety_boundaries": {
+    "raw_artifact_contents_embedded": false,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "sensitive_local_paths_persisted": false,
+    "unstable_temporary_paths_persisted": false,
+    "hash_calculation_implemented": false,
+    "signing_or_key_management_implemented": false,
+    "storage_migration_implemented": false,
+    "runtime_loading_implemented": false,
+    "public_endpoint_exposed": false,
+    "release_promoted": false,
+    "registry_updated": false,
+    "github_publication_performed": false
+  }
+}

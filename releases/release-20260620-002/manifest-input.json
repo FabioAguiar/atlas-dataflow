@@ -1,0 +1,19 @@
+{
+  "schema_version": "manifest-input.v1",
+  "dataset_slug": "bank-marketing",
+  "release_id": "release-20260620-002",
+  "candidate_root": "releases/candidates/bank-marketing/release-20260620-002",
+  "artifact_role_paths": {
+    "contracts_runtime": "contracts/runtime-contract.json",
+    "contracts_public": "contracts/public-contract.json",
+    "predictive_bundle": "predictions/bundle.json",
+    "metrics": "metrics/metrics.json",
+    "model_card": "model-card.json",
+    "public_context": "public-context.json",
+    "manifest_input": "manifest-input.json",
+    "candidate_metadata": "release-candidate.json"
+  },
+  "assembled_by": "M15-02 external implementation",
+  "assembled_at": "2026-06-20T22:30:00Z",
+  "notes": "Structured manifest input for the bank-marketing release-20260620-002 candidate. The publisher generates the final release manifest from this input using manifest_policy=publisher_generates_manifest."
+}

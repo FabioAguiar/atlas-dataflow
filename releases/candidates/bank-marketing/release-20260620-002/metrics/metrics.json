@@ -1,0 +1,17 @@
+{
+  "schema_version": "metrics.v1",
+  "dataset_slug": "bank-marketing",
+  "release_id": "release-20260620-002",
+  "evaluation": {
+    "split": "test",
+    "sample_size": 1130,
+    "metrics": {
+      "accuracy": 0.891,
+      "precision": 0.713,
+      "recall": 0.581,
+      "f1_score": 0.640,
+      "auc_roc": 0.882
+    }
+  },
+  "notes": "Public-safe evaluation metrics for the bank-marketing binary classification model on a held-out test set. No raw prediction scores, training details, or private data are included."
+}

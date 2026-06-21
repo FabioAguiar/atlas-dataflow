@@ -1,0 +1,33 @@
+{
+  "schema_version": "model-card.v1",
+  "dataset_slug": "bank-marketing",
+  "release_id": "release-20260620-002",
+  "model_summary": "Binary classification model predicting whether a bank client subscribes to a term deposit based on marketing campaign contact attributes.",
+  "problem_type": "binary_classification",
+  "prediction_target": "subscribed",
+  "intended_use": "Demonstration of the Atlas DataFlow multi-dataset publication capability. Predicts whether a client will subscribe to a term deposit based on demographic and campaign contact features.",
+  "input_features": [
+    "age",
+    "job",
+    "marital",
+    "education",
+    "balance",
+    "housing",
+    "loan",
+    "contact",
+    "duration",
+    "campaign",
+    "poutcome"
+  ],
+  "output": {
+    "type": "binary",
+    "positive_class": true,
+    "positive_class_meaning": "client subscribes to a term deposit"
+  },
+  "limitations": [
+    "Model is assembled for demonstration purposes within the Atlas DataFlow M15 second dataset candidate build.",
+    "Predictions reflect patterns in the training dataset and should not be used for production banking decisions without independent validation.",
+    "No sensitive personal data, raw model weights, or private training pipeline details are included in this public artifact."
+  ],
+  "data_notes": "Public-safe model card for the bank-marketing release-20260620-002 candidate. Raw training data, private preprocessing steps, and model internals are excluded."
+}

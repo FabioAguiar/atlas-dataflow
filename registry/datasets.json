@@ -31,16 +31,18 @@
       }
     },
     {
-      "dataset_slug": "example-dataset",
-      "active_release": "release-20260616-001",
+      "dataset_slug": "bank-marketing",
+      "active_release": "release-20260620-002",
       "public_metadata": {
-        "title": "Example Dataset",
-        "summary": "Fixture registry entry used to validate the first-cycle registry structure before the initial production dataset is selected.",
-        "domain": "example",
+        "title": "Bank Marketing",
+        "summary": "A binary classification dataset for predicting client subscription to a term deposit in a bank marketing campaign. Used to validate Atlas DataFlow multi-dataset publication mechanics.",
+        "domain": "banking-marketing",
         "visibility": "public",
         "tags": [
-          "example",
-          "fixture"
+          "banking",
+          "binary-classification",
+          "marketing-campaign",
+          "subscription-prediction"
         ]
       }
     }

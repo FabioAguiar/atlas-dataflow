@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "age",
+      "label": "Age",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 1,
+      "description": "Client age in years."
+    },
+    {
+      "name": "job",
+      "label": "Job Type",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 2,
+      "description": "Type of job held by the client."
+    },
+    {
+      "name": "marital",
+      "label": "Marital Status",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 3,
+      "description": "Client marital status."
+    },
+    {
+      "name": "education",
+      "label": "Education Level",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 4,
+      "description": "Client education level."
+    },
+    {
+      "name": "balance",
+      "label": "Account Balance (EUR)",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 5,
+      "description": "Average yearly balance in euros."
+    },
+    {
+      "name": "housing",
+      "label": "Housing Loan",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 6,
+      "description": "Whether the client has a housing loan."
+    },
+    {
+      "name": "loan",
+      "label": "Personal Loan",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 7,
+      "description": "Whether the client has a personal loan."
+    },
+    {
+      "name": "contact",
+      "label": "Contact Type",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 8,
+      "description": "Contact communication type used in the campaign."
+    },
+    {
+      "name": "duration",
+      "label": "Last Contact Duration (seconds)",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 9,
+      "description": "Last contact duration in seconds."
+    },
+    {
+      "name": "campaign",
+      "label": "Campaign Contacts",
+      "input_type": "number",
+      "optional": false,
+      "display_order": 10,
+      "description": "Number of contacts performed during this campaign for this client."
+    },
+    {
+      "name": "poutcome",
+      "label": "Previous Campaign Outcome",
+      "input_type": "select",
+      "optional": false,
+      "display_order": 11,
+      "description": "Outcome of the previous marketing campaign."
+    }
+  ]
+}

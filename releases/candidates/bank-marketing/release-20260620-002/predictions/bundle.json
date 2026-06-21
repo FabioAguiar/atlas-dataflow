@@ -1,0 +1,14 @@
+{
+  "schema_version": "predictive-bundle.v1",
+  "dataset_slug": "bank-marketing",
+  "release_id": "release-20260620-002",
+  "bundle_kind": "inference_descriptor",
+  "problem_type": "binary_classification",
+  "prediction_target": "subscribed",
+  "output_type": "binary",
+  "positive_class": true,
+  "positive_class_meaning": "client subscribes to a term deposit",
+  "threshold": 0.5,
+  "runtime_contract_reference": "contracts/runtime-contract.json",
+  "notes": "Predictive bundle descriptor for the bank-marketing release candidate. Describes the inference interface for the binary subscription classification model. No raw model weights, private training artifacts, or raw scoring data are included in this public descriptor."
+}

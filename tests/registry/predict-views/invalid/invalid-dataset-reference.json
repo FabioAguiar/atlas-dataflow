@@ -1,0 +1,30 @@
+{
+  "schema_version": "atlas.dataflow.predict-views.v1",
+  "predict_views": [
+    {
+      "schema_version": "1.0.0",
+      "view_id": "nonexistent-dataset-view",
+      "dataset_slug": "nonexistent-dataset",
+      "display": {
+        "title": "Nonexistent Dataset View",
+        "summary": "A view that references a dataset that is not in the canonical registry."
+      },
+      "intent": {
+        "prediction_goal": "This record references a dataset that does not exist.",
+        "audience": "Test fixture only. Not a production record.",
+        "usage_notes": "Fixture for invalid dataset reference rejection testing."
+      },
+      "binding": {
+        "dataset_slug": "nonexistent-dataset",
+        "release": {
+          "mode": "active"
+        }
+      },
+      "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": true,
+        "view_metadata_defines_runtime_validation": false,
+        "view_metadata_duplicates_contract": false
+      }
+    }
+  ]
+}

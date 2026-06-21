@@ -1,0 +1,30 @@
+{
+  "schema_version": "atlas.dataflow.predict-views.v1",
+  "predict_views": [
+    {
+      "schema_version": "1.0.0",
+      "view_id": "churn-compatible-missing-release-id",
+      "dataset_slug": "telco-customer-churn",
+      "display": {
+        "title": "Churn Risk Compatible Release",
+        "summary": "A view using compatible mode but missing a valid release_id."
+      },
+      "intent": {
+        "prediction_goal": "Test fixture for invalid release reference rejection.",
+        "audience": "Test fixture only. Not a production record.",
+        "usage_notes": "Fixture for invalid release reference rejection testing."
+      },
+      "binding": {
+        "dataset_slug": "telco-customer-churn",
+        "release": {
+          "mode": "compatible"
+        }
+      },
+      "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": true,
+        "view_metadata_defines_runtime_validation": false,
+        "view_metadata_duplicates_contract": false
+      }
+    }
+  ]
+}

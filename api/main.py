@@ -39,6 +39,10 @@ from public_contract_loader import (  # noqa: E402
     PublicContractUnavailableError,
     load_public_contract,
 )
+from public_context_loader import (  # noqa: E402
+    PublicContextUnavailableError,
+    load_public_context,
+)
 from public_metrics_loader import (  # noqa: E402
     PublicMetricsUnavailableError,
     load_public_metrics,
@@ -71,6 +75,13 @@ VISUALIZATIONS_UNAVAILABLE = PublicError(
     error_type="visualizations_unavailable",
     error_code="VISUALIZATIONS_UNAVAILABLE",
     message="The visualizations for this dataset are temporarily unavailable.",
+)
+
+CONTEXT_UNAVAILABLE = PublicError(
+    status_code=503,
+    error_type="context_unavailable",
+    error_code="CONTEXT_UNAVAILABLE",
+    message="The context for this dataset is temporarily unavailable.",
 )
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -308,6 +319,28 @@ def get_public_metrics(dataset_slug: str):
     return {
         "dataset_slug": resolved.dataset_slug,
         "metrics": metrics,
+    }
+
+
+@app.get("/datasets/{dataset_slug}/context")
+def get_public_context(dataset_slug: str):
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        context = load_public_context(resolved.active_release)
+    except PublicContextUnavailableError:
+        return public_error_response(CONTEXT_UNAVAILABLE)
+
+    return {
+        "dataset_slug": resolved.dataset_slug,
+        "context": context,
     }
 
 

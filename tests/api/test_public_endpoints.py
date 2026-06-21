@@ -16,14 +16,19 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).parent.parent.parent
+API_ROOT = REPO_ROOT / "api"
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(API_ROOT))
 
+import main as api_main  # noqa: E402
 from registry.list import ListedDataset, list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
     RegistryInvalidError,
+    ReleaseUnavailableError,
     resolve_dataset,
 )
 
@@ -225,6 +230,100 @@ def test_listing_each_item_safe_fields_only():
 
 
 # ---------------------------------------------------------------------------
+# Context endpoint: safe public runtime projection
+# ---------------------------------------------------------------------------
+
+def _response_json(response):
+    return json.loads(response.body.decode("utf-8"))
+
+
+def test_context_endpoint_returns_public_context_response():
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_public_context = api_main.load_public_context
+    context = {
+        "schema_version": "public-context.v1",
+        "dataset_slug": "example-dataset",
+        "release_id": "release-20260616-001",
+        "title": "Example Dataset",
+        "summary": "Fixture for public context endpoint tests.",
+        "domain": "example",
+        "problem_type": "classification",
+        "prediction_target_description": "Example target.",
+        "use_case": "Example use case.",
+        "visibility": "public",
+        "tags": ["example", "fixture"],
+    }
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-20260616-001",
+        )
+        api_main.load_public_context = lambda active_release: context
+        response = api_main.get_public_context("example-dataset")
+        assert response == {
+            "dataset_slug": "example-dataset",
+            "context": context,
+        }
+        assert "run_id" not in response["context"]
+        assert "raw_metrics" not in response["context"]
+        assert all(not key.startswith("_") for key in response["context"])
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_public_context = original_load_public_context
+
+
+def test_context_endpoint_unknown_dataset_returns_dataset_not_found():
+    original_resolve_dataset = api_main.resolve_dataset
+    try:
+        def raise_dataset_unavailable(_dataset_slug):
+            raise DatasetUnavailableError("missing")
+
+        api_main.resolve_dataset = raise_dataset_unavailable
+        response = api_main.get_public_context("unknown-slug")
+        assert response.status_code == 404
+        assert _response_json(response)["error_code"] == "DATASET_NOT_FOUND"
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+
+
+def test_context_endpoint_release_unavailable_returns_release_unavailable():
+    original_resolve_dataset = api_main.resolve_dataset
+    try:
+        def raise_release_unavailable(_dataset_slug):
+            raise ReleaseUnavailableError("missing release")
+
+        api_main.resolve_dataset = raise_release_unavailable
+        response = api_main.get_public_context("example-dataset")
+        assert response.status_code == 503
+        assert _response_json(response)["error_code"] == "RELEASE_UNAVAILABLE"
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+
+
+def test_context_endpoint_context_unavailable_returns_context_unavailable():
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_public_context = api_main.load_public_context
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-20260616-001",
+        )
+
+        def raise_context_unavailable(_active_release):
+            raise api_main.PublicContextUnavailableError("missing context")
+
+        api_main.load_public_context = raise_context_unavailable
+        response = api_main.get_public_context("example-dataset")
+        assert response.status_code == 503
+        payload = _response_json(response)
+        assert payload["error_type"] == "context_unavailable"
+        assert payload["error_code"] == "CONTEXT_UNAVAILABLE"
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_public_context = original_load_public_context
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -244,6 +343,10 @@ if __name__ == "__main__":
         test_single_dataset_response_safe_fields_only,
         test_listing_response_datasets_key,
         test_listing_each_item_safe_fields_only,
+        test_context_endpoint_returns_public_context_response,
+        test_context_endpoint_unknown_dataset_returns_dataset_not_found,
+        test_context_endpoint_release_unavailable_returns_release_unavailable,
+        test_context_endpoint_context_unavailable_returns_context_unavailable,
     ]
     passed = 0
     failed = 0

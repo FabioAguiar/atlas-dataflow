@@ -1,0 +1,201 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Governed Predict View",
+  "description": "Minimum governed predict view schema for Atlas DataFlow. Defines stable view identity, public display metadata, intent metadata, dataset association, and constrained binding references for a published dataset release context. Predict view metadata is presentation and intent metadata only; canonical dataset contracts remain the source of truth for runtime validation, inference input semantics, feature domains, and payload behavior.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "view_id",
+    "dataset_slug",
+    "display",
+    "intent",
+    "binding",
+    "contract_precedence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of this predict view schema structure in MAJOR.MINOR.PATCH format."
+    },
+    "view_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "description": "Stable predict view identifier. Lowercase ASCII slug used to identify one governed prediction experience within a dataset. It is not a dataset identifier, route alias, or runtime contract name."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "description": "Associated published dataset slug. This binds the view to an existing dataset identity and must not replace, alias, or override registry dataset identity."
+    },
+    "display": {
+      "$ref": "#/definitions/display_metadata"
+    },
+    "intent": {
+      "$ref": "#/definitions/intent_metadata"
+    },
+    "binding": {
+      "$ref": "#/definitions/binding_reference"
+    },
+    "contract_precedence": {
+      "$ref": "#/definitions/contract_precedence"
+    },
+    "_example_note": {
+      "type": "string",
+      "description": "Optional annotation for example or demonstration artifacts only. Omit in production predict view records."
+    }
+  },
+  "not": {
+    "anyOf": [
+      {"required": ["features"]},
+      {"required": ["validation_rules"]},
+      {"required": ["input_semantics"]},
+      {"required": ["domain_constraints"]},
+      {"required": ["business_logic"]},
+      {"required": ["runtime_contract"]},
+      {"required": ["public_contract"]}
+    ]
+  },
+  "definitions": {
+    "display_metadata": {
+      "type": "object",
+      "required": ["title", "summary"],
+      "additionalProperties": false,
+      "description": "Public display metadata for rendering and discovery. It must not carry inference validation rules, feature domains, or input semantics.",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable predict view title for the public experience."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short public-safe summary of the prediction experience."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe longer description of the view's purpose."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Optional public-safe tags for grouping or discovery. Tags are display metadata only.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "intent_metadata": {
+      "type": "object",
+      "required": ["prediction_goal", "audience"],
+      "additionalProperties": false,
+      "description": "Intent metadata describing what the view is for and who it is for. It is not executable business logic.",
+      "properties": {
+        "prediction_goal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Public-safe statement of the prediction question or user goal."
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Intended public audience or usage context for this prediction experience."
+        },
+        "usage_notes": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe explanatory notes. Must not contain executable routing, validation, or business rules."
+        }
+      }
+    },
+    "binding_reference": {
+      "type": "object",
+      "required": ["dataset_slug", "release"],
+      "additionalProperties": false,
+      "description": "Constrained binding reference tying the view to its dataset and active or compatible release context.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "minLength": 1,
+          "description": "Dataset slug for the binding context. It must match the top-level dataset_slug."
+        },
+        "release": {
+          "$ref": "#/definitions/release_binding"
+        }
+      }
+    },
+    "release_binding": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "description": "Release binding for the view. The active mode follows the dataset's active release; the compatible mode pins an explicit compatible release identifier.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["active", "compatible"],
+          "description": "active uses the dataset active_release context. compatible requires an explicit compatible release_id."
+        },
+        "release_id": {
+          "type": "string",
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+          "description": "Explicit compatible release identifier. Required when mode is compatible and prohibited when mode is active."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"mode": {"const": "compatible"}},
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["release_id"]
+          }
+        },
+        {
+          "if": {
+            "properties": {"mode": {"const": "active"}},
+            "required": ["mode"]
+          },
+          "then": {
+            "not": {"required": ["release_id"]}
+          }
+        }
+      ]
+    },
+    "contract_precedence": {
+      "type": "object",
+      "required": [
+        "canonical_contracts_are_source_of_truth",
+        "view_metadata_defines_runtime_validation",
+        "view_metadata_duplicates_contract"
+      ],
+      "additionalProperties": false,
+      "description": "Explicit schema-level contract precedence declaration. These constants prevent predict views from becoming a second contract system.",
+      "properties": {
+        "canonical_contracts_are_source_of_truth": {
+          "type": "boolean",
+          "const": true,
+          "description": "Must be true. Runtime validation and input semantics remain owned by canonical dataset contracts."
+        },
+        "view_metadata_defines_runtime_validation": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must be false. View metadata does not define inference validation rules."
+        },
+        "view_metadata_duplicates_contract": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must be false. View metadata does not duplicate canonical runtime or public contracts."
+        }
+      }
+    }
+  }
+}

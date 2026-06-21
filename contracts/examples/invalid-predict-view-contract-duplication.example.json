@@ -1,0 +1,37 @@
+{
+  "_example_note": "Invalid predict view example. This payload attempts to duplicate canonical contract validation by declaring feature and validation metadata inside the view.",
+  "schema_version": "1.0.0",
+  "view_id": "churn-risk-overview",
+  "dataset_slug": "telco-customer-churn",
+  "display": {
+    "title": "Churn Risk Overview",
+    "summary": "Estimate whether a telecommunications customer is likely to churn."
+  },
+  "intent": {
+    "prediction_goal": "Estimate customer churn likelihood from the canonical dataset contract inputs.",
+    "audience": "Public visitors evaluating churn risk examples."
+  },
+  "binding": {
+    "dataset_slug": "telco-customer-churn",
+    "release": {
+      "mode": "active"
+    }
+  },
+  "contract_precedence": {
+    "canonical_contracts_are_source_of_truth": true,
+    "view_metadata_defines_runtime_validation": false,
+    "view_metadata_duplicates_contract": false
+  },
+  "features": [
+    {
+      "name": "tenure",
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0
+      }
+    }
+  ],
+  "validation_rules": {
+    "tenure": "must be non-negative"
+  }
+}

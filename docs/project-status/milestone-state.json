@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M17",
-    "title": "Published Shell and Dataset Home Experience",
+    "id": "M18",
+    "title": "Predict View Foundation",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M16",
-    "title": "Published Dataset Context Foundation",
+    "id": "M17",
+    "title": "Published Shell and Dataset Home Experience",
     "status": "completed"
   },
   "completed_milestones": [
@@ -107,6 +107,11 @@
       "id": "M16",
       "title": "Published Dataset Context Foundation",
       "status": "completed"
+    },
+    {
+      "id": "M17",
+      "title": "Published Shell and Dataset Home Experience",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -188,6 +193,11 @@
     {
       "id": "M16",
       "title": "Published Dataset Context Foundation",
+      "status": "locked"
+    },
+    {
+      "id": "M17",
+      "title": "Published Shell and Dataset Home Experience",
       "status": "locked"
     }
   ],
@@ -299,12 +309,12 @@
     {
       "id": "M17",
       "title": "Published Shell and Dataset Home Experience",
-      "status": "active"
+      "status": "completed"
     },
     {
       "id": "M18",
       "title": "Predict View Foundation",
-      "status": "planned"
+      "status": "active"
     },
     {
       "id": "M19",
@@ -324,7 +334,8 @@
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M17 is the current active milestone for Published Shell and Dataset Home Experience in Atlas DataFlow.",
+    "M18 is the current active milestone for Predict View Foundation in Atlas DataFlow.",
+    "M17 is marked as completed because Published Shell and Dataset Home Experience has been completed.",
     "M16 is marked as completed because Published Dataset Context Foundation has been completed.",
     "M15 is marked as completed because Controlled Expansion to a Second Dataset has been completed.",
     "M14 is marked as completed because Run Evidence and Traceability Layer has been completed.",
@@ -333,14 +344,14 @@
     "M11 is marked as completed because Publisher Operational Release Flow has been completed.",
     "M10 is marked as completed in the operational cursor because Initial Private Internal Administration was closed with documented deferral, not implemented as an admin surface.",
     "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, and M16 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M17 should be validated against docs/milestones.md before workflow continuation.",
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, and M17 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M18 should be validated against docs/milestones.md before workflow continuation.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "The current milestone points to M17 because the next implementation focus is Published Shell and Dataset Home Experience."
+    "The current milestone points to M18 because the next implementation focus is Predict View Foundation."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

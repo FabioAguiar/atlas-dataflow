@@ -1,0 +1,19 @@
+{
+  "_example_note": "Invalid predict view example. This payload omits the required binding object that constrains the view to dataset and release context.",
+  "schema_version": "1.0.0",
+  "view_id": "churn-risk-overview",
+  "dataset_slug": "telco-customer-churn",
+  "display": {
+    "title": "Churn Risk Overview",
+    "summary": "Estimate whether a telecommunications customer is likely to churn."
+  },
+  "intent": {
+    "prediction_goal": "Estimate customer churn likelihood from the canonical dataset contract inputs.",
+    "audience": "Public visitors evaluating churn risk examples."
+  },
+  "contract_precedence": {
+    "canonical_contracts_are_source_of_truth": true,
+    "view_metadata_defines_runtime_validation": false,
+    "view_metadata_duplicates_contract": false
+  }
+}

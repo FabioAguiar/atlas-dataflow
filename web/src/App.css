@@ -36,6 +36,64 @@ h1 {
   line-height: 1.6;
 }
 
+.context-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.context-domain {
+  color: #23382d;
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tag-list li {
+  border: 1px solid #cbd8cf;
+  border-radius: 999px;
+  padding: 0.25rem 0.625rem;
+  color: #2f4638;
+  font-size: 0.875rem;
+  line-height: 1.3;
+  background: #f7faf8;
+}
+
+.context-narrative {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 46rem;
+  margin: 0;
+}
+
+.context-narrative > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.context-narrative dt {
+  color: #68746c;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.context-narrative dd {
+  margin: 0;
+  color: #26362e;
+  line-height: 1.5;
+}
+
 .status-panel {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

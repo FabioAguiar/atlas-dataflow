@@ -19,6 +19,17 @@ type DatasetMetadata = {
   tags: string[];
 };
 
+type PublicContextPayload = {
+  title?: string;
+  summary?: string;
+  description?: string;
+  domain?: string;
+  tags?: string[];
+  use_case?: string;
+  problem_type?: string;
+  prediction_target_description?: string;
+};
+
 type MetricsData = Record<string, unknown>;
 
 type ModelCardPayload = {
@@ -44,6 +55,7 @@ export default function DatasetPage() {
   const [modelCardState, setModelCardState] = useState<SectionState<ModelCardPayload>>({ status: "loading" });
   const [visualizationsState, setVisualizationsState] = useState<SectionState<VisualizationsPayload>>({ status: "loading" });
   const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
+  const [contextState, setContextState] = useState<SectionState<PublicContextPayload>>({ status: "loading" });
 
   useEffect(() => {
     if (!slug) {
@@ -75,6 +87,38 @@ export default function DatasetPage() {
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
           setState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug]);
+
+  useEffect(() => {
+    if (!slug) {
+      setContextState({ status: "unavailable" });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/context`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setContextState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<{ dataset_slug: string; context: PublicContextPayload }>;
+      })
+      .then((data) => {
+        if (data) {
+          setContextState({ status: "ready", data: data.context });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setContextState({ status: "unavailable" });
         }
       });
 
@@ -233,9 +277,20 @@ export default function DatasetPage() {
     );
   }
 
+  const context = contextState.status === "ready" ? contextState.data : null;
+  const contextTags = Array.isArray(context?.tags) ? context.tags : state.data.tags;
+
   return (
     <main className="app-shell">
-      <DatasetHeader title={state.data.title} summary={state.data.summary} />
+      <DatasetHeader
+        title={context?.title || state.data.title}
+        summary={context?.summary || context?.description || state.data.summary}
+        domain={context?.domain || state.data.domain}
+        tags={contextTags}
+        useCase={context?.use_case}
+        problemType={context?.problem_type}
+        predictionTargetDescription={context?.prediction_target_description}
+      />
 
       {metricsState.status === "loading" && <LoadingState />}
       {metricsState.status === "ready" && (

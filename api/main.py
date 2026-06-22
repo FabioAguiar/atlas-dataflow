@@ -61,6 +61,10 @@ from public_predict_view_loader import (  # noqa: E402
     load_public_predict_view,
     load_public_predict_view_list,
 )
+from public_predict_view_customization_loader import (  # noqa: E402
+    CustomizationNotFoundError,
+    load_public_predict_view_customization,
+)
 
 METRICS_UNAVAILABLE = PublicError(
     status_code=503,
@@ -102,6 +106,13 @@ VIEW_BINDING_INVALID = PublicError(
     error_type="view_binding_invalid",
     error_code="VIEW_BINDING_INVALID",
     message="The predict view binding is not valid for this dataset.",
+)
+
+CUSTOMIZATION_NOT_FOUND = PublicError(
+    status_code=404,
+    error_type="customization_not_found",
+    error_code="CUSTOMIZATION_NOT_FOUND",
+    message="No customization is available for this predict view.",
 )
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -449,6 +460,25 @@ def get_predict_view(dataset_slug: str, view_id: str):
         return public_error_response(VIEW_NOT_FOUND)
 
     return view
+
+
+@app.get("/datasets/{dataset_slug}/views/{view_id}/customization")
+def get_predict_view_customization(dataset_slug: str, view_id: str):
+    try:
+        resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        customization = load_public_predict_view_customization(dataset_slug, view_id)
+    except CustomizationNotFoundError:
+        return public_error_response(CUSTOMIZATION_NOT_FOUND)
+
+    return customization
 
 
 if __name__ == "__main__":

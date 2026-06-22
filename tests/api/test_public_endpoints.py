@@ -324,6 +324,141 @@ def test_context_endpoint_context_unavailable_returns_context_unavailable():
 
 
 # ---------------------------------------------------------------------------
+# GET /datasets/{dataset_slug}/views/{view_id}/customization
+# ---------------------------------------------------------------------------
+
+_VALID_CUSTOMIZATION = {
+    "schema_version": "1.0.0",
+    "view_id": "churn-risk-overview",
+    "dataset_slug": "telco-customer-churn",
+    "view_copy": {
+        "heading": "Churn Risk Assessment",
+        "description": "Estimate churn likelihood.",
+        "usage_guidance": "Use canonical contracts.",
+    },
+    "field_hints": [
+        {
+            "field_name": "tenure",
+            "display_label": "Months with Company",
+            "explanatory_copy": "How long the customer has been with the provider.",
+            "display_order_hint": 1,
+            "group": "account-history",
+        }
+    ],
+    "groups": [
+        {
+            "group_id": "account-history",
+            "label": "Account History",
+            "description": "Tenure and demographic fields.",
+        }
+    ],
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "customization_defines_runtime_validation": False,
+        "customization_duplicates_contract": False,
+    },
+}
+
+
+def test_customization_endpoint_returns_200_with_payload():
+    original_resolve = api_main.resolve_dataset
+    original_load = api_main.load_public_predict_view_customization
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-20260622-001",
+        )
+        api_main.load_public_predict_view_customization = (
+            lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
+        )
+        response = api_main.get_predict_view_customization("telco-customer-churn", "churn-risk-overview")
+        assert not hasattr(response, "status_code") or response.status_code == 200
+        if hasattr(response, "status_code"):
+            payload = _response_json(response)
+        else:
+            payload = response
+        assert payload["view_id"] == "churn-risk-overview"
+        assert payload["dataset_slug"] == "telco-customer-churn"
+        assert "view_copy" in payload
+        assert "field_hints" in payload
+        assert "groups" in payload
+    finally:
+        api_main.resolve_dataset = original_resolve
+        api_main.load_public_predict_view_customization = original_load
+
+
+def test_customization_endpoint_returns_customization_not_found_when_absent():
+    original_resolve = api_main.resolve_dataset
+    original_load = api_main.load_public_predict_view_customization
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-20260622-001",
+        )
+
+        def raise_not_found(dataset_slug, view_id):
+            raise api_main.CustomizationNotFoundError("No customization for this view.")
+
+        api_main.load_public_predict_view_customization = raise_not_found
+        response = api_main.get_predict_view_customization("telco-customer-churn", "no-customization-view")
+        assert response.status_code == 404
+        payload = _response_json(response)
+        assert payload["error_code"] == "CUSTOMIZATION_NOT_FOUND"
+    finally:
+        api_main.resolve_dataset = original_resolve
+        api_main.load_public_predict_view_customization = original_load
+
+
+def test_customization_endpoint_unknown_dataset_returns_dataset_not_found():
+    original_resolve = api_main.resolve_dataset
+    try:
+        def raise_dataset_unavailable(dataset_slug):
+            raise DatasetUnavailableError("Unknown dataset")
+
+        api_main.resolve_dataset = raise_dataset_unavailable
+        response = api_main.get_predict_view_customization("unknown-dataset", "churn-risk-overview")
+        assert response.status_code == 404
+        payload = _response_json(response)
+        assert payload["error_code"] == "DATASET_NOT_FOUND"
+    finally:
+        api_main.resolve_dataset = original_resolve
+
+
+def test_customization_response_structure_matches_expected_fields():
+    original_resolve = api_main.resolve_dataset
+    original_load = api_main.load_public_predict_view_customization
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-20260622-001",
+        )
+        api_main.load_public_predict_view_customization = (
+            lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
+        )
+        response = api_main.get_predict_view_customization("telco-customer-churn", "churn-risk-overview")
+        if hasattr(response, "status_code"):
+            payload = _response_json(response)
+        else:
+            payload = response
+        # view_copy structure
+        assert "heading" in payload["view_copy"]
+        assert "description" in payload["view_copy"]
+        assert "usage_guidance" in payload["view_copy"]
+        # field_hints structure
+        hint = payload["field_hints"][0]
+        assert "field_name" in hint
+        assert "display_label" in hint
+        assert "group" in hint
+        # groups structure
+        group = payload["groups"][0]
+        assert "group_id" in group
+        assert "label" in group
+    finally:
+        api_main.resolve_dataset = original_resolve
+        api_main.load_public_predict_view_customization = original_load
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -347,6 +482,10 @@ if __name__ == "__main__":
         test_context_endpoint_unknown_dataset_returns_dataset_not_found,
         test_context_endpoint_release_unavailable_returns_release_unavailable,
         test_context_endpoint_context_unavailable_returns_context_unavailable,
+        test_customization_endpoint_returns_200_with_payload,
+        test_customization_endpoint_returns_customization_not_found_when_absent,
+        test_customization_endpoint_unknown_dataset_returns_dataset_not_found,
+        test_customization_response_structure_matches_expected_fields,
     ]
     passed = 0
     failed = 0

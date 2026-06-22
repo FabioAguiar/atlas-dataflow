@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
+import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 
@@ -29,6 +29,7 @@ export default function DatasetViewPage() {
   const { slug, viewId } = useParams<{ slug: string; viewId: string }>();
   const [viewState, setViewState] = useState<ViewState>({ status: "loading" });
   const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
+  const [customizationState, setCustomizationState] = useState<SectionState<PredictViewCustomization | null>>({ status: "loading" });
 
   useEffect(() => {
     if (!slug || !viewId) {
@@ -98,6 +99,43 @@ export default function DatasetViewPage() {
     return () => controller.abort();
   }, [slug]);
 
+  useEffect(() => {
+    if (!slug || !viewId) {
+      setCustomizationState({ status: "ready", data: null });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(
+      `${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/views/${encodeURIComponent(viewId)}/customization`,
+      { signal: controller.signal }
+    )
+      .then((res) => {
+        if (res.status === 404) {
+          setCustomizationState({ status: "ready", data: null });
+          return null;
+        }
+        if (!res.ok) {
+          setCustomizationState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<PredictViewCustomization>;
+      })
+      .then((data) => {
+        if (data) {
+          setCustomizationState({ status: "ready", data });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setCustomizationState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug, viewId]);
+
   if (viewState.status === "loading") {
     return (
       <main className="app-shell">
@@ -123,12 +161,27 @@ export default function DatasetViewPage() {
   }
 
   const view = viewState.data;
+  const customization =
+    customizationState.status === "ready" && customizationState.data
+      ? customizationState.data
+      : undefined;
+
+  const displayHeading =
+    customization?.view_copy?.heading ?? view.display.title ?? view.view_id;
 
   return (
     <main className="app-shell">
       <section aria-labelledby="view-title">
-        <h1 id="view-title">{view.display.title ?? view.view_id}</h1>
-        {view.display.summary && <p>{view.display.summary}</p>}
+        <h1 id="view-title">{displayHeading}</h1>
+        {customization?.view_copy?.description && (
+          <p>{customization.view_copy.description}</p>
+        )}
+        {customization?.view_copy?.usage_guidance && (
+          <p>{customization.view_copy.usage_guidance}</p>
+        )}
+        {!customization?.view_copy?.description && view.display.summary && (
+          <p>{view.display.summary}</p>
+        )}
         {view.intent.prediction_goal && (
           <p><strong>Goal:</strong> {view.intent.prediction_goal}</p>
         )}
@@ -139,7 +192,7 @@ export default function DatasetViewPage() {
 
       {contractState.status === "loading" && <LoadingState />}
       {contractState.status === "ready" && (
-        <InferenceForm contract={contractState.data} slug={slug!} />
+        <InferenceForm contract={contractState.data} slug={slug!} customization={customization} />
       )}
       {contractState.status === "unavailable" && (
         <ErrorState message="The prediction form is temporarily unavailable." />

@@ -16,6 +16,30 @@ export type ContractPayload = {
   features: Feature[];
 };
 
+export type FieldHint = {
+  field_name: string;
+  display_label?: string;
+  explanatory_copy?: string;
+  display_order_hint?: number;
+  group?: string;
+};
+
+export type GroupDef = {
+  group_id: string;
+  label: string;
+  description?: string;
+};
+
+export type PredictViewCustomization = {
+  field_hints: FieldHint[];
+  groups: GroupDef[];
+  view_copy?: {
+    heading?: string;
+    description?: string;
+    usage_guidance?: string;
+  };
+};
+
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
@@ -41,14 +65,65 @@ function mapErrorCode(errorCode: string | undefined): string {
 type Props = {
   contract: ContractPayload;
   slug: string;
+  customization?: PredictViewCustomization;
 };
 
-export default function InferenceForm({ contract, slug }: Props) {
+function buildHintMap(customization: PredictViewCustomization | undefined): Map<string, FieldHint> {
+  const map = new Map<string, FieldHint>();
+  if (!customization) return map;
+  for (const hint of customization.field_hints) {
+    map.set(hint.field_name, hint);
+  }
+  return map;
+}
+
+function presentationSortKey(feature: Feature, hint: FieldHint | undefined): number {
+  if (hint?.display_order_hint !== undefined) return hint.display_order_hint;
+  return feature.display_order;
+}
+
+function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | undefined }) {
+  const displayLabel = hint?.display_label ?? feature.label;
+  const explanatoryCopy = hint?.explanatory_copy;
+
+  return (
+    <div key={feature.name}>
+      <label htmlFor={`field-${feature.name}`}>
+        {displayLabel}
+        {feature.input_type === "select" && " (categorical field)"}
+        {!feature.optional && <span aria-hidden="true"> *</span>}
+      </label>
+      {feature.input_type === "checkbox" ? (
+        <input
+          type="checkbox"
+          id={`field-${feature.name}`}
+          name={feature.name}
+          required={!feature.optional}
+        />
+      ) : (
+        <input
+          type={feature.input_type === "number" ? "number" : "text"}
+          id={`field-${feature.name}`}
+          name={feature.name}
+          required={!feature.optional}
+        />
+      )}
+      {explanatoryCopy && <p>{explanatoryCopy}</p>}
+      {!explanatoryCopy && feature.description && <p>{feature.description}</p>}
+    </div>
+  );
+}
+
+export default function InferenceForm({ contract, slug, customization }: Props) {
   const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
 
-  const sorted = [...contract.features].sort(
-    (a, b) => a.display_order - b.display_order
-  );
+  const hintMap = buildHintMap(customization);
+
+  const sortedForPresentation = [...contract.features].sort((a, b) => {
+    const hintA = hintMap.get(a.name);
+    const hintB = hintMap.get(b.name);
+    return presentationSortKey(a, hintA) - presentationSortKey(b, hintB);
+  });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -57,7 +132,7 @@ export default function InferenceForm({ contract, slug }: Props) {
     const form = event.currentTarget;
     const payload: Record<string, string | number | boolean> = {};
 
-    for (const feature of sorted) {
+    for (const feature of sortedForPresentation) {
       if (feature.input_type === "checkbox") {
         const el = form.elements.namedItem(feature.name) as HTMLInputElement | null;
         payload[feature.name] = el ? el.checked : false;
@@ -97,35 +172,60 @@ export default function InferenceForm({ contract, slug }: Props) {
     }
   }
 
+  function renderFields(features: Feature[]) {
+    return features.map((feature) => (
+      <FieldInput key={feature.name} feature={feature} hint={hintMap.get(feature.name)} />
+    ));
+  }
+
+  function renderGrouped() {
+    const groups = customization!.groups;
+    const groupIds = new Set(groups.map((g) => g.group_id));
+
+    const grouped = new Map<string, Feature[]>();
+    for (const g of groups) grouped.set(g.group_id, []);
+
+    const ungrouped: Feature[] = [];
+
+    for (const feature of sortedForPresentation) {
+      const hint = hintMap.get(feature.name);
+      const groupId = hint?.group;
+      if (groupId && groupIds.has(groupId)) {
+        grouped.get(groupId)!.push(feature);
+      } else {
+        ungrouped.push(feature);
+      }
+    }
+
+    return (
+      <>
+        {groups.map((group) => {
+          const members = grouped.get(group.group_id) ?? [];
+          if (members.length === 0) return null;
+          return (
+            <fieldset key={group.group_id}>
+              <legend>{group.label}</legend>
+              {group.description && <p>{group.description}</p>}
+              {renderFields(members)}
+            </fieldset>
+          );
+        })}
+        {ungrouped.length > 0 && (
+          <div>
+            {renderFields(ungrouped)}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  const hasGroups = customization && customization.groups.length > 0;
+
   return (
     <section aria-label="Inference Form">
       <h2>Make a Prediction</h2>
       <form onSubmit={handleSubmit}>
-        {sorted.map((feature) => (
-          <div key={feature.name}>
-            <label htmlFor={`field-${feature.name}`}>
-              {feature.label}
-              {feature.input_type === "select" && " (categorical field)"}
-              {!feature.optional && <span aria-hidden="true"> *</span>}
-            </label>
-            {feature.input_type === "checkbox" ? (
-              <input
-                type="checkbox"
-                id={`field-${feature.name}`}
-                name={feature.name}
-                required={!feature.optional}
-              />
-            ) : (
-              <input
-                type={feature.input_type === "number" ? "number" : "text"}
-                id={`field-${feature.name}`}
-                name={feature.name}
-                required={!feature.optional}
-              />
-            )}
-            {feature.description && <p>{feature.description}</p>}
-          </div>
-        ))}
+        {hasGroups ? renderGrouped() : renderFields(sortedForPresentation)}
         <button type="submit" disabled={submission.status === "submitting"}>
           {submission.status === "submitting" ? "Submitting…" : "Submit"}
         </button>

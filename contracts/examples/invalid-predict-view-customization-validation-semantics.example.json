@@ -1,0 +1,24 @@
+{
+  "_example_note": "Invalid predict view customization example. This payload attempts to include per-field validation rules inside customization metadata. The schema rejects this because customization metadata must not carry validation rules, domain constraints, or inference behavior. Canonical runtime validation remains owned by the dataset runtime contract.",
+  "schema_version": "1.0.0",
+  "view_id": "churn-risk-overview",
+  "dataset_slug": "telco-customer-churn",
+  "view_copy": {
+    "heading": "Churn Risk Assessment"
+  },
+  "field_hints": [
+    {
+      "field_name": "tenure",
+      "display_label": "Months with Company"
+    }
+  ],
+  "contract_precedence": {
+    "canonical_contracts_are_source_of_truth": true,
+    "customization_defines_runtime_validation": false,
+    "customization_duplicates_contract": false
+  },
+  "validation_rules": {
+    "tenure": "must be a non-negative integer",
+    "monthly_charges": "must be greater than zero"
+  }
+}

@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Predict View Customization",
+  "description": "Companion contract defining the safe customization metadata surface for predict views. Governs presentation-only fields: view-level copy, field-level display hints, and group definitions. Does not carry validation rules, inference behavior, domain constraints, or model configuration. Canonical runtime validation and input semantics remain owned by canonical dataset contracts.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "view_id",
+    "contract_precedence"
+  ],
+  "additionalProperties": false,
+  "not": {
+    "anyOf": [
+      {"required": ["validation_rules"]},
+      {"required": ["features"]},
+      {"required": ["domain_constraints"]},
+      {"required": ["inference_behavior"]},
+      {"required": ["model_config"]},
+      {"required": ["business_logic"]},
+      {"required": ["input_semantics"]},
+      {"required": ["runtime_contract"]},
+      {"required": ["public_contract"]}
+    ]
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of this predict view customization schema structure in MAJOR.MINOR.PATCH format."
+    },
+    "view_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "description": "Stable predict view identifier this customization applies to. Must match a view_id in the predict view registry. It is not a dataset identifier, route alias, or runtime contract name."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "description": "Optional associated dataset slug for traceability. When provided, must match the dataset_slug of the bound predict view."
+    },
+    "view_copy": {
+      "$ref": "#/definitions/view_copy"
+    },
+    "field_hints": {
+      "type": "array",
+      "description": "Optional array of per-field presentation hints. Each hint references a field by its public contract feature name and provides presentation-only metadata. Field names must correspond to public contract features for the bound dataset. No domain bounds or validation rules may be included.",
+      "items": {
+        "$ref": "#/definitions/field_hint"
+      }
+    },
+    "groups": {
+      "type": "array",
+      "description": "Optional array of section or group definitions for organizing fields in the prediction experience. Groups are presentation metadata only and must not control validation, inference order, or model behavior.",
+      "items": {
+        "$ref": "#/definitions/group_definition"
+      }
+    },
+    "contract_precedence": {
+      "$ref": "#/definitions/contract_precedence"
+    },
+    "_example_note": {
+      "type": "string",
+      "description": "Optional annotation for example or demonstration artifacts only. Omit in production customization records."
+    }
+  },
+  "definitions": {
+    "view_copy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional view-level presentation copy. All fields are presentation text only and must not carry validation rules, inference hints, or business logic.",
+      "properties": {
+        "heading": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe heading for the prediction experience, if different from the predict view title."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe description of this prediction experience's purpose."
+        },
+        "usage_guidance": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe contextual guidance for users. Must not contain executable routing, validation rules, or business logic."
+        }
+      }
+    },
+    "field_hint": {
+      "type": "object",
+      "required": ["field_name"],
+      "additionalProperties": false,
+      "description": "Presentation hint for a single public contract field. field_name must reference a feature name from the public contract projection for the bound dataset. No domain bounds, accepted value lists, or validation rules may be included.",
+      "properties": {
+        "field_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the public contract field this hint applies to. Must match a feature name in the public contract projection for the bound dataset."
+        },
+        "display_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional alternative display label for the field in this view context. Does not replace or redefine the canonical public contract label."
+        },
+        "explanatory_copy": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional explanatory text for the field in this view context. Must not contain validation rules, accepted value lists, or domain constraints."
+        },
+        "display_order_hint": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional integer hint for field display ordering within this view. This is a presentation hint only and does not redefine the canonical display_order in the public contract."
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional group_id associating this field with a group defined in the groups array."
+        }
+      }
+    },
+    "group_definition": {
+      "type": "object",
+      "required": ["group_id", "label"],
+      "additionalProperties": false,
+      "description": "Definition of a section or group for organizing fields in the prediction experience. Groups are presentation metadata only and must not encode validation logic or inference behavior.",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable identifier for this group, referenced by field_hints.group."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Public-safe display label for the group."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe description of the group's purpose."
+        }
+      }
+    },
+    "contract_precedence": {
+      "type": "object",
+      "required": [
+        "canonical_contracts_are_source_of_truth",
+        "customization_defines_runtime_validation",
+        "customization_duplicates_contract"
+      ],
+      "additionalProperties": false,
+      "description": "Explicit schema-level contract precedence declaration. These constants prevent customization metadata from becoming a second contract system.",
+      "properties": {
+        "canonical_contracts_are_source_of_truth": {
+          "type": "boolean",
+          "const": true,
+          "description": "Must be true. Runtime validation and input semantics remain owned by canonical dataset contracts."
+        },
+        "customization_defines_runtime_validation": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must be false. Customization metadata does not define, extend, or override inference validation rules."
+        },
+        "customization_duplicates_contract": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must be false. Customization metadata does not duplicate canonical runtime or public contracts."
+        }
+      }
+    }
+  }
+}

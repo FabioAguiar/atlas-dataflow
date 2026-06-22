@@ -1,0 +1,46 @@
+{
+  "_example_note": "Invalid fixture for M19-02. Demonstrates rejection of an unknown field reference: field_hints contains a field_name ('nonexistent_feature') that does not match any feature in the bound dataset's public contract. Expected rejection: UNKNOWN_FIELD_REFERENCE.",
+  "schema_version": "1.0.0",
+  "view_id": "churn-risk-overview",
+  "dataset_slug": "telco-customer-churn",
+  "view_copy": {
+    "heading": "Churn Risk Assessment",
+    "description": "Estimate the likelihood that a telecommunications customer will cancel their service.",
+    "usage_guidance": "Enter the customer profile below. Use the canonical dataset contracts for required fields, accepted values, and runtime validation."
+  },
+  "field_hints": [
+    {
+      "field_name": "tenure",
+      "display_label": "Months with Company",
+      "display_order_hint": 1,
+      "group": "account-history"
+    },
+    {
+      "field_name": "monthly_charges",
+      "display_label": "Monthly Bill (USD)",
+      "display_order_hint": 2,
+      "group": "financials"
+    },
+    {
+      "field_name": "nonexistent_feature",
+      "display_label": "Ghost Field",
+      "display_order_hint": 9,
+      "group": "account-history"
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "account-history",
+      "label": "Account History"
+    },
+    {
+      "group_id": "financials",
+      "label": "Financial Summary"
+    }
+  ],
+  "contract_precedence": {
+    "canonical_contracts_are_source_of_truth": true,
+    "customization_defines_runtime_validation": false,
+    "customization_duplicates_contract": false
+  }
+}

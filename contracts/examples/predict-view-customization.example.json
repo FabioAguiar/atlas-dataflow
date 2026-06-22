@@ -1,0 +1,89 @@
+{
+  "_example_note": "Demonstration artifact for contracts/predict-view-customization.schema.json. This example defines presentation-only customization metadata for the churn-risk-overview predict view. Field hints reference public contract field names for the telco-customer-churn dataset. No validation rules, domain constraints, or inference behavior is included.",
+  "schema_version": "1.0.0",
+  "view_id": "churn-risk-overview",
+  "dataset_slug": "telco-customer-churn",
+  "view_copy": {
+    "heading": "Churn Risk Assessment",
+    "description": "Estimate the likelihood that a telecommunications customer will cancel their service.",
+    "usage_guidance": "Enter the customer profile below. Use the canonical dataset contracts for required fields, accepted values, and runtime validation."
+  },
+  "field_hints": [
+    {
+      "field_name": "tenure",
+      "display_label": "Months with Company",
+      "explanatory_copy": "How long the customer has been with the provider. Longer tenure is often associated with lower churn risk.",
+      "display_order_hint": 1,
+      "group": "account-history"
+    },
+    {
+      "field_name": "monthly_charges",
+      "display_label": "Monthly Bill (USD)",
+      "explanatory_copy": "The customer's current monthly charge. Higher charges may correlate with increased churn risk.",
+      "display_order_hint": 2,
+      "group": "financials"
+    },
+    {
+      "field_name": "total_charges",
+      "display_label": "Lifetime Charges (USD)",
+      "explanatory_copy": "Total amount charged over the customer's lifetime with the provider.",
+      "display_order_hint": 3,
+      "group": "financials"
+    },
+    {
+      "field_name": "contract",
+      "display_label": "Contract Term",
+      "explanatory_copy": "The customer's current contract commitment. Month-to-month contracts have higher churn rates in historical data.",
+      "display_order_hint": 4,
+      "group": "service-details"
+    },
+    {
+      "field_name": "internet_service",
+      "display_label": "Internet Plan",
+      "explanatory_copy": "The type of internet service the customer subscribes to.",
+      "display_order_hint": 5,
+      "group": "service-details"
+    },
+    {
+      "field_name": "payment_method",
+      "display_label": "Payment Method",
+      "explanatory_copy": "How the customer pays their monthly bill.",
+      "display_order_hint": 6,
+      "group": "financials"
+    },
+    {
+      "field_name": "tech_support",
+      "display_label": "Tech Support Subscription",
+      "display_order_hint": 7,
+      "group": "service-details"
+    },
+    {
+      "field_name": "senior_citizen",
+      "display_label": "Senior Citizen",
+      "display_order_hint": 8,
+      "group": "account-history"
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "account-history",
+      "label": "Account History",
+      "description": "Fields relating to the customer's tenure and demographic profile."
+    },
+    {
+      "group_id": "financials",
+      "label": "Financial Summary",
+      "description": "Fields relating to the customer's billing and payment profile."
+    },
+    {
+      "group_id": "service-details",
+      "label": "Service Details",
+      "description": "Fields describing the customer's active service subscriptions and contract."
+    }
+  ],
+  "contract_precedence": {
+    "canonical_contracts_are_source_of_truth": true,
+    "customization_defines_runtime_validation": false,
+    "customization_duplicates_contract": false
+  }
+}

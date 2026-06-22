@@ -7,6 +7,7 @@ import DatasetVisualizations, { VisualizationsPayload } from "../components/Data
 import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
+import PredictViewList, { PredictViewItem } from "../components/PredictViewList/PredictViewList";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -48,6 +49,11 @@ type SectionState<T> =
   | { status: "ready"; data: T }
   | { status: "unavailable" };
 
+type PredictViewListPayload = {
+  dataset_slug: string;
+  views: PredictViewItem[];
+};
+
 export default function DatasetPage() {
   const { slug } = useParams<{ slug: string }>();
   const [state, setState] = useState<PageState>({ status: "loading" });
@@ -56,6 +62,7 @@ export default function DatasetPage() {
   const [visualizationsState, setVisualizationsState] = useState<SectionState<VisualizationsPayload>>({ status: "loading" });
   const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
   const [contextState, setContextState] = useState<SectionState<PublicContextPayload>>({ status: "loading" });
+  const [viewsState, setViewsState] = useState<SectionState<PredictViewListPayload>>({ status: "loading" });
 
   useEffect(() => {
     if (!slug) {
@@ -253,6 +260,38 @@ export default function DatasetPage() {
     return () => controller.abort();
   }, [slug]);
 
+  useEffect(() => {
+    if (!slug) {
+      setViewsState({ status: "unavailable" });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/views`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setViewsState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<PredictViewListPayload>;
+      })
+      .then((data) => {
+        if (data) {
+          setViewsState({ status: "ready", data });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setViewsState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug]);
+
   if (state.status === "loading") {
     return (
       <main className="app-shell">
@@ -314,6 +353,14 @@ export default function DatasetPage() {
       )}
       {visualizationsState.status === "unavailable" && (
         <ErrorState message="Visualizations are temporarily unavailable." />
+      )}
+
+      {viewsState.status === "loading" && <LoadingState />}
+      {viewsState.status === "ready" && (
+        <PredictViewList views={viewsState.data.views} slug={slug!} />
+      )}
+      {viewsState.status === "unavailable" && (
+        <ErrorState message="Predict views are temporarily unavailable." />
       )}
 
       {contractState.status === "loading" && <LoadingState />}

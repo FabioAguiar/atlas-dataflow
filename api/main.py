@@ -59,6 +59,7 @@ from public_predict_view_loader import (  # noqa: E402
     ViewNotFoundError,
     ViewBindingInvalidError,
     load_public_predict_view,
+    load_public_predict_view_list,
 )
 
 METRICS_UNAVAILABLE = PublicError(
@@ -404,6 +405,28 @@ def get_public_visualizations(dataset_slug: str):
     return {
         "dataset_slug": resolved.dataset_slug,
         "visualizations": visualizations,
+    }
+
+
+@app.get("/datasets/{dataset_slug}/views")
+def list_predict_views(dataset_slug: str):
+    try:
+        resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        views = load_public_predict_view_list(dataset_slug)
+    except ViewNotFoundError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    return {
+        "dataset_slug": dataset_slug,
+        "views": views,
     }
 
 

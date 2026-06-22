@@ -100,3 +100,82 @@ def load_public_predict_view(
         "intent": intent if isinstance(intent, dict) else {},
         "release_mode": release_mode,
     }
+
+
+def load_public_predict_view_list(
+    dataset_slug: str,
+    predict_views_path: Path | None = None,
+) -> list[dict]:
+    """
+    Return safe public projections for all valid predict views bound to dataset_slug.
+
+    Reads registry/predict-views.json, filters to records whose top-level
+    dataset_slug matches the requested slug, silently excludes records with
+    a binding.dataset_slug inconsistency, and returns the list. An empty list
+    is a valid result when no views exist for the dataset.
+
+    Raises ViewNotFoundError if the registry is unreadable or malformed.
+    """
+    path = predict_views_path if predict_views_path is not None else _DEFAULT_PREDICT_VIEWS_PATH
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        raise ViewNotFoundError("Predict view registry is not available.")
+
+    try:
+        registry = json.loads(content)
+    except json.JSONDecodeError:
+        raise ViewNotFoundError("Predict view registry is not available.")
+
+    predict_views = registry.get("predict_views")
+    if not isinstance(predict_views, list):
+        raise ViewNotFoundError("Predict view registry is not available.")
+
+    results = []
+    for record in predict_views:
+        if not isinstance(record, dict):
+            continue
+        if record.get("dataset_slug") != dataset_slug:
+            continue
+
+        binding = record.get("binding")
+        if isinstance(binding, dict):
+            binding_slug = binding.get("dataset_slug")
+            if binding_slug is not None and binding_slug != dataset_slug:
+                continue
+
+        release_mode = None
+        if isinstance(binding, dict):
+            release = binding.get("release")
+            if isinstance(release, dict):
+                release_mode = release.get("mode")
+
+        display = record.get("display")
+        intent = record.get("intent")
+
+        safe_display: dict = {}
+        if isinstance(display, dict):
+            if "title" in display:
+                safe_display["title"] = display["title"]
+            if "summary" in display:
+                safe_display["summary"] = display["summary"]
+
+        safe_intent: dict = {}
+        if isinstance(intent, dict):
+            if "prediction_goal" in intent:
+                safe_intent["prediction_goal"] = intent["prediction_goal"]
+            if "audience" in intent:
+                safe_intent["audience"] = intent["audience"]
+            if "usage_notes" in intent:
+                safe_intent["usage_notes"] = intent["usage_notes"]
+
+        results.append({
+            "view_id": record.get("view_id"),
+            "dataset_slug": dataset_slug,
+            "display": safe_display,
+            "intent": safe_intent,
+            "release_mode": release_mode,
+        })
+
+    return results

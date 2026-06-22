@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Routes, Route, Link } from "react-router-dom";
 import "./App.css";
 import DatasetPage from "./pages/DatasetPage";
+import DatasetViewPage from "./pages/DatasetViewPage";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -85,6 +86,7 @@ function Home() {
 export default function App() {
   return (
     <Routes>
+      <Route path="/dataset/:slug/view/:viewId" element={<DatasetViewPage />} />
       <Route path="/dataset/:slug" element={<DatasetPage />} />
       <Route path="/" element={<Home />} />
     </Routes>

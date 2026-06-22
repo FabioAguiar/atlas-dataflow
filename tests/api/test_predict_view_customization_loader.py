@@ -34,6 +34,7 @@ from public_predict_view_customization_loader import (  # noqa: E402
     CustomizationNotFoundError,
     load_public_predict_view_customization,
 )
+from registry.predict_view_customization_validate import validate_customization as _real_validate_customization  # noqa: E402
 
 _VALID_CUSTOMIZATION = {
     "schema_version": "1.0.0",
@@ -279,6 +280,58 @@ def test_customization_not_found_error_code():
 
 
 # ---------------------------------------------------------------------------
+# M19-04: hidden field visibility checks
+# ---------------------------------------------------------------------------
+
+def test_hidden_optional_field_passes_validation():
+    """A field_hint with hidden: true on an optional field must not produce REQUIRED_FIELD_HIDDEN."""
+    customization = {
+        "field_hints": [{"field_name": "tenure", "hidden": True}],
+        "groups": [],
+    }
+    public_contract = {
+        "features": [
+            {"name": "tenure", "label": "Tenure", "input_type": "number", "optional": True, "display_order": 1}
+        ]
+    }
+    result = _real_validate_customization(customization, public_contract)
+    hidden_errors = [e for e in result["errors"] if e["code"] == "REQUIRED_FIELD_HIDDEN"]
+    assert len(hidden_errors) == 0, (
+        f"Expected no REQUIRED_FIELD_HIDDEN for a hidden optional field, got: {hidden_errors}"
+    )
+
+
+def test_hidden_required_field_produces_required_field_hidden():
+    """A field_hint with hidden: true on a required field must produce REQUIRED_FIELD_HIDDEN."""
+    customization = {
+        "field_hints": [{"field_name": "tenure", "hidden": True}],
+        "groups": [],
+    }
+    public_contract = {
+        "features": [
+            {"name": "tenure", "label": "Tenure", "input_type": "number", "optional": False, "display_order": 1}
+        ]
+    }
+    result = _real_validate_customization(customization, public_contract)
+    hidden_errors = [e for e in result["errors"] if e["code"] == "REQUIRED_FIELD_HIDDEN"]
+    assert len(hidden_errors) >= 1, (
+        f"Expected at least one REQUIRED_FIELD_HIDDEN error for a hidden required field, got: {result['errors']}"
+    )
+    assert any("hidden" in (e.get("field") or "") for e in hidden_errors), (
+        f"Expected field path to contain 'hidden', got: {[e.get('field') for e in hidden_errors]}"
+    )
+
+
+def test_existing_records_unaffected_by_hidden_field_check():
+    """Records without hidden fields are not affected by the new hidden-field validation check."""
+    result = _real_validate_customization(_VALID_CUSTOMIZATION, _STUB_CONTRACT)
+    hidden_errors = [e for e in result["errors"] if e["code"] == "REQUIRED_FIELD_HIDDEN"]
+    assert len(hidden_errors) == 0, (
+        f"Expected no REQUIRED_FIELD_HIDDEN errors for a record without hidden fields, got: {hidden_errors}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Direct runner
 # ---------------------------------------------------------------------------
 
@@ -292,6 +345,9 @@ if __name__ == "__main__":
         test_raises_not_found_when_registry_is_malformed,
         test_result_does_not_contain_schema_version_root_key_added_by_registry,
         test_customization_not_found_error_code,
+        test_hidden_optional_field_passes_validation,
+        test_hidden_required_field_produces_required_field_hidden,
+        test_existing_records_unaffected_by_hidden_field_check,
     ]
     passed = 0
     failed = 0

@@ -22,6 +22,7 @@ export type FieldHint = {
   explanatory_copy?: string;
   display_order_hint?: number;
   group?: string;
+  hidden?: boolean;
 };
 
 export type GroupDef = {
@@ -173,9 +174,11 @@ export default function InferenceForm({ contract, slug, customization }: Props) 
   }
 
   function renderFields(features: Feature[]) {
-    return features.map((feature) => (
-      <FieldInput key={feature.name} feature={feature} hint={hintMap.get(feature.name)} />
-    ));
+    return features.map((feature) => {
+      const hint = hintMap.get(feature.name);
+      if (hint?.hidden === true) return null;
+      return <FieldInput key={feature.name} feature={feature} hint={hint} />;
+    });
   }
 
   function renderGrouped() {

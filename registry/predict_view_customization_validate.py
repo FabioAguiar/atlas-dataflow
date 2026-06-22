@@ -129,6 +129,14 @@ def validate_customization(customization: dict, public_contract: dict) -> dict:
                             f"field_hints[{i}].group references a group_id not defined in groups.",
                         ))
 
+            if hint.get("hidden") is True:
+                if field_name in required_field_names:
+                    errors.append(_err(
+                        "REQUIRED_FIELD_HIDDEN",
+                        f"field_hints[{i}].hidden",
+                        f"field_hints[{i}].hidden is true for required field {field_name!r}; required fields cannot be hidden.",
+                    ))
+
     # contract_precedence semantic check
     if contract_precedence is not None:
         if not isinstance(contract_precedence, dict):

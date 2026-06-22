@@ -55,6 +55,11 @@ from public_visualizations_loader import (  # noqa: E402
     PublicVisualizationsUnavailableError,
     load_public_visualizations,
 )
+from public_predict_view_loader import (  # noqa: E402
+    ViewNotFoundError,
+    ViewBindingInvalidError,
+    load_public_predict_view,
+)
 
 METRICS_UNAVAILABLE = PublicError(
     status_code=503,
@@ -82,6 +87,20 @@ CONTEXT_UNAVAILABLE = PublicError(
     error_type="context_unavailable",
     error_code="CONTEXT_UNAVAILABLE",
     message="The context for this dataset is temporarily unavailable.",
+)
+
+VIEW_NOT_FOUND = PublicError(
+    status_code=404,
+    error_type="view_not_found",
+    error_code="VIEW_NOT_FOUND",
+    message="The requested predict view is not available for this dataset.",
+)
+
+VIEW_BINDING_INVALID = PublicError(
+    status_code=422,
+    error_type="view_binding_invalid",
+    error_code="VIEW_BINDING_INVALID",
+    message="The predict view binding is not valid for this dataset.",
 )
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -386,6 +405,27 @@ def get_public_visualizations(dataset_slug: str):
         "dataset_slug": resolved.dataset_slug,
         "visualizations": visualizations,
     }
+
+
+@app.get("/datasets/{dataset_slug}/views/{view_id}")
+def get_predict_view(dataset_slug: str, view_id: str):
+    try:
+        resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    try:
+        view = load_public_predict_view(dataset_slug, view_id)
+    except ViewBindingInvalidError:
+        return public_error_response(VIEW_BINDING_INVALID)
+    except ViewNotFoundError:
+        return public_error_response(VIEW_NOT_FOUND)
+
+    return view
 
 
 if __name__ == "__main__":

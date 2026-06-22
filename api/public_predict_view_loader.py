@@ -1,0 +1,102 @@
+"""
+Predict view runtime loader for M18-03.
+
+Loads and resolves a predict view record from the authoritative registry
+(registry/predict-views.json) for a given dataset slug and view identifier.
+Returns a safe public projection excluding internal binding details,
+contract_precedence, schema_version, and registry metadata.
+"""
+
+import json
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).parent.parent
+_DEFAULT_PREDICT_VIEWS_PATH = _REPO_ROOT / "registry" / "predict-views.json"
+
+
+class ViewNotFoundError(Exception):
+    """No predict view record matching the given view_id and dataset_slug exists."""
+
+    code = "VIEW_NOT_FOUND"
+
+
+class ViewBindingInvalidError(Exception):
+    """A predict view record was found but its binding is internally inconsistent."""
+
+    code = "VIEW_BINDING_INVALID"
+
+
+def load_public_predict_view(
+    dataset_slug: str,
+    view_id: str,
+    predict_views_path: Path | None = None,
+) -> dict:
+    """
+    Load a safe public projection of a predict view record.
+
+    Resolution steps:
+    1. Read registry/predict-views.json.
+    2. Find the record where top-level view_id and top-level dataset_slug both
+       match the requested values.
+    3. Validate that binding.dataset_slug, if present, is consistent with the
+       record's top-level dataset_slug.
+    4. Return a projection containing only: view_id, dataset_slug, display,
+       intent, and release_mode (derived from binding.release.mode).
+
+    Raises ViewNotFoundError if no matching record exists or if the registry
+    is unavailable.
+    Raises ViewBindingInvalidError if a binding inconsistency is detected.
+    """
+    path = predict_views_path if predict_views_path is not None else _DEFAULT_PREDICT_VIEWS_PATH
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        raise ViewNotFoundError("Predict view registry is not available.")
+
+    try:
+        registry = json.loads(content)
+    except json.JSONDecodeError:
+        raise ViewNotFoundError("Predict view registry is not available.")
+
+    predict_views = registry.get("predict_views")
+    if not isinstance(predict_views, list):
+        raise ViewNotFoundError("Predict view registry is not available.")
+
+    matched = None
+    for record in predict_views:
+        if not isinstance(record, dict):
+            continue
+        if record.get("view_id") == view_id and record.get("dataset_slug") == dataset_slug:
+            matched = record
+            break
+
+    if matched is None:
+        raise ViewNotFoundError(
+            "The requested predict view is not available for this dataset."
+        )
+
+    binding = matched.get("binding")
+    if isinstance(binding, dict):
+        binding_slug = binding.get("dataset_slug")
+        if binding_slug is not None and binding_slug != dataset_slug:
+            raise ViewBindingInvalidError(
+                "The predict view binding is not valid for this dataset."
+            )
+
+    release_mode = None
+    if isinstance(binding, dict):
+        release = binding.get("release")
+        if isinstance(release, dict):
+            release_mode = release.get("mode")
+
+    display = matched.get("display")
+    intent = matched.get("intent")
+
+    return {
+        "view_id": view_id,
+        "dataset_slug": dataset_slug,
+        "display": display if isinstance(display, dict) else {},
+        "intent": intent if isinstance(intent, dict) else {},
+        "release_mode": release_mode,
+    }

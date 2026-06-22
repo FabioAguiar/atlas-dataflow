@@ -648,7 +648,7 @@ Pending decisions:
 
 - define the operational backup strategy for releases;
 - define the minimum log policy;
-- define the exact access mechanism for future internal administration;
+- access mechanism for future internal administration — narrowed by M20-02: the required mechanism is a private Caddy server block bound to localhost only (127.0.0.1:<port>), not routed through the public :443 server block, accessible only via SSH tunnel or equivalent private channel. The specific localhost port is an open choice to be set when admin is created. Boundary rules that must apply when admin is created: (1) the admin Caddy server block must listen on localhost only, never on a public interface; (2) it must not appear in or be forwarded from the public :443 server block; (3) admin must not be reachable through any public port mapping or public DNS entry. Admin creation remains deferred per M20-01. Public exposure review (M20-02) confirmed: no admin path in Caddyfile, no admin route in api/main.py, no admin service port in docker-compose.yml or docker-compose.prod.yml.
 - define whether the publisher will be exposed only as a CLI or also as an internal service in a later stage.
 
 Known gaps:

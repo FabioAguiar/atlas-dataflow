@@ -42,3 +42,20 @@ def test_predict_view_customization_rejects_validation_semantics():
         or "validation_rules" in error.message
         for error in errors
     )
+
+
+def test_hidden_optional_field_passes_schema_validation():
+    schema = _load_json(SCHEMA_PATH)
+    instance = {
+        "schema_version": "1.0.0",
+        "view_id": "churn-risk-overview",
+        "field_hints": [
+            {"field_name": "monthly_charges", "hidden": True},
+        ],
+        "contract_precedence": {
+            "canonical_contracts_are_source_of_truth": True,
+            "customization_defines_runtime_validation": False,
+            "customization_duplicates_contract": False,
+        },
+    }
+    jsonschema.validate(instance, schema)

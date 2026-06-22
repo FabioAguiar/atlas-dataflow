@@ -1,0 +1,24 @@
+{
+  "_example_note": "Invalid fixture for M19-05. Demonstrates explicit rejection of unsafe required-field hiding via the hidden property: the required field 'tenure' (optional: false in the public contract) has hidden: true set directly on the field_hint. Expected rejection: REQUIRED_FIELD_HIDDEN at field_hints[0].hidden. Distinct from the broken-group-ref proxy path (invalid-predict-view-customization-required-field-hidden.example.json) which emits REQUIRED_FIELD_HIDDEN at field_hints[i].group.",
+  "schema_version": "1.0.0",
+  "view_id": "churn-risk-overview",
+  "dataset_slug": "telco-customer-churn",
+  "view_copy": {
+    "heading": "Churn Risk Assessment",
+    "description": "Estimate the likelihood that a telecommunications customer will cancel their service.",
+    "usage_guidance": "Enter the customer profile below. Use the canonical dataset contracts for required fields, accepted values, and runtime validation."
+  },
+  "field_hints": [
+    {
+      "field_name": "tenure",
+      "display_label": "Months with Company",
+      "display_order_hint": 1,
+      "hidden": true
+    }
+  ],
+  "contract_precedence": {
+    "canonical_contracts_are_source_of_truth": true,
+    "customization_defines_runtime_validation": false,
+    "customization_duplicates_contract": false
+  }
+}

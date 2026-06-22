@@ -207,6 +207,54 @@ def test_error_messages_contain_no_filesystem_paths():
 
 
 # ---------------------------------------------------------------------------
+# Explicit hidden: true validator path (M19-05)
+# ---------------------------------------------------------------------------
+
+def test_hidden_optional_field_passes_validate_customization():
+    result = validate_customization(
+        {
+            "schema_version": "1.0.0",
+            "view_id": "churn-risk-overview",
+            "field_hints": [
+                {"field_name": "monthly_charges", "hidden": True},
+            ],
+            "contract_precedence": {
+                "canonical_contracts_are_source_of_truth": True,
+                "customization_defines_runtime_validation": False,
+                "customization_duplicates_contract": False,
+            },
+        },
+        _MOCK_PUBLIC_CONTRACT,
+    )
+    assert result["valid"] is True, f"Expected valid, got errors: {result['errors']}"
+    assert "REQUIRED_FIELD_HIDDEN" not in _codes(result)
+
+
+def test_hidden_required_field_produces_required_field_hidden_explicit():
+    result = validate_customization(
+        {
+            "schema_version": "1.0.0",
+            "view_id": "churn-risk-overview",
+            "field_hints": [
+                {"field_name": "tenure", "hidden": True},
+            ],
+            "contract_precedence": {
+                "canonical_contracts_are_source_of_truth": True,
+                "customization_defines_runtime_validation": False,
+                "customization_duplicates_contract": False,
+            },
+        },
+        _MOCK_PUBLIC_CONTRACT,
+    )
+    assert result["valid"] is False
+    assert "REQUIRED_FIELD_HIDDEN" in _codes(result)
+    hidden_errors = [e for e in result["errors"] if e["code"] == "REQUIRED_FIELD_HIDDEN"]
+    assert any("hidden" in (e.get("field") or "") for e in hidden_errors), (
+        f"Expected REQUIRED_FIELD_HIDDEN with field path containing 'hidden', got: {hidden_errors}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 
@@ -222,6 +270,8 @@ if __name__ == "__main__":
         test_empty_field_hints_passes,
         test_required_field_absent_from_field_hints_passes,
         test_error_messages_contain_no_filesystem_paths,
+        test_hidden_optional_field_passes_validate_customization,
+        test_hidden_required_field_produces_required_field_hidden_explicit,
     ]
     passed = 0
     failed = 0

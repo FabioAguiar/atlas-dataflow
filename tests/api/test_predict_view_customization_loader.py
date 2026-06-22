@@ -20,6 +20,8 @@ or directly:
 import json
 import sys
 import tempfile
+import types
+import unittest.mock as mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -102,11 +104,6 @@ def _stub_load_contract(dataset_slug: str) -> dict:
     return _STUB_CONTRACT
 
 
-class _FakeValidateModule:
-    def __init__(self, validator_fn):
-        self.validate_customization = validator_fn
-
-
 # ---------------------------------------------------------------------------
 # Load succeeds: valid registry entry + passing validator
 # ---------------------------------------------------------------------------
@@ -115,41 +112,18 @@ def test_load_returns_customization_record():
     with tempfile.TemporaryDirectory() as tmp:
         path = _write_customization_registry(Path(tmp), _VALID_REGISTRY)
 
-        original_import = loader_module.__builtins__
-
-        import unittest.mock as mock
-        with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
-            with mock.patch(
-                "public_predict_view_customization_loader.validate_customization",
-                _passing_validator,
-                create=True,
-            ):
-                # Patch the import inside the function
-                import importlib
-                fake_mod = _FakeValidateModule(_passing_validator)
-
-                def fake_import(name, package=None):
-                    if "predict_view_customization_validate" in name:
-                        return fake_mod
-                    raise ImportError(name)
-
-                with mock.patch("builtins.__import__", side_effect=fake_import):
-                    # Direct call with custom path to bypass the import inside function
-                    pass
-
-        # Use a simpler approach: patch the import at module level
-        with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
-            import sys as _sys
-            fake_validate_mod = type("mod", (), {"validate_customization": _passing_validator})()
-            _sys.modules["registry.predict_view_customization_validate"] = fake_validate_mod
-
-            result = load_public_predict_view_customization(
-                "telco-customer-churn",
-                "churn-risk-overview",
-                customizations_path=path,
-            )
-
-        del _sys.modules["registry.predict_view_customization_validate"]
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
+                result = load_public_predict_view_customization(
+                    "telco-customer-churn",
+                    "churn-risk-overview",
+                    customizations_path=path,
+                )
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
 
         assert result["view_id"] == "churn-risk-overview"
         assert result["dataset_slug"] == "telco-customer-churn"
@@ -166,24 +140,22 @@ def test_raises_not_found_for_unknown_view_id():
     with tempfile.TemporaryDirectory() as tmp:
         path = _write_customization_registry(Path(tmp), _VALID_REGISTRY)
 
-        import sys as _sys
-        import unittest.mock as mock
-
-        fake_validate_mod = type("mod", (), {"validate_customization": _passing_validator})()
-        _sys.modules["registry.predict_view_customization_validate"] = fake_validate_mod
-
-        with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
-            raised = False
-            try:
-                load_public_predict_view_customization(
-                    "telco-customer-churn",
-                    "nonexistent-view",
-                    customizations_path=path,
-                )
-            except CustomizationNotFoundError:
-                raised = True
-
-        del _sys.modules["registry.predict_view_customization_validate"]
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
+                raised = False
+                try:
+                    load_public_predict_view_customization(
+                        "telco-customer-churn",
+                        "nonexistent-view",
+                        customizations_path=path,
+                    )
+                except CustomizationNotFoundError:
+                    raised = True
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
         assert raised, "Expected CustomizationNotFoundError for unknown view_id"
 
 
@@ -191,24 +163,22 @@ def test_raises_not_found_for_unknown_dataset_slug():
     with tempfile.TemporaryDirectory() as tmp:
         path = _write_customization_registry(Path(tmp), _VALID_REGISTRY)
 
-        import sys as _sys
-        import unittest.mock as mock
-
-        fake_validate_mod = type("mod", (), {"validate_customization": _passing_validator})()
-        _sys.modules["registry.predict_view_customization_validate"] = fake_validate_mod
-
-        with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
-            raised = False
-            try:
-                load_public_predict_view_customization(
-                    "unknown-dataset",
-                    "churn-risk-overview",
-                    customizations_path=path,
-                )
-            except CustomizationNotFoundError:
-                raised = True
-
-        del _sys.modules["registry.predict_view_customization_validate"]
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
+                raised = False
+                try:
+                    load_public_predict_view_customization(
+                        "unknown-dataset",
+                        "churn-risk-overview",
+                        customizations_path=path,
+                    )
+                except CustomizationNotFoundError:
+                    raised = True
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
         assert raised, "Expected CustomizationNotFoundError for unknown dataset_slug"
 
 
@@ -220,24 +190,22 @@ def test_raises_not_found_when_validation_fails():
     with tempfile.TemporaryDirectory() as tmp:
         path = _write_customization_registry(Path(tmp), _VALID_REGISTRY)
 
-        import sys as _sys
-        import unittest.mock as mock
-
-        fake_validate_mod = type("mod", (), {"validate_customization": _failing_validator})()
-        _sys.modules["registry.predict_view_customization_validate"] = fake_validate_mod
-
-        with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
-            raised = False
-            try:
-                load_public_predict_view_customization(
-                    "telco-customer-churn",
-                    "churn-risk-overview",
-                    customizations_path=path,
-                )
-            except CustomizationNotFoundError:
-                raised = True
-
-        del _sys.modules["registry.predict_view_customization_validate"]
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_failing_validator
+        )
+        try:
+            with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
+                raised = False
+                try:
+                    load_public_predict_view_customization(
+                        "telco-customer-churn",
+                        "churn-risk-overview",
+                        customizations_path=path,
+                    )
+                except CustomizationNotFoundError:
+                    raised = True
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
         assert raised, "Expected CustomizationNotFoundError when validation fails"
 
 
@@ -282,20 +250,18 @@ def test_result_does_not_contain_schema_version_root_key_added_by_registry():
     with tempfile.TemporaryDirectory() as tmp:
         path = _write_customization_registry(Path(tmp), _VALID_REGISTRY)
 
-        import sys as _sys
-        import unittest.mock as mock
-
-        fake_validate_mod = type("mod", (), {"validate_customization": _passing_validator})()
-        _sys.modules["registry.predict_view_customization_validate"] = fake_validate_mod
-
-        with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
-            result = load_public_predict_view_customization(
-                "telco-customer-churn",
-                "churn-risk-overview",
-                customizations_path=path,
-            )
-
-        del _sys.modules["registry.predict_view_customization_validate"]
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
+                result = load_public_predict_view_customization(
+                    "telco-customer-churn",
+                    "churn-risk-overview",
+                    customizations_path=path,
+                )
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
 
         # The top-level registry schema_version must not bleed into the record
         assert result.get("predict_view_customizations") is None

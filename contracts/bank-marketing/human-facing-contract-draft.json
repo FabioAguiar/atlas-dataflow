@@ -1,0 +1,393 @@
+{
+  "contract_draft_version": "contract-draft.v1",
+  "artifact_type": "human_facing_contract_draft",
+  "non_executable": true,
+  "draft_status": "pending_human_review",
+  "human_review_required": true,
+  "dataset_slug": "bank-marketing",
+  "milestone": "M22",
+  "generating_issue": "M22-03",
+  "generated_at": "2026-06-23T19:00:00Z",
+  "promotion_boundary": {
+    "promotion_authorized": false,
+    "this_draft_does_not_constitute_execution_contract": true,
+    "promotion_stage": "M23",
+    "requires_before_promotion": [
+      "explicit human review and approval of all candidate fields",
+      "confirmed target column selection",
+      "M23 milestone authorization",
+      "validation of these observations against actual discovery evidence output from pipeline/discovery_evidence.py"
+    ],
+    "this_draft_must_not": [
+      "drive model training",
+      "drive inference or runtime behavior",
+      "serve as or be treated as an execution contract",
+      "be promoted to an execution contract without M23 authorization and human approval"
+    ]
+  },
+  "traceability": {
+    "source_discovery_generator": "pipeline/discovery_evidence.py",
+    "source_discovery_schema": "pipeline/dataset-discovery-evidence.schema.json",
+    "discovery_schema_version": "dataset-discovery-evidence.v1",
+    "upstream_issue": "M22-02",
+    "dataset_context_reference": "contracts/bank-marketing/dataset-context.json",
+    "runtime_contract_reference": "contracts/bank-marketing/runtime-contract.json",
+    "traceability_note": "Field observations in this draft are derived from the bank-marketing dataset structure as described in contracts/bank-marketing/dataset-context.json and the validated features in contracts/bank-marketing/runtime-contract.json. Null counts, null rates, cardinality counts, and sample bounds marked as null require verification against an actual discovery evidence run (pipeline/discovery_evidence.py) before M23 promotion."
+  },
+  "dataset_metadata": {
+    "name": "bank-marketing",
+    "domain": "banking-marketing",
+    "description": "Binary classification dataset for predicting client subscription to a term deposit in a bank marketing campaign.",
+    "observed_column_count": 17,
+    "observed_row_count": null,
+    "source_path_note": "Source CSV path to be confirmed at discovery evidence generation time. Must not contain private absolute paths.",
+    "row_count_note": "Requires actual discovery evidence run to confirm total row count."
+  },
+  "candidate_fields": [
+    {
+      "name": "age",
+      "inferred_type": "integer",
+      "description": "Client age in years.",
+      "cardinality_class": "high",
+      "null_count": null,
+      "null_rate": null,
+      "sample_min": 17,
+      "sample_max": 98,
+      "validation_hint": "Numeric field. Verify range bounds (17–98) against actual dataset. Check for implausible outliers.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract with domain_constraints min=17, max=98."
+    },
+    {
+      "name": "job",
+      "inferred_type": "string",
+      "description": "Type of job held by the client.",
+      "cardinality_class": "low",
+      "known_values": [
+        "admin.", "blue-collar", "entrepreneur", "housemaid",
+        "management", "retired", "self-employed", "services",
+        "student", "technician", "unemployed", "unknown"
+      ],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 12,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Categorical field with 12 known values including 'unknown'. Verify that 'unknown' is treated as a missing value indicator, not a legitimate category, before promotion.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract. 'unknown' value requires explicit handling decision."
+    },
+    {
+      "name": "marital",
+      "inferred_type": "string",
+      "description": "Client marital status.",
+      "cardinality_class": "low",
+      "known_values": ["divorced", "married", "single"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 3,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Categorical field with 3 known values. Confirm complete enumeration against actual dataset.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract."
+    },
+    {
+      "name": "education",
+      "inferred_type": "string",
+      "description": "Client education level.",
+      "cardinality_class": "low",
+      "known_values": ["primary", "secondary", "tertiary", "unknown"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 4,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Categorical field. 'unknown' value requires explicit handling. Consider ordinal encoding options at M23 promotion.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract. Ordinal vs. nominal encoding decision required at promotion."
+    },
+    {
+      "name": "default",
+      "inferred_type": "string",
+      "description": "Whether the client has credit in default.",
+      "cardinality_class": "low",
+      "known_values": ["no", "yes"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 2,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Binary categorical field. Low cardinality. Verify actual prevalence of 'yes' in dataset — low default rates may make this field near-constant.",
+      "review_status": "not_in_runtime_contract",
+      "review_note": "Not present in existing runtime contract. Requires human decision on inclusion or exclusion at M23 promotion. Possible near-constant distribution warrants review."
+    },
+    {
+      "name": "balance",
+      "inferred_type": "integer",
+      "description": "Average yearly balance in euros.",
+      "cardinality_class": "high",
+      "null_count": null,
+      "null_rate": null,
+      "sample_min": -8000,
+      "sample_max": 100000,
+      "validation_hint": "Numeric field with negative values possible. Wide range (-8000 to 100000) may require normalization. Verify outlier handling policy.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract with domain_constraints min=-8000, max=100000."
+    },
+    {
+      "name": "housing",
+      "inferred_type": "string",
+      "description": "Whether the client has a housing loan.",
+      "cardinality_class": "low",
+      "known_values": ["no", "yes"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 2,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Binary categorical field. Confirm encoding approach (binary 0/1 vs. string) at M23 promotion.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract."
+    },
+    {
+      "name": "loan",
+      "inferred_type": "string",
+      "description": "Whether the client has a personal loan.",
+      "cardinality_class": "low",
+      "known_values": ["no", "yes"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 2,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Binary categorical field. Confirm encoding approach at M23 promotion.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract."
+    },
+    {
+      "name": "contact",
+      "inferred_type": "string",
+      "description": "Contact communication type used in the campaign.",
+      "cardinality_class": "low",
+      "known_values": ["cellular", "telephone", "unknown"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 3,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Categorical field. 'unknown' value requires handling decision. High 'unknown' rate may reduce signal quality.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract."
+    },
+    {
+      "name": "day",
+      "inferred_type": "integer",
+      "description": "Last contact day of the month (1–31).",
+      "cardinality_class": "low",
+      "null_count": null,
+      "null_rate": null,
+      "sample_min": 1,
+      "sample_max": 31,
+      "validation_hint": "Numeric field representing day of month. Consider whether temporal leakage risk applies if day correlates with campaign batch timing.",
+      "review_status": "not_in_runtime_contract",
+      "review_note": "Not present in existing runtime contract. Requires human decision on inclusion or exclusion. Temporal leakage risk should be assessed."
+    },
+    {
+      "name": "month",
+      "inferred_type": "string",
+      "description": "Last contact month of year.",
+      "cardinality_class": "low",
+      "known_values": ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 12,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Categorical field with 12 known values. Consider whether month introduces temporal leakage or seasonal confounding.",
+      "review_status": "not_in_runtime_contract",
+      "review_note": "Not present in existing runtime contract. Requires human decision on inclusion. Seasonal effects and temporal leakage should be assessed."
+    },
+    {
+      "name": "duration",
+      "inferred_type": "integer",
+      "description": "Last contact duration in seconds.",
+      "cardinality_class": "high",
+      "null_count": null,
+      "null_rate": null,
+      "sample_min": 0,
+      "sample_max": 4920,
+      "validation_hint": "Numeric field. Note: duration is known to be a strong predictor but is unavailable at prediction time (call duration is unknown before the call ends). Confirm whether this field should be excluded to prevent data leakage in production use.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract. Data leakage risk from duration being known only after the contact event must be reviewed and documented at M23 promotion."
+    },
+    {
+      "name": "campaign",
+      "inferred_type": "integer",
+      "description": "Number of contacts performed during this campaign for this client.",
+      "cardinality_class": "high",
+      "null_count": null,
+      "null_rate": null,
+      "sample_min": 1,
+      "sample_max": 63,
+      "validation_hint": "Numeric field. High max value (63) may indicate outliers. Verify distribution and consider capping strategy.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract."
+    },
+    {
+      "name": "pdays",
+      "inferred_type": "integer",
+      "description": "Number of days since the client was last contacted from a previous campaign. -1 indicates not previously contacted.",
+      "cardinality_class": "high",
+      "null_count": null,
+      "null_rate": null,
+      "sample_min": -1,
+      "sample_max": null,
+      "validation_hint": "Numeric field with sentinel value -1 (meaning 'not contacted'). The -1 sentinel requires special handling — it is not a numeric interval from zero. Must not be treated as a continuous numeric variable without transformation.",
+      "review_status": "not_in_runtime_contract",
+      "review_note": "Not present in existing runtime contract. Sentinel value -1 requires explicit transformation decision before inclusion. May be represented as a boolean 'previously_contacted' flag plus a separate numeric 'days_since_contact'."
+    },
+    {
+      "name": "previous",
+      "inferred_type": "integer",
+      "description": "Number of contacts performed before this campaign for this client.",
+      "cardinality_class": "high",
+      "null_count": null,
+      "null_rate": null,
+      "sample_min": 0,
+      "sample_max": null,
+      "validation_hint": "Numeric field. Zero indicates no prior contacts. Verify distribution skewness — likely heavily right-skewed.",
+      "review_status": "not_in_runtime_contract",
+      "review_note": "Not present in existing runtime contract. Requires human decision on inclusion. Correlates with pdays; joint inclusion should be reviewed."
+    },
+    {
+      "name": "poutcome",
+      "inferred_type": "string",
+      "description": "Outcome of the previous marketing campaign.",
+      "cardinality_class": "low",
+      "known_values": ["failure", "other", "success", "unknown"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 4,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Categorical field. High 'unknown' rate expected (clients with no previous campaign). Verify proportion of 'unknown' in actual dataset.",
+      "review_status": "confirmed_in_runtime_contract",
+      "review_note": "Present in existing runtime contract."
+    },
+    {
+      "name": "y",
+      "inferred_type": "string",
+      "description": "Client subscription outcome: whether the client subscribed to a term deposit. Candidate target column.",
+      "cardinality_class": "low",
+      "known_values": ["no", "yes"],
+      "null_count": null,
+      "null_rate": null,
+      "cardinality": 2,
+      "sample_min": null,
+      "sample_max": null,
+      "validation_hint": "Binary outcome field. Verify class distribution. Class imbalance (typically ~88% no, ~12% yes) may require handling in the training objective. This field is the candidate business target — confirm intent before promotion.",
+      "review_status": "candidate_target_column",
+      "is_authoritative_target": false,
+      "review_note": "Identified as the primary candidate target column for binary classification. Not a confirmed business choice. Requires explicit human approval at M23 promotion."
+    }
+  ],
+  "candidate_target_columns": [
+    {
+      "name": "y",
+      "is_authoritative": false,
+      "candidate_reason": "Binary outcome field (yes/no) indicating client subscription to a term deposit. Named 'y' which is the conventional target column identifier in the bank-marketing dataset. Not present in the runtime contract's features list (consistent with it being the prediction target, not an input feature). Requires human confirmation as the intended business objective before M23 contract promotion.",
+      "label_encoding_note": "Encoding (yes=1, no=0 or binary string passthrough) must be decided at M23 promotion, not in this draft.",
+      "class_balance_note": "Historical distribution indicates significant class imbalance (~88% no, ~12% yes). Confirm whether this imbalance is acceptable for the modeling objective or requires resampling.",
+      "review_required": true
+    }
+  ],
+  "validation_hints": [
+    {
+      "id": "vh-001",
+      "scope": "dataset",
+      "hint": "Run pipeline/discovery_evidence.py against the bank-marketing CSV to confirm actual row count, column count, null counts, null rates, and cardinality values before M23 promotion."
+    },
+    {
+      "id": "vh-002",
+      "scope": "target",
+      "hint": "Confirm that 'y' is the intended business target. No automatic selection occurred."
+    },
+    {
+      "id": "vh-003",
+      "scope": "data_leakage",
+      "hint": "'duration' is known only after the marketing call ends and is therefore unavailable at true prediction time. Confirm the leakage policy: exclude 'duration' from the execution contract, or document this limitation explicitly."
+    },
+    {
+      "id": "vh-004",
+      "scope": "sentinel_value",
+      "hint": "'pdays' uses -1 as a sentinel meaning 'not previously contacted'. This must be transformed before numeric use. Decide on transformation strategy: separate boolean flag, imputation, or exclusion."
+    },
+    {
+      "id": "vh-005",
+      "scope": "unknown_values",
+      "hint": "Fields with 'unknown' as a value (job, education, contact, poutcome) require explicit handling decisions: treat as missing, impute, or retain as a distinct category."
+    },
+    {
+      "id": "vh-006",
+      "scope": "class_imbalance",
+      "hint": "Target 'y' has significant class imbalance. Confirm training strategy (class weights, oversampling, undersampling) at M23 execution contract definition."
+    },
+    {
+      "id": "vh-007",
+      "scope": "excluded_fields",
+      "hint": "Fields not in existing runtime contract: default, day, month, pdays, previous. Each requires an explicit inclusion or exclusion decision with rationale at M23 promotion."
+    }
+  ],
+  "unresolved_review_questions": [
+    {
+      "id": "rq-001",
+      "question": "Is 'y' (term deposit subscription outcome) confirmed as the business target for this dataset?",
+      "status": "open",
+      "blocking_for": "M23 execution contract promotion"
+    },
+    {
+      "id": "rq-002",
+      "question": "Should 'duration' be excluded from the execution contract due to data leakage risk? The call duration is unknown before the call occurs.",
+      "status": "open",
+      "blocking_for": "M23 execution contract promotion"
+    },
+    {
+      "id": "rq-003",
+      "question": "How should the 'pdays' sentinel value (-1 = not previously contacted) be transformed for model input?",
+      "status": "open",
+      "blocking_for": "M23 execution contract promotion"
+    },
+    {
+      "id": "rq-004",
+      "question": "Should 'default', 'day', 'month', 'pdays', and 'previous' be included or excluded from the execution contract? Rationale must be explicit.",
+      "status": "open",
+      "blocking_for": "M23 execution contract promotion"
+    },
+    {
+      "id": "rq-005",
+      "question": "How should 'unknown' values in categorical fields (job, education, contact, poutcome) be handled: retain as category, treat as missing, or impute?",
+      "status": "open",
+      "blocking_for": "M23 execution contract promotion"
+    },
+    {
+      "id": "rq-006",
+      "question": "What is the actual row count and class distribution of 'y' in the real dataset CSV? Discovery evidence run required.",
+      "status": "open",
+      "blocking_for": "Validation of this draft before M23 promotion"
+    },
+    {
+      "id": "rq-007",
+      "question": "Is the class imbalance in 'y' (~88% no, ~12% yes) acceptable for the intended modeling objective, or does it require a resampling or weighting strategy in the execution contract?",
+      "status": "open",
+      "blocking_for": "M23 execution contract promotion"
+    }
+  ],
+  "draft_constraints": [
+    "This draft must not be treated as a source of truth for runtime inference.",
+    "Human review is required before this draft can be promoted to an execution contract.",
+    "This draft does not constitute or imply an execution contract.",
+    "This draft does not authorize M23 contract promotion.",
+    "All candidate target columns carry is_authoritative: false and require human confirmation.",
+    "Field observations marked with null for null_count, null_rate, cardinality, sample_min, or sample_max require verification against an actual discovery evidence run."
+  ]
+}

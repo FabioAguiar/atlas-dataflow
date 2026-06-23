@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/dataset-discovery-evidence.schema.json",
+  "title": "Atlas DataFlow Dataset Discovery Evidence",
+  "description": "Governed discovery evidence for a dataset. Records objective observations only: dataset metadata, per-field schema and type observations, null counts, cardinality, sample bounds, duplicated rows, and candidate categorical and target column fields. Candidate target columns must be flagged non-authoritative. Raw dataset content, raw logs, raw runtime data, raw API payloads, and secrets are prohibited. This schema does not authorize contract promotion, model training, or release publication.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "producer",
+    "dataset_metadata",
+    "field_observations",
+    "duplicated_rows_count",
+    "candidate_categorical_fields",
+    "candidate_target_columns",
+    "generation_settings",
+    "generated_at",
+    "discovery_boundary_confirmations",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "dataset-discovery-evidence.v1",
+      "description": "Schema version for this dataset discovery evidence document."
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pipeline component that produced this discovery evidence."
+    },
+    "dataset_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "row_count", "column_count", "source_path"],
+      "description": "Reduced dataset identity. Must not embed raw dataset contents or private absolute paths.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dataset name derived from the source file stem."
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of rows in the dataset."
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of columns in the dataset."
+        },
+        "source_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced source path reference. Must not contain private absolute path details or raw content."
+        }
+      }
+    },
+    "field_observations": {
+      "type": "array",
+      "description": "Per-field objective observations. Must not embed raw field values or raw dataset content.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "inferred_type",
+          "null_count",
+          "null_rate",
+          "cardinality",
+          "sample_min",
+          "sample_max"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Column name."
+          },
+          "inferred_type": {
+            "type": "string",
+            "enum": ["integer", "float", "boolean", "string", "empty"],
+            "description": "Inferred data type from non-null values."
+          },
+          "null_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Count of null or empty values in this field."
+          },
+          "null_rate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Fraction of null or empty values over total rows."
+          },
+          "cardinality": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Count of distinct non-null values."
+          },
+          "sample_min": {
+            "description": "Minimum observed value (typed). Null when no non-null values exist."
+          },
+          "sample_max": {
+            "description": "Maximum observed value (typed). Null when no non-null values exist."
+          }
+        }
+      }
+    },
+    "duplicated_rows_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of rows that are exact duplicates of another row (excess copies)."
+    },
+    "candidate_categorical_fields": {
+      "type": "array",
+      "description": "Field names identified as candidate categorical fields based on cardinality. Non-authoritative — requires human review before finalization.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "candidate_target_columns": {
+      "type": "array",
+      "description": "Candidate target column identifications. Each entry must be flagged non-authoritative. No automatic selection is performed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "is_authoritative"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Candidate target column name."
+          },
+          "is_authoritative": {
+            "type": "boolean",
+            "const": false,
+            "description": "Must always be false. Candidate target columns require human review or a later authorized stage before finalization."
+          },
+          "candidate_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short non-authoritative reason for the candidate classification."
+          }
+        }
+      }
+    },
+    "generation_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed", "generator_version"],
+      "description": "Settings that determine the evidence generation run. Same input and seed must produce identical observations.",
+      "properties": {
+        "seed": {
+          "type": "integer",
+          "description": "Determinism seed for sampling and statistical operations."
+        },
+        "generator_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Generator version string for traceability."
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this evidence was generated."
+    },
+    "discovery_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_promotion_occurred",
+        "model_training_occurred",
+        "release_publication_occurred"
+      ],
+      "description": "Explicit confirmation that discovery evidence generation did not perform forbidden operations.",
+      "properties": {
+        "contract_promotion_occurred": {
+          "type": "boolean",
+          "const": false,
+          "description": "Discovery evidence must never perform or claim contract promotion."
+        },
+        "model_training_occurred": {
+          "type": "boolean",
+          "const": false,
+          "description": "Discovery evidence must never perform or claim model training."
+        },
+        "release_publication_occurred": {
+          "type": "boolean",
+          "const": false,
+          "description": "Discovery evidence must never perform or claim release publication."
+        }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_logs_prohibited",
+        "raw_runtime_prohibited",
+        "raw_api_payloads_prohibited",
+        "secrets_prohibited",
+        "private_source_paths_prohibited",
+        "reduced_and_sanitized"
+      ],
+      "description": "Safety policy for discovery evidence. All flags are required and fixed. Mirrors the pipeline evidence_policy convention.",
+      "properties": {
+        "raw_logs_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_runtime_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_api_payloads_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "secrets_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "private_source_paths_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "reduced_and_sanitized": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  }
+}

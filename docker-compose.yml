@@ -1,3 +1,5 @@
+name: atlas-dataflow
+
 services:
   api:
     build:
@@ -6,8 +8,8 @@ services:
     environment:
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8000}
-    ports:
-      - "8010:8000"
+    expose:
+      - "8000"
     healthcheck:
       test:
         [
@@ -23,10 +25,10 @@ services:
   web:
     build:
       context: ./web
-    environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
     ports:
-      - "5174:80"
+      - "127.0.0.1:${ATLAS_PREVIEW_PORT:-15174}:80"
     depends_on:
       api:
         condition: service_healthy

@@ -1,17 +1,17 @@
+# Atlas API image build context.
+# Keep this context small, but include every directory copied by api/Dockerfile.
+
 *
-
 !api/
-!api/Dockerfile
-!api/pyproject.toml
-!api/*.py
-api/validate_healthcheck.py
-
+!api/**
 !registry/
 !registry/**
-
 !runtime/
 !runtime/**
+!releases/
+!releases/**
 
+# Ignore generated/cache files even inside included directories.
 **/__pycache__/
 **/*.pyc
-**/*.pyo
+**/.pytest_cache/

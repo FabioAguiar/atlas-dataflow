@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-API_URL="${API_URL:-http://127.0.0.1:8000/health}"
-WEB_URL="${WEB_URL:-http://127.0.0.1:5173/}"
+ATLAS_PREVIEW_PORT="${ATLAS_PREVIEW_PORT:-15174}"
+API_URL="${API_URL:-http://127.0.0.1:${ATLAS_PREVIEW_PORT}/api/health}"
+WEB_URL="${WEB_URL:-http://127.0.0.1:${ATLAS_PREVIEW_PORT}/}"
 
 cd "$ROOT_DIR"
 

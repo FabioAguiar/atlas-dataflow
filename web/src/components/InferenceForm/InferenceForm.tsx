@@ -47,6 +47,8 @@ type SubmissionState =
   | { status: "result"; data: PredictionResult }
   | { status: "error"; message: string };
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+
 const ERROR_MESSAGES: Record<string, string> = {
   INVALID_PAYLOAD: "Some inputs are invalid. Please check your answers and try again.",
   INFERENCE_FAILURE: "The prediction service is temporarily unavailable. Please try again later.",
@@ -153,7 +155,7 @@ export default function InferenceForm({ contract, slug, customization }: Props) 
 
     try {
       const res = await fetch(
-        `/datasets/${encodeURIComponent(slug)}/inference`,
+        `${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/inference`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

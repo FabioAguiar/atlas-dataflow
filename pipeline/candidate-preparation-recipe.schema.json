@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/candidate-preparation-recipe.schema.json",
+  "title": "Atlas DataFlow Dataset Preparation Recipe",
+  "description": "Governed preparation recipe for a dataset candidate produced by pipeline/prepare_candidate.py (M22-04). Records every transformation applied — column selection, type normalization, row filtering, missing-value handling, and categorical treatment — with reason and review status. Inferred transformations must carry review_status 'inferred_pending_review' and must not be silently applied. The prepared candidate carries explicit candidate status and is not final training input without later validation and stage authorization (M23+). Raw dataset content, raw logs, raw runtime data, raw API payloads, and secrets are prohibited.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "producer",
+    "dataset_identity",
+    "discovery_evidence_ref",
+    "transformations",
+    "candidate_output",
+    "candidate_status",
+    "generation_settings",
+    "generated_at",
+    "preparation_boundary_confirmations",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "candidate-preparation-recipe.v1",
+      "description": "Schema version for this dataset preparation recipe."
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pipeline component that produced this preparation recipe."
+    },
+    "dataset_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "row_count_before", "column_count_before"],
+      "description": "Reduced dataset identity before transformation. Must not embed raw dataset contents or private absolute paths.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dataset name derived from the source file stem or filename."
+        },
+        "row_count_before": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of rows in the dataset before any transformation."
+        },
+        "column_count_before": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of columns in the dataset before any transformation."
+        }
+      }
+    },
+    "discovery_evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "schema_version"],
+      "description": "Traceability reference to the M22-02 discovery evidence artifact consumed as input. Records only a stable path reference and schema version — raw evidence content must not be embedded.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced path reference to the discovery evidence JSON artifact. Must not contain private absolute path details."
+        },
+        "schema_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Schema version of the consumed discovery evidence artifact."
+        }
+      }
+    },
+    "transformations": {
+      "type": "array",
+      "description": "Ordered list of all transformation rules recorded in this recipe. Every transformation applied to the dataset must appear here. Inferred rules that were not applied must also appear, marked with review_status 'inferred_pending_review'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transformation_type",
+          "description",
+          "source_columns",
+          "target_columns",
+          "reason",
+          "review_status"
+        ],
+        "properties": {
+          "transformation_type": {
+            "type": "string",
+            "enum": [
+              "column_selection",
+              "type_normalization",
+              "row_filtering",
+              "missing_value_handling",
+              "categorical_treatment"
+            ],
+            "description": "Category of transformation. Must be one of the M22-04 authorized transformation types."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable description of what this transformation does."
+          },
+          "source_columns": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "description": "Column names affected as inputs by this transformation. Empty for dataset-wide transformations."
+          },
+          "target_columns": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "description": "Column names produced or updated by this transformation. Empty for row-filtering transformations that do not produce new columns."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Traceable reason why this transformation was declared or inferred. Must be explicit and reviewable."
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "inferred_pending_review",
+              "inferred_approved"
+            ],
+            "description": "Authorization status of this transformation rule. 'explicit' means declared by the operator in the preparation rules input. 'inferred_pending_review' means the rule was derived from discovery evidence and requires human review before application. 'inferred_approved' means the rule was inferred and subsequently approved by a human reviewer. Only 'explicit' and 'inferred_approved' rules are applied; 'inferred_pending_review' rules are recorded but not applied."
+          }
+        }
+      }
+    },
+    "candidate_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced", "reason_not_produced", "row_count_after", "column_count_after"],
+      "description": "Records whether a prepared dataset candidate was produced and its post-transformation dimensions.",
+      "properties": {
+        "produced": {
+          "type": "boolean",
+          "description": "True when a prepared candidate was written; false when no safe prepared candidate could be produced."
+        },
+        "reason_not_produced": {
+          "type": ["string", "null"],
+          "description": "Explanation of why no prepared candidate was produced. Must be non-null when produced is false."
+        },
+        "row_count_after": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Total number of rows in the prepared candidate. Null when no candidate was produced."
+        },
+        "column_count_after": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Total number of columns in the prepared candidate. Null when no candidate was produced."
+        }
+      }
+    },
+    "candidate_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["is_final_training_input", "requires_m23_validation", "authorized_for"],
+      "description": "Explicit declaration of the prepared candidate's status. The candidate is not final training input without later validation and stage authorization (M23+).",
+      "properties": {
+        "is_final_training_input": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must always be false. The prepared candidate requires M23+ validation before it may be used as final training input."
+        },
+        "requires_m23_validation": {
+          "type": "boolean",
+          "const": true,
+          "description": "Must always be true. M23+ validation and stage authorization are required before promotion."
+        },
+        "authorized_for": {
+          "type": "string",
+          "const": "candidate_only",
+          "description": "The prepared output is authorized as a candidate only, not as a final or published artifact."
+        }
+      }
+    },
+    "generation_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generator_version", "preparation_rules_source"],
+      "description": "Settings that determined this preparation run.",
+      "properties": {
+        "generator_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Generator version string for traceability."
+        },
+        "preparation_rules_source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reduced path reference to the preparation rules input. Must not contain private absolute paths."
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this recipe was generated."
+    },
+    "preparation_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complex_feature_engineering_performed",
+        "model_training_performed",
+        "release_publication_performed",
+        "hidden_notebook_transformations",
+        "inferred_rules_applied_without_approval"
+      ],
+      "description": "Explicit confirmation that preparation did not perform forbidden operations.",
+      "properties": {
+        "complex_feature_engineering_performed": {
+          "type": "boolean",
+          "const": false,
+          "description": "Complex feature engineering beyond M22 authorized scope must never be performed."
+        },
+        "model_training_performed": {
+          "type": "boolean",
+          "const": false,
+          "description": "Model training must never be performed by the preparation pipeline."
+        },
+        "release_publication_performed": {
+          "type": "boolean",
+          "const": false,
+          "description": "Release publication must never be performed by the preparation pipeline."
+        },
+        "hidden_notebook_transformations": {
+          "type": "boolean",
+          "const": false,
+          "description": "Hidden notebook-state transformations are explicitly prohibited. All transformations must be recorded in this recipe."
+        },
+        "inferred_rules_applied_without_approval": {
+          "type": "boolean",
+          "const": false,
+          "description": "Inferred rules with review_status 'inferred_pending_review' must never be applied. Only 'explicit' and 'inferred_approved' rules are applied."
+        }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_logs_prohibited",
+        "raw_runtime_prohibited",
+        "raw_api_payloads_prohibited",
+        "secrets_prohibited",
+        "private_source_paths_prohibited",
+        "reduced_and_sanitized"
+      ],
+      "description": "Safety policy for this preparation recipe. All flags are required and fixed. Mirrors the pipeline evidence_policy convention.",
+      "properties": {
+        "raw_logs_prohibited": {"type": "boolean", "const": true},
+        "raw_runtime_prohibited": {"type": "boolean", "const": true},
+        "raw_api_payloads_prohibited": {"type": "boolean", "const": true},
+        "secrets_prohibited": {"type": "boolean", "const": true},
+        "private_source_paths_prohibited": {"type": "boolean", "const": true},
+        "reduced_and_sanitized": {"type": "boolean", "const": true}
+      }
+    },
+    "normalization_notes": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Optional list of non-fatal notes from type normalization (e.g., rows where casting failed). Present only when normalization encountered non-fatal issues."
+    }
+  }
+}

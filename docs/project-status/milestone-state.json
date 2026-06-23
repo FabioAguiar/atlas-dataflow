@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M20",
-    "title": "Internal Admin Re-Evaluation",
+    "id": "M21",
+    "title": "Publication Stabilization and Operational Hardening",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M19",
-    "title": "Predict Experience Customization",
+    "id": "M20",
+    "title": "Internal Admin Re-Evaluation",
     "status": "completed"
   },
   "completed_milestones": [
@@ -122,6 +122,11 @@
       "id": "M19",
       "title": "Predict Experience Customization",
       "status": "completed"
+    },
+    {
+      "id": "M20",
+      "title": "Internal Admin Re-Evaluation",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -218,6 +223,11 @@
     {
       "id": "M19",
       "title": "Predict Experience Customization",
+      "status": "locked"
+    },
+    {
+      "id": "M20",
+      "title": "Internal Admin Re-Evaluation",
       "status": "locked"
     }
   ],
@@ -344,17 +354,18 @@
     {
       "id": "M20",
       "title": "Internal Admin Re-Evaluation",
-      "status": "active"
+      "status": "completed"
     },
     {
       "id": "M21",
       "title": "Publication Stabilization and Operational Hardening",
-      "status": "planned"
+      "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M20 is the current active milestone for Internal Admin Re-Evaluation in Atlas DataFlow.",
+    "M21 is the current active milestone for Publication Stabilization and Operational Hardening in Atlas DataFlow.",
+    "M20 is marked as completed because Internal Admin Re-Evaluation has been completed.",
     "M19 is marked as completed because Predict Experience Customization has been completed.",
     "M18 is marked as completed because Predict View Foundation has been completed.",
     "M17 is marked as completed because Published Shell and Dataset Home Experience has been completed.",
@@ -366,14 +377,14 @@
     "M11 is marked as completed because Publisher Operational Release Flow has been completed.",
     "M10 is marked as completed in the operational cursor because Initial Private Internal Administration was closed with documented deferral, not implemented as an admin surface.",
     "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, and M19 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M20 should be validated against docs/milestones.md before workflow continuation.",
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, and M20 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M21 should be validated against docs/milestones.md before workflow continuation.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "The current milestone points to M20 because the next implementation focus is Internal Admin Re-Evaluation."
+    "The current milestone points to M21 because the next implementation focus is Publication Stabilization and Operational Hardening."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

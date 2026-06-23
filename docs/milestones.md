@@ -68,6 +68,9 @@ The milestones preserve this direction by prioritizing:
 - contracts as the source of truth;
 - inference based on published artifacts;
 - traceability between dataset, contract, model, metrics, and publication;
+- data-study authoring through controlled notebooks;
+- transformation from dataset discovery to contracts, prepared data, model artifacts, and release artifacts;
+- separation between human notebook authoring and deterministic build, publish, and runtime stages;
 - separation between public surface and internal processes;
 - simplicity proportional to the first public cycle.
 
@@ -90,6 +93,8 @@ The milestones reflect the following architectural decisions:
 - no public administration in the first public cycle;
 - eventual internal administration accessible only through a private surface;
 - separation between pipeline, publisher, runtime, contracts, artifacts, and web experience;
+- notebooks treated as controlled authoring and discovery surfaces, not as public runtime services;
+- prepared datasets, execution contracts, trained models, inference bundles, and release candidates generated through explicit artifacts;
 - implementation documentation strategy defined as `milestones-only`.
 
 ## Relationship with Operational State
@@ -122,6 +127,7 @@ Conditions that may motivate a future review of the strategy:
 - recurring difficulty locating responsibilities;
 - need for onboarding or AI-assisted continuity with lower context cost;
 - dedicated operational documentation emerging in multiple areas.
+- notebook-driven discovery, contract promotion, model training, bundle creation, release generation, and public runtime validation requiring repeatable operational navigation.
 
 ## Milestones Overview
 
@@ -148,6 +154,13 @@ Conditions that may motivate a future review of the strategy:
 | M19 | Predict experience customization | Prediction experiences become configurable without duplicating contracts | With reservations |
 | M20 | Internal admin re-evaluation | Private administration is reconsidered after real operations exist | With reservations |
 | M21 | Publication stabilization and operational hardening | Publication layer is hardened for continued operation | With reservations |
+| M22 | Notebook-driven dataset discovery | Notebooks transform real dataset inspection into governed discovery artifacts | With reservations |
+| M23 | Human contract to execution contract | Human-facing dataset understanding becomes validated execution-ready contracts | With reservations |
+| M24 | Notebook-to-pipeline model training | Training uses prepared data and execution contracts to produce traceable model artifacts | With reservations |
+| M25 | Inference bundle contract | Trained models become executable, contract-compatible inference bundles | With reservations |
+| M26 | Release candidate from real dataflow artifacts | Publishable releases are assembled from real pipeline, contract, model, and evidence artifacts | With reservations |
+| M27 | Public runtime and browser validation | Public API and web experience are validated end to end with real release artifacts | With reservations |
+| M28 | Operational release guide and implementation map | Repeatable navigation and operating guidance are documented after the dataflow is real | With reservations |
 
 ## M1 — Documented Foundation and Initial Technical Scope
 
@@ -1786,7 +1799,7 @@ Create the minimum governed pipeline for transforming dataset/study inputs into 
 
 ### Problem or Gap
 
-The legacy draft showed useful capabilities around pipeline, contracts, model artifacts, and reports, but the current Atlas must recover those capabilities through contract-first boundaries instead of ad hoc data processing.
+Atlas requires useful capabilities around pipeline, contracts, model artifacts, and reports, but those capabilities must be implemented through contract-first boundaries instead of ad hoc data processing.
 
 Atlas needs a build stage that prepares candidate artifacts before publisher promotion, while keeping publisher and pipeline responsibilities separate.
 
@@ -1879,7 +1892,7 @@ M11 makes publication executable. M12 proves a real release. M13 should establis
 
 ### Risks and Gaps
 
-- Risk of rebuilding the full legacy system too quickly.
+- Risk of rebuilding too much dataflow automation too quickly.
 - Risk of mixing pipeline and publisher responsibilities.
 - Risk of accepting implicit contract generation without review.
 - Gap: model training automation may remain limited after this milestone.
@@ -1896,7 +1909,7 @@ The milestone will be ready to derive issues when:
 
 ### Continuity Notes
 
-This milestone should recover useful legacy pipeline ideas while preserving the new contract-first architecture.
+This milestone should introduce useful pipeline capabilities while preserving the contract-first architecture.
 
 ## M14 — Run Evidence and Traceability Layer
 
@@ -1910,7 +1923,7 @@ As Atlas grows beyond a single manually assembled release, it needs a reliable w
 
 ### Context
 
-The legacy project included richer notions of runs and generated artifacts. The current architecture should recover that value in a simpler, release-oriented way.
+Atlas needs richer notions of runs and generated artifacts, implemented in a simple, release-oriented way.
 
 ### Core Scope
 
@@ -2145,7 +2158,7 @@ A public dataset experience needs more than contracts and prediction endpoints. 
 
 ### Context
 
-The legacy project contained richer published dataset context ideas. The current Atlas should recover that value in a way compatible with the release-oriented registry and active release model.
+Atlas needs richer published dataset context in a way compatible with the release-oriented registry and active release model.
 
 ### Core Scope
 
@@ -2256,7 +2269,7 @@ A single prediction screen is not enough to communicate a published dataset expe
 
 ### Context
 
-The legacy project explored multiple screens and published experience structure. The current Atlas should reintroduce this as a public shell after publication, context, and dataset identity are stable.
+Atlas needs multiple public screens and a coherent published experience structure, introduced as a public shell after publication, context, and dataset identity are stable.
 
 ### Core Scope
 
@@ -2369,7 +2382,7 @@ A dataset may need more than one prediction experience, but those experiences mu
 
 ### Context
 
-The legacy draft contained predict view concepts. The current Atlas should reintroduce them only after dataset context and published shell foundations exist.
+Atlas should introduce predict view concepts only after dataset context and published shell foundations exist.
 
 ### Core Scope
 
@@ -2456,7 +2469,7 @@ The legacy draft contained predict view concepts. The current Atlas should reint
 
 - Risk of view metadata becoming a second contract system.
 - Risk of coupling view identity to one release too rigidly or too loosely.
-- Risk of reintroducing legacy complexity too quickly.
+- Risk of introducing prediction-experience complexity too quickly.
 - Gap: customization rules need a later milestone.
 
 ### Derivability Criteria
@@ -2484,7 +2497,7 @@ After predict views exist, Atlas needs a safe way to vary presentation, field gr
 
 ### Context
 
-The legacy project explored richer prediction experiences. The current Atlas should recover customization gradually and only through contract-compatible metadata.
+Atlas should introduce richer prediction experiences gradually and only through contract-compatible metadata.
 
 ### Core Scope
 
@@ -2820,3 +2833,909 @@ The milestone will be ready to derive issues when:
 ### Continuity Notes
 
 This milestone should close the second roadmap block and prepare a future planning cycle based on evidence from real operation.
+
+## M22 — Notebook-Driven Dataset Discovery
+
+### Objective
+
+Create a controlled notebook-driven discovery stage that turns a real dataset into governed discovery artifacts, a preliminary human-facing contract, and a prepared dataset candidate.
+
+### Problem or Gap
+
+Atlas must not depend only on structural fixtures, generic payloads, or manually assembled contracts. The project needs a reproducible way for a user to inspect a real dataset, understand its shape, identify relevant modeling decisions, and generate artifacts that can later feed contract normalization, training, and publication.
+
+Without this milestone, the public experience can exist while the dataflow behind it remains weak, opaque, or disconnected from the dataset study that produced the model.
+
+### Context
+
+Atlas treats notebooks as an authoring and discovery surface. A notebook may assist the user in observing data, recording decisions, and generating candidate artifacts, but it must not become the final operational source of truth. The final source of truth must be explicit, versionable, validatable artifacts.
+
+This milestone starts the dataflow segment after publication stabilization by re-centering the project around real dataset transformation.
+
+### Core Scope
+
+- Define a controlled notebook discovery entrypoint.
+- Load a real dataset from an explicit input path.
+- Produce dataset discovery evidence, including schema, inferred types, nulls, cardinality, sample bounds, duplicated rows, and candidate categorical fields.
+- Identify candidate target columns without forcing an automatic decision.
+- Produce a human-facing contract draft for review.
+- Produce a prepared dataset candidate when preparation rules are explicitly declared or safely inferred under validation.
+- Produce a preparation recipe describing transformations applied during discovery.
+- Record hashes for raw input and prepared output.
+- Validate that discovery artifacts are complete, deterministic, and safe to commit when intended.
+
+### Out of Scope
+
+- Training a model.
+- Publishing a release.
+- Running notebooks in public production.
+- Public dataset upload.
+- Automatic decision of business objective without human review.
+- Private or public admin UI.
+- Supporting every possible dataset shape.
+- Complex feature engineering beyond the first controlled discovery flow.
+
+### Expected Deliverables
+
+- Notebook discovery template or controlled notebook entrypoint.
+- Dataset discovery evidence artifact.
+- Human-facing contract draft artifact.
+- Prepared dataset candidate artifact, when applicable.
+- Preparation recipe artifact.
+- Raw and prepared dataset hash records.
+- Validation command or tests for discovery outputs.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, with documentation review deferred to M28 unless this milestone introduces non-obvious manual steps.
+- Expected evaluation: verify whether notebook usage can be understood from the notebook itself, CLI help, tests, and generated artifacts.
+- Candidate documents: short notebook usage note only if authorized by a future issue.
+- Criterion to create: create documentation only if the discovery workflow requires steps that are not safely discoverable from the notebook and validation commands.
+- Criterion to update: update architecture if notebooks stop being an authoring surface and become an operational runtime dependency.
+- Criterion not to update: do not create broad operational documentation before the full dataset-to-release flow is proven.
+
+### Dependencies
+
+- M21 completed or explicitly stabilized enough to begin the next dataflow segment.
+- A real dataset selected for discovery validation.
+- Existing contract-first and release-oriented boundaries preserved.
+- Local environment able to execute notebook-related validation without requiring public services.
+
+### Components or Areas Affected
+
+- Notebooks.
+- Data Pipeline.
+- Contract Layer.
+- Dataset preparation artifacts.
+- Evidence Layer.
+- Tests and validations.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: notebook discovery entrypoint needs definition.
+  - Possible issue type: pipeline bootstrap.
+  - Note: must be deterministic enough to generate versionable evidence.
+- Criterion: discovery evidence schema needs definition.
+  - Possible issue type: evidence contract.
+  - Note: evidence should describe observations, not silently choose business semantics.
+- Criterion: human-facing contract draft needs generation.
+  - Possible issue type: contract authoring.
+  - Note: draft output must require review before execution use.
+- Criterion: prepared dataset candidate needs validation.
+  - Possible issue type: data preparation validation.
+  - Note: transformations must be explicit and traceable.
+
+### Definition of Done
+
+- A real dataset can be inspected through the controlled discovery flow.
+- Discovery evidence is generated and validatable.
+- A human-facing contract draft is generated from dataset observations.
+- Any prepared dataset output is linked to a preparation recipe.
+- Raw and prepared hashes are recorded.
+- The notebook does not publish a release or train a model as hidden side effects.
+- The generated artifacts are suitable inputs for later contract promotion.
+
+### Minimum Evidence
+
+- Notebook execution or equivalent controlled run evidence.
+- Discovery evidence example.
+- Human-facing contract draft example.
+- Preparation recipe example.
+- Hash verification for raw and prepared data.
+- Validation output for discovery artifacts.
+
+### Risks and Gaps
+
+- Risk of treating notebook output as final truth without validation.
+- Risk of over-automating target selection or business interpretation.
+- Risk of allowing hidden transformations that are not captured in the preparation recipe.
+- Risk of making the first real dataset a special case.
+- Gap: execution contract promotion remains for M23.
+- Gap: model training remains for M24.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- a representative real dataset is available;
+- minimum discovery evidence fields are known;
+- notebook responsibilities are separated from pipeline, publisher, and runtime;
+- validation expectations for generated artifacts are clear;
+- human review boundaries are explicit.
+
+### Continuity Notes
+
+This milestone should make data understanding visible and traceable. It should not rush into training or publication before the contract promotion stage exists.
+
+## M23 — Human Contract to Execution Contract
+
+### Objective
+
+Transform human-facing dataset understanding into validated execution-ready contracts that can drive preparation, training, inference, and public contract projection.
+
+### Problem or Gap
+
+Discovery artifacts and human-facing contracts are not enough to run a model safely. Atlas needs a formal promotion step that turns reviewed dataset understanding into an execution contract with clear target, features, transformations, validation rules, split policy, metrics, and modeling constraints.
+
+Without this milestone, contracts can remain demonstrative or manually assembled, and the training/runtime layers may still depend on assumptions outside the artifact model.
+
+### Context
+
+Atlas is contract-first. The human-facing contract explains the dataset and modeling intent in a form that can be reviewed. The execution contract defines operational behavior. The normalized and public contracts must be derived or validated from these sources without inventing behavior in the UI, runtime, or publisher.
+
+### Core Scope
+
+- Define promotion rules from human-facing contract to execution contract.
+- Define the minimum execution contract schema.
+- Declare target column, feature columns, ignored columns, required columns, and optional columns.
+- Declare missing-value policy, categorical encoding policy, numeric handling, and allowed transformations.
+- Declare dataset split policy and random seed policy.
+- Declare primary metric and candidate secondary metrics.
+- Declare model family candidates or training strategy constraints.
+- Validate contract consistency against discovery evidence and prepared dataset metadata.
+- Derive or validate runtime and public contract projections from the promoted contract.
+- Reject contracts that rely on unavailable fields, inconsistent types, or undocumented transformations.
+
+### Out of Scope
+
+- Training a model.
+- Publishing a release.
+- Public contract editor.
+- Automatic selection of best business objective.
+- Broad schema language for every machine learning task.
+- Online retraining.
+- Public upload.
+- Admin UI.
+
+### Expected Deliverables
+
+- Execution contract schema.
+- Contract promotion command, script, or validator.
+- Consistency validation between discovery evidence, prepared dataset, human-facing contract, and execution contract.
+- Runtime contract projection or validation.
+- Public contract projection or validation.
+- Tests for valid and invalid contract promotion cases.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, with documentation review deferred to M28 unless the promotion flow becomes too difficult to operate from tests and command help.
+- Expected evaluation: schemas and validation errors should be the primary source of truth for contract behavior.
+- Candidate documents: optional contract promotion note, if authorized by issue.
+- Criterion to create: create documentation only if human review steps require explicit operator guidance.
+- Criterion to update: update architecture if the relationship between human, execution, runtime, and public contracts changes.
+- Criterion not to update: do not document contract behavior outside schemas/tests when those are sufficient.
+
+### Dependencies
+
+- M22 completed or discovery artifacts available.
+- Human-facing contract draft available for promotion.
+- Prepared dataset metadata or discovery evidence available for validation.
+- Existing contract-first architecture preserved.
+
+### Components or Areas Affected
+
+- Contract Layer.
+- Data Pipeline.
+- Notebooks.
+- Runtime Contract.
+- Public Contract.
+- Tests and validations.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: execution contract schema needs definition.
+  - Possible issue type: artifact contract.
+  - Note: must distinguish reviewed intent from executable behavior.
+- Criterion: promotion logic needs implementation.
+  - Possible issue type: contract pipeline.
+  - Note: must reject inference from missing data.
+- Criterion: public/runtime projections need validation.
+  - Possible issue type: contract projection.
+  - Note: public projection must remain safe and not expose internal processing details.
+
+### Definition of Done
+
+- Human-facing contract can be promoted only through explicit validation.
+- Execution contract captures target, features, transformations, split, metrics, and modeling constraints.
+- Execution contract is consistent with discovery evidence and prepared data metadata.
+- Runtime and public contracts are derived or validated without duplicating business rules elsewhere.
+- Invalid promotions fail with actionable errors.
+- No model is trained as part of this milestone unless strictly required for validation fixtures.
+
+### Minimum Evidence
+
+- Human-facing contract input example.
+- Execution contract output example.
+- Contract promotion validation output.
+- Invalid field/type/missing-policy rejection examples.
+- Runtime/public projection validation.
+- Test results for contract promotion.
+
+### Risks and Gaps
+
+- Risk of making the execution contract too broad too early.
+- Risk of silently accepting human-facing descriptions as executable rules.
+- Risk of putting transformation behavior in notebooks without contract representation.
+- Risk of UI or runtime compensating for incomplete contracts.
+- Gap: model training remains for M24.
+- Gap: executable inference bundle remains for M25.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- discovery artifacts exist;
+- human-facing contract fields are known;
+- execution behavior required by training is identifiable;
+- projection boundaries for runtime and public contracts are clear;
+- invalid promotion cases can be defined.
+
+### Continuity Notes
+
+This milestone should make contracts operational. Training should consume the execution contract instead of rediscovering rules from notebooks, filenames, or dataframe conventions.
+
+## M24 — Notebook-to-Pipeline Model Training
+
+### Objective
+
+Create a governed training flow where notebooks and pipeline commands use prepared data and execution contracts to produce traceable model artifacts, metrics, and model selection evidence.
+
+### Problem or Gap
+
+Atlas needs to train models from real dataflow artifacts, not from generic local fixtures or implicit dataframe assumptions. The model artifact must be traceable to the raw dataset, prepared dataset, preparation recipe, execution contract, training configuration, and metrics.
+
+Without this milestone, the public runtime may load a bundle that is disconnected from the dataset study and contract decisions that produced it.
+
+### Context
+
+The notebook remains useful for interactive analysis and review, but the training result must be reproducible through explicit artifacts and validation. The training pipeline should consume the execution contract and prepared dataset generated in prior milestones.
+
+### Core Scope
+
+- Define a training entrypoint that consumes execution contract and prepared dataset artifacts.
+- Support deterministic split and seed behavior according to the execution contract.
+- Train the first supported model family or model strategy for tabular classification/regression as explicitly scoped.
+- Produce a serialized model artifact.
+- Produce training metrics and evaluation metrics.
+- Produce model selection evidence when multiple candidates are evaluated.
+- Record training parameters and artifact hashes.
+- Produce or update model card input data.
+- Validate that the trained model is compatible with the execution contract.
+- Ensure notebook-assisted training does not bypass the pipeline contract.
+
+### Out of Scope
+
+- Full AutoML platform.
+- Public training execution.
+- Online retraining.
+- Distributed training.
+- Complex experiment tracking service.
+- Multiple simultaneous production models per dataset.
+- A/B testing.
+- Model registry database.
+- Public admin UI.
+
+### Expected Deliverables
+
+- Training command, script, or controlled notebook-to-pipeline handoff.
+- Serialized model artifact.
+- Metrics artifact.
+- Model selection evidence artifact, when applicable.
+- Training parameter record.
+- Contract/model compatibility validation.
+- Tests for successful and invalid training inputs.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, with operational documentation deferred to M28 unless command usage becomes unsafe without guidance.
+- Expected evaluation: training artifacts, schemas, tests, and command help should explain the flow.
+- Candidate documents: optional training usage note, if authorized.
+- Criterion to create: create documentation only if training requires multi-step manual coordination.
+- Criterion to update: update architecture if training becomes a runtime or publisher responsibility.
+- Criterion not to update: do not create a model report as implementation documentation unless it is a release artifact.
+
+### Dependencies
+
+- M22 completed or discovery/preparation artifacts available.
+- M23 completed or execution contract available.
+- Local training dependencies available in the development environment.
+- Dataset size and model family chosen within proportional scope.
+
+### Components or Areas Affected
+
+- Data Pipeline.
+- Notebooks.
+- Model Training.
+- Contract Layer.
+- Evidence Layer.
+- Model Card inputs.
+- Tests and validations.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: training entrypoint needs definition.
+  - Possible issue type: pipeline implementation.
+  - Note: must consume execution contract, not implicit notebook state.
+- Criterion: model artifact export needs definition.
+  - Possible issue type: model artifact contract.
+  - Note: artifact must be compatible with future inference bundle creation.
+- Criterion: metrics and model selection evidence need persistence.
+  - Possible issue type: training evidence.
+  - Note: metrics must be traceable to data split and contract.
+
+### Definition of Done
+
+- Training runs from prepared data and execution contract.
+- A serialized model artifact is produced.
+- Metrics are produced from a controlled evaluation split.
+- Training parameters and relevant hashes are recorded.
+- Model compatibility with the execution contract is validated.
+- Notebook workflows cannot silently create production artifacts that bypass validation.
+- Invalid training inputs fail predictably.
+
+### Minimum Evidence
+
+- Training execution output.
+- Serialized model artifact example.
+- Metrics artifact example.
+- Training parameter record.
+- Contract/model compatibility validation.
+- Invalid training input test.
+- Reproducibility check for deterministic settings, when feasible.
+
+### Risks and Gaps
+
+- Risk of turning the training flow into broad AutoML.
+- Risk of hiding feature transformations inside model code without contract evidence.
+- Risk of treating notebook state as reproducible pipeline state.
+- Risk of overfitting the pipeline to the first supported dataset.
+- Gap: executable inference bundle remains for M25.
+- Gap: release candidate assembly remains for M26.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- execution contract fields required by training are defined;
+- prepared dataset artifact is available;
+- supported model family is explicitly scoped;
+- metrics and evaluation behavior are known;
+- model export expectations are clear.
+
+### Continuity Notes
+
+This milestone should prove that Atlas can transform contract-governed data into a trained model artifact. It should not publish the model until the inference bundle and release candidate stages validate it.
+
+## M25 — Inference Bundle Contract
+
+### Objective
+
+Define and implement the contract that turns trained model artifacts into executable, validated inference bundles compatible with public runtime and dataset releases.
+
+### Problem or Gap
+
+A trained model file alone is not enough for public prediction. The runtime must know the expected input schema, feature order, preprocessing requirements, model artifact path, output schema, contract version, and compatibility constraints.
+
+Without a strict inference bundle contract, Atlas can publish releases that look complete but fail when a valid payload is submitted.
+
+### Context
+
+The inference bundle is the bridge between training and public runtime. It must be generated from real dataflow artifacts and must be validated before publication. The bundle must not rely on global paths, notebook memory, implicit dataframe columns, or manual runtime assumptions.
+
+### Core Scope
+
+- Define inference bundle schema.
+- Link bundle to execution contract, runtime contract, public contract, prepared dataset hash, training evidence, and model artifact hash.
+- Declare model loader strategy and supported serialization format.
+- Declare input schema, feature order, preprocessing behavior, and output schema.
+- Validate compatibility between bundle, model artifact, and contracts.
+- Provide a local inference smoke test using the bundle.
+- Reject bundles with missing model files, inconsistent feature names, unsupported loader types, or stale contract references.
+- Ensure public runtime can load the bundle without knowing training internals.
+
+### Out of Scope
+
+- Training new models.
+- Publishing releases.
+- Public upload or public retraining.
+- Multiple model variants per release unless explicitly required.
+- Online feature stores.
+- A/B testing.
+- Complex model serving infrastructure.
+- Public exposure of internal file paths.
+
+### Expected Deliverables
+
+- Inference bundle schema.
+- Bundle generation or validation tool.
+- Bundle compatibility tests.
+- Local inference smoke test.
+- Runtime loading integration or adapter point.
+- Error policy for invalid or unavailable bundles.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, with documentation review deferred to M28.
+- Expected evaluation: bundle schema and validation errors should be sufficient as the primary technical source.
+- Candidate documents: optional public runtime bundle note, if authorized.
+- Criterion to create: create documentation only if multiple supported bundle formats make navigation difficult.
+- Criterion to update: update architecture if the bundle stops being release-oriented or contract-bound.
+- Criterion not to update: do not document bundle behavior in prose as a substitute for schema validation.
+
+### Dependencies
+
+- M23 completed or execution/runtime/public contracts available.
+- M24 completed or trained model artifact and metrics available.
+- Supported serialization and model loading strategy selected.
+- Runtime error policy available or revisable.
+
+### Components or Areas Affected
+
+- Inference Runtime.
+- Model Artifacts.
+- Contract Layer.
+- Data Pipeline.
+- Published Releases.
+- Public Runtime API.
+- Tests and validations.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: bundle schema needs definition.
+  - Possible issue type: artifact contract.
+  - Note: must encode model, contract, and preprocessing compatibility.
+- Criterion: bundle validation needs implementation.
+  - Possible issue type: inference validation.
+  - Note: must fail before publication when artifacts diverge.
+- Criterion: runtime loading needs integration.
+  - Possible issue type: public runtime integration.
+  - Note: runtime must not infer behavior from notebook or training files.
+
+### Definition of Done
+
+- Inference bundle schema is defined and validatable.
+- Bundle references contracts, model artifact, preprocessing rules, and hashes explicitly.
+- Local inference smoke test succeeds for a valid payload.
+- Invalid bundle states are rejected before publication.
+- Public runtime can load the bundle through a stable interface.
+- Runtime errors remain safe and do not expose internal paths.
+
+### Minimum Evidence
+
+- Valid inference bundle example.
+- Bundle validation output.
+- Local inference smoke test with valid payload.
+- Invalid bundle rejection examples.
+- Runtime loading validation.
+- Public error review.
+
+### Risks and Gaps
+
+- Risk of duplicating preprocessing behavior in runtime and training without contract linkage.
+- Risk of accepting a descriptive bundle that is not executable.
+- Risk of overfitting bundle format to one model library.
+- Risk of leaking internal artifact paths in errors.
+- Gap: release candidate assembly remains for M26.
+- Gap: browser validation remains for M27.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- model artifact format is known;
+- execution and runtime contract fields are stable enough;
+- preprocessing rules required at inference time are explicit;
+- valid and invalid bundle states can be tested;
+- public runtime loading boundary is clear.
+
+### Continuity Notes
+
+This milestone should make inference executable and contract-bound. It should not publish the release until the release candidate assembly validates the complete artifact set.
+
+## M26 — Release Candidate from Real Dataflow Artifacts
+
+### Objective
+
+Assemble and validate publishable release candidates from real discovery, contract, preparation, training, inference bundle, metrics, model card, and evidence artifacts.
+
+### Problem or Gap
+
+Atlas needs to prove that a public release is generated from the governed dataflow, not manually assembled from disconnected files. A release candidate must represent a complete, coherent publication package before the publisher promotes it.
+
+Without this milestone, the project can have valid pieces while still lacking a reliable path from real dataset study to published release.
+
+### Context
+
+By this point, Atlas should have discovery artifacts, promoted contracts, training outputs, and an executable inference bundle. This milestone connects those outputs to the release candidate model and ensures that the publisher consumes real dataflow artifacts.
+
+### Core Scope
+
+- Define release candidate assembly from dataflow artifact inputs.
+- Include discovery evidence, contract artifacts, preparation recipe, prepared data metadata, model artifact reference, metrics, model card, public context, visualizations where available, and inference bundle.
+- Validate consistency across artifact hashes and references.
+- Generate or validate release manifest inputs.
+- Ensure release candidate artifacts are safe for public projection.
+- Reject candidates with fixture-only or placeholder-only artifacts where real dataflow artifacts are required.
+- Promote valid candidates through the existing publisher.
+- Preserve release immutability and registry activation rules.
+
+### Out of Scope
+
+- New model training behavior.
+- New inference bundle behavior beyond compatibility fixes.
+- Public upload.
+- Public admin.
+- Marketplace behavior.
+- Database-backed registry.
+- Broad visual builder.
+- Multi-user release workflow.
+
+### Expected Deliverables
+
+- Release candidate assembly command, script, or pipeline stage.
+- Candidate artifact layout based on real dataflow outputs.
+- Candidate validation rules.
+- Manifest validation or generation integration.
+- Publisher compatibility validation.
+- Publication evidence linking dataflow artifacts to published release.
+- Tests for complete and incomplete release candidates.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, with M28 expected to evaluate whether the assembled flow now requires an operational guide.
+- Expected evaluation: release candidate layout, publisher evidence, and tests should be sufficient until operational documentation is authorized.
+- Candidate documents: operational release guide deferred to M28 unless this milestone explicitly authorizes a minimal note.
+- Criterion to create: create documentation only for unavoidable manual steps that affect release correctness.
+- Criterion to update: update architecture if release candidate assembly changes publisher responsibility or public artifact boundaries.
+- Criterion not to update: do not create a broad implementation map before public runtime validation.
+
+### Dependencies
+
+- M22 completed or discovery artifacts available.
+- M23 completed or execution/runtime/public contracts available.
+- M24 completed or training artifacts available.
+- M25 completed or executable inference bundle available.
+- Publisher operation available from earlier milestones.
+
+### Components or Areas Affected
+
+- Release Candidate Builder.
+- Internal Publisher.
+- Published Releases.
+- Registry.
+- Contract Layer.
+- Evidence Layer.
+- Model Card and Metrics.
+- Public dataset artifacts.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: candidate assembly inputs need definition.
+  - Possible issue type: release pipeline.
+  - Note: inputs must come from governed dataflow artifacts.
+- Criterion: cross-artifact consistency needs validation.
+  - Possible issue type: release validation.
+  - Note: hashes and references must align before promotion.
+- Criterion: publisher integration needs validation.
+  - Possible issue type: publisher integration.
+  - Note: release promotion must remain explicit and immutable.
+
+### Definition of Done
+
+- A release candidate can be assembled from real dataflow artifacts.
+- Candidate validation checks contract, model, bundle, metrics, model card, context, and evidence consistency.
+- Placeholder-only publication artifacts are rejected where real dataflow output is required.
+- Publisher can promote the candidate without manual artifact surgery.
+- Registry activation remains explicit.
+- Publication evidence links the release to its dataflow inputs.
+
+### Minimum Evidence
+
+- Release candidate assembly output.
+- Complete candidate validation.
+- Incomplete or inconsistent candidate rejection examples.
+- Publisher promotion evidence.
+- Manifest/hash verification.
+- Registry activation validation.
+- Public artifact exposure review.
+
+### Risks and Gaps
+
+- Risk of allowing manual shortcuts that bypass the governed dataflow.
+- Risk of making the release candidate builder responsible for training or inference logic.
+- Risk of leaking internal evidence through public artifacts.
+- Risk of making release assembly too specific to one dataset.
+- Gap: public browser validation remains for M27.
+- Gap: operational documentation remains for M28.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- dataflow artifacts from M22 through M25 are available;
+- publisher input expectations are stable;
+- required public artifacts are identified;
+- cross-artifact validation rules can be defined;
+- promotion and activation semantics remain explicit.
+
+### Continuity Notes
+
+This milestone should turn the governed dataflow into a publishable package. It should not hide missing upstream artifacts by inventing placeholders.
+
+## M27 — Public Runtime and Browser Validation
+
+### Objective
+
+Validate the public API and browser experience end to end using release artifacts produced from the real dataflow.
+
+### Problem or Gap
+
+A release can be structurally valid while still failing in the public API, frontend routing, contract rendering, or inference interaction. Atlas needs regression validation that proves the public experience works with real release artifacts, not only with unit-level fixtures.
+
+Without this milestone, the project may continue to pass backend tests while the user-facing experience remains broken or incomplete.
+
+### Context
+
+The public runtime and web experience must consume the registry, active release, public context, public contract, model card, metrics, visualizations, and inference bundle generated by the dataflow and publisher. This milestone validates that the full path works for external users.
+
+### Core Scope
+
+- Validate public dataset listing.
+- Validate dataset home rendering.
+- Validate dataset view or prediction route rendering, where applicable.
+- Validate public contract-driven form rendering.
+- Validate successful prediction with a known valid payload.
+- Validate invalid payload behavior.
+- Validate model card, metrics, public context, and visualization rendering.
+- Validate browser routing and frontend/API response shape compatibility.
+- Add or repair browser/e2e tests for the public flow.
+- Confirm that public errors are safe and understandable.
+
+### Out of Scope
+
+- New training capabilities.
+- New contract schema capabilities unless required to fix public incompatibility.
+- Public admin.
+- Public upload.
+- Marketplace navigation.
+- Authentication.
+- Broad UI redesign.
+- Performance/load testing beyond proportional smoke and regression validation.
+
+### Expected Deliverables
+
+- Public API regression tests for real release artifacts.
+- Browser/e2e tests or equivalent public flow validation.
+- Valid prediction test from public runtime.
+- Invalid payload test from public runtime and/or UI.
+- Frontend/API contract compatibility fixes, if needed.
+- Public exposure and error review.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`, with M28 expected to formalize operational guidance after public validation succeeds.
+- Expected evaluation: test names and public route coverage should make the public validation scope understandable.
+- Candidate documents: not required in this milestone unless a future issue authorizes a public runtime note.
+- Criterion to create: defer broad documentation until the validated flow is stable.
+- Criterion to update: update architecture if public routes or runtime responsibilities change.
+- Criterion not to update: do not create documentation to compensate for failing or absent tests.
+
+### Dependencies
+
+- M25 completed or executable inference bundle available.
+- M26 completed or real release candidate promoted.
+- Public API and web application available locally or in staging.
+- Representative valid and invalid prediction payloads defined.
+
+### Components or Areas Affected
+
+- Public Runtime API.
+- Public Web Experience.
+- Registry.
+- Published Releases.
+- Contract Layer.
+- Inference Runtime.
+- Browser/e2e tests.
+- Public error policy.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: public API needs real-release regression coverage.
+  - Possible issue type: public runtime validation.
+  - Note: must use active release artifacts, not isolated fixtures only.
+- Criterion: browser route needs validation.
+  - Possible issue type: web regression.
+  - Note: must cover dataset listing, dataset home, and prediction interaction.
+- Criterion: frontend/API shape mismatch appears.
+  - Possible issue type: integration correction.
+  - Note: fix the contract between API payloads and frontend consumers without duplicating rules.
+
+### Definition of Done
+
+- Public dataset listing works with the registry response shape.
+- Dataset home renders real public context and release metadata safely.
+- Prediction form renders from the public contract.
+- Valid payload returns a successful prediction through the public runtime.
+- Invalid payload fails predictably and safely.
+- Browser/e2e validation covers the main public path.
+- Public artifacts remain immutable during runtime use.
+- No internal evidence or paths are exposed publicly.
+
+### Minimum Evidence
+
+- Public API test output.
+- Browser/e2e or equivalent validation output.
+- Successful prediction response example.
+- Invalid payload response example.
+- Frontend/API compatibility validation.
+- Public exposure review.
+
+### Risks and Gaps
+
+- Risk of relying only on backend unit tests while browser flow is broken.
+- Risk of hardcoding payloads or field labels in the frontend.
+- Risk of accepting public prediction failures as release limitations.
+- Risk of exposing internal errors during integration failures.
+- Gap: operational documentation remains for M28.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- real release artifacts are available;
+- executable inference bundle is available;
+- public routes and API endpoints are identifiable;
+- valid and invalid payloads are known;
+- browser validation tool or equivalent method is available.
+
+### Continuity Notes
+
+This milestone should validate the user-facing promise of Atlas after the dataflow is real. It should prioritize public correctness and regression coverage over new features.
+
+## M28 — Operational Release Guide and Implementation Map
+
+### Objective
+
+Create proportional operational documentation that explains how Atlas moves from dataset discovery to public release after the real dataflow has been implemented and validated.
+
+### Problem or Gap
+
+After notebook discovery, contract promotion, training, inference bundle creation, release candidate assembly, publication, and public validation exist, `milestones-only` may no longer be sufficient for safe continuity. Future work may require a concise map of responsibilities and an operational release guide.
+
+Without this milestone, future handoffs may spend excessive effort rediscovering where notebooks, contracts, pipeline commands, publisher operations, runtime loading, and public validation live.
+
+### Context
+
+Documentation should be created after the real flow exists, not before. This milestone does not replace schemas, tests, evidence, architecture, or operational State. It provides navigation and safe operating guidance for a flow that has already been proven.
+
+### Core Scope
+
+- Review whether the `milestones-only` strategy remains sufficient.
+- Create a concise implementation map only if justified by real project complexity.
+- Document the dataset-to-release flow at a high level.
+- Document the role of notebooks, discovery evidence, human-facing contract, execution contract, prepared dataset, training outputs, inference bundle, release candidate, publisher, registry, runtime, and public web validation.
+- Document the expected validation commands or checkpoints without embedding environment-specific secrets.
+- Document boundaries: what notebooks may do, what pipeline may do, what publisher may do, what runtime may do, and what public web may do.
+- Record remaining operational gaps and future roadmap candidates without turning them into active scope.
+
+### Out of Scope
+
+- Implementing new dataflow behavior.
+- Rewriting architecture.
+- Replacing schemas, tests, or evidence with prose.
+- Creating a detailed changelog.
+- Recording secrets, production-only paths, or private credentials.
+- Creating public admin documentation before admin exists.
+- Creating marketplace or user onboarding documentation.
+
+### Expected Deliverables
+
+- Documentation strategy decision after M27.
+- Optional implementation map, if justified.
+- Operational release guide, if justified.
+- Dataset-to-release flow summary.
+- Validation checklist for local/staging/public verification.
+- Clear module responsibility map.
+- Recorded future gaps.
+
+### Implementation Documentation
+
+- Applicable strategy: review and possibly evolve from `milestones-only` to a proportional navigation strategy.
+- Expected evaluation: decide whether to keep `milestones-only`, add an operational release guide, add an implementation map, or both.
+- Candidate documents: `docs/implementation-map.md`, `docs/operations/release-flow.md`, `docs/public-runtime.md`, or equivalent names authorized by issue.
+- Criterion to create: create documentation only if it reduces real continuity cost and reflects implemented behavior.
+- Criterion to update: update when flow responsibilities, commands, artifact paths, or validation checkpoints change.
+- Criterion not to update: do not use these documents as operational State, changelog, backlog, or replacement for tests.
+
+### Dependencies
+
+- M22 through M27 completed or explicitly scoped as partially complete with known limitations.
+- Real dataset-to-release flow exists.
+- Public runtime and browser validation evidence available.
+- Human decision authorizes documentation creation if justified.
+
+### Components or Areas Affected
+
+- Documentation.
+- Notebooks.
+- Data Pipeline.
+- Contract Layer.
+- Model Training.
+- Inference Runtime.
+- Internal Publisher.
+- Registry and Published Releases.
+- Public Runtime API.
+- Public Web Experience.
+- Tests and validations.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: documentation strategy needs review.
+  - Possible issue type: documentation decision.
+  - Note: decide from real flow complexity, not from anticipated complexity.
+- Criterion: implementation map is justified.
+  - Possible issue type: documentation.
+  - Note: map responsibilities and files without becoming a changelog.
+- Criterion: operational release guide is justified.
+  - Possible issue type: documentation.
+  - Note: guide repeatable operation from dataset discovery to public validation.
+
+### Definition of Done
+
+- Documentation strategy is reviewed with evidence from the implemented flow.
+- Any created implementation map reflects real files and responsibilities.
+- Any created operational guide explains the repeatable dataset-to-release path.
+- Documentation avoids secrets and environment-specific private values.
+- Documentation does not replace tests, schemas, evidence, architecture, or operational State.
+- Remaining gaps are recorded as future candidates, not active implementation scope.
+
+### Minimum Evidence
+
+- M27 validation evidence reviewed.
+- Documentation strategy decision recorded.
+- Created documentation reviewed for accuracy, if created.
+- Responsibility map checked against real repository structure, if created.
+- Validation checklist checked against executable commands, if created.
+- Confirmation that no private secrets or unstable assumptions were documented.
+
+### Risks and Gaps
+
+- Risk of creating documentation too broad to maintain.
+- Risk of documenting intended behavior instead of implemented behavior.
+- Risk of turning the implementation map into a backlog or changelog.
+- Risk of leaking operational details that should remain private.
+- Gap: future roadmap after M28 may require new decisions around admin, storage, authentication, or broader platform capabilities.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- the real dataflow has been validated publicly;
+- continuity cost is observable;
+- candidate document names and purposes are scoped;
+- documentation can be written from implemented facts;
+- boundaries against changelog/backlog/State replacement are explicit.
+
+### Continuity Notes
+
+This milestone should make future work easier to navigate without expanding product scope. It should close the notebook-to-release roadmap segment and prepare a later roadmap based on evidence.

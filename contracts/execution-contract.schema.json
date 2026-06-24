@@ -1,0 +1,285 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "execution-contract.schema.json",
+  "title": "Atlas DataFlow Execution Contract",
+  "description": "Schema defining execution_contract.v1 — the machine-readable contract governing training preparation, runtime inference, and contract projections. Execution-only fields that drive training are explicitly separated from runtime/public projection fields. Human-facing field descriptions, validation hints, and review notes from the human-facing contract draft (M22) are deliberately excluded — those belong to the promotion validator (M23-02) as reviewed human intent, not as executable operational rules.",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "dataset_id",
+    "target_column",
+    "feature_columns",
+    "ignored_columns",
+    "required_columns",
+    "optional_columns",
+    "feature_definitions",
+    "missing_value_policy",
+    "categorical_encoding_policy",
+    "numeric_handling",
+    "allowed_transformations",
+    "split_policy",
+    "random_seed",
+    "primary_metric",
+    "secondary_metrics",
+    "modeling_constraints"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "execution_contract.v1",
+      "description": "Fixed contract schema version identifier. Must always equal 'execution_contract.v1'. Used to detect contract version incompatibilities during promotion validation (M23-02) and projection derivation (M23-04). Not a semantic version — the runtime contract projection carries its own schema_version."
+    },
+    "dataset_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Dataset identifier. Must match the dataset slug used in the contracts directory (e.g., 'bank-marketing'). Used to associate this execution contract with its dataset-specific subdirectory and runtime contract instance."
+    },
+    "target_column": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name of the column to predict. Must not appear in feature_columns or ignored_columns. Execution-only — not projected into the runtime contract features list, since the target is never an inference input."
+    },
+    "feature_columns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Ordered list of column names used as model inputs. Must be disjoint from ignored_columns and must not include target_column. Each name must have a corresponding entry in feature_definitions. Projected into the runtime contract features list via M23-04 projection derivation."
+    },
+    "ignored_columns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Columns present in the dataset but excluded from both training and inference. Must not overlap with feature_columns or target_column. Execution-only — not projected into the runtime or public contract."
+    },
+    "required_columns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Subset of feature_columns that must be present in every inference payload. Projected into the runtime contract as feature.required: true. Must be a subset of feature_columns."
+    },
+    "optional_columns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Subset of feature_columns that may be absent from an inference payload without triggering a validation failure. Projected into the runtime contract as feature.required: false. Must be a subset of feature_columns. The union of required_columns and optional_columns must equal feature_columns."
+    },
+    "feature_definitions": {
+      "type": "object",
+      "description": "Per-feature type and domain constraint definitions, keyed by feature name. Each key must be a name declared in feature_columns. Provides the type and domain information required to derive the runtime contract feature list in M23-04. Only feature_columns entries are permitted as keys — target_column and ignored_columns must not appear here. Human-facing descriptions, validation hints, and review notes from the human-facing contract draft are deliberately absent — those are reviewed intent (M22), not executable rules.",
+      "additionalProperties": {
+        "$ref": "#/definitions/feature_definition"
+      }
+    },
+    "missing_value_policy": {
+      "type": "object",
+      "description": "Per-feature missing value handling strategy, keyed by feature name. Each key must be a name declared in feature_columns. Governs pipeline preprocessing only — not runtime inference behavior. Human-facing 'validation_hint' fields from the M22 human-facing contract draft are deliberately not carried here.",
+      "additionalProperties": {
+        "$ref": "#/definitions/missing_value_strategy"
+      }
+    },
+    "categorical_encoding_policy": {
+      "$ref": "#/definitions/categorical_encoding",
+      "description": "Default encoding strategy applied to all categorical features. Execution-only — governs training preprocessing, not public-facing projection. Not projected into the runtime or public contract."
+    },
+    "numeric_handling": {
+      "$ref": "#/definitions/numeric_handling_strategy",
+      "description": "Numeric feature preprocessing approach applied to all numeric features before training. Execution-only — not projected into the runtime or public contract."
+    },
+    "allowed_transformations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/transformation"
+      },
+      "description": "List of column transformations permitted under this contract. An empty array means no transformations beyond encoding and scaling are applied. Execution-only."
+    },
+    "split_policy": {
+      "$ref": "#/definitions/split_policy",
+      "description": "Dataset partitioning configuration for training, validation, and testing phases. Execution-only — not projected into the runtime or public contract."
+    },
+    "random_seed": {
+      "type": ["integer", "null"],
+      "description": "Random seed for reproducibility across training runs. Null indicates non-deterministic training. Execution-only."
+    },
+    "primary_metric": {
+      "$ref": "#/definitions/metric",
+      "description": "Primary evaluation metric used to select the best model checkpoint during training. Execution-only — not projected into the runtime or public contract."
+    },
+    "secondary_metrics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/metric"
+      },
+      "description": "Candidate secondary evaluation metrics computed during training for monitoring. May be empty. Execution-only."
+    },
+    "modeling_constraints": {
+      "$ref": "#/definitions/modeling_constraints",
+      "description": "Constraints bounding the model family selection space and training strategy. Does not select a specific model — constrains what is permissible for this dataset. Execution-only."
+    }
+  },
+  "definitions": {
+    "feature_definition": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "description": "Execution-level definition of a single feature column. Provides the type and optional domain constraints used to derive the runtime contract feature entry in M23-04. Human-facing descriptions and validation hints from the M22 human-facing contract draft are deliberately excluded — this schema encodes executable operational rules only, not reviewed human intent.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["numeric", "categorical", "boolean"],
+          "description": "Feature type. Bounded vocabulary matching the runtime contract convention. Projected into runtime_contract feature.type via M23-04."
+        },
+        "domain_constraints": {
+          "type": "object",
+          "description": "Optional value domain constraints. Shape is determined by the feature type: numeric features use numeric_domain_constraints (min/max); categorical features use categorical_domain_constraints (values list). Must be absent for boolean features. Projected into runtime_contract feature.domain_constraints via M23-04."
+        }
+      },
+      "if": {
+        "properties": { "type": { "const": "numeric" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "domain_constraints": { "$ref": "#/definitions/numeric_domain_constraints" }
+        }
+      },
+      "else": {
+        "if": {
+          "properties": { "type": { "const": "categorical" } },
+          "required": ["type"]
+        },
+        "then": {
+          "properties": {
+            "domain_constraints": { "$ref": "#/definitions/categorical_domain_constraints" }
+          }
+        }
+      }
+    },
+    "numeric_domain_constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Value range constraints for numeric features. Mirrors the runtime contract convention to allow direct projection into runtime_contract feature.domain_constraints.",
+      "properties": {
+        "min": {
+          "type": "number",
+          "description": "Minimum accepted value (inclusive)."
+        },
+        "max": {
+          "type": "number",
+          "description": "Maximum accepted value (inclusive)."
+        }
+      }
+    },
+    "categorical_domain_constraints": {
+      "type": "object",
+      "required": ["values"],
+      "additionalProperties": false,
+      "description": "Enumerated accepted values for categorical features. Mirrors the runtime contract convention to allow direct projection into runtime_contract feature.domain_constraints.",
+      "properties": {
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Non-empty list of accepted string values for this categorical feature."
+        }
+      }
+    },
+    "missing_value_strategy": {
+      "type": "string",
+      "enum": ["mean", "median", "mode", "constant", "drop_row"],
+      "description": "Missing value handling strategy for a single feature: mean/median/mode imputation, constant fill, or row exclusion from the training dataset."
+    },
+    "categorical_encoding": {
+      "type": "string",
+      "enum": ["onehot", "ordinal", "target_encode", "binary"],
+      "description": "Encoding strategy for categorical features. onehot: one-hot encoding; ordinal: integer ordinal encoding; target_encode: mean-target encoding; binary: binary encoding."
+    },
+    "numeric_handling_strategy": {
+      "type": "string",
+      "enum": ["standardize", "normalize", "passthrough"],
+      "description": "Preprocessing approach for numeric features. standardize: z-score scaling (zero mean, unit variance); normalize: min-max scaling to [0, 1]; passthrough: no scaling applied."
+    },
+    "transformation": {
+      "type": "string",
+      "enum": ["log1p", "sqrt", "clip", "passthrough"],
+      "description": "Permitted column transformation. log1p: natural log of (1 + x); sqrt: square root; clip: clip to domain_constraints bounds; passthrough: no transformation."
+    },
+    "split_policy": {
+      "type": "object",
+      "required": ["strategy", "train_ratio", "val_ratio", "test_ratio"],
+      "additionalProperties": false,
+      "description": "Dataset split configuration. The three ratios must sum to 1.0 (enforced by the training pipeline, not by this schema).",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["stratified", "random"],
+          "description": "Split strategy. stratified: preserves class distribution of target_column in each split; random: uniform random split without class stratification."
+        },
+        "train_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Proportion of the dataset allocated to the training split."
+        },
+        "val_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Proportion of the dataset allocated to the validation split. May be zero if no validation split is required."
+        },
+        "test_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Proportion of the dataset allocated to the test split."
+        }
+      }
+    },
+    "metric": {
+      "type": "string",
+      "enum": ["roc_auc", "f1", "accuracy", "log_loss", "pr_auc"],
+      "description": "Evaluation metric identifier. Scoped to Atlas classification use cases. roc_auc: area under ROC curve; f1: F1 score; accuracy: classification accuracy; log_loss: cross-entropy loss; pr_auc: area under precision-recall curve."
+    },
+    "modeling_constraints": {
+      "type": "object",
+      "required": ["allowed_model_families"],
+      "additionalProperties": false,
+      "description": "Constraints bounding the model selection space for this dataset. Does not select a model — constrains what model families and training strategies are permissible. Scoped to Atlas classification use cases.",
+      "properties": {
+        "allowed_model_families": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "logistic_regression",
+              "gradient_boosting",
+              "random_forest",
+              "xgboost",
+              "lightgbm"
+            ]
+          },
+          "description": "Non-empty list of permitted model family identifiers. Training must use only families declared here. Scoped to the Atlas classification model families — broader ML families are out of scope for this contract."
+        },
+        "no_automl": {
+          "type": "boolean",
+          "description": "When true, prohibits automated model selection and hyperparameter search (AutoML). Training must use one of the allowed_model_families with explicitly configured parameters."
+        },
+        "max_training_time_seconds": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Optional upper bound on training wall-clock time in seconds. Null means no time constraint is imposed."
+        }
+      }
+    }
+  }
+}

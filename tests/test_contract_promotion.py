@@ -1,0 +1,371 @@
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from pipeline.promote_contract import PromotionRejected, promote
+
+REPO_ROOT = Path(__file__).parent.parent
+BANK_MARKETING_CONTRACT = (
+    REPO_ROOT / "contracts" / "bank-marketing" / "human-facing-contract-draft.json"
+)
+
+
+def _write(tmp_path: Path, data: dict) -> Path:
+    p = tmp_path / "contract.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return p
+
+
+def _valid_contract() -> dict:
+    """Minimal well-formed human-facing contract ready for promotion."""
+    return {
+        "promotion_boundary": {"promotion_authorized": True},
+        "dataset_id": "test-dataset",
+        "target_field": {"name": "outcome"},
+        "candidate_fields": [
+            {
+                "name": "age",
+                "review_status": "approved",
+                "field_type": "numeric",
+                "sample_min": 18,
+                "sample_max": 90,
+            },
+            {
+                "name": "category",
+                "review_status": "approved",
+                "field_type": "categorical",
+                "known_values": ["a", "b", "c"],
+            },
+            {
+                "name": "rejected_field",
+                "review_status": "rejected",
+                "field_type": "numeric",
+            },
+        ],
+    }
+
+
+def test_valid_contract_produces_execution_contract(tmp_path: Path) -> None:
+    path = _write(tmp_path, _valid_contract())
+    result = promote(path, repo_root=REPO_ROOT)
+
+    assert result["contract_version"] == "execution_contract.v1"
+    assert result["dataset_id"] == "test-dataset"
+    assert result["target_column"] == "outcome"
+    assert "age" in result["feature_columns"]
+    assert "category" in result["feature_columns"]
+    assert "rejected_field" in result["ignored_columns"]
+    assert "age" in result["feature_definitions"]
+    assert result["feature_definitions"]["age"]["type"] == "numeric"
+    assert "category" in result["feature_definitions"]
+    assert result["feature_definitions"]["category"]["type"] == "categorical"
+    assert result["feature_definitions"]["category"]["domain_constraints"] == {
+        "values": ["a", "b", "c"]
+    }
+
+
+def test_execution_contract_conforms_to_schema(tmp_path: Path) -> None:
+    import jsonschema
+
+    schema = json.loads(
+        (REPO_ROOT / "contracts" / "execution-contract.schema.json").read_text(encoding="utf-8")
+    )
+    path = _write(tmp_path, _valid_contract())
+    result = promote(path, repo_root=REPO_ROOT)
+    jsonschema.validate(result, schema)
+
+
+def test_promotion_authorized_false_rejected(tmp_path: Path) -> None:
+    """Reservation-01: gate must be honored for promotion_authorized: false."""
+    data = _valid_contract()
+    data["promotion_boundary"]["promotion_authorized"] = False
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("promotion_authorized" in e for e in exc_info.value.errors)
+
+
+def test_bank_marketing_draft_rejected_at_gate(tmp_path: Path) -> None:
+    """Reservation-01: the M22 bank-marketing draft must be rejected at the promotion gate."""
+    assert BANK_MARKETING_CONTRACT.exists(), (
+        f"Expected bank-marketing contract at {BANK_MARKETING_CONTRACT}"
+    )
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(BANK_MARKETING_CONTRACT, repo_root=REPO_ROOT)
+
+    assert any("promotion_authorized" in e for e in exc_info.value.errors)
+
+
+def test_missing_target_field_name_rejected(tmp_path: Path) -> None:
+    data = _valid_contract()
+    del data["target_field"]
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("target_column" in e for e in exc_info.value.errors)
+
+
+def test_empty_target_field_name_rejected(tmp_path: Path) -> None:
+    data = _valid_contract()
+    data["target_field"] = {"name": ""}
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("target_column" in e for e in exc_info.value.errors)
+
+
+def test_no_approved_fields_rejected(tmp_path: Path) -> None:
+    """feature_columns must not resolve to an empty list (rejection-h)."""
+    data = _valid_contract()
+    for field in data["candidate_fields"]:
+        field["review_status"] = "pending"
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("feature_columns" in e for e in exc_info.value.errors)
+
+
+def test_invalid_field_type_rejected(tmp_path: Path) -> None:
+    """rejection-a: field_type must be one of numeric, categorical, boolean."""
+    data = _valid_contract()
+    data["candidate_fields"][0]["field_type"] = "float"
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    errors = exc_info.value.errors
+    assert any("age" in e and "field_type" in e for e in errors)
+    assert any("float" in e for e in errors)
+
+
+def test_invalid_transformation_rejected(tmp_path: Path) -> None:
+    """rejection-b: allowed_transformations values must be in {log1p, sqrt, clip, passthrough}."""
+    data = _valid_contract()
+    data["policy"] = {"allowed_transformations": ["log1p", "pca"]}
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("pca" in e for e in exc_info.value.errors)
+
+
+def test_invalid_missing_value_strategy_rejected(tmp_path: Path) -> None:
+    """rejection-c: missing_value_strategy must be in {mean, median, mode, constant, drop_row}."""
+    data = _valid_contract()
+    data["candidate_fields"][0]["missing_value_strategy"] = "interpolate"
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    errors = exc_info.value.errors
+    assert any("age" in e and "missing_value_strategy" in e for e in errors)
+    assert any("interpolate" in e for e in errors)
+
+
+def test_invalid_categorical_encoding_policy_rejected(tmp_path: Path) -> None:
+    """rejection-d: categorical_encoding_policy must be in {onehot, ordinal, target_encode, binary}."""
+    data = _valid_contract()
+    data["policy"] = {"categorical_encoding_policy": "label_encode"}
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("label_encode" in e for e in exc_info.value.errors)
+
+
+def test_invalid_numeric_handling_rejected(tmp_path: Path) -> None:
+    """rejection-e: numeric_handling must be in {standardize, normalize, passthrough}."""
+    data = _valid_contract()
+    data["policy"] = {"numeric_handling": "robust_scale"}
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("robust_scale" in e for e in exc_info.value.errors)
+
+
+def test_invalid_primary_metric_rejected(tmp_path: Path) -> None:
+    """rejection-f: primary_metric must be in {roc_auc, f1, accuracy, log_loss, pr_auc}."""
+    data = _valid_contract()
+    data["policy"] = {"primary_metric": "rmse"}
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("rmse" in e for e in exc_info.value.errors)
+
+
+def test_invalid_secondary_metric_rejected(tmp_path: Path) -> None:
+    """rejection-f: secondary_metrics values must be valid metric identifiers."""
+    data = _valid_contract()
+    data["policy"] = {"secondary_metrics": ["f1", "mse"]}
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("mse" in e for e in exc_info.value.errors)
+
+
+def test_split_policy_non_summing_ratios_rejected(tmp_path: Path) -> None:
+    """gap-02: split_policy ratios that do not sum to 1.0 must be rejected."""
+    data = _valid_contract()
+    data["policy"] = {
+        "split_policy": {"strategy": "stratified", "train_ratio": 0.8, "val_ratio": 0.1, "test_ratio": 0.2}
+    }
+    path = _write(tmp_path, data)
+
+    with pytest.raises(PromotionRejected) as exc_info:
+        promote(path, repo_root=REPO_ROOT)
+
+    assert any("split_policy" in e for e in exc_info.value.errors)
+
+
+def test_optional_field_defaults_applied_when_absent(tmp_path: Path) -> None:
+    """decision-05: all optional execution contract fields receive documented defaults."""
+    path = _write(tmp_path, _valid_contract())
+    result = promote(path, repo_root=REPO_ROOT)
+
+    assert result["random_seed"] is None
+    assert result["secondary_metrics"] == []
+    assert result["categorical_encoding_policy"] == "onehot"
+    assert result["numeric_handling"] == "standardize"
+    assert result["allowed_transformations"] == ["passthrough"]
+    assert result["split_policy"] == {
+        "strategy": "stratified",
+        "train_ratio": 0.7,
+        "val_ratio": 0.15,
+        "test_ratio": 0.15,
+    }
+    assert result["primary_metric"] == "roc_auc"
+    assert result["modeling_constraints"]["no_automl"] is True
+    assert result["modeling_constraints"]["max_training_time_seconds"] is None
+    assert result["modeling_constraints"]["allowed_model_families"] == [
+        "logistic_regression", "gradient_boosting"
+    ]
+
+
+def test_declared_policy_values_override_defaults(tmp_path: Path) -> None:
+    data = _valid_contract()
+    data["policy"] = {
+        "categorical_encoding_policy": "ordinal",
+        "numeric_handling": "normalize",
+        "allowed_transformations": ["log1p", "clip"],
+        "primary_metric": "f1",
+        "secondary_metrics": ["roc_auc"],
+        "split_policy": {
+            "strategy": "random",
+            "train_ratio": 0.8,
+            "val_ratio": 0.1,
+            "test_ratio": 0.1,
+        },
+        "random_seed": 42,
+    }
+    path = _write(tmp_path, data)
+    result = promote(path, repo_root=REPO_ROOT)
+
+    assert result["categorical_encoding_policy"] == "ordinal"
+    assert result["numeric_handling"] == "normalize"
+    assert result["allowed_transformations"] == ["log1p", "clip"]
+    assert result["primary_metric"] == "f1"
+    assert result["secondary_metrics"] == ["roc_auc"]
+    assert result["split_policy"]["strategy"] == "random"
+    assert result["random_seed"] == 42
+
+
+def test_missing_value_strategy_type_defaults_applied(tmp_path: Path) -> None:
+    """decision-04-h: numeric defaults to median, categorical to mode, boolean to mode."""
+    data = _valid_contract()
+    data["candidate_fields"] = [
+        {"name": "num_field", "review_status": "approved", "field_type": "numeric"},
+        {"name": "cat_field", "review_status": "approved", "field_type": "categorical", "known_values": ["x"]},
+        {"name": "bool_field", "review_status": "approved", "field_type": "boolean"},
+    ]
+    path = _write(tmp_path, data)
+    result = promote(path, repo_root=REPO_ROOT)
+
+    assert result["missing_value_policy"]["num_field"] == "median"
+    assert result["missing_value_policy"]["cat_field"] == "mode"
+    assert result["missing_value_policy"]["bool_field"] == "mode"
+
+
+def test_explicit_missing_value_strategy_overrides_default(tmp_path: Path) -> None:
+    data = _valid_contract()
+    data["candidate_fields"][0]["missing_value_strategy"] = "mean"
+    path = _write(tmp_path, data)
+    result = promote(path, repo_root=REPO_ROOT)
+
+    assert result["missing_value_policy"]["age"] == "mean"
+
+
+def test_optional_field_included_in_optional_columns(tmp_path: Path) -> None:
+    data = _valid_contract()
+    data["candidate_fields"][0]["optional"] = True
+    path = _write(tmp_path, data)
+    result = promote(path, repo_root=REPO_ROOT)
+
+    assert "age" in result["optional_columns"]
+    assert "age" not in result["required_columns"]
+
+
+def test_non_approved_fields_go_to_ignored_columns(tmp_path: Path) -> None:
+    data = _valid_contract()
+    path = _write(tmp_path, data)
+    result = promote(path, repo_root=REPO_ROOT)
+
+    assert "rejected_field" in result["ignored_columns"]
+    assert "rejected_field" not in result["feature_columns"]
+
+
+def test_input_contract_file_not_modified(tmp_path: Path) -> None:
+    """constraint-01: the human-facing contract must not be modified as a side effect."""
+    path = _write(tmp_path, _valid_contract())
+    original_content = path.read_text(encoding="utf-8")
+    promote(path, repo_root=REPO_ROOT)
+    assert path.read_text(encoding="utf-8") == original_content
+
+
+def test_input_contract_file_not_modified_on_rejection(tmp_path: Path) -> None:
+    data = _valid_contract()
+    data["promotion_boundary"]["promotion_authorized"] = False
+    path = _write(tmp_path, data)
+    original_content = path.read_text(encoding="utf-8")
+
+    with pytest.raises(PromotionRejected):
+        promote(path, repo_root=REPO_ROOT)
+
+    assert path.read_text(encoding="utf-8") == original_content
+
+
+def test_no_extra_fields_in_execution_contract(tmp_path: Path) -> None:
+    """constraint-05: execution contract must not carry human-facing auxiliary fields."""
+    import jsonschema
+
+    schema = json.loads(
+        (REPO_ROOT / "contracts" / "execution-contract.schema.json").read_text(encoding="utf-8")
+    )
+    path = _write(tmp_path, _valid_contract())
+    result = promote(path, repo_root=REPO_ROOT)
+
+    jsonschema.validate(result, schema)
+
+    forbidden_keys = {"validation_hint", "review_status", "known_values", "review_note", "inferred_type"}
+    for key in forbidden_keys:
+        assert key not in result, f"auxiliary field '{key}' must not appear in execution contract"

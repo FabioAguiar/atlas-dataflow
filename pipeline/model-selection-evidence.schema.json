@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/model-selection-evidence.schema.json",
+  "title": "Atlas DataFlow Model Selection Evidence",
+  "description": "Reduced model selection evidence emitted only when a governed M24 training run evaluates multiple model candidates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "created_at",
+    "training_run_identity",
+    "selection_policy",
+    "candidates",
+    "selected_model",
+    "selection_rationale",
+    "path_references",
+    "hashes",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "model-selection-evidence.v1"
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "model_selection_evidence"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "training_run_identity": {
+      "$ref": "#/$defs/training_run_identity"
+    },
+    "selection_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_metric",
+        "ranking_direction",
+        "condition"
+      ],
+      "properties": {
+        "primary_metric": {
+          "$ref": "#/$defs/metric_name"
+        },
+        "ranking_direction": {
+          "type": "string",
+          "enum": [
+            "higher_is_better",
+            "lower_is_better"
+          ]
+        },
+        "condition": {
+          "type": "string",
+          "const": "produced_only_when_multiple_model_candidates_are_evaluated"
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id",
+          "model_family",
+          "primary_metric",
+          "secondary_metrics"
+        ],
+        "properties": {
+          "candidate_id": {
+            "$ref": "#/$defs/model_family"
+          },
+          "model_family": {
+            "$ref": "#/$defs/model_family"
+          },
+          "primary_metric": {
+            "$ref": "#/$defs/metric_value"
+          },
+          "secondary_metrics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/metric_value"
+            }
+          }
+        }
+      }
+    },
+    "selected_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "model_family",
+        "selected_model_reference",
+        "reference_kind"
+      ],
+      "properties": {
+        "candidate_id": {
+          "$ref": "#/$defs/model_family"
+        },
+        "model_family": {
+          "$ref": "#/$defs/model_family"
+        },
+        "selected_model_reference": {
+          "$ref": "#/$defs/training_parameter_record_path"
+        },
+        "reference_kind": {
+          "type": "string",
+          "const": "training_parameter_record_path"
+        }
+      }
+    },
+    "selection_rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path_references": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_selection_evidence_path",
+        "training_parameter_record_path",
+        "execution_contract_path"
+      ],
+      "properties": {
+        "model_selection_evidence_path": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-selection-evidence\\.json$"
+        },
+        "training_parameter_record_path": {
+          "$ref": "#/$defs/training_parameter_record_path"
+        },
+        "execution_contract_path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "execution_contract_sha256"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "sha256"
+        },
+        "execution_contract_sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        }
+      }
+    },
+    "evidence_policy": {
+      "$ref": "#/$defs/evidence_policy"
+    }
+  },
+  "$defs": {
+    "training_run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "run_id",
+        "output_directory"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
+        },
+        "output_directory": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
+        }
+      }
+    },
+    "metric_name": {
+      "type": "string",
+      "enum": [
+        "roc_auc",
+        "f1",
+        "accuracy",
+        "log_loss",
+        "pr_auc"
+      ]
+    },
+    "metric_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/metric_name"
+        },
+        "value": {
+          "type": "number"
+        }
+      }
+    },
+    "model_family": {
+      "type": "string",
+      "enum": [
+        "logistic_regression",
+        "gradient_boosting",
+        "random_forest"
+      ]
+    },
+    "training_parameter_record_path": {
+      "type": "string",
+      "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/training-parameter-record\\.json$"
+    },
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_logs_prohibited",
+        "raw_runtime_prohibited",
+        "raw_api_payloads_prohibited",
+        "secrets_prohibited",
+        "raw_dataset_embedded",
+        "model_bytes_embedded",
+        "notebook_state_embedded",
+        "reduced_and_sanitized"
+      ],
+      "properties": {
+        "raw_logs_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_runtime_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_api_payloads_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "secrets_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_dataset_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "model_bytes_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "notebook_state_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "reduced_and_sanitized": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  }
+}

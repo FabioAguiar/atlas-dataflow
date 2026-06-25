@@ -2,11 +2,11 @@
 Governed training entrypoint for atlas-dataflow M24.
 
 This module consumes only explicit execution contract and prepared dataset
-paths. It performs deterministic splitting and model training, then persists
-the trained model object and reduced training parameter record.
+paths. It performs deterministic splitting, model training, evaluation metric
+production, and reduced artifact persistence.
 
 Out of scope for this module:
-- metrics artifact, model-card input, or compatibility report production;
+- model-card input or compatibility report production;
 - publisher, registry, runtime inference, release, or GitHub operations.
 """
 
@@ -51,6 +51,10 @@ SUPPORTED_MODEL_FAMILIES = (
 SERIALIZER_NAME = "joblib"
 MODEL_ARTIFACT_FILENAME = "model.pkl"
 TRAINING_PARAMETER_RECORD_FILENAME = "training-parameter-record.json"
+METRICS_ARTIFACT_FILENAME = "metrics.json"
+MODEL_SELECTION_EVIDENCE_FILENAME = "model-selection-evidence.json"
+
+_LOWER_IS_BETTER_METRICS = frozenset({"log_loss"})
 
 
 class TrainingInputError(ValueError):
@@ -89,11 +93,15 @@ class TrainingResult:
     output_directory: str
     serialized_model_path: str
     training_parameter_record_path: str
+    metrics_path: str
+    model_selection_evidence_path: str | None
     serializer_name: str
     serializer_version: str
     serialization_format_version: str
     training_timestamp: str
     hashes: dict[str, str]
+    metrics: dict[str, float]
+    model_selection_evidence_produced: bool
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -112,6 +120,8 @@ class TrainingResult:
             "model_serialized": True,
             "serialized_model_path": self.serialized_model_path,
             "training_parameter_record_path": self.training_parameter_record_path,
+            "metrics_path": self.metrics_path,
+            "model_selection_evidence_path": self.model_selection_evidence_path,
             "serializer": {
                 "name": self.serializer_name,
                 "installed_version": self.serializer_version,
@@ -119,7 +129,9 @@ class TrainingResult:
             },
             "training_timestamp": self.training_timestamp,
             "hashes": self.hashes,
-            "metrics_artifact_produced": False,
+            "metrics_artifact_produced": True,
+            "metrics": self.metrics,
+            "model_selection_evidence_produced": self.model_selection_evidence_produced,
             "training_parameter_record_persisted": True,
         }
 
@@ -537,7 +549,7 @@ def _build_preprocessor(features: Any):
     return ColumnTransformer(transformers)
 
 
-def _select_model_family(contract: dict[str, Any], task_type: str) -> str:
+def _supported_model_families(contract: dict[str, Any], task_type: str) -> list[str]:
     constraints = contract["modeling_constraints"]
     families = constraints.get("allowed_model_families")
     if not isinstance(families, list) or not families:
@@ -546,16 +558,23 @@ def _select_model_family(contract: dict[str, Any], task_type: str) -> str:
             "modeling_constraints.allowed_model_families must be a non-empty array.",
             field="modeling_constraints.allowed_model_families",
         )
+    supported: list[str] = []
     for family in families:
         if family == "logistic_regression" and task_type != "classification":
             continue
         if family in SUPPORTED_MODEL_FAMILIES:
-            return family
+            supported.append(str(family))
+    if supported:
+        return supported
     raise TrainingInputError(
         "unsupported_model_family",
         "no locally supported model family found for the inferred tabular task type.",
         field="modeling_constraints.allowed_model_families",
     )
+
+
+def _select_model_family(contract: dict[str, Any], task_type: str) -> str:
+    return _supported_model_families(contract, task_type)[0]
 
 
 def _build_estimator(model_family: str, task_type: str, random_seed: int | None):
@@ -660,6 +679,336 @@ def _write_parameter_record(record_path: Path, record: dict[str, Any]) -> str:
     return _sha256_file(record_path)
 
 
+def _write_reduced_json_artifact(path: Path, artifact: dict[str, Any]) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return _sha256_file(path)
+
+
+def _metric_names(contract: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for metric in [contract["primary_metric"], *(contract.get("secondary_metrics") or [])]:
+        metric_name = str(metric)
+        if metric_name not in names:
+            names.append(metric_name)
+    return names
+
+
+def _positive_class_label(model: Any) -> Any:
+    classes = list(getattr(model, "classes_", []))
+    if len(classes) != 2:
+        raise TrainingInputError(
+            "unsupported_metric",
+            "roc_auc and pr_auc require binary classification probabilities.",
+            field="primary_metric",
+        )
+    return classes[1]
+
+
+def _classification_probabilities(model: Any, evaluation_features: Any) -> Any:
+    if not hasattr(model, "predict_proba"):
+        raise TrainingInputError(
+            "unsupported_metric",
+            "probability metrics require an estimator with predict_proba support.",
+            field="primary_metric",
+        )
+    return model.predict_proba(evaluation_features)
+
+
+def _finite_metric_value(metric_name: str, value: Any) -> float:
+    metric_value = float(value)
+    if not math.isfinite(metric_value):
+        raise TrainingInputError(
+            "invalid_metric_value",
+            f"{metric_name} produced a non-finite value.",
+            field=metric_name,
+        )
+    return metric_value
+
+
+def _compute_metrics(
+    *,
+    model: Any,
+    task_type: str,
+    evaluation_features: Any,
+    evaluation_target: Any,
+    metric_names: list[str],
+) -> dict[str, float]:
+    if task_type != "classification":
+        raise TrainingInputError(
+            "unsupported_metric",
+            "M24 execution-contract metrics are scoped to classification use cases.",
+            field="primary_metric",
+        )
+
+    try:
+        from sklearn.metrics import (
+            accuracy_score,
+            average_precision_score,
+            f1_score,
+            log_loss,
+            roc_auc_score,
+        )
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn metrics are required for governed training metrics.",
+            field="primary_metric",
+        ) from exc
+
+    predictions = model.predict(evaluation_features)
+    probabilities = None
+    values: dict[str, float] = {}
+    for metric_name in metric_names:
+        try:
+            if metric_name == "accuracy":
+                values[metric_name] = _finite_metric_value(
+                    metric_name,
+                    accuracy_score(evaluation_target, predictions),
+                )
+            elif metric_name == "f1":
+                values[metric_name] = _finite_metric_value(
+                    metric_name,
+                    f1_score(evaluation_target, predictions, average="weighted", zero_division=0),
+                )
+            elif metric_name == "log_loss":
+                if probabilities is None:
+                    probabilities = _classification_probabilities(model, evaluation_features)
+                values[metric_name] = _finite_metric_value(
+                    metric_name,
+                    log_loss(evaluation_target, probabilities, labels=list(model.classes_)),
+                )
+            elif metric_name in {"roc_auc", "pr_auc"}:
+                if probabilities is None:
+                    probabilities = _classification_probabilities(model, evaluation_features)
+                positive_label = _positive_class_label(model)
+                positive_scores = probabilities[:, list(model.classes_).index(positive_label)]
+                binary_target = [value == positive_label for value in evaluation_target]
+                if metric_name == "roc_auc":
+                    values[metric_name] = _finite_metric_value(
+                        metric_name,
+                        roc_auc_score(binary_target, positive_scores),
+                    )
+                else:
+                    values[metric_name] = _finite_metric_value(
+                        metric_name,
+                        average_precision_score(binary_target, positive_scores),
+                    )
+            else:
+                raise TrainingInputError(
+                    "unsupported_metric",
+                    f"unsupported execution-contract metric: {metric_name}",
+                    field=metric_name,
+                )
+        except ValueError as exc:
+            raise TrainingInputError(
+                "metric_computation_failed",
+                f"{metric_name} could not be computed on the controlled evaluation split: {exc}",
+                field=metric_name,
+            ) from exc
+    return values
+
+
+def _primary_metric_sort_value(primary_metric: str, metrics: dict[str, float]) -> float:
+    value = metrics[primary_metric]
+    return -value if primary_metric in _LOWER_IS_BETTER_METRICS else value
+
+
+def _train_candidate_models(
+    *,
+    contract: dict[str, Any],
+    task_type: str,
+    features: Any,
+    target: Any,
+    train_indices: list[int],
+    evaluation_indices: list[int],
+) -> tuple[Any, str, list[dict[str, Any]], bool]:
+    metric_names = _metric_names(contract)
+    supported_families = _supported_model_families(contract, task_type)
+    candidates: list[dict[str, Any]] = []
+    for model_family in supported_families:
+        model = _build_estimator(model_family, task_type, contract.get("random_seed"))
+        model.set_params(preprocess=_build_preprocessor(features))
+        model.fit(features.iloc[train_indices], target.iloc[train_indices])
+        metric_values = _compute_metrics(
+            model=model,
+            task_type=task_type,
+            evaluation_features=features.iloc[evaluation_indices],
+            evaluation_target=target.iloc[evaluation_indices],
+            metric_names=metric_names,
+        )
+        candidates.append({
+            "candidate_id": model_family,
+            "model_family": model_family,
+            "model": model,
+            "metrics": metric_values,
+        })
+
+    primary_metric = str(contract["primary_metric"])
+    selected = max(
+        candidates,
+        key=lambda candidate: (
+            _primary_metric_sort_value(primary_metric, candidate["metrics"]),
+            str(candidate["candidate_id"]),
+        ),
+    )
+    multiple_candidates_evaluated = len(candidates) > 1
+    return (
+        selected["model"],
+        str(selected["model_family"]),
+        candidates,
+        multiple_candidates_evaluated,
+    )
+
+
+def _build_metrics_artifact(
+    *,
+    contract: dict[str, Any],
+    contract_path: Path,
+    dataset_path: Path,
+    output_directory: Path,
+    metrics_path: Path,
+    parameter_record_path: Path,
+    metric_values: dict[str, float],
+    evaluation_indices: list[int],
+    training_timestamp: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "training-metrics.v1",
+        "artifact_kind": "training_metrics",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "metric_source": {
+            "split_name": "evaluation",
+            "split_size": len(evaluation_indices),
+            "random_seed": contract.get("random_seed"),
+            "computed_from_training_split": False,
+            "computed_from_mixed_split": False,
+        },
+        "metrics": {
+            "primary_metric": {
+                "name": str(contract["primary_metric"]),
+                "value": metric_values[str(contract["primary_metric"])],
+            },
+            "secondary_metrics": [
+                {
+                    "name": metric_name,
+                    "value": metric_values[metric_name],
+                }
+                for metric_name in _metric_names(contract)
+                if metric_name != str(contract["primary_metric"])
+            ],
+        },
+        "path_references": {
+            "metrics_path": _repo_relative_path(metrics_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(dataset_path),
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def _build_model_selection_evidence(
+    *,
+    contract: dict[str, Any],
+    contract_path: Path,
+    output_directory: Path,
+    evidence_path: Path,
+    parameter_record_path: Path,
+    candidates: list[dict[str, Any]],
+    selected_model_family: str,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    primary_metric = str(contract["primary_metric"])
+    ranking_direction = (
+        "lower_is_better" if primary_metric in _LOWER_IS_BETTER_METRICS else "higher_is_better"
+    )
+    return {
+        "schema_version": "model-selection-evidence.v1",
+        "artifact_kind": "model_selection_evidence",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "selection_policy": {
+            "primary_metric": primary_metric,
+            "ranking_direction": ranking_direction,
+            "condition": "produced_only_when_multiple_model_candidates_are_evaluated",
+        },
+        "candidates": [
+            {
+                "candidate_id": str(candidate["candidate_id"]),
+                "model_family": str(candidate["model_family"]),
+                "primary_metric": {
+                    "name": primary_metric,
+                    "value": candidate["metrics"][primary_metric],
+                },
+                "secondary_metrics": [
+                    {
+                        "name": metric_name,
+                        "value": candidate["metrics"][metric_name],
+                    }
+                    for metric_name in _metric_names(contract)
+                    if metric_name != primary_metric
+                ],
+            }
+            for candidate in candidates
+        ],
+        "selected_model": {
+            "candidate_id": selected_model_family,
+            "model_family": selected_model_family,
+            "selected_model_reference": _repo_relative_path(parameter_record_path),
+            "reference_kind": "training_parameter_record_path",
+        },
+        "selection_rationale": (
+            f"Selected {selected_model_family} by {primary_metric} "
+            f"using {ranking_direction} comparison on the controlled evaluation split."
+        ),
+        "path_references": {
+            "model_selection_evidence_path": _repo_relative_path(evidence_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "execution_contract_path": _reduced_path_reference(contract_path),
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
 def _build_training_parameter_record(
     *,
     contract: dict[str, Any],
@@ -670,7 +1019,10 @@ def _build_training_parameter_record(
     output_directory: Path,
     model_artifact_path: Path,
     parameter_record_path: Path,
+    metrics_path: Path | None,
+    model_selection_evidence_path: Path | None,
     model_artifact_sha256: str,
+    metrics_sha256: str | None,
     serializer_version: str,
     training_timestamp: str,
 ) -> dict[str, Any]:
@@ -694,8 +1046,12 @@ def _build_training_parameter_record(
         "produced_outputs": {
             "serialized_model_path": _repo_relative_path(model_artifact_path),
             "training_parameter_record_path": _repo_relative_path(parameter_record_path),
-            "metrics_path": None,
-            "model_selection_evidence_path": None,
+            "metrics_path": _repo_relative_path(metrics_path) if metrics_path else None,
+            "model_selection_evidence_path": (
+                _repo_relative_path(model_selection_evidence_path)
+                if model_selection_evidence_path
+                else None
+            ),
             "model_card_input_path": None,
         },
         "serializer": {
@@ -724,6 +1080,7 @@ def _build_training_parameter_record(
             "execution_contract_sha256": _sha256_file(contract_path),
             "prepared_dataset_sha256": _sha256_file(dataset_path),
             "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
         },
         "record_boundary_confirmations": {
             "is_metrics_artifact": False,
@@ -751,9 +1108,7 @@ def train_from_paths(
     dataset_slug: str | None = None,
     run_id: str | None = None,
 ) -> TrainingResult:
-    """
-    Train from explicit governed inputs and persist the M24-03 artifacts.
-    """
+    """Train from explicit governed inputs and persist M24 training artifacts."""
     contract_path = Path(execution_contract_path)
     prepared_dataset_path = Path(dataset_path)
     contract = _load_execution_contract(contract_path)
@@ -773,19 +1128,61 @@ def train_from_paths(
         str(contract["target_column"]),
     )
     task_type = _infer_task_type(target)
-    model_family = _select_model_family(contract, task_type)
-    model = _build_estimator(model_family, task_type, contract.get("random_seed"))
-    model.set_params(preprocess=_build_preprocessor(features))
-    model.fit(features.iloc[train_indices], target.iloc[train_indices])
+    model, model_family, candidates, multiple_candidates_evaluated = _train_candidate_models(
+        contract=contract,
+        task_type=task_type,
+        features=features,
+        target=target,
+        train_indices=train_indices,
+        evaluation_indices=evaluation_indices,
+    )
 
     selected_dataset_slug = dataset_slug or _dataset_slug_from_dataset_id(str(contract["dataset_id"]))
     selected_run_id = run_id or _new_run_id()
     output_directory = _training_output_directory(selected_dataset_slug, selected_run_id)
     model_artifact_path = output_directory / MODEL_ARTIFACT_FILENAME
     parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
+    metrics_path = output_directory / METRICS_ARTIFACT_FILENAME
+    model_selection_evidence_path = (
+        output_directory / MODEL_SELECTION_EVIDENCE_FILENAME
+        if multiple_candidates_evaluated
+        else None
+    )
     serializer_version = _serializer_version()
     training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     model_artifact_sha256 = _serialize_model(model, model_artifact_path)
+    selected_candidate = next(
+        candidate for candidate in candidates if candidate["model_family"] == model_family
+    )
+    metric_values = selected_candidate["metrics"]
+    metrics_artifact = _build_metrics_artifact(
+        contract=contract,
+        contract_path=contract_path,
+        dataset_path=prepared_dataset_path,
+        output_directory=output_directory,
+        metrics_path=metrics_path,
+        parameter_record_path=parameter_record_path,
+        metric_values=metric_values,
+        evaluation_indices=evaluation_indices,
+        training_timestamp=training_timestamp,
+    )
+    metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
+    model_selection_evidence_sha256 = None
+    if model_selection_evidence_path is not None:
+        selection_artifact = _build_model_selection_evidence(
+            contract=contract,
+            contract_path=contract_path,
+            output_directory=output_directory,
+            evidence_path=model_selection_evidence_path,
+            parameter_record_path=parameter_record_path,
+            candidates=candidates,
+            selected_model_family=model_family,
+            training_timestamp=training_timestamp,
+        )
+        model_selection_evidence_sha256 = _write_reduced_json_artifact(
+            model_selection_evidence_path,
+            selection_artifact,
+        )
 
     result_payload = {
         "model": model,
@@ -802,7 +1199,10 @@ def train_from_paths(
         output_directory=output_directory,
         model_artifact_path=model_artifact_path,
         parameter_record_path=parameter_record_path,
+        metrics_path=metrics_path,
+        model_selection_evidence_path=model_selection_evidence_path,
         model_artifact_sha256=model_artifact_sha256,
+        metrics_sha256=metrics_sha256,
         serializer_version=serializer_version,
         training_timestamp=training_timestamp,
     )
@@ -822,6 +1222,12 @@ def train_from_paths(
         output_directory=f"{_repo_relative_path(output_directory)}/",
         serialized_model_path=_repo_relative_path(model_artifact_path),
         training_parameter_record_path=_repo_relative_path(parameter_record_path),
+        metrics_path=_repo_relative_path(metrics_path),
+        model_selection_evidence_path=(
+            _repo_relative_path(model_selection_evidence_path)
+            if model_selection_evidence_path
+            else None
+        ),
         serializer_name=SERIALIZER_NAME,
         serializer_version=serializer_version,
         serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
@@ -830,8 +1236,12 @@ def train_from_paths(
             "execution_contract_sha256": parameter_record["hashes"]["execution_contract_sha256"],
             "prepared_dataset_sha256": parameter_record["hashes"]["prepared_dataset_sha256"],
             "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
             "training_parameter_record_sha256": parameter_record_sha256,
+            "model_selection_evidence_sha256": model_selection_evidence_sha256,
         },
+        metrics=metric_values,
+        model_selection_evidence_produced=multiple_candidates_evaluated,
     )
 
 

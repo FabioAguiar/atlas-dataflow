@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/training-parameter-record.schema.json",
+  "title": "Atlas DataFlow Training Parameter Record",
+  "description": "Schema for the training-parameter-record.json artifact emitted by a governed M24 training run. The record is a reduced provenance artifact written under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json. It links the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes. It is distinct from metrics.json and must not embed raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_kind",
+    "training_run_identity",
+    "consumed_inputs",
+    "produced_outputs",
+    "permitted_execution_contract_fields",
+    "training_parameters",
+    "hashes",
+    "record_boundary_confirmations",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "training-parameter-record.v1",
+      "description": "Schema version for the training parameter record artifact."
+    },
+    "record_kind": {
+      "type": "string",
+      "const": "training_parameter_record",
+      "description": "Identifies this artifact as the provenance and parameter record for a governed training run, not as the training metrics artifact."
+    },
+    "training_run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "run_id",
+        "output_directory"
+      ],
+      "description": "Identity of the training run that produced this record.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset slug used to parameterize the training run path."
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$",
+          "description": "Training run identifier using the train-{timestamp}Z convention."
+        },
+        "output_directory": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$",
+          "description": "Concrete output directory for this run, derived from pipeline/training-runs/{dataset_slug}/{run_id}/."
+        }
+      }
+    },
+    "consumed_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "execution_contract_path",
+        "dataset_path",
+        "execution_contract_dataset_id",
+        "prepared_dataset_dataset_id"
+      ],
+      "description": "Reduced references to the governed training inputs. The dataset_id values must match before training proceeds.",
+      "properties": {
+        "execution_contract_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Explicit path reference to the execution_contract.v1 JSON consumed by the training entrypoint."
+        },
+        "dataset_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Explicit path reference to the prepared dataset consumed by the training entrypoint."
+        },
+        "execution_contract_dataset_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "dataset_id read from the execution contract."
+        },
+        "prepared_dataset_dataset_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "dataset_id read from the prepared dataset metadata. Must match execution_contract_dataset_id."
+        }
+      }
+    },
+    "produced_outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serialized_model_path",
+        "metrics_path",
+        "model_card_input_path"
+      ],
+      "description": "Reduced path references to artifacts produced by the same training run. The metrics artifact is distinct from this parameter record.",
+      "properties": {
+        "serialized_model_path": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model\\.[A-Za-z0-9._-]+$",
+          "description": "Path to the serialized model artifact. The default interface convention is model.pkl, but the role remains stable if a future serializer changes the extension."
+        },
+        "metrics_path": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/metrics\\.json$",
+          "description": "Path to the distinct training metrics artifact."
+        },
+        "model_selection_evidence_path": {
+          "type": ["string", "null"],
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-selection-evidence\\.json$",
+          "description": "Path to conditional model selection evidence. Null when no multi-candidate comparison was performed."
+        },
+        "model_card_input_path": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-card-input\\.json$",
+          "description": "Path to reduced model card input data produced for downstream M24 model-card work."
+        }
+      }
+    },
+    "permitted_execution_contract_fields": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "uniqueItems": true,
+      "description": "Closed list of execution contract fields actually consumed by the training run. Must match the M24 training interface subset and must not include ignored_columns, required_columns, or optional_columns.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "contract_version",
+          "dataset_id",
+          "target_column",
+          "feature_columns",
+          "feature_definitions",
+          "missing_value_policy",
+          "categorical_encoding_policy",
+          "numeric_handling",
+          "allowed_transformations",
+          "split_policy",
+          "random_seed",
+          "primary_metric",
+          "secondary_metrics",
+          "modeling_constraints"
+        ]
+      }
+    },
+    "training_parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_column",
+        "feature_columns",
+        "split_policy",
+        "random_seed",
+        "primary_metric",
+        "secondary_metrics",
+        "modeling_constraints"
+      ],
+      "description": "Reduced parameter values selected from the permitted execution contract fields for reproducibility and audit. This record intentionally does not include ignored_columns, required_columns, or optional_columns.",
+      "properties": {
+        "target_column": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feature_columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "split_policy": {
+          "$ref": "#/$defs/split_policy"
+        },
+        "random_seed": {
+          "type": ["integer", "null"]
+        },
+        "primary_metric": {
+          "$ref": "#/$defs/metric"
+        },
+        "secondary_metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metric"
+          }
+        },
+        "modeling_constraints": {
+          "$ref": "#/$defs/modeling_constraints"
+        }
+      }
+    },
+    "hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "execution_contract_sha256",
+        "prepared_dataset_sha256",
+        "model_artifact_sha256",
+        "metrics_sha256"
+      ],
+      "description": "SHA-256 hashes linking the consumed inputs and produced outputs for this training run.",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "sha256"
+        },
+        "execution_contract_sha256": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "SHA-256 hex digest of the execution contract JSON file consumed."
+        },
+        "prepared_dataset_sha256": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "SHA-256 hex digest of the prepared dataset file consumed."
+        },
+        "model_artifact_sha256": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "SHA-256 hex digest of the serialized model artifact produced."
+        },
+        "metrics_sha256": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "SHA-256 hex digest of the metrics.json artifact produced."
+        }
+      }
+    },
+    "record_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_metrics_artifact",
+        "raw_dataset_embedded",
+        "model_bytes_embedded",
+        "notebook_state_embedded",
+        "unauthorized_contract_fields_consumed"
+      ],
+      "description": "Boundary confirmations for the parameter record artifact.",
+      "properties": {
+        "is_metrics_artifact": {
+          "type": "boolean",
+          "const": false,
+          "description": "This parameter record is not the metrics artifact."
+        },
+        "raw_dataset_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "model_bytes_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "notebook_state_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "unauthorized_contract_fields_consumed": {
+          "type": "boolean",
+          "const": false,
+          "description": "No execution contract fields outside the permitted M24 training subset were consumed."
+        }
+      }
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_logs_prohibited",
+        "raw_runtime_prohibited",
+        "raw_api_payloads_prohibited",
+        "secrets_prohibited",
+        "private_source_paths_prohibited",
+        "raw_artifact_contents_prohibited",
+        "reduced_and_sanitized"
+      ],
+      "description": "Safety policy for the training parameter record.",
+      "properties": {
+        "raw_logs_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_runtime_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_api_payloads_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "secrets_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "private_source_paths_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_artifact_contents_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "reduced_and_sanitized": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "metric": {
+      "type": "string",
+      "enum": [
+        "roc_auc",
+        "f1",
+        "accuracy",
+        "log_loss",
+        "pr_auc"
+      ]
+    },
+    "split_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "train_ratio",
+        "val_ratio",
+        "test_ratio"
+      ],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "stratified",
+            "random"
+          ]
+        },
+        "train_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "val_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "test_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "modeling_constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_model_families"
+      ],
+      "properties": {
+        "allowed_model_families": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "logistic_regression",
+              "gradient_boosting",
+              "random_forest",
+              "xgboost",
+              "lightgbm"
+            ]
+          }
+        },
+        "no_automl": {
+          "type": "boolean"
+        },
+        "max_training_time_seconds": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

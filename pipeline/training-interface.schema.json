@@ -1,0 +1,470 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/training-interface.schema.json",
+  "title": "Atlas DataFlow Training Entrypoint Interface",
+  "description": "Machine-readable interface for the M24 governed training entrypoint. The entrypoint is contract-driven: it consumes an explicit execution contract path and an explicit prepared dataset path, never notebook-held state, inferred local files, in-memory dataset variables, raw logs, secrets, or implicit outputs from a prior notebook execution. Training run outputs are written under pipeline/training-runs/{dataset_slug}/{run_id}/, where dataset_slug follows ^[a-z0-9]+(?:-[a-z0-9]+)*$ and run_id follows train-{timestamp}Z, for example train-20260625T120000Z. The prepared dataset path is provided by the caller because the M22 prepared dataset output path is not fixed by this interface.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "entrypoint_kind",
+    "required_inputs",
+    "permitted_execution_contract_fields",
+    "validation_behavior",
+    "training_run_identity",
+    "output_artifacts",
+    "behavioral_constraints",
+    "hash_policy",
+    "interface_boundary_confirmations"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "training-interface.v1",
+      "description": "Schema version for the governed training entrypoint interface."
+    },
+    "entrypoint_kind": {
+      "type": "string",
+      "const": "governed_training_entrypoint",
+      "description": "Identifies this contract as the interface for a governed training command, not the command implementation itself."
+    },
+    "required_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "execution_contract_path",
+        "dataset_path"
+      ],
+      "description": "Required explicit inputs for every training invocation. Both values must be supplied by the caller as reviewable path references; missing values must cause a non-zero exit with a diagnostic message before training begins.",
+      "properties": {
+        "execution_contract_path": {
+          "$ref": "#/$defs/explicit_path_argument",
+          "description": "Required explicit path to the execution_contract.v1 JSON file consumed by the training entrypoint. Missing value behavior: reject invocation with non-zero exit and a diagnostic message naming execution_contract_path."
+        },
+        "dataset_path": {
+          "$ref": "#/$defs/explicit_path_argument",
+          "description": "Required explicit path to the prepared dataset file consumed by the training entrypoint. The interface deliberately does not declare a fixed prepared dataset path convention. Missing value behavior: reject invocation with non-zero exit and a diagnostic message naming dataset_path."
+        }
+      }
+    },
+    "permitted_execution_contract_fields": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "uniqueItems": true,
+      "description": "Closed list of execution contract fields that the training entrypoint may consume. The fields ignored_columns, required_columns, and optional_columns are deliberately excluded because they are not part of the training-consumption contract for M24.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "contract_version",
+          "dataset_id",
+          "target_column",
+          "feature_columns",
+          "feature_definitions",
+          "missing_value_policy",
+          "categorical_encoding_policy",
+          "numeric_handling",
+          "allowed_transformations",
+          "split_policy",
+          "random_seed",
+          "primary_metric",
+          "secondary_metrics",
+          "modeling_constraints"
+        ]
+      },
+      "contains": {
+        "const": "contract_version"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "const": "dataset_id"
+          }
+        },
+        {
+          "contains": {
+            "const": "target_column"
+          }
+        },
+        {
+          "contains": {
+            "const": "feature_columns"
+          }
+        },
+        {
+          "contains": {
+            "const": "feature_definitions"
+          }
+        },
+        {
+          "contains": {
+            "const": "missing_value_policy"
+          }
+        },
+        {
+          "contains": {
+            "const": "categorical_encoding_policy"
+          }
+        },
+        {
+          "contains": {
+            "const": "numeric_handling"
+          }
+        },
+        {
+          "contains": {
+            "const": "allowed_transformations"
+          }
+        },
+        {
+          "contains": {
+            "const": "split_policy"
+          }
+        },
+        {
+          "contains": {
+            "const": "random_seed"
+          }
+        },
+        {
+          "contains": {
+            "const": "primary_metric"
+          }
+        },
+        {
+          "contains": {
+            "const": "secondary_metrics"
+          }
+        },
+        {
+          "contains": {
+            "const": "modeling_constraints"
+          }
+        }
+      ]
+    },
+    "validation_behavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "missing_required_input",
+        "dataset_id_mismatch",
+        "forbidden_execution_contract_field_consumption"
+      ],
+      "description": "Validation behavior that every future training implementation must preserve before model training begins.",
+      "properties": {
+        "missing_required_input": {
+          "$ref": "#/$defs/fatal_validation_behavior",
+          "description": "Missing execution_contract_path or dataset_path is a fatal invocation error. The command must exit non-zero and emit a diagnostic naming the absent input."
+        },
+        "dataset_id_mismatch": {
+          "$ref": "#/$defs/fatal_validation_behavior",
+          "description": "The prepared dataset dataset_id must match execution_contract.dataset_id before training proceeds. A mismatch is a fatal input validation failure."
+        },
+        "forbidden_execution_contract_field_consumption": {
+          "$ref": "#/$defs/fatal_validation_behavior",
+          "description": "Training code must not consume execution contract fields outside permitted_execution_contract_fields. In particular, ignored_columns, required_columns, and optional_columns are outside the training interface."
+        }
+      }
+    },
+    "training_run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "run_id",
+        "output_directory_template"
+      ],
+      "description": "Run identity and output directory convention for M24 training artifacts.",
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable dataset slug used to parameterize training artifact paths. The value must not be hardcoded to a particular dataset."
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$",
+          "description": "Training run identifier using the train-{timestamp}Z convention, for example train-20260625T120000Z."
+        },
+        "output_directory_template": {
+          "type": "string",
+          "const": "pipeline/training-runs/{dataset_slug}/{run_id}/",
+          "description": "Directory template for all artifacts produced by one training run. The directory may not exist before the run; it is created by the future training implementation, not by this interface schema."
+        }
+      }
+    },
+    "output_artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serialized_model",
+        "training_parameter_record",
+        "training_metrics",
+        "model_card_input"
+      ],
+      "description": "Distinct output artifact roles produced by a governed training run. The training parameter record and metrics artifact are separate roles with separate paths. model_selection_evidence is conditional and omitted when no multi-candidate comparison is performed.",
+      "properties": {
+        "serialized_model": {
+          "$ref": "#/$defs/output_artifact_role",
+          "description": "Serialized model artifact role. Default path template: pipeline/training-runs/{dataset_slug}/{run_id}/model.pkl. The role name is stable even if a future implementation revises the file extension."
+        },
+        "training_parameter_record": {
+          "$ref": "#/$defs/output_artifact_role",
+          "description": "Training parameter record artifact role. Path template: pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json. This role records provenance and hashes and must not be merged with metrics."
+        },
+        "training_metrics": {
+          "$ref": "#/$defs/output_artifact_role",
+          "description": "Training metrics artifact role. Path template: pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json. This role is distinct from the training parameter record."
+        },
+        "model_selection_evidence": {
+          "$ref": "#/$defs/conditional_output_artifact_role",
+          "description": "Conditional model selection evidence artifact role. Path template: pipeline/training-runs/{dataset_slug}/{run_id}/model-selection-evidence.json. Produced only when multiple model candidates from modeling_constraints.allowed_model_families are evaluated and compared; absence is not a validation failure when not applicable."
+        },
+        "model_card_input": {
+          "$ref": "#/$defs/output_artifact_role",
+          "description": "Model card input data artifact role. Path template: pipeline/training-runs/{dataset_slug}/{run_id}/model-card-input.json. Downstream M24 model-card work consumes this reduced artifact rather than raw training runtime state."
+        }
+      }
+    },
+    "behavioral_constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_drives_split_policy",
+        "contract_drives_random_seed",
+        "contract_drives_model_family_candidates",
+        "contract_drives_primary_metric",
+        "notebook_state_prohibited",
+        "implicit_local_paths_prohibited"
+      ],
+      "description": "Contractual behavior that future training implementation must respect.",
+      "properties": {
+        "contract_drives_split_policy": {
+          "type": "boolean",
+          "const": true,
+          "description": "Training split behavior is driven by execution_contract.split_policy."
+        },
+        "contract_drives_random_seed": {
+          "type": "boolean",
+          "const": true,
+          "description": "Training reproducibility behavior is driven by execution_contract.random_seed."
+        },
+        "contract_drives_model_family_candidates": {
+          "type": "boolean",
+          "const": true,
+          "description": "Candidate model families are bounded by execution_contract.modeling_constraints.allowed_model_families."
+        },
+        "contract_drives_primary_metric": {
+          "type": "boolean",
+          "const": true,
+          "description": "Model selection and primary evaluation are driven by execution_contract.primary_metric."
+        },
+        "notebook_state_prohibited": {
+          "type": "boolean",
+          "const": true,
+          "description": "The training entrypoint must reject invocations that depend on notebook-held state, in-memory dataset variables, or prior notebook execution."
+        },
+        "implicit_local_paths_prohibited": {
+          "type": "boolean",
+          "const": true,
+          "description": "The training entrypoint must not infer local input paths. Required inputs are explicit path arguments."
+        }
+      }
+    },
+    "hash_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "recorded_hashes"
+      ],
+      "description": "Hash behavior connecting consumed inputs and produced outputs to the training parameter record.",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "sha256",
+          "description": "All training provenance hashes use SHA-256 hexadecimal digests."
+        },
+        "recorded_hashes": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "description": "Hash fields that must be recorded in pipeline/training-parameter-record.schema.json.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "execution_contract_sha256",
+              "prepared_dataset_sha256",
+              "model_artifact_sha256",
+              "metrics_sha256"
+            ]
+          },
+          "contains": {
+            "const": "execution_contract_sha256"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "const": "prepared_dataset_sha256"
+              }
+            },
+            {
+              "contains": {
+                "const": "model_artifact_sha256"
+              }
+            },
+            {
+              "contains": {
+                "const": "metrics_sha256"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "interface_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "training_flow_implemented",
+        "model_artifact_serialized",
+        "metrics_artifact_produced",
+        "tests_defined",
+        "release_candidate_assembled"
+      ],
+      "description": "Boundary flags for M24-01. This schema defines the interface only and does not implement later M24 or M26 work.",
+      "properties": {
+        "training_flow_implemented": {
+          "type": "boolean",
+          "const": false
+        },
+        "model_artifact_serialized": {
+          "type": "boolean",
+          "const": false
+        },
+        "metrics_artifact_produced": {
+          "type": "boolean",
+          "const": false
+        },
+        "tests_defined": {
+          "type": "boolean",
+          "const": false
+        },
+        "release_candidate_assembled": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "explicit_path_argument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "argument_name",
+        "required",
+        "path_kind"
+      ],
+      "properties": {
+        "argument_name": {
+          "type": "string",
+          "enum": [
+            "--execution-contract-path",
+            "--dataset-path"
+          ],
+          "description": "CLI argument name or equivalent structured invocation key."
+        },
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "path_kind": {
+          "type": "string",
+          "enum": [
+            "execution_contract_json",
+            "prepared_dataset"
+          ]
+        }
+      }
+    },
+    "fatal_validation_behavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fatal",
+        "exit_non_zero",
+        "diagnostic_required"
+      ],
+      "properties": {
+        "fatal": {
+          "type": "boolean",
+          "const": true
+        },
+        "exit_non_zero": {
+          "type": "boolean",
+          "const": true
+        },
+        "diagnostic_required": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "output_artifact_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "required",
+        "path_template"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "path_template": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/\\{dataset_slug\\}/\\{run_id\\}/[^/]+$",
+          "description": "Training-run-relative artifact path parameterized by {dataset_slug} and {run_id}."
+        }
+      }
+    },
+    "conditional_output_artifact_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "required",
+        "path_template",
+        "condition"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "const": "model_selection_evidence"
+        },
+        "required": {
+          "type": "boolean",
+          "const": false
+        },
+        "path_template": {
+          "type": "string",
+          "const": "pipeline/training-runs/{dataset_slug}/{run_id}/model-selection-evidence.json"
+        },
+        "condition": {
+          "type": "string",
+          "const": "produced_only_when_multiple_model_candidates_are_evaluated"
+        }
+      }
+    }
+  }
+}

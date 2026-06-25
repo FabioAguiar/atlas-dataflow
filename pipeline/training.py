@@ -1,12 +1,11 @@
 """
-Governed training entrypoint for atlas-dataflow M24-02.
+Governed training entrypoint for atlas-dataflow M24.
 
 This module consumes only explicit execution contract and prepared dataset
-paths. It performs deterministic splitting and model training, then returns a
-trained model object for the later M24-03 persistence step.
+paths. It performs deterministic splitting and model training, then persists
+the trained model object and reduced training parameter record.
 
 Out of scope for this module:
-- model serialization or training parameter record persistence;
 - metrics artifact, model-card input, or compatibility report production;
 - publisher, registry, runtime inference, release, or GitHub operations.
 """
@@ -15,10 +14,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
+import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +48,10 @@ SUPPORTED_MODEL_FAMILIES = (
     "random_forest",
 )
 
+SERIALIZER_NAME = "joblib"
+MODEL_ARTIFACT_FILENAME = "model.pkl"
+TRAINING_PARAMETER_RECORD_FILENAME = "training-parameter-record.json"
+
 
 class TrainingInputError(ValueError):
     """Structured, actionable validation error raised before training starts."""
@@ -68,7 +74,7 @@ class TrainingInputError(ValueError):
 
 @dataclass(frozen=True)
 class TrainingResult:
-    """Reduced in-memory result. The model object is intentionally not persisted."""
+    """Reduced result for a governed training run."""
 
     status: str
     model: Any
@@ -80,6 +86,14 @@ class TrainingResult:
     target_column: str
     feature_columns: list[str]
     primary_metric: str
+    output_directory: str
+    serialized_model_path: str
+    training_parameter_record_path: str
+    serializer_name: str
+    serializer_version: str
+    serialization_format_version: str
+    training_timestamp: str
+    hashes: dict[str, str]
 
     def to_summary(self) -> dict[str, Any]:
         return {
@@ -95,9 +109,18 @@ class TrainingResult:
                 "evaluation_rows": len(self.evaluation_indices),
             },
             "model_object_returned": self.model is not None,
-            "model_serialized": False,
+            "model_serialized": True,
+            "serialized_model_path": self.serialized_model_path,
+            "training_parameter_record_path": self.training_parameter_record_path,
+            "serializer": {
+                "name": self.serializer_name,
+                "installed_version": self.serializer_version,
+                "serialization_format_version": self.serialization_format_version,
+            },
+            "training_timestamp": self.training_timestamp,
+            "hashes": self.hashes,
             "metrics_artifact_produced": False,
-            "training_parameter_record_persisted": False,
+            "training_parameter_record_persisted": True,
         }
 
 
@@ -165,6 +188,64 @@ def _load_execution_contract(path: Path) -> dict[str, Any]:
             field="feature_columns",
         )
     return reduced
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _repo_relative_path(path: Path) -> str:
+    return path.resolve().relative_to(_repo_root()).as_posix()
+
+
+def _reduced_path_reference(path: Path) -> str:
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return _repo_relative_path(path)
+    except ValueError:
+        return path.name
+
+
+def _dataset_slug_from_dataset_id(dataset_id: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", dataset_id.lower()).strip("-")
+    slug = re.sub(r"-+", "-", slug)
+    if not slug:
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "execution contract dataset_id cannot produce a valid dataset_slug.",
+            field="dataset_id",
+        )
+    return slug
+
+
+def _new_run_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    return f"train-{timestamp}Z"
+
+
+def _training_output_directory(dataset_slug: str, run_id: str) -> Path:
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", dataset_slug):
+        raise TrainingInputError(
+            "invalid_run_identity",
+            "dataset_slug must match ^[a-z0-9]+(?:-[a-z0-9]+)*$.",
+            field="dataset_slug",
+        )
+    if not re.fullmatch(r"train-[0-9]{8}T[0-9]{6}Z", run_id):
+        raise TrainingInputError(
+            "invalid_run_identity",
+            "run_id must match train-{timestamp}Z, for example train-20260625T120000Z.",
+            field="run_id",
+        )
+    return _repo_root() / "pipeline" / "training-runs" / dataset_slug / run_id
 
 
 def _load_csv_dataset(path: Path) -> tuple[list[dict[str, Any]], str | None]:
@@ -522,15 +603,156 @@ def _build_estimator(model_family: str, task_type: str, random_seed: int | None)
     ])
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return value.as_posix()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in sorted(value.items())}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
+def _estimator_hyperparameters(model: Any) -> dict[str, Any]:
+    estimator = model.named_steps.get("model") if hasattr(model, "named_steps") else model
+    if hasattr(estimator, "get_params"):
+        return {
+            str(key): _json_safe(value)
+            for key, value in sorted(estimator.get_params(deep=False).items())
+        }
+    return {}
+
+
+def _serializer_version() -> str:
+    try:
+        import joblib
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "joblib is required for model artifact serialization. Install joblib in the training environment.",
+            field="serializer",
+        ) from exc
+    return str(joblib.__version__)
+
+
+def _serialize_model(model: Any, model_path: Path) -> str:
+    try:
+        import joblib
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "joblib is required for model artifact serialization. Install joblib in the training environment.",
+            field="serializer",
+        ) from exc
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, model_path)
+    return _sha256_file(model_path)
+
+
+def _write_parameter_record(record_path: Path, record: dict[str, Any]) -> str:
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return _sha256_file(record_path)
+
+
+def _build_training_parameter_record(
+    *,
+    contract: dict[str, Any],
+    contract_path: Path,
+    dataset_path: Path,
+    prepared_dataset_id: str | None,
+    result: dict[str, Any],
+    output_directory: Path,
+    model_artifact_path: Path,
+    parameter_record_path: Path,
+    model_artifact_sha256: str,
+    serializer_version: str,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    split_policy = dict(contract["split_policy"])
+    serialization_format_version = f"{SERIALIZER_NAME}-{serializer_version}"
+    return {
+        "schema_version": "training-parameter-record.v1",
+        "record_kind": "training_parameter_record",
+        "training_timestamp": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "consumed_inputs": {
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(dataset_path),
+            "execution_contract_dataset_id": str(contract["dataset_id"]),
+            "prepared_dataset_dataset_id": str(prepared_dataset_id or contract["dataset_id"]),
+        },
+        "produced_outputs": {
+            "serialized_model_path": _repo_relative_path(model_artifact_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": None,
+            "model_selection_evidence_path": None,
+            "model_card_input_path": None,
+        },
+        "serializer": {
+            "name": SERIALIZER_NAME,
+            "installed_version": serializer_version,
+            "serialization_format_version": serialization_format_version,
+        },
+        "permitted_execution_contract_fields": sorted(PERMITTED_EXECUTION_CONTRACT_FIELDS),
+        "training_parameters": {
+            "model_family": str(result["model_family"]),
+            "hyperparameters": _estimator_hyperparameters(result["model"]),
+            "target_column": str(contract["target_column"]),
+            "feature_columns": [str(column) for column in contract["feature_columns"]],
+            "split_policy": split_policy,
+            "split_sizes": {
+                "training_rows": len(result["train_indices"]),
+                "evaluation_rows": len(result["evaluation_indices"]),
+            },
+            "random_seed": contract.get("random_seed"),
+            "primary_metric": str(contract["primary_metric"]),
+            "secondary_metrics": list(contract.get("secondary_metrics") or []),
+            "modeling_constraints": dict(contract["modeling_constraints"]),
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+            "prepared_dataset_sha256": _sha256_file(dataset_path),
+            "model_artifact_sha256": model_artifact_sha256,
+        },
+        "record_boundary_confirmations": {
+            "is_metrics_artifact": False,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "unauthorized_contract_fields_consumed": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "raw_artifact_contents_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
 def train_from_paths(
     execution_contract_path: str | Path,
     dataset_path: str | Path,
+    *,
+    dataset_slug: str | None = None,
+    run_id: str | None = None,
 ) -> TrainingResult:
     """
-    Train from explicit governed inputs and return the in-memory model object.
-
-    The returned model is not serialized here. Artifact persistence belongs to
-    M24-03 and later pipeline steps.
+    Train from explicit governed inputs and persist the M24-03 artifacts.
     """
     contract_path = Path(execution_contract_path)
     prepared_dataset_path = Path(dataset_path)
@@ -556,6 +778,36 @@ def train_from_paths(
     model.set_params(preprocess=_build_preprocessor(features))
     model.fit(features.iloc[train_indices], target.iloc[train_indices])
 
+    selected_dataset_slug = dataset_slug or _dataset_slug_from_dataset_id(str(contract["dataset_id"]))
+    selected_run_id = run_id or _new_run_id()
+    output_directory = _training_output_directory(selected_dataset_slug, selected_run_id)
+    model_artifact_path = output_directory / MODEL_ARTIFACT_FILENAME
+    parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
+    serializer_version = _serializer_version()
+    training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    model_artifact_sha256 = _serialize_model(model, model_artifact_path)
+
+    result_payload = {
+        "model": model,
+        "model_family": model_family,
+        "train_indices": train_indices,
+        "evaluation_indices": evaluation_indices,
+    }
+    parameter_record = _build_training_parameter_record(
+        contract=contract,
+        contract_path=contract_path,
+        dataset_path=prepared_dataset_path,
+        prepared_dataset_id=prepared_dataset_id,
+        result=result_payload,
+        output_directory=output_directory,
+        model_artifact_path=model_artifact_path,
+        parameter_record_path=parameter_record_path,
+        model_artifact_sha256=model_artifact_sha256,
+        serializer_version=serializer_version,
+        training_timestamp=training_timestamp,
+    )
+    parameter_record_sha256 = _write_parameter_record(parameter_record_path, parameter_record)
+
     return TrainingResult(
         status="trained",
         model=model,
@@ -567,6 +819,19 @@ def train_from_paths(
         target_column=str(contract["target_column"]),
         feature_columns=feature_columns,
         primary_metric=str(contract["primary_metric"]),
+        output_directory=f"{_repo_relative_path(output_directory)}/",
+        serialized_model_path=_repo_relative_path(model_artifact_path),
+        training_parameter_record_path=_repo_relative_path(parameter_record_path),
+        serializer_name=SERIALIZER_NAME,
+        serializer_version=serializer_version,
+        serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
+        training_timestamp=training_timestamp,
+        hashes={
+            "execution_contract_sha256": parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": parameter_record["hashes"]["prepared_dataset_sha256"],
+            "model_artifact_sha256": model_artifact_sha256,
+            "training_parameter_record_sha256": parameter_record_sha256,
+        },
     )
 
 
@@ -584,10 +849,23 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Explicit path to the prepared dataset file (.csv or .json).",
     )
+    parser.add_argument(
+        "--dataset-slug",
+        help="Optional dataset slug for pipeline/training-runs/{dataset_slug}/{run_id}/. Defaults to a slug derived from execution_contract.dataset_id.",
+    )
+    parser.add_argument(
+        "--run-id",
+        help="Optional run identifier matching train-{timestamp}Z. Defaults to the current UTC timestamp.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        result = train_from_paths(args.execution_contract_path, args.dataset_path)
+        result = train_from_paths(
+            args.execution_contract_path,
+            args.dataset_path,
+            dataset_slug=args.dataset_slug,
+            run_id=args.run_id,
+        )
     except TrainingInputError as exc:
         print(json.dumps(exc.to_dict(), indent=2), file=sys.stderr)
         return 2

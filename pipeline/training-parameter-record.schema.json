@@ -8,9 +8,11 @@
   "required": [
     "schema_version",
     "record_kind",
+    "training_timestamp",
     "training_run_identity",
     "consumed_inputs",
     "produced_outputs",
+    "serializer",
     "permitted_execution_contract_fields",
     "training_parameters",
     "hashes",
@@ -94,20 +96,24 @@
       "additionalProperties": false,
       "required": [
         "serialized_model_path",
-        "metrics_path",
-        "model_card_input_path"
+        "training_parameter_record_path"
       ],
-      "description": "Reduced path references to artifacts produced by the same training run. The metrics artifact is distinct from this parameter record.",
+      "description": "Reduced path references to artifacts produced by the same training run. M24-03 produces the serialized model and this parameter record only; metrics and model-card input remain later issue responsibilities.",
       "properties": {
         "serialized_model_path": {
           "type": "string",
           "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model\\.[A-Za-z0-9._-]+$",
           "description": "Path to the serialized model artifact. The default interface convention is model.pkl, but the role remains stable if a future serializer changes the extension."
         },
-        "metrics_path": {
+        "training_parameter_record_path": {
           "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/training-parameter-record\\.json$",
+          "description": "Path to this reduced training parameter record artifact."
+        },
+        "metrics_path": {
+          "type": ["string", "null"],
           "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/metrics\\.json$",
-          "description": "Path to the distinct training metrics artifact."
+          "description": "Path to the distinct training metrics artifact. Null for M24-03 because metrics production is owned by M24-04."
         },
         "model_selection_evidence_path": {
           "type": ["string", "null"],
@@ -115,9 +121,39 @@
           "description": "Path to conditional model selection evidence. Null when no multi-candidate comparison was performed."
         },
         "model_card_input_path": {
-          "type": "string",
+          "type": ["string", "null"],
           "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-card-input\\.json$",
-          "description": "Path to reduced model card input data produced for downstream M24 model-card work."
+          "description": "Path to reduced model card input data. Null for M24-03 because model-card input production is owned by M24-05."
+        }
+      }
+    },
+    "training_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when the model artifact and training parameter record were produced."
+    },
+    "serializer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "installed_version",
+        "serialization_format_version"
+      ],
+      "description": "Serializer metadata required for future inference runtime compatibility checks.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "joblib"
+        },
+        "installed_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serialization_format_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Versioned serialization format identifier recorded from the installed serializer."
         }
       }
     },
@@ -151,9 +187,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "model_family",
+        "hyperparameters",
         "target_column",
         "feature_columns",
         "split_policy",
+        "split_sizes",
         "random_seed",
         "primary_metric",
         "secondary_metrics",
@@ -161,6 +200,18 @@
       ],
       "description": "Reduced parameter values selected from the permitted execution contract fields for reproducibility and audit. This record intentionally does not include ignored_columns, required_columns, or optional_columns.",
       "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "logistic_regression",
+            "gradient_boosting",
+            "random_forest"
+          ]
+        },
+        "hyperparameters": {
+          "type": "object",
+          "description": "Reduced JSON-safe hyperparameters used by the fitted estimator."
+        },
         "target_column": {
           "type": "string",
           "minLength": 1
@@ -175,6 +226,24 @@
         },
         "split_policy": {
           "$ref": "#/$defs/split_policy"
+        },
+        "split_sizes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "training_rows",
+            "evaluation_rows"
+          ],
+          "properties": {
+            "training_rows": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "evaluation_rows": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         },
         "random_seed": {
           "type": ["integer", "null"]
@@ -200,10 +269,9 @@
         "algorithm",
         "execution_contract_sha256",
         "prepared_dataset_sha256",
-        "model_artifact_sha256",
-        "metrics_sha256"
+        "model_artifact_sha256"
       ],
-      "description": "SHA-256 hashes linking the consumed inputs and produced outputs for this training run.",
+      "description": "SHA-256 hashes linking the consumed inputs and serialized model output for this training run. The training parameter record hash is computed after this file is written and is reported by the caller because embedding it would change the bytes being hashed.",
       "properties": {
         "algorithm": {
           "type": "string",
@@ -222,8 +290,15 @@
           "description": "SHA-256 hex digest of the serialized model artifact produced."
         },
         "metrics_sha256": {
-          "$ref": "#/$defs/sha256_hex",
-          "description": "SHA-256 hex digest of the metrics.json artifact produced."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256_hex"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "SHA-256 hex digest of the metrics.json artifact when produced by M24-04. Null or absent for M24-03."
         }
       }
     },

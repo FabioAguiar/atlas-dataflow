@@ -8,6 +8,7 @@ this runtime boundary.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -50,6 +51,15 @@ class BundleUnavailableError(InferenceRuntimeError):
 
 class BundleExecutionError(InferenceRuntimeError):
     """Raised when prediction execution fails."""
+
+
+class BundleValidationError(InferenceRuntimeError):
+    """Raised when bundle metadata is invalid before runtime loading."""
+
+    def __init__(self, code: str, message: str, *, field: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.field = field
 
 
 @dataclass(frozen=True)
@@ -122,6 +132,7 @@ def load_runtime_bundle_adapter(
     manifest: Mapping[str, Any] | None = None,
     bundle_loader: BundleLoader,
     loader_strategies: Mapping[str, LoaderStrategy] | None = None,
+    supported_serialization_formats: Sequence[str] | None = None,
     prediction_executor: PredictionExecutor | None = None,
     compatibility_status: Mapping[str, Any] | None = None,
 ) -> RuntimeBundleAdapter:
@@ -142,6 +153,11 @@ def load_runtime_bundle_adapter(
     )
     declaration = _bundle_declaration(loaded.bundle, manifest)
     metadata = _runtime_metadata(declaration)
+    _validate_bundle_declaration(
+        declaration,
+        compatibility_status=compatibility_status,
+        supported_serialization_formats=supported_serialization_formats,
+    )
     bundle = loaded.bundle
     model_artifact_path: Path | None = None
 
@@ -155,6 +171,7 @@ def load_runtime_bundle_adapter(
         model_artifact_path = _resolve_release_relative_path(release_root, model_reference)
         if not model_artifact_path.is_file():
             raise BundleUnavailableError("Inference model artifact is unavailable.")
+        _verify_model_artifact_hash(model_artifact_path, declaration)
         try:
             bundle = loader_strategies[strategy](model_artifact_path, declaration)
         except InferenceRuntimeError:
@@ -212,6 +229,16 @@ def _require_compatible_status(compatibility_status: Mapping[str, Any] | None) -
         return
     if compatibility_status.get("status") != "compatible":
         raise BundleReferenceError("Inference bundle has not passed compatibility validation.")
+
+    checks = compatibility_status.get("checks")
+    if isinstance(checks, Mapping):
+        for key in ("feature_order_compatible", "feature_names_compatible"):
+            if checks.get(key) is False:
+                raise BundleValidationError(
+                    "feature_contract_mismatch",
+                    "Inference bundle feature metadata is incompatible with the validated contract.",
+                    field=f"compatibility_status.checks.{key}",
+                )
 
 
 def _release_root(active_release: Mapping[str, Any]) -> Path:
@@ -301,11 +328,175 @@ def _runtime_metadata(declaration: Mapping[str, Any]) -> RuntimeBundleMetadata:
     )
 
 
+def _validate_bundle_declaration(
+    declaration: Mapping[str, Any],
+    *,
+    compatibility_status: Mapping[str, Any] | None,
+    supported_serialization_formats: Sequence[str] | None,
+) -> None:
+    if not declaration:
+        return
+
+    runtime_execution = declaration.get("runtime_execution")
+    if not isinstance(runtime_execution, Mapping):
+        if _is_full_inference_bundle(declaration):
+            raise BundleValidationError(
+                "missing_runtime_execution",
+                "Inference bundle runtime execution metadata is not defined.",
+                field="runtime_execution",
+            )
+        return
+
+    serialization_format = runtime_execution.get("serialization_format")
+    if supported_serialization_formats is not None and serialization_format not in supported_serialization_formats:
+        raise BundleValidationError(
+            "unsupported_serialization_format",
+            "Inference bundle serialization format is unsupported.",
+            field="runtime_execution.serialization_format",
+        )
+
+    if _is_full_inference_bundle(declaration):
+        _validate_required_references(declaration)
+        _validate_contract_reference_versions(declaration)
+
+    if compatibility_status is not None:
+        _validate_compatibility_reference(declaration, compatibility_status)
+
+
+def _is_full_inference_bundle(declaration: Mapping[str, Any]) -> bool:
+    return any(
+        key in declaration
+        for key in (
+            "bundle_identity",
+            "contract_references",
+            "training_evidence",
+            "compatibility_constraints",
+        )
+    )
+
+
+def _validate_required_references(declaration: Mapping[str, Any]) -> None:
+    model_reference = _model_artifact_reference(declaration)
+    if model_reference is None:
+        raise BundleValidationError(
+            "missing_model_artifact_reference",
+            "Inference model artifact reference is not defined.",
+            field="model_artifact.path",
+        )
+
+    training_evidence = declaration.get("training_evidence")
+    if not isinstance(training_evidence, Mapping):
+        raise BundleValidationError(
+            "missing_training_evidence_reference",
+            "Inference bundle training evidence references are not defined.",
+            field="training_evidence",
+        )
+    for key in ("training_parameter_record", "training_metrics"):
+        reference = training_evidence.get(key)
+        if not isinstance(reference, Mapping) or not _first_string_value(reference, _REFERENCE_KEYS):
+            raise BundleValidationError(
+                "missing_training_evidence_reference",
+                "Inference bundle training evidence reference is not defined.",
+                field=f"training_evidence.{key}.path",
+            )
+
+    contract_references = declaration.get("contract_references")
+    if not isinstance(contract_references, Mapping):
+        raise BundleValidationError(
+            "missing_contract_reference",
+            "Inference bundle contract references are not defined.",
+            field="contract_references",
+        )
+    for key in ("execution_contract", "runtime_contract", "public_contract"):
+        reference = contract_references.get(key)
+        if not isinstance(reference, Mapping) or not _first_string_value(reference, _REFERENCE_KEYS):
+            raise BundleValidationError(
+                "missing_contract_reference",
+                "Inference bundle contract reference is not defined.",
+                field=f"contract_references.{key}.path",
+            )
+
+
+def _validate_contract_reference_versions(declaration: Mapping[str, Any]) -> None:
+    constraints = declaration.get("compatibility_constraints")
+    if not isinstance(constraints, Mapping):
+        return
+    required_versions = constraints.get("requires_contract_versions")
+    if not isinstance(required_versions, Mapping):
+        return
+    contract_references = declaration.get("contract_references")
+    if not isinstance(contract_references, Mapping):
+        return
+
+    for key, required_version in required_versions.items():
+        reference = contract_references.get(key)
+        actual_version = reference.get("contract_version") if isinstance(reference, Mapping) else None
+        if isinstance(required_version, str) and actual_version != required_version:
+            raise BundleValidationError(
+                "stale_contract_reference",
+                "Inference bundle contract reference version is stale.",
+                field=f"contract_references.{key}.contract_version",
+            )
+
+
+def _validate_compatibility_reference(
+    declaration: Mapping[str, Any],
+    compatibility_status: Mapping[str, Any],
+) -> None:
+    validated_bundle = compatibility_status.get("validated_bundle")
+    if not isinstance(validated_bundle, str) or not validated_bundle.strip():
+        return
+
+    bundle_identity = declaration.get("bundle_identity")
+    bundle_id = bundle_identity.get("bundle_id") if isinstance(bundle_identity, Mapping) else None
+    release_context = declaration.get("release_context")
+    release_reference = (
+        release_context.get("release_package_reference") if isinstance(release_context, Mapping) else None
+    )
+    if validated_bundle not in {bundle_id, release_reference}:
+        raise BundleValidationError(
+            "stale_compatibility_reference",
+            "Inference bundle compatibility validation references a different bundle.",
+            field="compatibility_status.validated_bundle",
+        )
+
+
 def _model_artifact_reference(declaration: Mapping[str, Any]) -> str | None:
     model_artifact = declaration.get("model_artifact")
     if isinstance(model_artifact, Mapping):
         return _first_string_value(model_artifact, _REFERENCE_KEYS)
     return None
+
+
+def _verify_model_artifact_hash(model_artifact_path: Path, declaration: Mapping[str, Any]) -> None:
+    expected_hash = _model_artifact_sha256(declaration)
+    if expected_hash is None:
+        return
+    actual_hash = _sha256_file(model_artifact_path)
+    if actual_hash != expected_hash:
+        raise BundleValidationError(
+            "model_artifact_hash_mismatch",
+            "Inference model artifact hash does not match the bundle declaration.",
+            field="model_artifact.sha256",
+        )
+
+
+def _model_artifact_sha256(declaration: Mapping[str, Any]) -> str | None:
+    model_artifact = declaration.get("model_artifact")
+    if not isinstance(model_artifact, Mapping):
+        return None
+    value = model_artifact.get("sha256")
+    if isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value):
+        return value
+    return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _resolve_release_relative_path(release_root: Path, reference: str) -> Path:

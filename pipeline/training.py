@@ -54,6 +54,7 @@ TRAINING_PARAMETER_RECORD_FILENAME = "training-parameter-record.json"
 METRICS_ARTIFACT_FILENAME = "metrics.json"
 MODEL_SELECTION_EVIDENCE_FILENAME = "model-selection-evidence.json"
 MODEL_CARD_INPUT_FILENAME = "model-card-input.json"
+CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION = "controlled-entrypoint-provenance.v1"
 
 _LOWER_IS_BETTER_METRICS = frozenset({"log_loss"})
 
@@ -707,6 +708,183 @@ def _serialize_model(model: Any, model_path: Path) -> str:
     return _sha256_file(model_path)
 
 
+def _require_model_interface_attribute(
+    *,
+    model: Any,
+    attribute: str,
+    contract_field: str,
+    expectation: str,
+) -> Any:
+    if not hasattr(model, attribute):
+        raise TrainingInputError(
+            "contract_model_compatibility_failed",
+            (
+                f"execution contract field {contract_field} requires model interface "
+                f"{attribute}: {expectation}."
+            ),
+            field=f"{contract_field}:{attribute}",
+        )
+    return getattr(model, attribute)
+
+
+def _validate_contract_model_compatibility(
+    *,
+    contract: dict[str, Any],
+    model: Any,
+    task_type: str,
+) -> None:
+    """Validate the fitted model against contract-level interface expectations."""
+    feature_columns = [str(column) for column in contract["feature_columns"]]
+    n_features_in = _require_model_interface_attribute(
+        model=model,
+        attribute="n_features_in_",
+        contract_field="feature_columns",
+        expectation="fitted model must declare the number of input features it accepts",
+    )
+    if int(n_features_in) != len(feature_columns):
+        raise TrainingInputError(
+            "contract_model_compatibility_failed",
+            (
+                "execution contract field feature_columns is incompatible with model "
+                f"attribute n_features_in_: expected {len(feature_columns)}, got {n_features_in}."
+            ),
+            field="feature_columns:n_features_in_",
+        )
+
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is not None:
+        model_feature_names = [str(name) for name in list(feature_names)]
+        if model_feature_names != feature_columns:
+            raise TrainingInputError(
+                "contract_model_compatibility_failed",
+                (
+                    "execution contract field feature_columns is incompatible with model "
+                    "attribute feature_names_in_: expected the same ordered feature names."
+                ),
+                field="feature_columns:feature_names_in_",
+            )
+
+    if not hasattr(model, "predict"):
+        raise TrainingInputError(
+            "contract_model_compatibility_failed",
+            "execution contract requires a model interface with predict support.",
+            field="modeling_constraints:predict",
+        )
+
+    if task_type == "classification":
+        classes = _require_model_interface_attribute(
+            model=model,
+            attribute="classes_",
+            contract_field="target_column",
+            expectation="classification model must expose fitted target classes",
+        )
+        if len(list(classes)) < 2:
+            raise TrainingInputError(
+                "contract_model_compatibility_failed",
+                (
+                    "execution contract field target_column requires model attribute "
+                    "classes_ to contain at least two fitted classes."
+                ),
+                field="target_column:classes_",
+            )
+
+
+def _controlled_entrypoint_provenance_marker(
+    *,
+    contract_path: Path,
+    dataset_path: Path,
+    output_directory: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    marker_inputs = {
+        "version": CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION,
+        "entrypoint": "pipeline.training.train_from_paths",
+        "run_id": output_directory.name,
+        "output_directory": f"{_repo_relative_path(output_directory)}/",
+        "execution_contract_sha256": _sha256_file(contract_path),
+        "prepared_dataset_sha256": _sha256_file(dataset_path),
+        "training_timestamp": training_timestamp,
+    }
+    marker_id = hashlib.sha256(
+        json.dumps(marker_inputs, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return {
+        "marker_version": CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION,
+        "marker_kind": "controlled_training_entrypoint",
+        "entrypoint": "pipeline.training.train_from_paths",
+        "generated_at": training_timestamp,
+        "run_id": output_directory.name,
+        "output_directory": marker_inputs["output_directory"],
+        "execution_contract_sha256": marker_inputs["execution_contract_sha256"],
+        "prepared_dataset_sha256": marker_inputs["prepared_dataset_sha256"],
+        "marker_id": marker_id,
+    }
+
+
+def _require_valid_controlled_entrypoint_provenance(
+    parameter_record: dict[str, Any],
+) -> dict[str, Any]:
+    marker = parameter_record.get("controlled_entrypoint_provenance")
+    if not isinstance(marker, dict):
+        raise TrainingInputError(
+            "missing_controlled_entrypoint_provenance",
+            (
+                "training_parameter_record controlled_entrypoint_provenance is required "
+                "before downstream pipeline artifact acceptance."
+            ),
+            field="controlled_entrypoint_provenance",
+        )
+    required = {
+        "marker_version",
+        "marker_kind",
+        "entrypoint",
+        "generated_at",
+        "run_id",
+        "output_directory",
+        "execution_contract_sha256",
+        "prepared_dataset_sha256",
+        "marker_id",
+    }
+    missing = sorted(required - set(marker))
+    if missing:
+        raise TrainingInputError(
+            "invalid_controlled_entrypoint_provenance",
+            (
+                "training_parameter_record controlled_entrypoint_provenance is missing "
+                f"required marker fields: {missing}."
+            ),
+            field="controlled_entrypoint_provenance",
+        )
+    if marker["marker_version"] != CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION:
+        raise TrainingInputError(
+            "invalid_controlled_entrypoint_provenance",
+            (
+                "training_parameter_record controlled_entrypoint_provenance marker_version "
+                f"is incompatible: {marker['marker_version']}."
+            ),
+            field="controlled_entrypoint_provenance.marker_version",
+        )
+    if marker["marker_kind"] != "controlled_training_entrypoint":
+        raise TrainingInputError(
+            "invalid_controlled_entrypoint_provenance",
+            "training_parameter_record controlled_entrypoint_provenance marker_kind is invalid.",
+            field="controlled_entrypoint_provenance.marker_kind",
+        )
+    if marker["entrypoint"] != "pipeline.training.train_from_paths":
+        raise TrainingInputError(
+            "invalid_controlled_entrypoint_provenance",
+            "training_parameter_record controlled_entrypoint_provenance entrypoint is invalid.",
+            field="controlled_entrypoint_provenance.entrypoint",
+        )
+    if not re.fullmatch(r"[a-f0-9]{64}", str(marker["marker_id"])):
+        raise TrainingInputError(
+            "invalid_controlled_entrypoint_provenance",
+            "training_parameter_record controlled_entrypoint_provenance marker_id must be a SHA-256 hex digest.",
+            field="controlled_entrypoint_provenance.marker_id",
+        )
+    return marker
+
+
 def _write_parameter_record(record_path: Path, record: dict[str, Any]) -> str:
     record_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.write_text(
@@ -1061,6 +1239,7 @@ def _build_training_parameter_record(
     model_card_input_path: Path,
     model_artifact_sha256: str,
     metrics_sha256: str | None,
+    controlled_entrypoint_provenance: dict[str, Any],
     serializer_version: str,
     training_timestamp: str,
 ) -> dict[str, Any]:
@@ -1097,6 +1276,7 @@ def _build_training_parameter_record(
             "installed_version": serializer_version,
             "serialization_format_version": serialization_format_version,
         },
+        "controlled_entrypoint_provenance": controlled_entrypoint_provenance,
         "permitted_execution_contract_fields": sorted(PERMITTED_EXECUTION_CONTRACT_FIELDS),
         "training_parameters": {
             "model_family": str(result["model_family"]),
@@ -1126,6 +1306,7 @@ def _build_training_parameter_record(
             "model_bytes_embedded": False,
             "notebook_state_embedded": False,
             "unauthorized_contract_fields_consumed": False,
+            "controlled_entrypoint_provenance_marker_present": True,
         },
         "evidence_policy": {
             "raw_logs_prohibited": True,
@@ -1152,6 +1333,7 @@ def _build_model_card_input_artifact(
     training_timestamp: str,
 ) -> dict[str, Any]:
     parameter_record = _load_json_file(parameter_record_path, "training_parameter_record_path")
+    _require_valid_controlled_entrypoint_provenance(parameter_record)
     metrics_artifact = _load_json_file(metrics_path, "metrics_path")
     training_parameters = parameter_record["training_parameters"]
     metric_source = metrics_artifact["metric_source"]
@@ -1291,6 +1473,17 @@ def train_from_paths(
     )
     serializer_version = _serializer_version()
     training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _validate_contract_model_compatibility(
+        contract=contract,
+        model=model,
+        task_type=task_type,
+    )
+    controlled_entrypoint_provenance = _controlled_entrypoint_provenance_marker(
+        contract_path=contract_path,
+        dataset_path=prepared_dataset_path,
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
     model_artifact_sha256 = _serialize_model(model, model_artifact_path)
     selected_candidate = next(
         candidate for candidate in candidates if candidate["model_family"] == model_family
@@ -1345,6 +1538,7 @@ def train_from_paths(
         model_card_input_path=model_card_input_path,
         model_artifact_sha256=model_artifact_sha256,
         metrics_sha256=metrics_sha256,
+        controlled_entrypoint_provenance=controlled_entrypoint_provenance,
         serializer_version=serializer_version,
         training_timestamp=training_timestamp,
     )

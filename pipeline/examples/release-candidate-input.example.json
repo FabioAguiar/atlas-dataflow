@@ -1,0 +1,349 @@
+{
+  "contract_version": "release-candidate-input.v1",
+  "input_kind": "release_candidate_input",
+  "dataset_identity": {
+    "dataset_slug": "example-dataset",
+    "dataset_title": "Example Dataset"
+  },
+  "release_identity": {
+    "release_id": "release-20260626-001",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-06-26T00:00:00Z"
+  },
+  "source_run": {
+    "run_id": "candidate-input-20260626T000000Z",
+    "producer": "atlas-dataflow pipeline",
+    "created_at": "2026-06-26T00:00:00Z"
+  },
+  "artifact_inputs": {
+    "discovery_evidence": {
+      "role": "discovery_evidence",
+      "required": true,
+      "source_stage": "M22",
+      "path": "pipeline/evidence/example-dataset/discovery-evidence.json",
+      "contract_version": "dataset-discovery-evidence.v1",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "hash_policy": "sha256_required",
+      "public_projection": "internal_only",
+      "evidence_classification": "internal_evidence",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "promoted_contracts": {
+      "execution_contract": {
+        "role": "execution_contract",
+        "required": true,
+        "source_stage": "M23",
+        "path": "contracts/example-dataset/execution-contract.json",
+        "contract_version": "execution_contract.v1",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "hash_policy": "sha256_required",
+        "public_projection": "internal_only",
+        "evidence_classification": "not_evidence",
+        "placeholder_policy": {
+          "fixtures_allowed": false,
+          "placeholders_allowed": false,
+          "missing_required_behavior": "reject"
+        },
+        "availability_status": "real_dataflow_artifact"
+      },
+      "runtime_contract": {
+        "role": "runtime_contract",
+        "required": true,
+        "source_stage": "M23",
+        "path": "contracts/example-dataset/runtime-contract.json",
+        "contract_version": "1.0.0",
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "hash_policy": "sha256_required",
+        "public_projection": "internal_only",
+        "evidence_classification": "not_evidence",
+        "placeholder_policy": {
+          "fixtures_allowed": false,
+          "placeholders_allowed": false,
+          "missing_required_behavior": "reject"
+        },
+        "availability_status": "real_dataflow_artifact"
+      },
+      "public_contract": {
+        "role": "public_contract",
+        "required": true,
+        "source_stage": "M23",
+        "path": "contracts/example-dataset/public-contract.json",
+        "contract_version": "1.0.0",
+        "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "hash_policy": "sha256_required",
+        "public_projection": "public_artifact",
+        "evidence_classification": "public_artifact",
+        "placeholder_policy": {
+          "fixtures_allowed": false,
+          "placeholders_allowed": false,
+          "missing_required_behavior": "reject"
+        },
+        "availability_status": "real_dataflow_artifact"
+      }
+    },
+    "preparation_recipe": {
+      "role": "preparation_recipe",
+      "required": true,
+      "source_stage": "M22",
+      "path": "pipeline/evidence/example-dataset/preparation-recipe.json",
+      "contract_version": "candidate-preparation-recipe.v1",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "hash_policy": "sha256_required",
+      "public_projection": "internal_only",
+      "evidence_classification": "internal_evidence",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "prepared_data_metadata": {
+      "role": "prepared_data_metadata",
+      "required": true,
+      "source_stage": "M23",
+      "path": "pipeline/prepared/example-dataset/prepared-data-metadata.json",
+      "contract_version": "prepared-data-metadata.v1",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "hash_policy": "sha256_required",
+      "public_projection": "internal_only",
+      "evidence_classification": "internal_traceability_reference",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "training_parameter_record": {
+      "role": "training_parameter_record",
+      "required": true,
+      "source_stage": "M24",
+      "path": "pipeline/training-runs/example-dataset/train-20260626T000000Z/training-parameter-record.json",
+      "contract_version": "training-parameter-record.v1",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "hash_policy": "sha256_required",
+      "public_projection": "internal_only",
+      "evidence_classification": "internal_traceability_reference",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "model_artifact": {
+      "role": "model_artifact",
+      "required": true,
+      "source_stage": "M24",
+      "path": "pipeline/training-runs/example-dataset/train-20260626T000000Z/model.joblib",
+      "contract_version": "model_artifact_reference",
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "hash_policy": "sha256_required",
+      "public_projection": "public_reference_only",
+      "evidence_classification": "not_evidence",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "training_metrics": {
+      "role": "training_metrics",
+      "required": true,
+      "source_stage": "M24",
+      "path": "pipeline/training-runs/example-dataset/train-20260626T000000Z/metrics.json",
+      "contract_version": "training-metrics.v1",
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "hash_policy": "sha256_required",
+      "public_projection": "public_artifact",
+      "evidence_classification": "public_artifact",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "model_card": {
+      "role": "model_card",
+      "required": true,
+      "source_stage": "M24",
+      "path": "pipeline/training-runs/example-dataset/train-20260626T000000Z/model-card.json",
+      "contract_version": "model-card.v1",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hash_policy": "sha256_required",
+      "public_projection": "public_artifact",
+      "evidence_classification": "public_artifact",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "public_context": {
+      "role": "public_context",
+      "required": true,
+      "source_stage": "M23",
+      "path": "contracts/example-dataset/dataset-context.json",
+      "contract_version": "dataset-context.v1",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "hash_policy": "sha256_required",
+      "public_projection": "public_artifact",
+      "evidence_classification": "public_artifact",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "visualization_references": [
+      {
+        "role": "visualization_reference",
+        "required": false,
+        "source_stage": "M24",
+        "path": "pipeline/visualizations/example-dataset/feature-importance.json",
+        "contract_version": "visualization-reference.v1",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "hash_policy": "sha256_required",
+        "public_projection": "public_artifact",
+        "evidence_classification": "public_artifact",
+        "placeholder_policy": {
+          "fixtures_allowed": false,
+          "placeholders_allowed": false,
+          "missing_required_behavior": "reject"
+        },
+        "availability_status": "real_dataflow_artifact",
+        "notes": [
+          "Optional role included only when a governed visualization artifact exists."
+        ]
+      }
+    ],
+    "inference_bundle": {
+      "role": "inference_bundle",
+      "required": true,
+      "source_stage": "M25",
+      "path": "contracts/example-dataset/inference-bundle.json",
+      "contract_version": "inference_bundle.v1",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "hash_policy": "sha256_required",
+      "public_projection": "public_reference_only",
+      "evidence_classification": "not_evidence",
+      "placeholder_policy": {
+        "fixtures_allowed": false,
+        "placeholders_allowed": false,
+        "missing_required_behavior": "reject"
+      },
+      "availability_status": "real_dataflow_artifact"
+    },
+    "internal_evidence_references": [
+      {
+        "role": "discovery_evidence",
+        "path": "pipeline/evidence/example-dataset/discovery-evidence.json",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "source_stage": "M22",
+        "evidence_classification": "internal_evidence",
+        "public_projection": "internal_only"
+      },
+      {
+        "role": "training_evidence",
+        "path": "pipeline/training-runs/example-dataset/train-20260626T000000Z/training-parameter-record.json",
+        "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+        "source_stage": "M24",
+        "evidence_classification": "internal_evidence",
+        "public_projection": "internal_only"
+      }
+    ]
+  },
+  "candidate_mapping": {
+    "candidate_layout_schema": "pipeline/candidate-layout.schema.json",
+    "publisher_release_candidate_schema": "publisher/release-candidate.schema.json",
+    "publisher_release_manifest_schema": "publisher/release-manifest.schema.json",
+    "publisher_validation_schema": "publisher/validation/release-candidate-validation.schema.json",
+    "role_mappings": [
+      {
+        "input_role": "promoted_contracts",
+        "candidate_role": "contracts",
+        "publisher_role": "contracts",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "training_metrics",
+        "candidate_role": "metrics",
+        "publisher_role": "metrics",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "model_card",
+        "candidate_role": "model_card",
+        "publisher_role": "model_card",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "public_context",
+        "candidate_role": "public_context",
+        "publisher_role": "public_context",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "inference_bundle",
+        "candidate_role": "predictive_bundle",
+        "publisher_role": "predictive_bundle",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "prepared_data_metadata",
+        "candidate_role": "candidate_metadata",
+        "publisher_role": "candidate_metadata",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "visualization_references",
+        "candidate_role": "visualizations",
+        "publisher_role": "visualizations",
+        "mapping_requirement": "optional_when_available"
+      },
+      {
+        "input_role": "internal_evidence_references",
+        "candidate_role": "build_evidence",
+        "publisher_role": null,
+        "mapping_requirement": "must_remain_internal_evidence"
+      }
+    ]
+  },
+  "classification_policy": {
+    "missing_required_input": "reject",
+    "fixture_only_required_input": "reject",
+    "placeholder_only_required_input": "reject",
+    "unsafe_public_projection": "reject",
+    "internal_absolute_path_in_public_reference": "reject"
+  },
+  "boundary_confirmations": {
+    "candidate_assembly_performed": false,
+    "publisher_validation_performed": false,
+    "manifest_generation_performed": false,
+    "promotion_performed": false,
+    "registry_activation_performed": false,
+    "runtime_inference_performed": false,
+    "model_training_performed": false,
+    "raw_artifact_contents_embedded": false,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "public_artifacts_include_internal_evidence": false
+  },
+  "example_metadata": {
+    "example_only": true,
+    "not_release_evidence": true,
+    "note": "Example-only release candidate input set for pipeline/release-candidate-input.schema.json. This fixture demonstrates required fields and safe references; it is not a real release candidate input, release evidence, or publication artifact."
+  }
+}

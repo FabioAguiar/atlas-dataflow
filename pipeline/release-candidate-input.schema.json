@@ -1,0 +1,862 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/release-candidate-input.schema.json",
+  "title": "Atlas DataFlow Release Candidate Input",
+  "description": "Pre-assembly input contract for a governed release candidate. This schema defines the M26 release candidate input boundary before pipeline candidate assembly. It enumerates required M22 through M25 artifacts, stable dataset and release identities, source references, hashes, public projection classification, internal evidence boundaries, and deterministic placeholder handling without performing candidate assembly, publisher validation, manifest generation, promotion, registry activation, runtime inference, or model training.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "input_kind",
+    "dataset_identity",
+    "release_identity",
+    "source_run",
+    "artifact_inputs",
+    "candidate_mapping",
+    "classification_policy",
+    "boundary_confirmations"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "release-candidate-input.v1",
+      "description": "Fixed version for the first release candidate input contract."
+    },
+    "input_kind": {
+      "type": "string",
+      "const": "release_candidate_input",
+      "description": "Declares that this document is the governed pre-assembly input set, not an assembled release candidate or publisher manifest."
+    },
+    "dataset_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug"
+      ],
+      "description": "Dataset identity that must map to pipeline/candidate-layout.schema.json and publisher/release-candidate.schema.json. It must be explicit and must not be inferred from a local path, fixture name, or notebook state.",
+      "properties": {
+        "dataset_slug": {
+          "$ref": "#/$defs/dataset_slug"
+        },
+        "dataset_title": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "release_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_id",
+        "release_version",
+        "created_at"
+      ],
+      "description": "Release identity that must remain compatible with existing candidate layout, release candidate, manifest, and validation schemas.",
+      "properties": {
+        "release_id": {
+          "$ref": "#/$defs/release_id"
+        },
+        "release_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "source_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "producer",
+        "created_at"
+      ],
+      "description": "Traceability for the pre-assembly input selection run. This does not make the input set publishable.",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "artifact_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "discovery_evidence",
+        "promoted_contracts",
+        "preparation_recipe",
+        "prepared_data_metadata",
+        "training_parameter_record",
+        "model_artifact",
+        "training_metrics",
+        "model_card",
+        "public_context",
+        "inference_bundle",
+        "internal_evidence_references"
+      ],
+      "description": "Governed artifact roles consumed before candidate assembly. Required roles must reference real dataflow outputs with hashes or an explicit hash policy. Visualization references are optional and must not weaken mandatory role rejection.",
+      "properties": {
+        "discovery_evidence": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_internal_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "discovery_evidence"
+                },
+                "source_stage": {
+                  "const": "M22"
+                },
+                "contract_version": {
+                  "const": "dataset-discovery-evidence.v1"
+                }
+              }
+            }
+          ],
+          "description": "M22 dataset discovery evidence input."
+        },
+        "promoted_contracts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "execution_contract",
+            "runtime_contract",
+            "public_contract"
+          ],
+          "description": "Promoted contract inputs. Runtime and execution contracts remain internal; the public contract is publisher-visible.",
+          "properties": {
+            "execution_contract": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/required_internal_artifact_input"
+                },
+                {
+                  "properties": {
+                    "role": {
+                      "const": "execution_contract"
+                    },
+                    "contract_version": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "runtime_contract": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/required_internal_artifact_input"
+                },
+                {
+                  "properties": {
+                    "role": {
+                      "const": "runtime_contract"
+                    },
+                    "contract_version": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              ]
+            },
+            "public_contract": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/required_public_artifact_input"
+                },
+                {
+                  "properties": {
+                    "role": {
+                      "const": "public_contract"
+                    },
+                    "contract_version": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "preparation_recipe": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_internal_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "preparation_recipe"
+                },
+                "source_stage": {
+                  "const": "M22"
+                },
+                "contract_version": {
+                  "const": "candidate-preparation-recipe.v1"
+                }
+              }
+            }
+          ]
+        },
+        "prepared_data_metadata": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_internal_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "prepared_data_metadata"
+                },
+                "source_stage": {
+                  "enum": [
+                    "M22",
+                    "M23"
+                  ]
+                }
+              }
+            }
+          ],
+          "description": "Metadata for the prepared dataset consumed by training and candidate assembly. This role records metadata and hashes, not raw prepared data contents."
+        },
+        "training_parameter_record": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_internal_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "training_parameter_record"
+                },
+                "source_stage": {
+                  "const": "M24"
+                },
+                "contract_version": {
+                  "const": "training-parameter-record.v1"
+                }
+              }
+            }
+          ]
+        },
+        "model_artifact": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_internal_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "model_artifact"
+                },
+                "source_stage": {
+                  "const": "M24"
+                },
+                "contract_version": {
+                  "const": "model_artifact_reference"
+                }
+              }
+            }
+          ],
+          "description": "Serialized model artifact reference and hash. The artifact bytes are not embedded."
+        },
+        "training_metrics": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_public_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "training_metrics"
+                },
+                "source_stage": {
+                  "const": "M24"
+                },
+                "contract_version": {
+                  "const": "training-metrics.v1"
+                }
+              }
+            }
+          ]
+        },
+        "model_card": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_public_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "model_card"
+                },
+                "source_stage": {
+                  "const": "M24"
+                }
+              }
+            }
+          ]
+        },
+        "public_context": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_public_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "public_context"
+                }
+              }
+            }
+          ]
+        },
+        "visualization_references": {
+          "type": "array",
+          "description": "Optional visualization references where available. Missing visualization references must be represented by omission or by availability_status='not_available', not by weakening mandatory artifact requirements.",
+          "items": {
+            "$ref": "#/$defs/optional_public_artifact_input"
+          }
+        },
+        "inference_bundle": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_internal_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "inference_bundle"
+                },
+                "source_stage": {
+                  "const": "M25"
+                },
+                "contract_version": {
+                  "const": "inference_bundle.v1"
+                }
+              }
+            }
+          ]
+        },
+        "internal_evidence_references": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Internal reduced evidence references used for traceability. These are not publisher-visible public artifacts.",
+          "items": {
+            "$ref": "#/$defs/internal_evidence_reference"
+          }
+        }
+      }
+    },
+    "candidate_mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_layout_schema",
+        "publisher_release_candidate_schema",
+        "publisher_release_manifest_schema",
+        "publisher_validation_schema",
+        "role_mappings"
+      ],
+      "description": "Explicit mapping from pre-assembly inputs to existing post-assembly candidate, manifest, and validation surfaces. This prevents the input contract from replacing those downstream schemas.",
+      "properties": {
+        "candidate_layout_schema": {
+          "type": "string",
+          "const": "pipeline/candidate-layout.schema.json"
+        },
+        "publisher_release_candidate_schema": {
+          "type": "string",
+          "const": "publisher/release-candidate.schema.json"
+        },
+        "publisher_release_manifest_schema": {
+          "type": "string",
+          "const": "publisher/release-manifest.schema.json"
+        },
+        "publisher_validation_schema": {
+          "type": "string",
+          "const": "publisher/validation/release-candidate-validation.schema.json"
+        },
+        "role_mappings": {
+          "type": "array",
+          "minItems": 7,
+          "items": {
+            "$ref": "#/$defs/role_mapping"
+          }
+        }
+      }
+    },
+    "classification_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "missing_required_input",
+        "fixture_only_required_input",
+        "placeholder_only_required_input",
+        "unsafe_public_projection",
+        "internal_absolute_path_in_public_reference"
+      ],
+      "description": "Deterministic classification rules for invalid or incomplete release candidate inputs.",
+      "properties": {
+        "missing_required_input": {
+          "type": "string",
+          "const": "reject"
+        },
+        "fixture_only_required_input": {
+          "type": "string",
+          "const": "reject"
+        },
+        "placeholder_only_required_input": {
+          "type": "string",
+          "const": "reject"
+        },
+        "unsafe_public_projection": {
+          "type": "string",
+          "const": "reject"
+        },
+        "internal_absolute_path_in_public_reference": {
+          "type": "string",
+          "const": "reject"
+        }
+      }
+    },
+    "boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_assembly_performed",
+        "publisher_validation_performed",
+        "manifest_generation_performed",
+        "promotion_performed",
+        "registry_activation_performed",
+        "runtime_inference_performed",
+        "model_training_performed",
+        "raw_artifact_contents_embedded",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "public_artifacts_include_internal_evidence"
+      ],
+      "description": "Boundary controls confirming that this input contract is a declaration of inputs only.",
+      "properties": {
+        "candidate_assembly_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "publisher_validation_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "manifest_generation_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "promotion_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "registry_activation_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "runtime_inference_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "model_training_performed": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_artifact_contents_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_logs_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_runtime_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_api_payloads_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "secrets_persisted": {
+          "type": "boolean",
+          "const": false
+        },
+        "public_artifacts_include_internal_evidence": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "example_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "example_only",
+        "not_release_evidence"
+      ],
+      "description": "Optional marker for examples under pipeline/examples/. Production release candidate input documents should omit this field.",
+      "properties": {
+        "example_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "not_release_evidence": {
+          "type": "boolean",
+          "const": true
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    },
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safe_relative_file_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\\\)(?![A-Za-z]:)(?!.*(?:^|/)(?:\\.env|logs|runtime/logs|runtime/tmp|runtime/cache|runtime/data)(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*[^/]$",
+      "description": "Repository- or release-relative file reference. Absolute paths, parent traversal, repeated separators, Windows paths, URI-like references, runtime/log/cache/data paths, and directory-only references are invalid."
+    },
+    "artifact_presence": {
+      "type": "string",
+      "enum": [
+        "real_dataflow_artifact",
+        "not_available"
+      ]
+    },
+    "hash_policy": {
+      "type": "string",
+      "enum": [
+        "sha256_required",
+        "sha256_verified_by_downstream_manifest"
+      ]
+    },
+    "public_projection": {
+      "type": "string",
+      "enum": [
+        "public_artifact",
+        "internal_only",
+        "public_reference_only"
+      ]
+    },
+    "evidence_classification": {
+      "type": "string",
+      "enum": [
+        "public_artifact",
+        "internal_evidence",
+        "internal_traceability_reference",
+        "not_evidence"
+      ]
+    },
+    "placeholder_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixtures_allowed",
+        "placeholders_allowed",
+        "missing_required_behavior"
+      ],
+      "properties": {
+        "fixtures_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "placeholders_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "missing_required_behavior": {
+          "type": "string",
+          "const": "reject"
+        }
+      }
+    },
+    "artifact_input_base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "required",
+        "source_stage",
+        "path",
+        "contract_version",
+        "hash_policy",
+        "public_projection",
+        "evidence_classification",
+        "placeholder_policy",
+        "availability_status"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "source_stage": {
+          "type": "string",
+          "enum": [
+            "M22",
+            "M23",
+            "M24",
+            "M25",
+            "M26",
+            "manual_governed_input"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/safe_relative_file_path"
+        },
+        "contract_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        },
+        "hash_policy": {
+          "$ref": "#/$defs/hash_policy"
+        },
+        "public_projection": {
+          "$ref": "#/$defs/public_projection"
+        },
+        "evidence_classification": {
+          "$ref": "#/$defs/evidence_classification"
+        },
+        "placeholder_policy": {
+          "$ref": "#/$defs/placeholder_policy"
+        },
+        "availability_status": {
+          "$ref": "#/$defs/artifact_presence"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "required_internal_artifact_input": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifact_input_base"
+        },
+        {
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "required": {
+              "const": true
+            },
+            "public_projection": {
+              "enum": [
+                "internal_only",
+                "public_reference_only"
+              ]
+            },
+            "evidence_classification": {
+              "enum": [
+                "internal_evidence",
+                "internal_traceability_reference",
+                "not_evidence"
+              ]
+            },
+            "availability_status": {
+              "const": "real_dataflow_artifact"
+            }
+          }
+        }
+      ]
+    },
+    "required_public_artifact_input": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifact_input_base"
+        },
+        {
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "required": {
+              "const": true
+            },
+            "public_projection": {
+              "enum": [
+                "public_artifact",
+                "public_reference_only"
+              ]
+            },
+            "availability_status": {
+              "const": "real_dataflow_artifact"
+            }
+          }
+        }
+      ]
+    },
+    "optional_public_artifact_input": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifact_input_base"
+        },
+        {
+          "properties": {
+            "role": {
+              "const": "visualization_reference"
+            },
+            "required": {
+              "const": false
+            },
+            "public_projection": {
+              "enum": [
+                "public_artifact",
+                "public_reference_only"
+              ]
+            },
+            "evidence_classification": {
+              "enum": [
+                "public_artifact",
+                "not_evidence"
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "availability_status": {
+                "const": "real_dataflow_artifact"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sha256"
+            ]
+          }
+        }
+      ]
+    },
+    "internal_evidence_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "path",
+        "sha256",
+        "source_stage",
+        "evidence_classification",
+        "public_projection"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "discovery_evidence",
+            "preparation_evidence",
+            "training_evidence",
+            "model_selection_evidence",
+            "inference_bundle_evidence",
+            "candidate_assembly_evidence"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/safe_relative_file_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        },
+        "source_stage": {
+          "type": "string",
+          "enum": [
+            "M22",
+            "M23",
+            "M24",
+            "M25",
+            "M26"
+          ]
+        },
+        "evidence_classification": {
+          "type": "string",
+          "const": "internal_evidence"
+        },
+        "public_projection": {
+          "type": "string",
+          "const": "internal_only"
+        }
+      }
+    },
+    "role_mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input_role",
+        "candidate_role",
+        "publisher_role",
+        "mapping_requirement"
+      ],
+      "properties": {
+        "input_role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "publisher_role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "mapping_requirement": {
+          "type": "string",
+          "enum": [
+            "must_map_to_candidate_artifact_role",
+            "must_remain_internal_evidence",
+            "optional_when_available"
+          ]
+        }
+      }
+    }
+  }
+}

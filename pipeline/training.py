@@ -193,11 +193,25 @@ def _load_execution_contract(path: Path) -> dict[str, Any]:
         "target_column",
         "feature_columns",
         "split_policy",
-        "random_seed",
         "primary_metric",
         "modeling_constraints",
     ):
         _require_contract_field(reduced, required)
+    if "random_seed" not in reduced or reduced["random_seed"] == "":
+        raise TrainingInputError(
+            "missing_contract_field",
+            "execution contract is missing required field: random_seed",
+            field="random_seed",
+        )
+    if reduced["random_seed"] is not None and (
+        not isinstance(reduced["random_seed"], int)
+        or isinstance(reduced["random_seed"], bool)
+    ):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "execution contract random_seed must be an integer or null.",
+            field="random_seed",
+        )
     if not isinstance(reduced["feature_columns"], list) or not reduced["feature_columns"]:
         raise TrainingInputError(
             "invalid_contract_field",
@@ -205,6 +219,64 @@ def _load_execution_contract(path: Path) -> dict[str, Any]:
             field="feature_columns",
         )
     return reduced
+
+
+def _is_missing_dataset_value(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
+def _is_numeric_dataset_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return math.isfinite(float(value))
+    if isinstance(value, str):
+        try:
+            return math.isfinite(float(value.strip()))
+        except ValueError:
+            return False
+    return False
+
+
+def _validate_contract_dataset_type_compatibility(
+    rows: list[dict[str, Any]],
+    contract: dict[str, Any],
+) -> None:
+    feature_definitions = contract.get("feature_definitions")
+    if feature_definitions in (None, ""):
+        return
+    if not isinstance(feature_definitions, dict):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "execution contract feature_definitions must be an object when declared.",
+            field="feature_definitions",
+        )
+
+    for column in contract["feature_columns"]:
+        definition = feature_definitions.get(column)
+        if definition is None:
+            continue
+        if not isinstance(definition, dict):
+            raise TrainingInputError(
+                "invalid_contract_field",
+                f"feature_definitions.{column} must be an object.",
+                field=f"feature_definitions.{column}",
+            )
+        declared_type = definition.get("type")
+        if declared_type == "numeric":
+            for row in rows:
+                value = row.get(column)
+                if _is_missing_dataset_value(value):
+                    continue
+                if not _is_numeric_dataset_value(value):
+                    raise TrainingInputError(
+                        "contract_dataset_type_mismatch",
+                        (
+                            f"dataset column {column} contains a value that is not "
+                            "compatible with declared numeric feature type."
+                        ),
+                        field=f"feature_definitions.{column}",
+                    )
 
 
 def _sha256_file(path: Path) -> str:
@@ -366,6 +438,7 @@ def _validate_dataset(
             f"prepared dataset is missing required columns: {missing}",
             field="dataset_path",
         )
+    _validate_contract_dataset_type_compatibility(rows, contract)
 
 
 def _split_indices(

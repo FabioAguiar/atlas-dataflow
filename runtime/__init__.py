@@ -6,8 +6,11 @@ from .inference import (
     BundleUnavailableError,
     InferenceRuntimeError,
     LoadedInferenceBundle,
+    RuntimeBundleAdapter,
+    RuntimeBundleMetadata,
     execute_prediction,
     load_inference_bundle,
+    load_runtime_bundle_adapter,
 )
 
 __all__ = [
@@ -16,6 +19,9 @@ __all__ = [
     "BundleUnavailableError",
     "InferenceRuntimeError",
     "LoadedInferenceBundle",
+    "RuntimeBundleAdapter",
+    "RuntimeBundleMetadata",
     "execute_prediction",
     "load_inference_bundle",
+    "load_runtime_bundle_adapter",
 ]

@@ -224,7 +224,7 @@
         },
         "model_card_input": {
           "$ref": "#/$defs/output_artifact_role",
-          "description": "Model card input data artifact role. Path template: pipeline/training-runs/{dataset_slug}/{run_id}/model-card-input.json. Downstream M24 model-card work consumes this reduced artifact rather than raw training runtime state."
+          "description": "Model card input data artifact role. Path template: pipeline/training-runs/{dataset_slug}/{run_id}/model-card-input.json. The artifact must be standalone reduced JSON that copies model_family, training_timestamp, primary_metric_name, primary_metric_value, evaluation_split_size, seed, intended_use_context or explicit absence, feature_count, training_data_row_count, and execution_contract_hash. Downstream M24 model-card work consumes this reduced artifact rather than raw training runtime state."
         }
       }
     },

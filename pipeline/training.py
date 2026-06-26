@@ -3,10 +3,10 @@ Governed training entrypoint for atlas-dataflow M24.
 
 This module consumes only explicit execution contract and prepared dataset
 paths. It performs deterministic splitting, model training, evaluation metric
-production, and reduced artifact persistence.
+production, model-card input production, and reduced artifact persistence.
 
 Out of scope for this module:
-- model-card input or compatibility report production;
+- compatibility report production;
 - publisher, registry, runtime inference, release, or GitHub operations.
 """
 
@@ -53,6 +53,7 @@ MODEL_ARTIFACT_FILENAME = "model.pkl"
 TRAINING_PARAMETER_RECORD_FILENAME = "training-parameter-record.json"
 METRICS_ARTIFACT_FILENAME = "metrics.json"
 MODEL_SELECTION_EVIDENCE_FILENAME = "model-selection-evidence.json"
+MODEL_CARD_INPUT_FILENAME = "model-card-input.json"
 
 _LOWER_IS_BETTER_METRICS = frozenset({"log_loss"})
 
@@ -95,6 +96,7 @@ class TrainingResult:
     training_parameter_record_path: str
     metrics_path: str
     model_selection_evidence_path: str | None
+    model_card_input_path: str
     serializer_name: str
     serializer_version: str
     serialization_format_version: str
@@ -122,6 +124,7 @@ class TrainingResult:
             "training_parameter_record_path": self.training_parameter_record_path,
             "metrics_path": self.metrics_path,
             "model_selection_evidence_path": self.model_selection_evidence_path,
+            "model_card_input_path": self.model_card_input_path,
             "serializer": {
                 "name": self.serializer_name,
                 "installed_version": self.serializer_version,
@@ -132,6 +135,7 @@ class TrainingResult:
             "metrics_artifact_produced": True,
             "metrics": self.metrics,
             "model_selection_evidence_produced": self.model_selection_evidence_produced,
+            "model_card_input_produced": True,
             "training_parameter_record_persisted": True,
         }
 
@@ -634,6 +638,39 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _explicit_absence(reason: str) -> dict[str, Any]:
+    return {
+        "declared": False,
+        "value": None,
+        "absence_reason": reason,
+    }
+
+
+def _declared_or_absent(source: dict[str, Any], field: str, reason: str) -> dict[str, Any]:
+    value = source.get(field)
+    if value in (None, ""):
+        return _explicit_absence(reason)
+    return {
+        "declared": True,
+        "value": _json_safe(value),
+        "absence_reason": None,
+    }
+
+
+def _class_distribution(rows: list[dict[str, Any]], target_column: str) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        label = str(row.get(target_column))
+        counts[label] = counts.get(label, 0) + 1
+    return [
+        {
+            "label": label,
+            "row_count": counts[label],
+        }
+        for label in sorted(counts)
+    ]
+
+
 def _estimator_hyperparameters(model: Any) -> dict[str, Any]:
     estimator = model.named_steps.get("model") if hasattr(model, "named_steps") else model
     if hasattr(estimator, "get_params"):
@@ -1021,6 +1058,7 @@ def _build_training_parameter_record(
     parameter_record_path: Path,
     metrics_path: Path | None,
     model_selection_evidence_path: Path | None,
+    model_card_input_path: Path,
     model_artifact_sha256: str,
     metrics_sha256: str | None,
     serializer_version: str,
@@ -1052,7 +1090,7 @@ def _build_training_parameter_record(
                 if model_selection_evidence_path
                 else None
             ),
-            "model_card_input_path": None,
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
         },
         "serializer": {
             "name": SERIALIZER_NAME,
@@ -1101,6 +1139,107 @@ def _build_training_parameter_record(
     }
 
 
+def _build_model_card_input_artifact(
+    *,
+    contract: dict[str, Any],
+    full_contract: dict[str, Any],
+    rows: list[dict[str, Any]],
+    task_type: str,
+    output_directory: Path,
+    model_card_input_path: Path,
+    parameter_record_path: Path,
+    metrics_path: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    parameter_record = _load_json_file(parameter_record_path, "training_parameter_record_path")
+    metrics_artifact = _load_json_file(metrics_path, "metrics_path")
+    training_parameters = parameter_record["training_parameters"]
+    metric_source = metrics_artifact["metric_source"]
+    primary_metric = metrics_artifact["metrics"]["primary_metric"]
+    feature_columns = [str(column) for column in training_parameters["feature_columns"]]
+    target_column = str(training_parameters["target_column"])
+    intended_use = _declared_or_absent(
+        full_contract,
+        "intended_use_context",
+        "execution contract does not declare intended_use_context",
+    )
+    target_description = _declared_or_absent(
+        full_contract,
+        "target_description",
+        "execution contract does not declare target_description",
+    )
+
+    return {
+        "schema_version": "model-card-input.v1",
+        "artifact_kind": "model_card_input",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "model": {
+            "model_family": str(training_parameters["model_family"]),
+            "task_type": task_type,
+            "hyperparameters": _json_safe(training_parameters["hyperparameters"]),
+        },
+        "training": {
+            "training_timestamp": training_timestamp,
+            "seed": training_parameters.get("random_seed"),
+            "split_policy": _json_safe(training_parameters["split_policy"]),
+            "training_data_row_count": int(
+                training_parameters["split_sizes"]["training_rows"]
+            ),
+            "evaluation_split_size": int(metric_source["split_size"]),
+        },
+        "evaluation": {
+            "primary_metric_name": str(primary_metric["name"]),
+            "primary_metric_value": primary_metric["value"],
+            "secondary_metrics": _json_safe(metrics_artifact["metrics"]["secondary_metrics"]),
+        },
+        "dataset": {
+            "dataset_id": str(contract["dataset_id"]),
+            "target_column": target_column,
+            "target_description": target_description,
+            "feature_count": len(feature_columns),
+            "feature_columns": feature_columns,
+            "feature_definitions": _json_safe(contract.get("feature_definitions") or {}),
+            "class_distribution": (
+                _class_distribution(rows, target_column)
+                if task_type == "classification"
+                else []
+            ),
+        },
+        "intended_use_context": intended_use,
+        "path_references": {
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "execution_contract_path": parameter_record["consumed_inputs"]["execution_contract_path"],
+            "dataset_path": parameter_record["consumed_inputs"]["dataset_path"],
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": parameter_record["hashes"]["prepared_dataset_sha256"],
+            "training_parameter_record_sha256": _sha256_file(parameter_record_path),
+            "metrics_sha256": parameter_record["hashes"]["metrics_sha256"],
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "full_training_parameter_record_embedded": False,
+            "full_metrics_artifact_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
 def train_from_paths(
     execution_contract_path: str | Path,
     dataset_path: str | Path,
@@ -1111,6 +1250,7 @@ def train_from_paths(
     """Train from explicit governed inputs and persist M24 training artifacts."""
     contract_path = Path(execution_contract_path)
     prepared_dataset_path = Path(dataset_path)
+    full_contract = _load_json_file(contract_path, "execution_contract_path")
     contract = _load_execution_contract(contract_path)
     rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
     _validate_dataset(rows, prepared_dataset_id, contract)
@@ -1143,6 +1283,7 @@ def train_from_paths(
     model_artifact_path = output_directory / MODEL_ARTIFACT_FILENAME
     parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
     metrics_path = output_directory / METRICS_ARTIFACT_FILENAME
+    model_card_input_path = output_directory / MODEL_CARD_INPUT_FILENAME
     model_selection_evidence_path = (
         output_directory / MODEL_SELECTION_EVIDENCE_FILENAME
         if multiple_candidates_evaluated
@@ -1201,12 +1342,28 @@ def train_from_paths(
         parameter_record_path=parameter_record_path,
         metrics_path=metrics_path,
         model_selection_evidence_path=model_selection_evidence_path,
+        model_card_input_path=model_card_input_path,
         model_artifact_sha256=model_artifact_sha256,
         metrics_sha256=metrics_sha256,
         serializer_version=serializer_version,
         training_timestamp=training_timestamp,
     )
     parameter_record_sha256 = _write_parameter_record(parameter_record_path, parameter_record)
+    model_card_input_artifact = _build_model_card_input_artifact(
+        contract=contract,
+        full_contract=full_contract,
+        rows=rows,
+        task_type=task_type,
+        output_directory=output_directory,
+        model_card_input_path=model_card_input_path,
+        parameter_record_path=parameter_record_path,
+        metrics_path=metrics_path,
+        training_timestamp=training_timestamp,
+    )
+    model_card_input_sha256 = _write_reduced_json_artifact(
+        model_card_input_path,
+        model_card_input_artifact,
+    )
 
     return TrainingResult(
         status="trained",
@@ -1228,6 +1385,7 @@ def train_from_paths(
             if model_selection_evidence_path
             else None
         ),
+        model_card_input_path=_repo_relative_path(model_card_input_path),
         serializer_name=SERIALIZER_NAME,
         serializer_version=serializer_version,
         serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
@@ -1238,6 +1396,7 @@ def train_from_paths(
             "model_artifact_sha256": model_artifact_sha256,
             "metrics_sha256": metrics_sha256,
             "training_parameter_record_sha256": parameter_record_sha256,
+            "model_card_input_sha256": model_card_input_sha256,
             "model_selection_evidence_sha256": model_selection_evidence_sha256,
         },
         metrics=metric_values,

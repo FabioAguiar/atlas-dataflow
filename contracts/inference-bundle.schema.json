@@ -1,0 +1,559 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/contracts/inference-bundle.schema.json",
+  "title": "Atlas DataFlow Inference Bundle",
+  "description": "Schema defining inference_bundle.v1, the release-oriented contract that turns a governed trained model artifact into an executable runtime bundle. The bundle links model loading details, contract references, training provenance, hashes, feature order, preprocessing behavior, output schema, and compatibility constraints without embedding raw model bytes, notebook state, private paths, or duplicated runtime payload validation semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "bundle_identity",
+    "dataset_context",
+    "release_context",
+    "contract_references",
+    "prepared_dataset",
+    "training_evidence",
+    "model_artifact",
+    "runtime_execution",
+    "input_schema",
+    "feature_order",
+    "preprocessing",
+    "output_schema",
+    "compatibility_constraints",
+    "boundary_confirmations"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "inference_bundle.v1",
+      "description": "Fixed contract version for the first inference bundle schema iteration."
+    },
+    "bundle_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bundle_id",
+        "artifact_kind",
+        "created_at"
+      ],
+      "properties": {
+        "bundle_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*-inference-bundle-[0-9]{8}T[0-9]{6}Z$",
+          "description": "Stable generated bundle identifier tied to the dataset slug and generation timestamp."
+        },
+        "artifact_kind": {
+          "type": "string",
+          "const": "inference_bundle"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "example_only": {
+          "type": "boolean",
+          "description": "May be true only for fixtures under contracts/examples/. Production generated bundles should omit this field or set it to false."
+        }
+      }
+    },
+    "dataset_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "dataset_context_reference"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "$ref": "#/$defs/dataset_slug"
+        },
+        "dataset_context_reference": {
+          "$ref": "#/$defs/artifact_reference"
+        }
+      }
+    },
+    "release_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_id",
+        "release_package_reference"
+      ],
+      "properties": {
+        "release_id": {
+          "type": "string",
+          "pattern": "^release-[0-9]{8}-[0-9]{3}$"
+        },
+        "release_package_reference": {
+          "$ref": "#/$defs/release_relative_path"
+        },
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "contract_references": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "execution_contract",
+        "runtime_contract",
+        "public_contract"
+      ],
+      "properties": {
+        "execution_contract": {
+          "$ref": "#/$defs/versioned_artifact_reference"
+        },
+        "runtime_contract": {
+          "$ref": "#/$defs/versioned_artifact_reference"
+        },
+        "public_contract": {
+          "$ref": "#/$defs/versioned_artifact_reference"
+        }
+      }
+    },
+    "prepared_dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prepared_dataset_reference",
+        "prepared_dataset_sha256"
+      ],
+      "properties": {
+        "prepared_dataset_reference": {
+          "$ref": "#/$defs/artifact_reference"
+        },
+        "prepared_dataset_sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        }
+      }
+    },
+    "training_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "training_run_identity",
+        "training_parameter_record",
+        "training_metrics"
+      ],
+      "properties": {
+        "training_run_identity": {
+          "$ref": "#/$defs/training_run_identity"
+        },
+        "training_parameter_record": {
+          "$ref": "#/$defs/versioned_artifact_reference"
+        },
+        "training_metrics": {
+          "$ref": "#/$defs/versioned_artifact_reference"
+        },
+        "model_selection_evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/versioned_artifact_reference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "model_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "source_training_parameter_record_path"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/release_relative_file_path",
+          "description": "Release-relative path to the serialized model artifact. Absolute paths, parent traversal, and internal local paths are invalid."
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        },
+        "source_training_parameter_record_path": {
+          "$ref": "#/$defs/release_relative_file_path"
+        }
+      }
+    },
+    "runtime_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "serialization_format",
+        "loader_strategy",
+        "prediction_interface",
+        "model_family"
+      ],
+      "properties": {
+        "serialization_format": {
+          "type": "string",
+          "enum": [
+            "joblib"
+          ],
+          "description": "Bounded serialization format vocabulary. The first implementation-ready format follows M24 serializer output."
+        },
+        "loader_strategy": {
+          "type": "string",
+          "enum": [
+            "joblib_sklearn_predict"
+          ],
+          "description": "Bounded runtime loader strategy. Arbitrary import paths, executable strings, or notebook callbacks are not valid."
+        },
+        "prediction_interface": {
+          "type": "string",
+          "enum": [
+            "predict"
+          ]
+        },
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "logistic_regression",
+            "gradient_boosting",
+            "random_forest"
+          ]
+        },
+        "runtime_adapter_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_contract_reference",
+        "payload_shape"
+      ],
+      "properties": {
+        "runtime_contract_reference": {
+          "type": "string",
+          "const": "contract_references.runtime_contract",
+          "description": "Pointer to the canonical runtime contract reference in this bundle. Payload validation semantics remain owned by contracts/runtime-contract.schema.json."
+        },
+        "payload_shape": {
+          "type": "string",
+          "enum": [
+            "runtime_contract_features_object"
+          ]
+        }
+      }
+    },
+    "feature_order": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/feature_name"
+      },
+      "description": "Ordered feature identifiers passed to the model after runtime payload validation and preprocessing."
+    },
+    "preprocessing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "missing_value_policy",
+        "categorical_encoding_policy",
+        "numeric_handling",
+        "transformations"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "execution_contract_and_training_parameter_record"
+          ],
+          "description": "Preprocessing behavior must be traced to governed contract/training artifacts rather than notebook memory."
+        },
+        "missing_value_policy": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "mean",
+              "median",
+              "mode",
+              "constant",
+              "drop_row"
+            ]
+          }
+        },
+        "categorical_encoding_policy": {
+          "type": "string",
+          "enum": [
+            "onehot",
+            "ordinal",
+            "target_encode",
+            "binary"
+          ]
+        },
+        "numeric_handling": {
+          "type": "string",
+          "enum": [
+            "standardize",
+            "normalize",
+            "passthrough"
+          ]
+        },
+        "transformations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "log1p",
+              "sqrt",
+              "clip",
+              "passthrough"
+            ]
+          }
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prediction_key",
+        "prediction_type"
+      ],
+      "properties": {
+        "prediction_key": {
+          "type": "string",
+          "const": "prediction"
+        },
+        "prediction_type": {
+          "type": "string",
+          "enum": [
+            "number",
+            "integer",
+            "string",
+            "boolean"
+          ]
+        },
+        "class_labels": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "boolean"
+            ]
+          }
+        },
+        "probability_output": {
+          "type": "boolean"
+        }
+      }
+    },
+    "compatibility_constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires_contract_versions",
+        "requires_hash_match",
+        "requires_feature_order_match",
+        "requires_release_relative_paths",
+        "requires_supported_loader",
+        "requires_supported_serialization"
+      ],
+      "properties": {
+        "requires_contract_versions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "execution_contract",
+            "runtime_contract",
+            "public_contract"
+          ],
+          "properties": {
+            "execution_contract": {
+              "type": "string",
+              "const": "execution_contract.v1"
+            },
+            "runtime_contract": {
+              "type": "string",
+              "minLength": 1
+            },
+            "public_contract": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "requires_hash_match": {
+          "type": "boolean",
+          "const": true
+        },
+        "requires_feature_order_match": {
+          "type": "boolean",
+          "const": true
+        },
+        "requires_release_relative_paths": {
+          "type": "boolean",
+          "const": true
+        },
+        "requires_supported_loader": {
+          "type": "boolean",
+          "const": true
+        },
+        "requires_supported_serialization": {
+          "type": "boolean",
+          "const": true
+        },
+        "minimum_runtime_adapter_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "release_relative_paths_only",
+        "absolute_paths_embedded",
+        "parent_traversal_embedded",
+        "notebook_state_embedded",
+        "raw_dataset_embedded",
+        "model_bytes_embedded",
+        "runtime_payload_validation_duplicated",
+        "training_internals_required_at_runtime"
+      ],
+      "properties": {
+        "release_relative_paths_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "absolute_paths_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "parent_traversal_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "notebook_state_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_dataset_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "model_bytes_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "runtime_payload_validation_duplicated": {
+          "type": "boolean",
+          "const": false
+        },
+        "training_internals_required_at_runtime": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "feature_name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "release_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)[A-Za-z0-9][A-Za-z0-9._/-]*$",
+      "description": "Portable path relative to the release package root. Absolute paths, parent traversal, repeated separators, URI schemes, drive letters, and shell metacharacters are not valid."
+    },
+    "release_relative_file_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/release_relative_path"
+        },
+        {
+          "not": {
+            "pattern": "/$"
+          }
+        }
+      ]
+    },
+    "artifact_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/release_relative_file_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        }
+      }
+    },
+    "versioned_artifact_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "contract_version"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/release_relative_file_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256_hex"
+        },
+        "contract_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "training_run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "run_id"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "$ref": "#/$defs/dataset_slug"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
+        }
+      }
+    }
+  }
+}

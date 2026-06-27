@@ -84,14 +84,28 @@ def _candidate_dir(tmp_repo: Path, release_id: str = RELEASE_ID) -> Path:
 
 
 def _role_path(role: str) -> str:
-    suffix = "json" if role in {
-        "contracts",
-        "metrics",
-        "model_card",
-        "manifest_input",
-        "candidate_metadata",
-    } else "txt"
-    return f"artifacts/{role}.{suffix}"
+    return f"artifacts/{role}.json"
+
+
+def _artifact_payload(role: str) -> dict:
+    payload = {
+        "role": role,
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "release_identity": {"release_id": RELEASE_ID},
+        "availability_status": "real_dataflow_artifact",
+        "placeholder_policy": {
+            "fixtures_allowed": False,
+            "placeholders_allowed": False,
+            "missing_required_behavior": "reject",
+        },
+    }
+    if role in {"metrics", "model_card", "predictive_bundle"}:
+        payload["model_id"] = "model-example-001"
+    if role == "predictive_bundle":
+        payload["runtime_contract_ref"] = "artifacts/contracts.json"
+    if role == "public_context":
+        payload["public_projection"] = {"safe_for_public": True}
+    return payload
 
 
 def _write_candidate(tmp_repo: Path, missing_role: str | None = None) -> Path:
@@ -111,13 +125,10 @@ def _write_candidate(tmp_repo: Path, missing_role: str | None = None) -> Path:
 
         artifact_path = candidate_dir / role_path
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        if role_path.endswith(".json"):
-            artifact_path.write_text(
-                json.dumps({"role": role, "fixture": True}),
-                encoding="utf-8",
-            )
-        else:
-            artifact_path.write_text(f"{role} fixture\n", encoding="utf-8")
+        artifact_path.write_text(
+            json.dumps(_artifact_payload(role), indent=2),
+            encoding="utf-8",
+        )
 
     candidate = {
         "schema_version": "release-candidate.v1",

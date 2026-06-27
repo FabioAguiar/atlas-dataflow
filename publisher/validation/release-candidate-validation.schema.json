@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/publisher/validation/release-candidate-validation.schema.json",
-  "title": "Atlas DataFlow Release Candidate Completeness Validation",
-  "description": "Internal publisher validation result contract for deterministic release candidate completeness checks before promotion or registry mutation. This schema defines accept and reject evidence shape; it does not train models, execute notebooks, regenerate artifacts, rebuild candidates, expose public endpoints, promote releases, or update the registry.",
+  "title": "Atlas DataFlow Release Candidate Consistency Validation",
+  "description": "Internal publisher validation result contract for deterministic release candidate completeness and cross-artifact consistency checks before promotion or registry mutation. This schema defines accept and reject evidence shape; it does not train models, execute notebooks, regenerate artifacts, rebuild candidates, expose public endpoints, promote releases, or update the registry.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,6 +14,7 @@
     "required_artifact_role_results",
     "identifier_consistency",
     "schema_compatibility",
+    "cross_artifact_consistency",
     "rejection",
     "promotion_gate",
     "evidence_safety",
@@ -26,7 +27,10 @@
     },
     "validation_kind": {
       "type": "string",
-      "const": "release_candidate_completeness"
+      "enum": [
+        "release_candidate_completeness",
+        "release_candidate_cross_artifact_consistency"
+      ]
     },
     "candidate_identity": {
       "type": "object",
@@ -191,6 +195,64 @@
         },
         "candidate_metadata": {
           "$ref": "#/$defs/schema_compatibility_result"
+        }
+      }
+    },
+    "cross_artifact_consistency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checked",
+        "identity_checks",
+        "hash_checks",
+        "reference_checks",
+        "public_projection_checks",
+        "real_artifact_checks",
+        "evidence_link_checks",
+        "valid"
+      ],
+      "properties": {
+        "checked": {
+          "type": "boolean"
+        },
+        "identity_checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reduced_check_result"
+          }
+        },
+        "hash_checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reduced_hash_check_result"
+          }
+        },
+        "reference_checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reduced_check_result"
+          }
+        },
+        "public_projection_checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reduced_check_result"
+          }
+        },
+        "real_artifact_checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reduced_check_result"
+          }
+        },
+        "evidence_link_checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reduced_check_result"
+          }
+        },
+        "valid": {
+          "type": "boolean"
         }
       }
     },
@@ -604,6 +666,66 @@
         }
       }
     },
+    "reduced_check_result": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "artifact_role": {
+          "$ref": "#/$defs/required_artifact_role"
+        },
+        "identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "consistent": {
+          "type": "boolean"
+        },
+        "safe_for_public_projection": {
+          "type": "boolean"
+        },
+        "safe_evidence_links": {
+          "type": "boolean"
+        },
+        "real_dataflow_artifact": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "reduced_hash_check_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_role",
+        "declared_sha256_present",
+        "status"
+      ],
+      "properties": {
+        "artifact_role": {
+          "$ref": "#/$defs/required_artifact_role"
+        },
+        "declared_sha256_present": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "present",
+            "missing",
+            "incomplete",
+            "contradictory",
+            "unsafe"
+          ]
+        }
+      }
+    },
     "rejection_reason": {
       "type": "object",
       "additionalProperties": false,
@@ -629,6 +751,15 @@
             "unsafe_candidate_artifact",
             "dataset_identifier_mismatch",
             "release_identifier_mismatch",
+            "declared_hash_missing",
+            "hash_mismatch",
+            "fixture_only_artifact",
+            "placeholder_only_artifact",
+            "public_projection_unsafe",
+            "contract_reference_mismatch",
+            "prepared_data_metadata_mismatch",
+            "model_bundle_mismatch",
+            "evidence_link_unsafe",
             "contract_schema_incompatible",
             "manifest_input_schema_incompatible",
             "metrics_schema_incompatible",

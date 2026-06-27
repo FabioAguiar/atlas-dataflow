@@ -463,6 +463,7 @@ def test_customization_response_structure_matches_expected_fields():
 # ---------------------------------------------------------------------------
 
 _REAL_REGISTRY_PATH = REPO_ROOT / "registry" / "datasets.json"
+_REAL_RELEASES_ROOT = REPO_ROOT / "releases"
 
 
 def test_real_registry_listing_returns_non_empty_list():
@@ -545,6 +546,124 @@ def test_real_registry_listing_envelope_shape():
 
 
 # ---------------------------------------------------------------------------
+# Real-release dataset home payloads: M27-02
+# ---------------------------------------------------------------------------
+
+def _real_release_dataset_pairs():
+    return [
+        resolve_dataset("telco-customer-churn", registry_path=_REAL_REGISTRY_PATH),
+        resolve_dataset("bank-marketing", registry_path=_REAL_REGISTRY_PATH),
+    ]
+
+
+def _assert_no_internal_public_exposure(payload):
+    serialized = json.dumps(payload, sort_keys=True)
+    assert "raw_logs" not in serialized
+    assert "raw_api_payload" not in serialized
+    assert "evidence/" not in serialized
+    assert "/home/" not in serialized
+    assert "/workspace/" not in serialized
+
+
+def test_real_release_dataset_home_context_payload_shape():
+    for resolved in _real_release_dataset_pairs():
+        context = api_main.load_public_context(
+            resolved.active_release,
+            releases_root=_REAL_RELEASES_ROOT,
+        )
+        response = {
+            "dataset_slug": resolved.dataset_slug,
+            "context": context,
+        }
+
+        assert response["dataset_slug"] == resolved.dataset_slug
+        assert isinstance(response["context"], dict)
+        assert isinstance(response["context"].get("title"), str)
+        assert response["context"]["title"]
+        assert isinstance(response["context"].get("summary"), str)
+        assert response["context"]["summary"]
+        assert isinstance(response["context"].get("domain"), str)
+        assert response["context"]["domain"]
+        assert "active_release" not in response["context"]
+        assert "run_id" not in response["context"]
+        _assert_no_internal_public_exposure(response)
+
+
+def test_real_release_dataset_home_metrics_payload_shape():
+    for resolved in _real_release_dataset_pairs():
+        metrics = api_main.load_public_metrics(
+            resolved.active_release,
+            releases_root=_REAL_RELEASES_ROOT,
+        )
+        response = {
+            "dataset_slug": resolved.dataset_slug,
+            "metrics": metrics,
+        }
+
+        assert response["dataset_slug"] == resolved.dataset_slug
+        assert isinstance(response["metrics"], dict)
+        assert response["metrics"].get("dataset_slug") == resolved.dataset_slug
+        assert isinstance(response["metrics"].get("release_id"), str)
+        assert response["metrics"]["release_id"]
+        evaluation = response["metrics"].get("evaluation")
+        assert isinstance(evaluation, dict)
+        assert isinstance(evaluation.get("split"), str)
+        assert isinstance(evaluation.get("sample_size"), int)
+        assert evaluation["sample_size"] > 0
+        values = evaluation.get("metrics")
+        assert isinstance(values, dict)
+        for metric_name in ("accuracy", "precision", "recall", "f1_score", "auc_roc"):
+            assert isinstance(values.get(metric_name), (int, float))
+        _assert_no_internal_public_exposure(response)
+
+
+def test_real_release_dataset_home_model_card_payload_shape():
+    for resolved in _real_release_dataset_pairs():
+        model_card = api_main.load_public_model_card(
+            resolved.active_release,
+            releases_root=_REAL_RELEASES_ROOT,
+        )
+        response = {
+            "dataset_slug": resolved.dataset_slug,
+            "model_card": model_card,
+        }
+
+        assert response["dataset_slug"] == resolved.dataset_slug
+        assert set(response["model_card"].keys()) == {"content", "format"}
+        assert response["model_card"]["format"] == "markdown"
+        assert isinstance(response["model_card"]["content"], str)
+        assert response["model_card"]["content"].strip()
+        _assert_no_internal_public_exposure(response)
+
+
+def test_real_release_dataset_home_visualizations_degrade_safely():
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_public_visualizations = api_main.load_public_visualizations
+    try:
+        for resolved in _real_release_dataset_pairs():
+            api_main.resolve_dataset = lambda dataset_slug, resolved=resolved: SimpleNamespace(
+                dataset_slug=dataset_slug,
+                active_release=resolved.active_release,
+            )
+            api_main.load_public_visualizations = (
+                lambda active_release: original_load_public_visualizations(
+                    active_release,
+                    releases_root=_REAL_RELEASES_ROOT,
+                )
+            )
+
+            response = api_main.get_public_visualizations(resolved.dataset_slug)
+            assert response.status_code == 503
+            payload = _response_json(response)
+            assert payload["error_type"] == "visualizations_unavailable"
+            assert payload["error_code"] == "VISUALIZATIONS_UNAVAILABLE"
+            _assert_no_internal_public_exposure(payload)
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_public_visualizations = original_load_public_visualizations
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -582,6 +701,10 @@ if __name__ == "__main__":
         test_real_registry_resolve_telco_customer_churn_succeeds,
         test_real_registry_resolve_bank_marketing_succeeds,
         test_real_registry_listing_envelope_shape,
+        test_real_release_dataset_home_context_payload_shape,
+        test_real_release_dataset_home_metrics_payload_shape,
+        test_real_release_dataset_home_model_card_payload_shape,
+        test_real_release_dataset_home_visualizations_degrade_safely,
     ]
     passed = 0
     failed = 0

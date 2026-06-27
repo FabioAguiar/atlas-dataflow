@@ -15,6 +15,10 @@ type DatasetListing = {
   tags: string[];
 };
 
+type DatasetListingResponse = {
+  datasets: DatasetListing[];
+};
+
 type HomeState =
   | { status: "loading" }
   | { status: "ready"; datasets: DatasetListing[] }
@@ -32,11 +36,15 @@ function Home() {
           setState({ status: "error" });
           return;
         }
-        return res.json();
+        return res.json() as Promise<DatasetListingResponse>;
       })
       .then((data) => {
+        if (data && Array.isArray(data.datasets)) {
+          setState({ status: "ready", datasets: data.datasets });
+          return;
+        }
         if (data) {
-          setState({ status: "ready", datasets: data });
+          setState({ status: "error" });
         }
       })
       .catch(() => {

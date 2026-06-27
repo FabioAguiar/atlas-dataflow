@@ -664,6 +664,88 @@ def test_real_release_dataset_home_visualizations_degrade_safely():
 
 
 # ---------------------------------------------------------------------------
+# Real-release valid prediction flow: M27-03
+# ---------------------------------------------------------------------------
+
+def _valid_payload_from_contracts(public_contract, runtime_contract):
+    public_feature_names = [
+        feature["name"]
+        for feature in public_contract["features"]
+        if isinstance(feature, dict) and isinstance(feature.get("name"), str)
+    ]
+    runtime_features = {
+        feature["name"]: feature
+        for feature in runtime_contract["features"]
+        if isinstance(feature, dict) and isinstance(feature.get("name"), str)
+    }
+
+    payload = {}
+    for feature_name in public_feature_names:
+        feature = runtime_features[feature_name]
+        feature_type = feature["type"]
+        constraints = feature.get("domain_constraints", {})
+        if feature_type == "numeric":
+            minimum = constraints.get("min", 0)
+            maximum = constraints.get("max", minimum)
+            payload[feature_name] = (minimum + maximum) / 2
+        elif feature_type == "categorical":
+            payload[feature_name] = constraints["values"][0]
+        elif feature_type == "boolean":
+            payload[feature_name] = False
+        else:
+            raise AssertionError(f"Unsupported runtime feature type: {feature_type}")
+    return payload
+
+
+def test_real_release_valid_prediction_flow_uses_public_route_and_bundle():
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_releases_root = api_main._inference_releases_root
+    try:
+        resolved = resolve_dataset("bank-marketing", registry_path=_REAL_REGISTRY_PATH)
+        public_contract = api_main.load_public_contract(
+            resolved.active_release,
+            releases_root=_REAL_RELEASES_ROOT,
+        )
+        runtime_contract = original_load_contract(
+            resolved.active_release,
+            releases_root=_REAL_RELEASES_ROOT,
+        )
+        payload = _valid_payload_from_contracts(public_contract, runtime_contract)
+
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=resolved.dataset_slug,
+            active_release=resolved.active_release,
+        )
+        api_main.load_contract = (
+            lambda active_release: original_load_contract(
+                active_release,
+                releases_root=_REAL_RELEASES_ROOT,
+            )
+        )
+        api_main._inference_releases_root = lambda: _REAL_RELEASES_ROOT
+
+        response = api_main.validate_dataset_inference_payload(
+            resolved.dataset_slug,
+            payload=payload,
+        )
+
+        assert not hasattr(response, "status_code")
+        assert response["dataset_slug"] == resolved.dataset_slug
+        prediction = response["prediction"]
+        assert set(prediction.keys()) == {"label", "confidence"}
+        assert isinstance(prediction["label"], str)
+        assert prediction["label"]
+        assert isinstance(prediction["confidence"], float)
+        assert 0.0 <= prediction["confidence"] <= 1.0
+        _assert_no_internal_public_exposure(response)
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main._inference_releases_root = original_releases_root
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -705,6 +787,7 @@ if __name__ == "__main__":
         test_real_release_dataset_home_metrics_payload_shape,
         test_real_release_dataset_home_model_card_payload_shape,
         test_real_release_dataset_home_visualizations_degrade_safely,
+        test_real_release_valid_prediction_flow_uses_public_route_and_bundle,
     ]
     passed = 0
     failed = 0

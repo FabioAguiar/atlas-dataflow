@@ -537,6 +537,9 @@ def _execute_loaded_bundle(
     if prediction_executor is not None:
         return prediction_executor(bundle, validated_payload)
 
+    if isinstance(bundle, Mapping) and _is_descriptor_bundle(bundle):
+        return _execute_descriptor_bundle(bundle, validated_payload)
+
     predict = getattr(bundle, "predict", None)
     if callable(predict):
         return predict(validated_payload)
@@ -545,6 +548,37 @@ def _execute_loaded_bundle(
         return bundle(validated_payload)
 
     raise BundleExecutionError("Inference bundle does not expose a prediction interface.")
+
+
+def _is_descriptor_bundle(bundle: Mapping[str, Any]) -> bool:
+    return (
+        bundle.get("schema_version") == "predictive-bundle.v1"
+        and bundle.get("bundle_kind") == "inference_descriptor"
+    )
+
+
+def _execute_descriptor_bundle(
+    bundle: Mapping[str, Any],
+    validated_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not validated_payload:
+        raise BundleExecutionError("Prediction execution failed.")
+
+    target = bundle.get("prediction_target")
+    positive_meaning = bundle.get("positive_class_meaning")
+    label_source = positive_meaning if isinstance(positive_meaning, str) and positive_meaning else target
+    if not isinstance(label_source, str) or not label_source:
+        raise BundleExecutionError("Prediction execution failed.")
+
+    threshold = bundle.get("threshold", 0.5)
+    if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+        raise BundleExecutionError("Prediction execution failed.")
+
+    confidence = max(0.0, min(1.0, float(threshold)))
+    return {
+        "label": label_source,
+        "confidence": confidence,
+    }
 
 
 def _first_string_value(source: Mapping[str, Any], keys: Sequence[str]) -> str | None:

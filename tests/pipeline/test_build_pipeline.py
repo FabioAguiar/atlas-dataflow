@@ -18,7 +18,7 @@ RELEASE_ID = "release-20260620-001"
 RELEASE_VERSION = "2026.06.20"
 
 
-REQUIRED_SOURCE_ARTIFACTS = (
+PUBLIC_CANDIDATE_ARTIFACTS = (
     "contracts/runtime-contract.json",
     "contracts/public-contract.json",
     "metrics/metrics.json",
@@ -34,28 +34,135 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def _write_source_input(tmp_path: Path, **overrides) -> Path:
+def _artifact(path: Path, role: str, *, availability_status: str = "real_dataflow_artifact") -> dict:
+    return {
+        "role": role,
+        "required": True,
+        "source_stage": "M26",
+        "path": str(path),
+        "contract_version": f"{role}.v1",
+        "sha256": "0" * 64,
+        "hash_policy": "sha256_required",
+        "public_projection": "internal_only",
+        "evidence_classification": "not_evidence",
+        "placeholder_policy": {
+            "fixtures_allowed": False,
+            "placeholders_allowed": False,
+            "missing_required_behavior": "reject",
+        },
+        "availability_status": availability_status,
+    }
+
+
+def _write_governed_artifacts(repo_root: Path, *, missing_role: str | None = None) -> dict:
+    source_dir = Path("governed-artifacts")
+    paths = {
+        "discovery_evidence": source_dir / "m22" / "discovery-evidence.json",
+        "execution_contract": source_dir / "m23" / "execution-contract.json",
+        "runtime_contract": source_dir / "m23" / "runtime-contract.json",
+        "public_contract": source_dir / "m23" / "public-contract.json",
+        "preparation_recipe": source_dir / "m22" / "preparation-recipe.json",
+        "prepared_data_metadata": source_dir / "m23" / "prepared-data-metadata.json",
+        "training_parameter_record": source_dir / "m24" / "training-parameter-record.json",
+        "model_artifact": source_dir / "m24" / "model.joblib",
+        "training_metrics": source_dir / "m24" / "metrics.json",
+        "model_card": source_dir / "m24" / "model-card.json",
+        "public_context": source_dir / "m23" / "public-context.json",
+        "inference_bundle": source_dir / "m25" / "bundle.json",
+    }
+    for role, path in paths.items():
+        if role == missing_role:
+            continue
+        _write_json(repo_root / path, {"role": role, "governed": True})
+    return paths
+
+
+def _write_candidate_input(tmp_path: Path, **overrides) -> Path:
+    paths = overrides.pop("artifact_paths", None) or _write_governed_artifacts(tmp_path)
     data = {
-        "schema_version": "source-contract-input.v1",
-        "dataset_slug": DATASET_SLUG,
-        "release_id": RELEASE_ID,
-        "source_contract_ref": "contracts/runtime-contract.schema.json",
-        "source_data_ref": "datasets/telco-customer-churn/v1",
+        "contract_version": "release-candidate-input.v1",
+        "input_kind": "release_candidate_input",
+        "dataset_identity": {
+            "dataset_slug": DATASET_SLUG,
+            "dataset_title": "Telco Customer Churn",
+        },
+        "release_identity": {
+            "release_id": RELEASE_ID,
+            "release_version": RELEASE_VERSION,
+            "created_at": "2026-06-20T00:00:00Z",
+        },
+        "source_run": {
+            "run_id": "candidate-input-20260620T000000Z",
+            "producer": "test-governed-input",
+            "created_at": "2026-06-20T00:00:00Z",
+        },
+        "artifact_inputs": {
+            "discovery_evidence": _artifact(paths["discovery_evidence"], "discovery_evidence"),
+            "promoted_contracts": {
+                "execution_contract": _artifact(paths["execution_contract"], "execution_contract"),
+                "runtime_contract": _artifact(paths["runtime_contract"], "runtime_contract"),
+                "public_contract": _artifact(
+                    paths["public_contract"],
+                    "public_contract",
+                ) | {
+                    "public_projection": "public_artifact",
+                    "evidence_classification": "public_artifact",
+                },
+            },
+            "preparation_recipe": _artifact(paths["preparation_recipe"], "preparation_recipe"),
+            "prepared_data_metadata": _artifact(
+                paths["prepared_data_metadata"],
+                "prepared_data_metadata",
+            ),
+            "training_parameter_record": _artifact(
+                paths["training_parameter_record"],
+                "training_parameter_record",
+            ),
+            "model_artifact": _artifact(paths["model_artifact"], "model_artifact"),
+            "training_metrics": _artifact(paths["training_metrics"], "training_metrics") | {
+                "public_projection": "public_artifact",
+                "evidence_classification": "public_artifact",
+            },
+            "model_card": _artifact(paths["model_card"], "model_card") | {
+                "public_projection": "public_artifact",
+                "evidence_classification": "public_artifact",
+            },
+            "public_context": _artifact(paths["public_context"], "public_context") | {
+                "public_projection": "public_artifact",
+                "evidence_classification": "public_artifact",
+            },
+            "inference_bundle": _artifact(paths["inference_bundle"], "inference_bundle") | {
+                "public_projection": "public_reference_only",
+            },
+            "internal_evidence_references": [
+                {
+                    "role": "internal_evidence_reference",
+                    "path": "evidence/internal-only.json",
+                    "public_projection": "internal_only",
+                }
+            ],
+        },
+        "candidate_mapping": {
+            "candidate_layout_schema": "pipeline/candidate-layout.schema.json",
+            "publisher_release_candidate_schema": "publisher/release-candidate.schema.json",
+            "publisher_release_manifest_schema": "publisher/release-manifest.schema.json",
+            "publisher_validation_schema": "publisher/validation/release-candidate-validation.schema.json",
+        },
+        "classification_policy": {
+            "public_artifacts_exclude_internal_evidence": True,
+        },
+        "boundary_confirmations": {
+            "candidate_assembly_only": True,
+            "promotion_not_included": True,
+            "registry_activation_not_included": True,
+            "model_training_not_included": True,
+        },
     }
     data.update(overrides)
 
-    source_input = tmp_path / "source-contract-input.json"
-    _write_json(source_input, data)
-    return source_input
-
-
-def _write_source_artifacts(tmp_path: Path, *, missing: str | None = None) -> Path:
-    source_dir = tmp_path / "source-artifacts"
-    for relative in REQUIRED_SOURCE_ARTIFACTS:
-        if relative == missing:
-            continue
-        _write_json(source_dir / relative, {"fixture": True, "path": relative})
-    return source_dir
+    candidate_input = tmp_path / "release-candidate-input.json"
+    _write_json(candidate_input, data)
+    return candidate_input
 
 
 def _copy_publisher_operational_note(tmp_repo: Path) -> None:
@@ -69,13 +176,14 @@ def _assemble_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    source_input: Path | None = None,
-    source_dir: Path | None = None,
+    candidate_input: Path | None = None,
 ) -> tuple[int, dict, Path]:
     tmp_repo = tmp_path / "repo"
     output_dir = tmp_repo / "releases" / "candidates"
-    source_input = source_input or _write_source_input(tmp_path)
-    source_dir = source_dir or _write_source_artifacts(tmp_path)
+    candidate_input = candidate_input or _write_candidate_input(
+        tmp_path,
+        artifact_paths=_write_governed_artifacts(tmp_repo),
+    )
     schema_dst = tmp_repo / "pipeline" / "build-evidence.schema.json"
     schema_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO_ROOT / "pipeline" / "build-evidence.schema.json", schema_dst)
@@ -87,13 +195,9 @@ def _assemble_candidate(
         "argv",
         [
             "assemble_candidate.py",
-            str(source_input),
+            str(candidate_input),
             "--output-dir",
             str(output_dir),
-            "--source-dir",
-            str(source_dir),
-            "--release-version",
-            RELEASE_VERSION,
         ],
     )
 
@@ -111,7 +215,7 @@ def test_successful_build_creates_candidate_layout_and_required_artifacts(tmp_pa
     assert release_candidate["release_identity"]["release_id"] == RELEASE_ID
     assert release_candidate["release_identity"]["release_version"] == RELEASE_VERSION
 
-    for relative in REQUIRED_SOURCE_ARTIFACTS:
+    for relative in PUBLIC_CANDIDATE_ARTIFACTS:
         assert (candidate_dir / relative).is_file()
 
     assert (candidate_dir / "release-candidate.json").is_file()
@@ -129,6 +233,7 @@ def test_successful_build_writes_reduced_evidence_and_boundary_confirmations(tmp
     assert evidence["schema_version"] == "build-evidence.v1"
     assert evidence["source_input"]["dataset_slug"] == DATASET_SLUG
     assert evidence["source_input"]["release_id"] == RELEASE_ID
+    assert evidence["source_input"]["contract_version"] == "release-candidate-input.v1"
     assert evidence["publisher_validation"] == {
         "valid": True,
         "validation_outcome": "accepted",
@@ -151,91 +256,131 @@ def test_successful_build_writes_reduced_evidence_and_boundary_confirmations(tmp
     assert "schema_compatibility" not in evidence["publisher_validation"]
 
 
-def test_missing_source_artifact_rejects_without_publishable_candidate(tmp_path, monkeypatch, capsys):
-    source_dir = _write_source_artifacts(
-        tmp_path,
-        missing="contracts/public-contract.json",
-    )
-    source_input = _write_source_input(tmp_path)
-
-    output_dir = tmp_path / "repo" / "releases" / "candidates"
-    monkeypatch.setattr(assemble_candidate, "_CANDIDATE_STAGING_PREFIX", output_dir)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "assemble_candidate.py",
-            str(source_input),
-            "--output-dir",
-            str(output_dir),
-            "--source-dir",
-            str(source_dir),
-        ],
-    )
-
-    assert assemble_candidate.main() == 1
-    result = json.loads(capsys.readouterr().out)
-    assert result["status"] == "rejected"
-    assert result["rejection_phase"] == "source_artifact_missing"
-    assert "contracts/public-contract.json" in result["missing_paths"]
-    assert not (output_dir / DATASET_SLUG / RELEASE_ID / "release-candidate.json").exists()
-
-
-def test_missing_required_source_input_field_rejects_before_candidate_creation(
+def test_missing_required_artifact_rejects_without_publishable_candidate(
     tmp_path,
     monkeypatch,
     capsys,
 ):
-    source_input = _write_source_input(tmp_path)
-    data = json.loads(source_input.read_text())
-    del data["release_id"]
-    source_input.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp_repo = tmp_path / "repo"
+    artifact_paths = _write_governed_artifacts(tmp_repo, missing_role="public_contract")
+    candidate_input = _write_candidate_input(tmp_path, artifact_paths=artifact_paths)
 
-    source_dir = _write_source_artifacts(tmp_path)
-    output_dir = tmp_path / "repo" / "releases" / "candidates"
+    output_dir = tmp_repo / "releases" / "candidates"
+    monkeypatch.setattr(assemble_candidate, "_REPO_ROOT", tmp_repo)
     monkeypatch.setattr(assemble_candidate, "_CANDIDATE_STAGING_PREFIX", output_dir)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "assemble_candidate.py",
-            str(source_input),
+            str(candidate_input),
             "--output-dir",
             str(output_dir),
-            "--source-dir",
-            str(source_dir),
         ],
     )
 
     assert assemble_candidate.main() == 1
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "rejected"
-    assert result["rejection_phase"] == "source_input_parse"
-    assert result["release_id"] is None
-    assert not output_dir.exists()
+    assert result["rejection_phase"] == "candidate_artifact_missing"
+    assert str(artifact_paths["public_contract"]) in result["missing_paths"]
+    assert not (output_dir / DATASET_SLUG / RELEASE_ID / "release-candidate.json").exists()
 
 
-def test_invalid_public_projection_rejects_in_publisher_validation(tmp_path, monkeypatch, capsys):
-    source_dir = _write_source_artifacts(tmp_path)
-    (source_dir / "model-card.json").write_text("not json", encoding="utf-8")
-    source_input = _write_source_input(tmp_path)
+def test_missing_required_candidate_input_field_rejects_before_candidate_creation(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    tmp_repo = tmp_path / "repo"
+    candidate_input = _write_candidate_input(
+        tmp_path,
+        artifact_paths=_write_governed_artifacts(tmp_repo),
+    )
+    data = json.loads(candidate_input.read_text())
+    del data["release_identity"]["release_id"]
+    candidate_input.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    output_dir = tmp_path / "repo" / "releases" / "candidates"
-    schema_dst = tmp_path / "repo" / "pipeline" / "build-evidence.schema.json"
-    schema_dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(REPO_ROOT / "pipeline" / "build-evidence.schema.json", schema_dst)
-    monkeypatch.setattr(assemble_candidate, "_REPO_ROOT", tmp_path / "repo")
+    output_dir = tmp_repo / "releases" / "candidates"
+    monkeypatch.setattr(assemble_candidate, "_REPO_ROOT", tmp_repo)
     monkeypatch.setattr(assemble_candidate, "_CANDIDATE_STAGING_PREFIX", output_dir)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "assemble_candidate.py",
-            str(source_input),
+            str(candidate_input),
             "--output-dir",
             str(output_dir),
-            "--source-dir",
-            str(source_dir),
+        ],
+    )
+
+    assert assemble_candidate.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "candidate_input_parse"
+    assert result["release_id"] is None
+    assert not output_dir.exists()
+
+
+def test_placeholder_only_required_artifact_rejects_before_candidate_creation(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    tmp_repo = tmp_path / "repo"
+    candidate_input = _write_candidate_input(
+        tmp_path,
+        artifact_paths=_write_governed_artifacts(tmp_repo),
+    )
+    data = json.loads(candidate_input.read_text())
+    artifact = data["artifact_inputs"]["training_metrics"]
+    artifact["availability_status"] = "placeholder_only"
+    artifact["placeholder_policy"]["placeholders_allowed"] = True
+    candidate_input.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    output_dir = tmp_repo / "releases" / "candidates"
+    monkeypatch.setattr(assemble_candidate, "_REPO_ROOT", tmp_repo)
+    monkeypatch.setattr(assemble_candidate, "_CANDIDATE_STAGING_PREFIX", output_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assemble_candidate.py",
+            str(candidate_input),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert assemble_candidate.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "candidate_input_parse"
+    assert any("placeholder" in error for error in result["validation_errors"])
+    assert not output_dir.exists()
+
+
+def test_invalid_public_projection_rejects_in_publisher_validation(tmp_path, monkeypatch, capsys):
+    tmp_repo = tmp_path / "repo"
+    artifact_paths = _write_governed_artifacts(tmp_repo)
+    (tmp_repo / artifact_paths["model_card"]).write_text("not json", encoding="utf-8")
+    candidate_input = _write_candidate_input(tmp_path, artifact_paths=artifact_paths)
+
+    output_dir = tmp_repo / "releases" / "candidates"
+    schema_dst = tmp_repo / "pipeline" / "build-evidence.schema.json"
+    schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "pipeline" / "build-evidence.schema.json", schema_dst)
+    monkeypatch.setattr(assemble_candidate, "_REPO_ROOT", tmp_repo)
+    monkeypatch.setattr(assemble_candidate, "_CANDIDATE_STAGING_PREFIX", output_dir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "assemble_candidate.py",
+            str(candidate_input),
+            "--output-dir",
+            str(output_dir),
         ],
     )
 

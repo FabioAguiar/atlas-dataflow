@@ -1,8 +1,8 @@
 """
-Candidate assembly pipeline for atlas-dataflow (M13-04).
+Candidate assembly pipeline for atlas-dataflow.
 
-Assembles a publisher-compatible candidate artifact set from build outputs
-and a pre-staged source directory, validates the assembled candidate against
+Assembles a publisher-compatible candidate artifact set from governed
+release-candidate-input.v1 artifacts, validates the assembled candidate against
 publisher requirements, and returns a JSON result to stdout.
 
 Does NOT call publisher/promote.py.
@@ -16,24 +16,39 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT = Path(__file__).parent.parent
 
-_REQUIRED_SOURCE_ARTIFACTS = [
-    "contracts/runtime-contract.json",
-    "contracts/public-contract.json",
-    "metrics/metrics.json",
-    "predictions/bundle.json",
-    "model-card.json",
-    "public-context.json",
-    "manifest-input.json",
+_PUBLIC_ARTIFACT_MAPPINGS = [
+    ("promoted_contracts.runtime_contract", "contracts/runtime-contract.json"),
+    ("promoted_contracts.public_contract", "contracts/public-contract.json"),
+    ("training_metrics", "metrics/metrics.json"),
+    ("inference_bundle", "predictions/bundle.json"),
+    ("model_card", "model-card.json"),
+    ("public_context", "public-context.json"),
+]
+
+_REQUIRED_REAL_INPUTS = [
+    "discovery_evidence",
+    "promoted_contracts.execution_contract",
+    "promoted_contracts.runtime_contract",
+    "promoted_contracts.public_contract",
+    "preparation_recipe",
+    "prepared_data_metadata",
+    "training_parameter_record",
+    "model_artifact",
+    "training_metrics",
+    "model_card",
+    "public_context",
+    "inference_bundle",
 ]
 
 _CANDIDATE_STAGING_PREFIX = "releases/candidates"
 
 
-def _load_source_input(path: str) -> tuple:
-    """Load and parse the source-contract-input JSON. Returns (data, error_message)."""
+def _load_candidate_input(path: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Load and parse the release-candidate-input JSON."""
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f), None
@@ -63,26 +78,31 @@ def _acceptance(dataset_slug: str, release_id: str, candidate_dir: Path, validat
 
 
 def _build_release_candidate(
-    dataset_slug: str, release_id: str, release_version: str | None
+    candidate_input: dict[str, Any], now: str
 ) -> dict:
     """Build release-candidate.json conforming to publisher/release-candidate.schema.json."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    dataset_identity = candidate_input["dataset_identity"]
+    release_identity = candidate_input["release_identity"]
+    source_run = candidate_input["source_run"]
     return {
         "schema_version": "release-candidate.v1",
         "candidate_kind": "release_candidate",
         "dataset_identity": {
-            "dataset_slug": dataset_slug,
-            "dataset_title": dataset_slug.replace("-", " ").title(),
+            "dataset_slug": dataset_identity["dataset_slug"],
+            "dataset_title": dataset_identity.get(
+                "dataset_title",
+                dataset_identity["dataset_slug"].replace("-", " ").title(),
+            ),
         },
         "release_identity": {
-            "release_id": release_id,
-            "release_version": release_version or "1.0.0-rc.1",
-            "created_at": now,
+            "release_id": release_identity["release_id"],
+            "release_version": release_identity["release_version"],
+            "created_at": release_identity.get("created_at", now),
         },
         "source_run": {
-            "run_id": f"m13-04-assembly-{release_id}",
-            "producer": "pipeline/assemble_candidate.py",
-            "created_at": now,
+            "run_id": source_run["run_id"],
+            "producer": source_run["producer"],
+            "created_at": source_run.get("created_at", now),
         },
         "artifact_roles": {
             "contracts": {
@@ -159,50 +179,189 @@ def _build_release_candidate(
     }
 
 
+def _get_nested(data: dict[str, Any], dotted_path: str) -> Any:
+    value: Any = data
+    for part in dotted_path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _input_identity(candidate_input: dict[str, Any]) -> tuple[str | None, str | None]:
+    dataset_slug = _get_nested(candidate_input, "dataset_identity.dataset_slug")
+    release_id = _get_nested(candidate_input, "release_identity.release_id")
+    return dataset_slug, release_id
+
+
+def _validate_candidate_input(candidate_input: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if candidate_input.get("contract_version") != "release-candidate-input.v1":
+        errors.append("contract_version must be release-candidate-input.v1")
+    if candidate_input.get("input_kind") != "release_candidate_input":
+        errors.append("input_kind must be release_candidate_input")
+
+    dataset_slug, release_id = _input_identity(candidate_input)
+    release_version = _get_nested(candidate_input, "release_identity.release_version")
+    if not dataset_slug:
+        errors.append("dataset_identity.dataset_slug is required")
+    if not release_id:
+        errors.append("release_identity.release_id is required")
+    if not release_version:
+        errors.append("release_identity.release_version is required")
+    if not _get_nested(candidate_input, "source_run.run_id"):
+        errors.append("source_run.run_id is required")
+    if not _get_nested(candidate_input, "source_run.producer"):
+        errors.append("source_run.producer is required")
+
+    artifact_inputs = candidate_input.get("artifact_inputs")
+    if not isinstance(artifact_inputs, dict):
+        errors.append("artifact_inputs must be an object")
+        return errors
+
+    for input_path in _REQUIRED_REAL_INPUTS:
+        artifact = _get_nested(artifact_inputs, input_path)
+        if not isinstance(artifact, dict):
+            errors.append(f"artifact_inputs.{input_path} is required")
+            continue
+        if artifact.get("required") is not True:
+            errors.append(f"artifact_inputs.{input_path}.required must be true")
+        if artifact.get("availability_status") != "real_dataflow_artifact":
+            errors.append(
+                f"artifact_inputs.{input_path}.availability_status must be real_dataflow_artifact"
+            )
+        placeholder_policy = artifact.get("placeholder_policy")
+        if not isinstance(placeholder_policy, dict):
+            errors.append(f"artifact_inputs.{input_path}.placeholder_policy is required")
+            continue
+        if placeholder_policy.get("fixtures_allowed") is not False:
+            errors.append(f"artifact_inputs.{input_path} must reject fixture-only artifacts")
+        if placeholder_policy.get("placeholders_allowed") is not False:
+            errors.append(f"artifact_inputs.{input_path} must reject placeholder-only artifacts")
+        if placeholder_policy.get("missing_required_behavior") != "reject":
+            errors.append(f"artifact_inputs.{input_path} must reject missing required artifacts")
+    return errors
+
+
+def _resolve_repo_relative(path_value: str, repo_root: Path) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        raise ValueError(f"artifact path must be repository-relative: {path_value}")
+    if ".." in path.parts:
+        raise ValueError(f"artifact path must not contain parent traversal: {path_value}")
+    return repo_root / path
+
+
+def _required_public_artifacts(candidate_input: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
+    artifact_inputs = candidate_input["artifact_inputs"]
+    artifacts: list[tuple[dict[str, Any], str]] = []
+    for input_path, output_path in _PUBLIC_ARTIFACT_MAPPINGS:
+        artifacts.append((_get_nested(artifact_inputs, input_path), output_path))
+    return artifacts
+
+
+def _missing_required_artifacts(candidate_input: dict[str, Any], repo_root: Path) -> list[str]:
+    missing = []
+    artifact_inputs = candidate_input["artifact_inputs"]
+    for input_path in _REQUIRED_REAL_INPUTS:
+        artifact = _get_nested(artifact_inputs, input_path)
+        source_path = artifact.get("path")
+        try:
+            source_file_missing = (
+                not source_path or not _resolve_repo_relative(source_path, repo_root).is_file()
+            )
+        except ValueError:
+            source_file_missing = True
+        if source_file_missing:
+            missing.append(source_path or artifact["role"])
+    return missing
+
+
+def _write_manifest_input(candidate_dir: Path, candidate_input: dict[str, Any]) -> None:
+    manifest_input = {
+        "schema_version": "manifest-input.v1",
+        "dataset_identity": candidate_input["dataset_identity"],
+        "release_identity": candidate_input["release_identity"],
+        "source_run": candidate_input["source_run"],
+        "candidate_mapping": candidate_input.get("candidate_mapping", {}),
+        "generated_by": "pipeline/assemble_candidate.py",
+    }
+    (candidate_dir / "manifest-input.json").write_text(
+        json.dumps(manifest_input, indent=2), encoding="utf-8"
+    )
+
+
+def _build_assembly_evidence(
+    candidate_input: dict[str, Any],
+    source_input_path: str,
+    validation: dict[str, Any],
+    assembled: list[str],
+) -> dict[str, Any]:
+    dataset_slug, release_id = _input_identity(candidate_input)
+    return {
+        "schema_version": "build-evidence.v1",
+        "source_input": {
+            "path": str(Path(source_input_path).name),
+            "contract_version": candidate_input.get("contract_version"),
+            "dataset_slug": dataset_slug,
+            "release_id": release_id,
+        },
+        "assembled_artifacts": assembled,
+        "publisher_validation": {
+            "valid": validation.get("valid"),
+            "validation_outcome": "accepted" if validation.get("valid") else "rejected",
+            "validated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        "build_boundary_confirmations": {
+            "promotion_occurred": False,
+            "registry_mutation_occurred": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Assemble a publisher-compatible candidate from build outputs."
+        description="Assemble a publisher-compatible candidate from a release-candidate-input."
     )
     parser.add_argument(
-        "source_input",
-        help="Path to the source-contract-input JSON file",
+        "candidate_input",
+        help="Path to the release-candidate-input JSON file",
     )
     parser.add_argument(
         "--output-dir",
         required=True,
         help="Candidate staging base directory (e.g. releases/candidates/)",
     )
-    parser.add_argument(
-        "--source-dir",
-        required=True,
-        help="Pre-staged artifacts source directory",
-    )
-    parser.add_argument(
-        "--release-version",
-        default=None,
-        help="Release version string (optional)",
-    )
     args = parser.parse_args()
 
-    # Step 1: Load source-contract-input JSON; extract dataset_slug and release_id.
-    source_data, load_err = _load_source_input(args.source_input)
+    # Step 1: Load release-candidate-input JSON; extract stable identity.
+    candidate_input, load_err = _load_candidate_input(args.candidate_input)
     if load_err:
-        phase = "source_input_read" if "not found" in load_err else "source_input_parse"
+        phase = "candidate_input_read" if "not found" in load_err else "candidate_input_parse"
         print(json.dumps(_rejection(
             phase, load_err,
             dataset_slug=None, release_id=None, candidate_dir=None,
         ), indent=2))
         return 1
 
-    dataset_slug = source_data.get("dataset_slug")
-    release_id = source_data.get("release_id")
-    if not dataset_slug or not release_id:
+    dataset_slug, release_id = _input_identity(candidate_input)
+    input_errors = _validate_candidate_input(candidate_input)
+    if input_errors:
         print(json.dumps(_rejection(
-            "source_input_parse",
-            "source-contract-input JSON must contain 'dataset_slug' and 'release_id'",
+            "candidate_input_parse",
+            "release-candidate-input JSON failed required assembly checks",
             dataset_slug=dataset_slug,
             release_id=release_id,
             candidate_dir=None,
+            validation_errors=input_errors,
         ), indent=2))
         return 1
 
@@ -219,24 +378,12 @@ def main() -> int:
         ), indent=2))
         return 1
 
-    # Step 3: Assert --source-dir is a valid directory.
-    source_dir = Path(args.source_dir)
-    if not source_dir.is_dir():
-        print(json.dumps(_rejection(
-            "source_dir_invalid",
-            f"--source-dir does not exist or is not a directory: {args.source_dir}",
-            dataset_slug=dataset_slug,
-            release_id=release_id,
-            candidate_dir=str(candidate_dir),
-        ), indent=2))
-        return 1
-
-    # Step 4: Verify all required source artifacts are present.
-    missing = [p for p in _REQUIRED_SOURCE_ARTIFACTS if not (source_dir / p).is_file()]
+    # Step 3: Verify all required governed artifacts are present.
+    missing = _missing_required_artifacts(candidate_input, _REPO_ROOT)
     if missing:
         print(json.dumps(_rejection(
-            "source_artifact_missing",
-            f"required source artifacts missing from --source-dir: {missing}",
+            "candidate_artifact_missing",
+            f"required governed artifacts missing: {missing}",
             dataset_slug=dataset_slug,
             release_id=release_id,
             candidate_dir=str(candidate_dir),
@@ -244,39 +391,44 @@ def main() -> int:
         ), indent=2))
         return 1
 
-    # Step 5: Create candidate_dir and necessary subdirectories.
+    # Step 4: Create candidate_dir and necessary subdirectories.
     candidate_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 6: Copy each required source artifact to the candidate directory.
-    for rel_path in _REQUIRED_SOURCE_ARTIFACTS:
-        dst = candidate_dir / rel_path
+    # Step 5: Copy each publisher-visible governed artifact to the candidate directory.
+    assembled = []
+    for artifact, output_path in _required_public_artifacts(candidate_input):
+        dst = candidate_dir / output_path
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_dir / rel_path, dst)
+        shutil.copy2(_resolve_repo_relative(artifact["path"], _REPO_ROOT), dst)
+        assembled.append(output_path)
+    _write_manifest_input(candidate_dir, candidate_input)
+    assembled.append("manifest-input.json")
 
-    # Step 7: Write release-candidate.json (publisher/release-candidate.schema.json).
-    release_candidate = _build_release_candidate(dataset_slug, release_id, args.release_version)
+    # Step 6: Write release-candidate.json (publisher/release-candidate.schema.json).
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    release_candidate = _build_release_candidate(candidate_input, now)
     (candidate_dir / "release-candidate.json").write_text(
         json.dumps(release_candidate, indent=2), encoding="utf-8"
     )
+    assembled.append("release-candidate.json")
 
-    # Step 8: Invoke publisher.validate.validate_candidate_file() via Python import.
+    # Step 7: Invoke publisher.validate.validate_candidate_file() via Python import.
     sys.path.insert(0, str(_REPO_ROOT))
     from publisher import validate  # noqa: PLC0415
     result = validate.validate_candidate_file(candidate_dir)
 
-    # Step 9: Write reduced build-evidence.json (pipeline-internal; NOT in artifact_roles).
-    from pipeline import evidence  # noqa: PLC0415
-    assembled = _REQUIRED_SOURCE_ARTIFACTS + ["release-candidate.json"]
-    build_evidence = evidence.build_build_evidence(
-        dataset_slug,
-        release_id,
-        args.source_input,
+    # Step 8: Write reduced build-evidence.json (pipeline-internal; NOT in artifact_roles).
+    build_evidence = _build_assembly_evidence(
+        candidate_input,
+        args.candidate_input,
         result,
         assembled,
     )
-    evidence.write_build_evidence(candidate_dir, build_evidence, _REPO_ROOT)
+    (candidate_dir / "build-evidence.json").write_text(
+        json.dumps(build_evidence, indent=2), encoding="utf-8"
+    )
 
-    # Steps 10-11: Emit result JSON and exit.
+    # Steps 9-10: Emit result JSON and exit.
     if result.get("valid"):
         print(json.dumps(_acceptance(dataset_slug, release_id, candidate_dir, result), indent=2))
         return 0

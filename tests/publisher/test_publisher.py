@@ -300,3 +300,79 @@ def test_evidence_requires_schema_validation_before_write(tmp_path, monkeypatch)
         evidence.run(str(run_dir), registry_result, repo_root=tmp_repo)
 
     assert not (run_dir / "publication-evidence.json").exists()
+
+
+# --- M26-04: isolated manifest generation and verification tests ---
+
+
+def test_manifest_generates_all_required_roles_with_hashes(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    result = manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert result["schema_version"] == "release-manifest.v1"
+    assert result["manifest_kind"] == "release_manifest"
+    assert result["dataset_identity"]["dataset_slug"] == DATASET_SLUG
+    assert result["release_identity"]["release_id"] == RELEASE_ID
+
+    artifacts = result["artifacts"]
+    assert len(artifacts) == len(REQUIRED_ROLES)
+    assert {a["role"] for a in artifacts} == set(REQUIRED_ROLES)
+    for entry in artifacts:
+        assert entry["hash_algorithm"] == "sha256"
+        assert len(entry["hash_value"]) == 64
+        assert all(c in "0123456789abcdef" for c in entry["hash_value"])
+
+    assert result["safety_boundaries"]["registry_updated"] is False
+    assert result["safety_boundaries"]["release_promoted"] is False
+    assert not (tmp_repo / "registry" / "datasets.json.previous").exists()
+
+
+def test_manifest_halted_by_failed_promotion_gate(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo, missing_role="metrics")
+    validate.run(str(candidate_dir), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    with pytest.raises(RuntimeError, match="promotion_gate.promotion_allowed"):
+        manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert not (run_dir / "manifest.json").exists()
+
+
+def test_manifest_halted_when_artifact_unreadable_during_hash(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    (_candidate_dir(tmp_repo) / _role_path("metrics")).unlink()
+
+    with pytest.raises(RuntimeError, match="Manifest generation failed"):
+        manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert not (run_dir / "manifest.json").exists()
+
+
+def test_manifest_verify_detects_hash_mismatch(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+    manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    manifest_path = run_dir / "manifest.json"
+    candidate_dir = _candidate_dir(tmp_repo)
+
+    valid, errors = manifest.verify(manifest_path, candidate_dir)
+    assert valid is True
+    assert errors == []
+
+    (candidate_dir / _role_path("metrics")).write_text(
+        json.dumps({"tampered": True}), encoding="utf-8"
+    )
+
+    valid, errors = manifest.verify(manifest_path, candidate_dir)
+    assert valid is False
+    assert any(e["code"] == "MANIFEST_HASH_MISMATCH" for e in errors)

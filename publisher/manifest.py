@@ -220,6 +220,56 @@ def generate_manifest(candidate_dir: Path) -> tuple:
     return manifest, []
 
 
+def verify(manifest_path: Path, candidate_dir: Path) -> tuple:
+    """
+    Verify that the SHA-256 hash of each artifact entry in an existing manifest
+    matches the corresponding file under candidate_dir.
+
+    Returns (valid, errors). valid is True only when all artifact files are
+    readable and every declared hash matches the computed hash.
+    """
+    manifest_data, load_errors = _load_json_file(manifest_path, "manifest")
+    if load_errors:
+        return False, load_errors
+
+    if not isinstance(manifest_data, dict):
+        return False, [_err("MANIFEST_NOT_AN_OBJECT", None, "Manifest must be a JSON object.")]
+
+    artifacts = manifest_data.get("artifacts") or []
+    if not artifacts:
+        return False, [_err("MANIFEST_NO_ARTIFACTS", "artifacts", "Manifest contains no artifact entries.")]
+
+    errors = []
+    for entry in artifacts:
+        role = entry.get("role", "<unknown>")
+        reference = entry.get("reference")
+        expected_hash = entry.get("hash_value")
+
+        if not reference:
+            errors.append(_err(
+                "ARTIFACT_REFERENCE_MISSING",
+                f"artifacts[{role}].reference",
+                f"Artifact entry for role '{role}' is missing a reference.",
+            ))
+            continue
+
+        artifact_file = candidate_dir / reference
+        actual_hash, hash_errors = _sha256_file(artifact_file)
+        if hash_errors:
+            errors.extend(hash_errors)
+            continue
+
+        if actual_hash != expected_hash:
+            errors.append(_err(
+                "MANIFEST_HASH_MISMATCH",
+                f"artifacts[{role}].hash_value",
+                f"Hash mismatch for role '{role}': manifest declares {expected_hash!r},"
+                f" file computes to {actual_hash!r}.",
+            ))
+
+    return len(errors) == 0, errors
+
+
 def _validate_manifest_schema(manifest: dict, schema_path: Path) -> list:
     """Validate manifest against publisher/release-manifest.schema.json."""
     try:

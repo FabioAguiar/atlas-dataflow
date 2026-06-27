@@ -459,6 +459,92 @@ def test_customization_response_structure_matches_expected_fields():
 
 
 # ---------------------------------------------------------------------------
+# Real-registry regression: M27-01
+# ---------------------------------------------------------------------------
+
+_REAL_REGISTRY_PATH = REPO_ROOT / "registry" / "datasets.json"
+
+
+def test_real_registry_listing_returns_non_empty_list():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+
+def test_real_registry_listing_contains_telco_customer_churn():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    slugs = [d.dataset_slug for d in result]
+    assert "telco-customer-churn" in slugs
+
+
+def test_real_registry_listing_telco_customer_churn_safe_fields_non_empty():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    entry = next(d for d in result if d.dataset_slug == "telco-customer-churn")
+    assert entry.title
+    assert entry.summary
+    assert entry.domain
+    assert entry.visibility
+
+
+def test_real_registry_listing_contains_bank_marketing():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    slugs = [d.dataset_slug for d in result]
+    assert "bank-marketing" in slugs
+
+
+def test_real_registry_listing_bank_marketing_safe_fields_non_empty():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    entry = next(d for d in result if d.dataset_slug == "bank-marketing")
+    assert entry.title
+    assert entry.summary
+    assert entry.domain
+    assert entry.visibility
+
+
+def test_real_registry_listing_no_active_release_in_any_item():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    for item in result:
+        assert "active_release" not in item._asdict()
+
+
+def test_real_registry_listing_safe_fields_only_on_all_items():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    for item in result:
+        keys = set(item._asdict().keys())
+        assert keys == {"dataset_slug", "title", "summary", "domain", "visibility", "tags"}
+
+
+def test_real_registry_resolve_telco_customer_churn_succeeds():
+    resolved = resolve_dataset("telco-customer-churn", registry_path=_REAL_REGISTRY_PATH)
+    assert resolved.dataset_slug == "telco-customer-churn"
+    assert resolved.active_release
+    assert isinstance(resolved.active_release, str)
+
+
+def test_real_registry_resolve_bank_marketing_succeeds():
+    resolved = resolve_dataset("bank-marketing", registry_path=_REAL_REGISTRY_PATH)
+    assert resolved.dataset_slug == "bank-marketing"
+    assert resolved.active_release
+    assert isinstance(resolved.active_release, str)
+
+
+def test_real_registry_listing_envelope_shape():
+    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    response = {"datasets": [d._asdict() for d in result]}
+    assert "datasets" in response
+    assert isinstance(response["datasets"], list)
+    assert len(response["datasets"]) > 0
+    for item in response["datasets"]:
+        assert "dataset_slug" in item
+        assert "title" in item
+        assert "summary" in item
+        assert "domain" in item
+        assert "visibility" in item
+        assert "tags" in item
+        assert "active_release" not in item
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -486,6 +572,16 @@ if __name__ == "__main__":
         test_customization_endpoint_returns_customization_not_found_when_absent,
         test_customization_endpoint_unknown_dataset_returns_dataset_not_found,
         test_customization_response_structure_matches_expected_fields,
+        test_real_registry_listing_returns_non_empty_list,
+        test_real_registry_listing_contains_telco_customer_churn,
+        test_real_registry_listing_telco_customer_churn_safe_fields_non_empty,
+        test_real_registry_listing_contains_bank_marketing,
+        test_real_registry_listing_bank_marketing_safe_fields_non_empty,
+        test_real_registry_listing_no_active_release_in_any_item,
+        test_real_registry_listing_safe_fields_only_on_all_items,
+        test_real_registry_resolve_telco_customer_churn_succeeds,
+        test_real_registry_resolve_bank_marketing_succeeds,
+        test_real_registry_listing_envelope_shape,
     ]
     passed = 0
     failed = 0

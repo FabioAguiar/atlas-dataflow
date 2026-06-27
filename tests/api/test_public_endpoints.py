@@ -746,6 +746,191 @@ def test_real_release_valid_prediction_flow_uses_public_route_and_bundle():
 
 
 # ---------------------------------------------------------------------------
+# Real-route invalid prediction payload failures: M27-04
+# ---------------------------------------------------------------------------
+
+_M27_INVALID_PAYLOAD_RUNTIME_CONTRACT = {
+    "schema_version": "atlas.dataflow.runtime_contract.v1",
+    "features": [
+        {
+            "name": "account_age_months",
+            "type": "numeric",
+            "required": True,
+            "domain_constraints": {"min": 0, "max": 120},
+        },
+        {
+            "name": "customer_segment",
+            "type": "categorical",
+            "required": True,
+            "domain_constraints": {"values": ["standard", "premium"]},
+        },
+        {
+            "name": "has_support_plan",
+            "type": "boolean",
+            "required": True,
+        },
+    ],
+}
+
+_M27_VALID_FIXTURE_PAYLOAD = {
+    "account_age_months": 24,
+    "customer_segment": "standard",
+    "has_support_plan": False,
+}
+
+
+def _m27_invalid_case_payloads():
+    missing_required = dict(_M27_VALID_FIXTURE_PAYLOAD)
+    del missing_required["account_age_months"]
+
+    numeric_type_mismatch = dict(_M27_VALID_FIXTURE_PAYLOAD)
+    numeric_type_mismatch["account_age_months"] = "twenty-four"
+
+    categorical_type_mismatch = dict(_M27_VALID_FIXTURE_PAYLOAD)
+    categorical_type_mismatch["customer_segment"] = 10
+
+    boolean_type_mismatch = dict(_M27_VALID_FIXTURE_PAYLOAD)
+    boolean_type_mismatch["has_support_plan"] = "false"
+
+    numeric_domain_violation = dict(_M27_VALID_FIXTURE_PAYLOAD)
+    numeric_domain_violation["account_age_months"] = 121
+
+    categorical_domain_violation = dict(_M27_VALID_FIXTURE_PAYLOAD)
+    categorical_domain_violation["customer_segment"] = "unsupported"
+
+    return [
+        (
+            missing_required,
+            "account_age_months",
+            "MISSING_REQUIRED_FIELD",
+            "missing_required_field",
+        ),
+        (
+            numeric_type_mismatch,
+            "account_age_months",
+            "TYPE_MISMATCH",
+            "type_mismatch",
+        ),
+        (
+            categorical_type_mismatch,
+            "customer_segment",
+            "TYPE_MISMATCH",
+            "type_mismatch",
+        ),
+        (
+            boolean_type_mismatch,
+            "has_support_plan",
+            "TYPE_MISMATCH",
+            "type_mismatch",
+        ),
+        (
+            numeric_domain_violation,
+            "account_age_months",
+            "DOMAIN_VIOLATION",
+            "domain_violation",
+        ),
+        (
+            categorical_domain_violation,
+            "customer_segment",
+            "DOMAIN_VIOLATION",
+            "domain_violation",
+        ),
+    ]
+
+
+def _assert_invalid_payload_response(response, expected_field, expected_code, expected_violation):
+    assert response.status_code == 422
+    payload = _response_json(response)
+    assert payload["error_type"] == "invalid_payload"
+    assert payload["error_code"] == "INVALID_PAYLOAD"
+    assert isinstance(payload["message"], str)
+    assert payload["message"]
+    assert isinstance(payload["errors"], list)
+    assert payload["errors"]
+
+    error = payload["errors"][0]
+    assert set(error.keys()) == {"error_code", "message", "field", "violation"}
+    assert error["error_code"] == expected_code
+    assert isinstance(error["message"], str)
+    assert error["message"]
+    assert error["field"] == expected_field
+    assert error["violation"] == expected_violation
+    _assert_no_internal_public_exposure(payload)
+
+
+def test_real_route_non_object_prediction_payload_fails_before_runtime_resolution():
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    try:
+        api_main.resolve_dataset = (
+            lambda _dataset_slug: (_ for _ in ()).throw(
+                AssertionError("non-object payload should fail before dataset resolution")
+            )
+        )
+        api_main.load_contract = (
+            lambda _active_release: (_ for _ in ()).throw(
+                AssertionError("non-object payload should fail before contract loading")
+            )
+        )
+        api_main.execute_prediction = (
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("non-object payload should fail before prediction execution")
+            )
+        )
+
+        response = api_main.validate_dataset_inference_payload(
+            "fixture-dataset",
+            payload=["not", "an", "object"],
+        )
+
+        _assert_invalid_payload_response(
+            response,
+            "payload",
+            "TYPE_MISMATCH",
+            "type_mismatch",
+        )
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+
+
+def test_real_route_contract_invalid_prediction_payloads_fail_before_prediction_execution():
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-m27-invalid-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _M27_INVALID_PAYLOAD_RUNTIME_CONTRACT
+        api_main.execute_prediction = (
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("invalid payload should fail before prediction execution")
+            )
+        )
+
+        for payload, expected_field, expected_code, expected_violation in _m27_invalid_case_payloads():
+            response = api_main.validate_dataset_inference_payload(
+                "fixture-dataset",
+                payload=payload,
+            )
+
+            _assert_invalid_payload_response(
+                response,
+                expected_field,
+                expected_code,
+                expected_violation,
+            )
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -788,6 +973,8 @@ if __name__ == "__main__":
         test_real_release_dataset_home_model_card_payload_shape,
         test_real_release_dataset_home_visualizations_degrade_safely,
         test_real_release_valid_prediction_flow_uses_public_route_and_bundle,
+        test_real_route_non_object_prediction_payload_fails_before_runtime_resolution,
+        test_real_route_contract_invalid_prediction_payloads_fail_before_prediction_execution,
     ]
     passed = 0
     failed = 0

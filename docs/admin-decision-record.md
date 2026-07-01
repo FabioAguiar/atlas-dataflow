@@ -399,3 +399,31 @@ Until such a future implementation exists, M20's validated state is deferred adm
 ---
 
 *Recorded as part of M20-05. This section validates the M20 admin deferral and operational boundaries. It does not authorize implementation of any admin surface or public admin capability.*
+
+---
+
+## M29-05: Cross-Document Confirmation — Admin Implementation Remains Contract- and Publisher-Governed
+
+This section records an explicit, cross-document confirmation that Dashboard and Dataset Admin curation orchestrate existing publisher/profile operations and do not become an independent source of contract, model, validation, or runtime truth. It ties together boundary language already stated separately in `docs/vision.md` and `docs/architecture.md`; it does not restate, redefine, or duplicate that language, and it does not implement enforcement code for the boundary.
+
+### Confirmed Boundary Language
+
+`docs/vision.md` (line 23) states: "This administrative layer exists to support publication and curation. It must not replace contracts, runtime validation, publisher rules, or released artifacts as sources of truth."
+
+`docs/vision.md` (line 101) states: "The administrative layer only makes sense if it helps this transformation happen safely. It must orchestrate and present publication state; it must not become an independent source of contract truth, model truth, validation truth, or runtime behavior."
+
+`docs/architecture.md`'s "Publisher vs Private Administration" section (heading at line 501; content at lines 503-505) states: "The publisher contains operational logic for validation and promotion. Private administration must only orchestrate or trigger operations already available in publisher/profile logic. It must not duplicate publication rules."
+
+### Cross-Reference
+
+This confirmation is consistent with the M29-02 review recorded in `docs/vision-acceptance-record.md` and the M29-03 review recorded in `docs/architecture-acceptance-record.md`, both of which reauthorized the same private-admin scope (Dashboard, Dataset Admin, Settings, Help) referenced by the boundary language above.
+
+### Outcome
+
+**Confirmed: admin implementation stays contract- and publisher-governed.** Dashboard and Dataset Admin curation must orchestrate operations already available in publisher/profile logic. They must not replace contracts, runtime validation, publisher rules, or released artifacts as sources of truth, and must not duplicate publication rules.
+
+This confirmation does not redefine contract or publisher logic, does not implement enforcement code for the boundary, and does not authorize implementation, publication, branch creation, commits, pull requests, or patches. It records a cross-document decision only. No existing M20-03, M20-04, or M20-05 section content in this file is modified, reordered, or renumbered by this addition.
+
+---
+
+*Recorded as part of M29-05. This section confirms the contract- and publisher-governance boundary already established separately in `docs/vision.md` and `docs/architecture.md`. It does not authorize implementation of any admin surface, enforcement code, or public admin capability.*

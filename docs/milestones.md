@@ -67,14 +67,17 @@ The milestones preserve this direction by prioritizing:
 - understandable public experience;
 - contracts as the source of truth;
 - inference based on published artifacts;
-- traceability between dataset, contract, model, metrics, and publication;
+- traceability between dataset, run, contract, model, metrics, public profile, snapshot, and publication;
 - data-study authoring through controlled notebooks;
-- transformation from dataset discovery to contracts, prepared data, model artifacts, and release artifacts;
+- transformation from dataset discovery to contracts, prepared data, model artifacts, inference bundles, and release artifacts;
 - separation between human notebook authoring and deterministic build, publish, and runtime stages;
-- separation between public surface and internal processes;
-- simplicity proportional to the first public cycle.
+- separation between public surface, private administration, internal publisher, runtime, and generated artifacts;
+- design-backed public and administrative screens that make the existing contract-driven foundation usable without turning the frontend into the source of truth;
+- private run discovery, dataset curation, draft preview, snapshot publishing, and visibility control;
+- removal of permanent Telco/Bank hardcoding as product logic while preserving them as examples or fixtures when useful;
+- simplicity proportional to the first complete public/admin product cycle.
 
-Items outside the initial vision, such as public upload, marketplace, multi-user operation, complex administration, and public retraining, must not appear as mandatory scope in the first milestones.
+Items outside the current vision, such as public upload, marketplace, multi-user operation, complex authorization, public administration, and public retraining, must not appear as mandatory scope in the first complete public/admin cycle.
 
 ## Relationship with docs/architecture.md
 
@@ -82,20 +85,47 @@ Items outside the initial vision, such as public upload, marketplace, multi-user
 
 The milestones reflect the following architectural decisions:
 
-- `dataset-centric`, `contract-first`, and `release-oriented` architecture;
-- public runtime resolving publications by `dataset_slug` and `active_release`;
-- initial file-based registry;
-- one active release per dataset in the first public cycle;
-- one public experience per dataset in the first public cycle;
-- no predict views at the beginning;
+- `dataset-centric`, `contract-first`, `release-oriented`, `profile-aware`, and design-backed architecture;
+- public runtime resolving publications by `dataset_slug`, active release, published public profile snapshot, and visibility state;
+- file-based registry and artifact-based releases as the current proportional storage model;
+- one active release per published dataset in the current cycle;
+- one public experience per published dataset;
 - published releases treated as immutable;
-- internal publisher before any web administration;
-- no public administration in the first public cycle;
-- eventual internal administration accessible only through a private surface;
-- separation between pipeline, publisher, runtime, contracts, artifacts, and web experience;
+- internal publisher and validation logic remaining authoritative over release and publication rules;
+- private administration now authorized as a proportional curation and publication surface;
+- no public administration;
+- private Dashboard for safe run discovery and promotion intent;
+- private Dataset Admin for public profile draft curation, preview, publishing, and visibility control;
+- minimal Settings and Help routes as part of the private admin shell;
+- separation between pipeline, publisher, runtime, contracts, artifacts, public web experience, and private administration;
 - notebooks treated as controlled authoring and discovery surfaces, not as public runtime services;
-- prepared datasets, execution contracts, trained models, inference bundles, and release candidates generated through explicit artifacts;
-- implementation documentation strategy defined as `milestones-only`.
+- prepared datasets, execution contracts, trained models, inference bundles, release candidates, profile drafts, and profile snapshots generated or validated through explicit artifacts;
+- design prototypes treated as deterministic UX references, not as API, schema, publisher, or runtime contracts;
+- implementation documentation strategy reviewed after the real dataflow and product-surface complexity become observable.
+
+## Relationship with Design Documentation
+
+The `design/` directory in the support repository is a reference for the next product-surface implementation stage.
+
+The milestones treat the design documents and HTML/CSS/JS prototypes as:
+
+- deterministic UX references for layout, visible content, interaction states, responsive behavior, and intended screen composition;
+- guidance for public Home, public Dataset Detail, private Dashboard, private Dataset Admin, Help, and Settings surfaces;
+- evidence of expected user-facing behavior for draft editing, live preview, publishing, visibility, and drag-and-drop interaction;
+- implementation input that must still be reconciled with `docs/vision.md`, `docs/architecture.md`, schemas, APIs, publisher rules, runtime validation, and tests.
+
+The design documentation does not replace:
+
+- runtime contracts;
+- release candidate schemas;
+- publisher validation;
+- public API contracts;
+- private/admin API boundaries;
+- public/private access rules;
+- operational State;
+- test evidence.
+
+If a future issue finds inconsistency between a design `.md` file and its HTML/CSS/JS prototype, the issue must document the inconsistency and resolve it explicitly instead of silently choosing one side by inference.
 
 ## Relationship with Operational State
 
@@ -161,6 +191,16 @@ Conditions that may motivate a future review of the strategy:
 | M26 | Release candidate from real dataflow artifacts | Publishable releases are assembled from real pipeline, contract, model, and evidence artifacts | With reservations |
 | M27 | Public runtime and browser validation | Public API and web experience are validated end to end with real release artifacts | With reservations |
 | M28 | Operational release guide and implementation map | Repeatable navigation and operating guidance are documented after the dataflow is real | With reservations |
+| M29 | Design-grounded product surface reauthorization | Vision, architecture, milestones, and design boundaries authorize the new public/admin stage | Yes |
+| M30 | Frontend shell, routing, and design system foundation | Shared public/admin frontend foundation exists before feature-heavy screens | With reservations |
+| M31 | Public Home and Dataset Detail design implementation | Public screens follow the design and consume real public API data | With reservations |
+| M32 | Public contract projection and inference presentation upgrade | Inference forms become truly contract-driven for select/options and result presentation | With reservations |
+| M33 | Run discovery and Dashboard backend foundation | Private Dashboard reads safe run summaries and dataset publication readiness | With reservations |
+| M34 | Dataset public profile draft model | Admin-editable public presentation state becomes validated and persisted | With reservations |
+| M35 | Dataset Admin UI, live preview, and drag-and-drop UX | Dataset Admin edits drafts and previews real public components with improved drag feedback | With reservations |
+| M36 | Draft preview, publishing snapshot, and visibility semantics | Drafts, previews, published snapshots, and public visibility behave deterministically | With reservations |
+| M37 | Dataset catalog generalization and hardcoded dataset exit | Telco/Bank become examples or fixtures, not product assumptions | With reservations |
+| M38 | Settings, Help, and admin completion pass | Admin navigation gaps are closed with minimal Settings and Help screens | With reservations |
 
 ## M1 — Documented Foundation and Initial Technical Scope
 
@@ -3739,3 +3779,1214 @@ The milestone will be ready to derive issues when:
 ### Continuity Notes
 
 This milestone should make future work easier to navigate without expanding product scope. It should close the notebook-to-release roadmap segment and prepare a later roadmap based on evidence.
+
+## M29 — Design-Grounded Product Surface Reauthorization
+
+### Objective
+
+Authorize the next Atlas implementation stage as a design-backed product surface composed of public dataset experiences and a private administrative curation layer.
+
+This milestone aligns `docs/vision.md`, `docs/architecture.md`, `docs/milestones.md`, and the support `design/` directory before implementation begins.
+
+### Problem or Gap
+
+The official Atlas foundation is now materially contract-driven, release-oriented, and capable of serving public runtime data. However, the historical architecture deferred internal administration until publisher operations became real.
+
+The support repository now contains concrete designs for public Home, public Dataset Detail, private Dashboard, and private Dataset Admin. Implementing these screens without updating the foundational documents would create a conflict between current implementation intent and earlier architectural boundaries.
+
+### Context
+
+This milestone does not implement screens or APIs. It records that the design-backed UI/admin stage is now authorized, while preserving the core Atlas principle that contracts, publisher rules, release artifacts, profile schemas, and runtime validation remain authoritative over frontend behavior.
+
+The design files should be treated as deterministic UX references. They are not executable source of truth for schemas, API contracts, publisher logic, or runtime validation.
+
+### Core Scope
+
+- Review the current `design/` directory as the UX reference for the next stage.
+- Record the product transition from contract-driven foundation to design-backed public/admin surfaces.
+- Confirm that public Home and Dataset Detail are public product surfaces.
+- Confirm that Dashboard, Dataset Admin, Settings, and Help are private administrative surfaces.
+- Clarify that admin exists for curation, preview, publishing, and visibility control, not for replacing contracts or technical artifacts.
+- Clarify that Help and Settings are part of the private admin shell.
+- Limit Settings initially to user display-name configuration.
+- Establish that design inconsistencies must be documented and resolved explicitly in later issues.
+- Update this milestones roadmap with the M29+ sequence.
+
+### Out of Scope
+
+- Implementing React screens.
+- Implementing backend admin APIs.
+- Creating profile schemas.
+- Modifying release artifacts.
+- Publishing GitHub issues.
+- Creating a database.
+- Implementing authentication or a complete authorization system.
+- Implementing marketplace, public upload, public retraining, multi-tenant administration, or public administration.
+- Treating the HTML/CSS/JS prototypes as production code to copy without adaptation.
+
+### Expected Deliverables
+
+- Updated `docs/vision.md` authorizing the product-surface stage.
+- Updated `docs/architecture.md` authorizing private admin and profile/snapshot boundaries.
+- Updated `docs/milestones.md` with the M29+ roadmap.
+- Recorded interpretation of `design/` as deterministic UX reference rather than API/schema source of truth.
+- Explicit confirmation that implementation must remain contract-driven and publisher-governed.
+
+### Implementation Documentation
+
+- Applicable strategy: documentation-first reauthorization.
+- Expected documentation updates: foundational documents only.
+- Candidate documents: `docs/vision.md`, `docs/architecture.md`, `docs/milestones.md`.
+- Criterion to create additional implementation documentation: do not create new cumulative implementation documents unless a later issue authorizes them.
+- Criterion not to update: do not use this milestone to document implementation that does not yet exist.
+
+### Dependencies
+
+- M22 through M28 completed or explicitly understood as the current foundation.
+- Current support repository contains design references under `design/`.
+- Current official repository exposes a contract-driven public runtime foundation.
+- Human decision authorizes the next product-surface stage.
+
+### Components or Areas Affected
+
+- Documentation.
+- Product vision.
+- Architecture boundaries.
+- Milestone roadmap.
+- Design documentation interpretation.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: design directory must be reviewed as implementation input.
+  - Possible issue type: documentation.
+  - Note: record design as UX reference and document any inconsistency requiring later resolution.
+- Criterion: vision must authorize admin/public product surfaces.
+  - Possible issue type: documentation.
+  - Note: do not define implementation details in vision.
+- Criterion: architecture must authorize private admin without weakening public/private separation.
+  - Possible issue type: documentation.
+  - Note: admin must remain subordinate to contracts, artifacts, publisher, and runtime validation.
+- Criterion: milestones must define the next implementable sequence.
+  - Possible issue type: documentation.
+  - Note: do not publish issues from this document alone.
+
+### Definition of Done
+
+- Foundational documentation no longer treats private administration only as a hypothetical deferred possibility.
+- Private admin is explicitly scoped as a proportional curation/publishing surface.
+- Public and private surfaces are separated.
+- Design references are acknowledged without overriding technical contracts.
+- M30 through M38 can be derived as future implementation milestones.
+- No implementation behavior is changed by this milestone.
+
+### Minimum Evidence
+
+- Updated foundational documents are present.
+- Updated milestone overview includes M29 through M38.
+- Design interpretation is recorded.
+- No code, schema, API, publisher, or release behavior is changed.
+
+### Risks and Gaps
+
+- Risk of over-authorizing admin and turning Atlas into a broad MLOps platform.
+- Risk of treating design prototypes as backend contracts.
+- Risk of implementing UI before data/profile/publishing boundaries exist.
+- Gap: concrete admin access control remains to be defined proportionally in later implementation work.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- current vision and architecture files are available;
+- current milestones file is available;
+- design references are available in the support repository;
+- the intended public/admin scope is known;
+- implementation remains explicitly out of scope.
+
+### Continuity Notes
+
+This milestone is the bridge between the completed contract-driven foundation and the next design-backed product implementation cycle. It should be short, decisive, and documentation-only.
+
+## M30 — Frontend Shell, Routing, and Design System Foundation
+
+### Objective
+
+Create the reusable React/Vite frontend foundation required to implement the designed public and private Atlas screens without duplicating layout, styles, navigation, and interaction primitives across pages.
+
+### Problem or Gap
+
+The current public frontend is functional but visually simple and not aligned with the support designs. The next screens require consistent tokens, cards, tabs, headers, sidebars, tables, status states, empty states, and responsive behavior.
+
+Starting directly with individual screens would likely duplicate CSS, fragment layout rules, and make later admin implementation harder to keep consistent.
+
+### Context
+
+This milestone prepares the frontend surface but should avoid feature-heavy backend behavior. Admin routes may exist as private placeholders while profile, run discovery, and publishing semantics are implemented in later milestones.
+
+### Core Scope
+
+- Introduce shared design tokens for spacing, typography, radius, shadow, borders, and semantic UI states.
+- Create reusable primitives for cards, buttons, tabs, badges, status pills, empty states, error states, form rows, and table rows.
+- Create public shell components compatible with Home and Dataset Detail.
+- Create private admin shell components: sidebar, workspace, header controls, user/profile block, and navigation items.
+- Add route entries for public Home, public Dataset Detail, Dashboard, Dataset Admin, Settings, and Help.
+- Keep public routes functional during the transition.
+- Keep admin routes private/internal and safe while behavior is not yet implemented.
+- Add or update frontend build/regression validation required for shell changes.
+
+### Out of Scope
+
+- Implementing final public Home content.
+- Implementing final Dataset Detail tabs.
+- Implementing run discovery.
+- Implementing profile drafts.
+- Implementing Dataset Admin forms.
+- Implementing publishing semantics.
+- Implementing authentication unless a later issue scopes the minimal gate.
+- Changing publisher, registry, runtime, contracts, or release artifacts.
+
+### Expected Deliverables
+
+- Shared frontend design tokens and primitives.
+- Public shell foundation.
+- Private admin shell foundation.
+- Route map for the intended public and admin screens.
+- Safe placeholders or minimal empty states for unimplemented admin screens.
+- Frontend validation evidence.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation can remain code-first with milestone traceability.
+- Expected documentation update: only update implementation notes if an issue explicitly authorizes it.
+- Candidate documentation: route map or frontend component notes, only if necessary to reduce future context cost.
+- Criterion not to update: do not create broad UI documentation before components stabilize.
+
+### Dependencies
+
+- M29 completed or equivalent authorization recorded.
+- Current React/Vite application structure available.
+- Current design screens available.
+- Public API routes continue to exist.
+
+### Components or Areas Affected
+
+- Web frontend.
+- Routing.
+- Shared UI components.
+- Public shell.
+- Admin shell.
+- Frontend tests or build validation.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: design tokens and primitives are needed.
+  - Possible issue type: bootstrap.
+  - Note: avoid styling every screen independently.
+- Criterion: public shell must be reusable by Home and Dataset Detail.
+  - Possible issue type: bootstrap.
+  - Note: preserve current public routes.
+- Criterion: private admin shell must exist before Dashboard and Dataset Admin.
+  - Possible issue type: bootstrap.
+  - Note: keep behavior static/safe until data milestones authorize it.
+- Criterion: route map must include known future screens.
+  - Possible issue type: bootstrap.
+  - Note: placeholders must not overclaim functionality.
+
+### Definition of Done
+
+- The application builds successfully.
+- Existing public routes remain reachable.
+- Public and admin layout foundations are separated.
+- Admin navigation includes Dashboard, Dataset Admin, Settings, and Help.
+- Unimplemented behavior has deterministic empty or placeholder states.
+- No publisher/runtime/backend behavior is changed.
+
+### Minimum Evidence
+
+- Frontend build passes.
+- Route smoke validation is available or manually documented.
+- Visual structure can host the design-backed screens.
+- No new public admin operation is exposed.
+
+### Risks and Gaps
+
+- Risk of overbuilding a component library before screen requirements are proven.
+- Risk of leaking admin routes into the public experience.
+- Risk of changing public API integration while doing shell work.
+- Gap: final data wiring remains dependent on later milestones.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M29 has authorized the product-surface stage;
+- target routes are known;
+- current frontend entry points are available;
+- design primitives can be extracted from current prototypes without copying prototype code blindly.
+
+### Continuity Notes
+
+This milestone should create enough structure to reduce regressions in later UI work, but it should not attempt to solve profile, run, or publishing behavior.
+
+## M31 — Public Home and Dataset Detail Design Implementation
+
+### Objective
+
+Replace the current simple public React UI with design-backed public Home and Dataset Detail screens that consume real public API data and preserve contract-driven behavior.
+
+### Problem or Gap
+
+The current public UI exposes useful runtime data but does not match the designed Atlas public experience. Dataset Detail is especially linear and technical, while the design expects an understandable dataset-centered page with Overview, Inference, and Documentation tabs.
+
+### Context
+
+Public Home and Dataset Detail can be implemented earlier than the full admin flow because the public API foundation already exists. The UI should remain data-driven and must not introduce hardcoded dataset assumptions.
+
+### Core Scope
+
+- Implement public Home from `design/screens/home/`.
+- Render dataset cards from the public dataset API or registry-backed public endpoint.
+- Use public profile/home-card fields when available and deterministic fallbacks when unavailable.
+- Implement public Dataset Detail from `design/screens/dataset-detail/`.
+- Convert Dataset Detail into tabs: `Overview`, `Inference`, and `Documentation`.
+- Place inference form and result exclusively under the Inference tab.
+- Keep Documentation intentionally empty at this stage unless a later issue authorizes real content.
+- Render problem summary, dataset metadata, performance summary, and model context from public-safe sources.
+- Normalize metrics from nested `evaluation.metrics` when needed.
+- Treat target distribution and feature importance as optional public visualization blocks with deterministic empty states when artifacts are absent.
+- Preserve mobile, tablet, and desktop responsive expectations from the design.
+
+### Out of Scope
+
+- Creating Dataset Admin.
+- Creating public profile draft persistence.
+- Publishing profile snapshots.
+- Generating new visualization artifacts unless explicitly derived into a backend issue.
+- Changing runtime validation rules.
+- Removing Telco/Bank fixtures.
+- Implementing Documentation tab content.
+- Implementing public upload or public retraining.
+
+### Expected Deliverables
+
+- Design-aligned public Home.
+- Design-aligned public Dataset Detail.
+- Dataset cards rendered from public data.
+- Dataset Detail tab behavior.
+- Metrics adapter or normalization sufficient for the Performance Summary.
+- Optional visualization empty states.
+- Responsive frontend validation evidence.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation with milestone traceability.
+- Expected documentation update: only update public UI notes if route behavior or public data assumptions change materially.
+- Candidate documentation: public route behavior, only if necessary.
+- Criterion not to update: do not convert design documentation into a duplicate frontend spec unless inconsistencies are resolved.
+
+### Dependencies
+
+- M30 completed or equivalent frontend shell exists.
+- Public dataset API available.
+- Public context, metrics, contract, inference, model-card, or related endpoints available.
+- Design references for Home and Dataset Detail available.
+
+### Components or Areas Affected
+
+- Web frontend.
+- Public Home route.
+- Public Dataset Detail route.
+- Public metrics rendering.
+- Public visualization rendering.
+- Inference form placement.
+- Responsive CSS.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: Home must render dataset cards from data.
+  - Possible issue type: bootstrap.
+  - Note: avoid hardcoded datasets in UI.
+- Criterion: Dataset Detail must match the designed tab model.
+  - Possible issue type: bootstrap.
+  - Note: inference moves to the Inference tab.
+- Criterion: metrics must be read from real artifact shape.
+  - Possible issue type: bootstrap.
+  - Note: nested metrics must be handled safely.
+- Criterion: visualizations may be absent.
+  - Possible issue type: bootstrap.
+  - Note: implement empty states or derive artifact generation separately.
+- Criterion: public responsiveness must follow design references.
+  - Possible issue type: bootstrap.
+  - Note: validate mobile/tablet/desktop where applicable.
+
+### Definition of Done
+
+- Public Home follows the design reference and remains data-driven.
+- Dataset Detail follows the design reference and tab model.
+- Inference behavior still uses runtime/public contract data.
+- Metrics display uses real metric values rather than top-level-only assumptions.
+- Missing visualization artifacts do not break the page.
+- Existing seeded datasets continue to work.
+
+### Minimum Evidence
+
+- Frontend build passes.
+- Public Home route validates with available datasets.
+- Dataset Detail route validates with at least one published dataset.
+- Inference form remains usable.
+- Responsive behavior is checked against the design targets.
+
+### Risks and Gaps
+
+- Risk of frontend inventing presentation data that should come from profile snapshots later.
+- Risk of hiding missing visualization artifacts rather than recording the gap.
+- Risk of coupling Home card design to Telco/Bank examples.
+- Gap: final public profile source may not exist until M34/M36.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- public shell exists;
+- current public endpoints are known;
+- design references are available;
+- metrics and visualization artifact shapes are inspected;
+- fallback behavior is accepted.
+
+### Continuity Notes
+
+This milestone should make the current public runtime feel like the designed Atlas product while avoiding admin/publishing behavior that has not yet been implemented.
+
+## M32 — Public Contract Projection and Inference Presentation Upgrade
+
+### Objective
+
+Upgrade public inference rendering so forms and results are driven by public-safe contract projections, especially for categorical/select options and design-aligned result presentation.
+
+### Problem or Gap
+
+Runtime contracts can describe categorical domains, but public form rendering may not expose enough public-safe option data for real select controls. A frontend form that renders select-like fields as plain text inputs weakens the contract-driven promise and creates a poor user experience.
+
+### Context
+
+The runtime validator must remain authoritative. The frontend may improve rendering and guidance, but it must not invent allowed values, override domain rules, or mutate technical contracts.
+
+### Core Scope
+
+- Review runtime contract and public contract projection shape for categorical/domain values.
+- Add or adapt public-safe option projection for select fields.
+- Ensure public projection does not leak internal training, preprocessing, or private artifact details.
+- Update the inference form to render number, text, select, checkbox, or other supported controls appropriately.
+- Preserve runtime validation and error mapping.
+- Prepare inference form presentation hooks for future admin-controlled grouping, ordering, labels, hints, and visibility.
+- Prepare result-card presentation hooks for custom labels, badge presets, and friendly display without changing prediction semantics.
+
+### Out of Scope
+
+- Allowing admin to change runtime contract fields.
+- Allowing frontend-defined validation rules to replace runtime validation.
+- Adding unsupported input types without contract support.
+- Implementing the full Dataset Admin builder.
+- Implementing public profile draft persistence.
+- Changing model prediction behavior.
+
+### Expected Deliverables
+
+- Public-safe contract projection for select/domain options or an equivalent validated adapter.
+- Updated inference form controls.
+- Runtime validation preserved.
+- Error states mapped to user-friendly display.
+- Foundation for later admin presentation settings.
+
+### Implementation Documentation
+
+- Applicable strategy: schema/API change must be documented only where the issue authorizes it.
+- Expected documentation update: public contract projection notes if the exposed shape changes.
+- Candidate documents: API contract documentation, architecture notes, or schema comments.
+- Criterion not to update: do not duplicate runtime contract definitions in prose.
+
+### Dependencies
+
+- M31 completed or public form area known.
+- Runtime contract field/domain shape available.
+- Public contract endpoint or projection layer available.
+- Tests for valid/invalid inference payloads available or derivable.
+
+### Components or Areas Affected
+
+- Contract projection layer.
+- Public API contract response.
+- Web inference form.
+- Runtime validation integration.
+- Tests for contract/public projection/inference behavior.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: categorical values need public-safe projection.
+  - Possible issue type: bootstrap.
+  - Note: projection must not expose private implementation details.
+- Criterion: inference form must render real controls.
+  - Possible issue type: bootstrap.
+  - Note: no frontend-invented options.
+- Criterion: runtime validation must remain authoritative.
+  - Possible issue type: bootstrap.
+  - Note: invalid frontend payloads must still be rejected server-side.
+- Criterion: presentation settings need a future-compatible adapter.
+  - Possible issue type: bootstrap.
+  - Note: prepare hooks without implementing admin persistence yet.
+
+### Definition of Done
+
+- Public select fields render as select controls when safe options exist.
+- Missing options produce deterministic fallback behavior rather than invalid UI assumptions.
+- Runtime validation remains unchanged or explicitly validated after any schema exposure change.
+- Result display can be styled without changing prediction semantics.
+- Tests cover public projection and inference rendering where applicable.
+
+### Minimum Evidence
+
+- Contract projection tests pass.
+- Inference form tests or manual validation demonstrate select behavior.
+- Invalid payload validation remains intact.
+- Public Dataset Detail still works for seeded examples.
+
+### Risks and Gaps
+
+- Risk of exposing internal preprocessing categories that should not be public.
+- Risk of mismatching frontend options and runtime accepted values.
+- Risk of changing contract schemas too broadly for presentation needs.
+- Gap: admin grouping/order remains dependent on M34/M35.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- runtime contract categorical field structure is understood;
+- public contract endpoint behavior is known;
+- frontend form rendering gaps are confirmed;
+- acceptable public-safe option shape is scoped.
+
+### Continuity Notes
+
+This milestone should strengthen the contract-driven user experience before the Dataset Admin builder depends on form configuration.
+
+## M33 — Run Discovery and Dashboard Backend Foundation
+
+### Objective
+
+Implement the safe backend/admin data foundation for the Dashboard screen by exposing validated run summaries and publication-preparation status through a private boundary.
+
+### Problem or Gap
+
+Generated notebook runs are central to the next product workflow, but they should not be exposed as raw filesystem paths or trusted directly by the frontend. The legacy/rascunho project can help understand promotion intent, but the official Atlas needs a safer, contract-driven run summary boundary.
+
+### Context
+
+Dashboard should help an operator discover runs, understand readiness, and begin promotion into a dataset public profile workflow. It must not become a public endpoint, arbitrary file browser, or direct artifact mutator.
+
+### Core Scope
+
+- Define a safe run-summary schema.
+- List generated runs from a configured runs root through private/admin API boundaries.
+- Derive run id/name, dataset candidate, created timestamp, readiness/status, trace reference, and validation summary from known artifacts or evidence.
+- Avoid exposing raw absolute paths, secrets, arbitrary files, or unvalidated artifact contents.
+- Integrate Dashboard frontend counters, filters, and tables with the run summary API.
+- Represent promotion as controlled intent or later workflow entry point, not an uncontrolled direct mutation.
+- Provide deterministic empty/error states when no runs exist.
+
+### Out of Scope
+
+- Publishing a run directly.
+- Mutating release artifacts.
+- Creating public profile drafts.
+- Implementing Dataset Admin.
+- Implementing arbitrary file browsing.
+- Exposing run discovery publicly.
+- Trusting legacy behavior without adapting it to official Atlas boundaries.
+
+### Expected Deliverables
+
+- Run summary schema or DTO.
+- Private/admin run listing endpoint or equivalent internal route.
+- Safe run readiness derivation.
+- Dashboard data integration for summary cards and tables.
+- Deterministic empty/error states.
+- Tests for safe listing and boundary behavior.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation with boundary documentation if API shape is introduced.
+- Expected documentation update: only if a private/admin API contract is created and needs future agent navigation.
+- Candidate documents: admin API notes, if authorized.
+- Criterion not to update: do not document local absolute paths or private machine-specific details.
+
+### Dependencies
+
+- M30 completed or admin shell exists.
+- Run artifact locations and expected evidence are known.
+- Legacy run promotion behavior reviewed only as conceptual input.
+- Private/admin route boundary is authorized by architecture.
+
+### Components or Areas Affected
+
+- Backend/admin API.
+- Run artifact readers.
+- Validation/evidence adapters.
+- Dashboard frontend.
+- Tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: run summaries need a safe schema.
+  - Possible issue type: bootstrap.
+  - Note: no raw filesystem exposure.
+- Criterion: run listing must be private/internal.
+  - Possible issue type: bootstrap.
+  - Note: public visitors must not see runs.
+- Criterion: Dashboard must render real or empty data.
+  - Possible issue type: bootstrap.
+  - Note: avoid mock-only behavior.
+- Criterion: promotion must remain controlled.
+  - Possible issue type: bootstrap.
+  - Note: a placeholder or intent boundary is acceptable before profile drafts exist.
+
+### Definition of Done
+
+- Dashboard can display real run summaries or a clear empty state.
+- Run data is filtered through a safe projection.
+- No public route exposes generated runs.
+- Promotion action does not bypass publisher/profile validation.
+- Legacy code is not copied without boundary review.
+
+### Minimum Evidence
+
+- Backend tests for run summary listing pass.
+- Dashboard build/interaction checks pass.
+- Boundary test or review confirms raw paths/private files are not exposed.
+- Empty-run state is validated.
+
+### Risks and Gaps
+
+- Risk of building an unsafe file browser under the name Dashboard.
+- Risk of trusting incomplete or malformed run artifacts.
+- Risk of prematurely coupling run listing to publish behavior.
+- Gap: promotion into profile drafts is completed later.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- run root configuration is identifiable;
+- expected run artifact/evidence shape is known;
+- Dashboard design reference is available;
+- private/admin boundary is authorized.
+
+### Continuity Notes
+
+This milestone should make run discovery visible and safe, while leaving curation and publishing to later profile/publishing milestones.
+
+## M34 — Dataset Public Profile Draft Model
+
+### Objective
+
+Define and implement the controlled data model for admin-editable public presentation state without mutating contracts, models, metrics, inference bundles, or immutable release artifacts.
+
+### Problem or Gap
+
+The Dataset Admin design includes editable public copy, home-card metadata, theme/icon choices, inference form presentation, result-card presentation, primary metric highlights, live preview, publishing, and visibility. These behaviors need a real validated profile model before the UI can safely persist changes.
+
+### Context
+
+The profile model should be proportional and file-based unless a future architectural decision authorizes a database. It must distinguish editable presentation state from Atlas-derived technical state.
+
+### Core Scope
+
+- Define `dataset_public_profile` or an equivalent schema.
+- Represent editable public presentation fields from the design.
+- Represent read-only Atlas-derived fields as references or derived values, not editable copies.
+- Support draft state for public content, home-card metadata, theme preset, icon, primary score highlight, inference grouping/order/visibility, labels/hints, and result-card presentation.
+- Validate profile fields against public contract fields where relevant.
+- Prevent unknown fields, hidden required contract fields, invalid field references, contract field duplication, arbitrary unsafe color values, and unsupported theme/icon values.
+- Add file-based draft persistence.
+- Add read/update API for profile drafts through private/admin boundaries.
+- Provide deterministic fallback profiles when no draft exists.
+
+### Out of Scope
+
+- Publishing profile snapshots publicly.
+- Implementing final Dataset Admin UI.
+- Changing runtime contracts.
+- Changing trained model artifacts.
+- Changing metrics artifacts.
+- Creating a database.
+- Allowing arbitrary custom CSS or unsafe presentation values.
+- Allowing admin to edit technical release artifacts.
+
+### Expected Deliverables
+
+- Public profile draft schema.
+- Profile loader and validator.
+- File-based draft persistence.
+- Draft read/update endpoints or service methods.
+- Fallback profile generation from active release/public artifacts.
+- Tests for validation and persistence.
+
+### Implementation Documentation
+
+- Applicable strategy: schema-backed implementation.
+- Expected documentation update: profile schema purpose and boundaries if authorized by issue.
+- Candidate documents: architecture subsection, schema README, or admin profile notes.
+- Criterion not to update: do not create UI documentation that duplicates design files.
+
+### Dependencies
+
+- M29 architecture authorization.
+- Public contract projection available or known.
+- Public release artifacts and registry available.
+- Dataset Admin design fields reviewed.
+
+### Components or Areas Affected
+
+- Backend/admin profile services.
+- Profile schema.
+- File-based storage.
+- Public contract adapters.
+- Private/admin API.
+- Tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: conceptual profile shape must become a formal schema.
+  - Possible issue type: bootstrap.
+  - Note: keep technical artifacts read-only.
+- Criterion: draft persistence is required.
+  - Possible issue type: bootstrap.
+  - Note: file-based storage is enough unless changed by decision.
+- Criterion: profile references must validate against contracts.
+  - Possible issue type: bootstrap.
+  - Note: no unknown/duplicated/hidden-required fields.
+- Criterion: fallbacks must keep existing datasets renderable.
+  - Possible issue type: bootstrap.
+  - Note: seeded releases should work without manually authored profiles.
+
+### Definition of Done
+
+- Draft profiles can be created, read, updated, and validated.
+- Draft profiles cannot mutate technical artifacts.
+- Invalid profile references are rejected.
+- Existing datasets render with deterministic fallback presentation.
+- Tests cover schema, persistence, and validation rules.
+
+### Minimum Evidence
+
+- Profile schema validation tests pass.
+- Draft read/update tests pass.
+- Contract-reference validation tests pass.
+- Fallback behavior is validated for at least one existing dataset.
+
+### Risks and Gaps
+
+- Risk of making profile schema too broad too early.
+- Risk of copying technical artifact values into editable presentation state.
+- Risk of allowing invalid UI configuration that breaks inference.
+- Gap: public snapshot publication is implemented later.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- Dataset Admin design fields are known;
+- public contract field identifiers are available;
+- file-based storage location can be scoped;
+- public/profile boundary is accepted.
+
+### Continuity Notes
+
+This milestone is the data foundation for Dataset Admin. UI work should not persist mock state before this model exists.
+
+## M35 — Dataset Admin UI, Live Preview, and Drag-and-Drop UX
+
+### Objective
+
+Implement the Dataset Admin screen against the real draft profile model and make the live preview and drag-and-drop interactions reflect actual user intent.
+
+### Problem or Gap
+
+The design prototype already demonstrates rich admin behavior, but the official application needs a production React implementation wired to validated draft profile data and shared public components. Drag-and-drop also needs stronger visual feedback than the current prototype, where the user does not clearly see the object attached to the pointer.
+
+### Context
+
+Dataset Admin should edit draft presentation settings and preview them. It should not publish draft changes or mutate release artifacts until M36 implements publishing semantics.
+
+### Core Scope
+
+- Implement Dataset Admin route and dataset selector.
+- Implement tabs from the design: public content, metadata/home card, theme preset, inference form, result card, publishing placeholder/state, and live preview.
+- Load read-only Atlas-derived values from active dataset/release/public contract/public artifacts.
+- Load and save draft profile values through private/admin endpoints.
+- Use shared public Home card and Dataset Detail components in Live Preview rather than a fixed mockup.
+- Ensure Primary Score Highlight changes affect Performance Summary preview.
+- Ensure theme preset/icon settings affect Home card and Dataset Detail preview.
+- Implement inference field/group ordering and visibility against validated draft state.
+- Implement custom drag ghost/overlay that follows the pointer while dragging fields or groups.
+- Preserve compact desktop usability from the design.
+- Keep publishing controls non-final or disabled until M36 authorizes behavior, unless scoped as read-only status.
+
+### Out of Scope
+
+- Publishing draft profiles publicly.
+- Implementing visibility semantics.
+- Changing runtime contracts.
+- Adding arbitrary custom fields not present in the contract/profile schema.
+- Implementing mobile/tablet admin versions unless a later decision authorizes them.
+- Exposing admin UI publicly.
+
+### Expected Deliverables
+
+- Dataset Admin screen implemented from the desktop design.
+- Draft profile data integration.
+- Live Preview using shared public components/adapters.
+- Primary score/theme/icon preview behavior.
+- Inference form builder for grouping/order/visibility.
+- Custom drag ghost/overlay for field/group dragging.
+- Frontend tests/build validation.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation with design-reference traceability.
+- Expected documentation update: only document deviations from design if necessary.
+- Candidate documentation: design implementation notes if inconsistencies are found.
+- Criterion not to update: do not create a duplicate UI specification if design `.md` remains sufficient.
+
+### Dependencies
+
+- M30 frontend shell exists.
+- M31 public components exist or are available for reuse.
+- M32 contract projection is sufficient for form rendering.
+- M34 profile draft model exists.
+- Dataset Admin design references available.
+
+### Components or Areas Affected
+
+- Web frontend.
+- Private admin routes.
+- Dataset Admin components.
+- Shared public preview components.
+- Draft profile API integration.
+- Drag-and-drop interaction logic.
+- Tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: Dataset Admin route and tab shell are needed.
+  - Possible issue type: bootstrap.
+  - Note: follow the design without copying prototype code blindly.
+- Criterion: draft profile editing must be wired to real persistence.
+  - Possible issue type: bootstrap.
+  - Note: no local-only fake persistence in official implementation.
+- Criterion: Live Preview must use shared public components.
+  - Possible issue type: bootstrap.
+  - Note: avoid fixed mockups that diverge from real Dataset Detail/Home.
+- Criterion: drag-and-drop needs visible pointer-attached feedback.
+  - Possible issue type: bootstrap.
+  - Note: implement a custom drag ghost/overlay.
+
+### Definition of Done
+
+- Dataset Admin follows the desktop design at the intended level of fidelity.
+- Draft changes persist through the profile draft model.
+- Live Preview reflects current draft state using real public component logic.
+- Dragging visibly carries a field/group object with the pointer.
+- Publishing is not accidentally triggered by draft editing.
+- Frontend build and relevant interaction checks pass.
+
+### Minimum Evidence
+
+- Frontend build passes.
+- Draft edit/save flow validates locally or through tests.
+- Live Preview responds to public content, theme/icon, primary score, and form layout changes.
+- Drag ghost/overlay is demonstrably active during drag.
+- Admin route remains private/internal.
+
+### Risks and Gaps
+
+- Risk of recreating public components separately inside preview.
+- Risk of UI allowing invalid profile state despite backend validation.
+- Risk of native drag/drop quirks causing inconsistent feedback.
+- Gap: publishing/visibility controls become fully active only in M36.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- profile draft APIs exist;
+- shared public components are reusable;
+- Dataset Admin design is available;
+- drag-and-drop behavior is scoped;
+- publishing side effects are explicitly excluded.
+
+### Continuity Notes
+
+This milestone should make Dataset Admin useful for curation and preview, while leaving public publication to the dedicated deterministic publishing milestone.
+
+## M36 — Draft Preview, Publishing Snapshot, and Visibility Semantics
+
+### Objective
+
+Implement deterministic publishing behavior for public profile drafts: Save Draft, Preview, Publish Changes, published profile snapshots, and Visible Publicly semantics.
+
+### Problem or Gap
+
+The Dataset Admin design must clearly distinguish draft configuration, preview of draft configuration, the last published public snapshot, and public visibility of that snapshot. Without explicit semantics, admin actions can become ambiguous and may accidentally expose drafts or hide the wrong state.
+
+### Context
+
+Published release artifacts remain immutable. Publishing a public profile snapshot should change presentation state, not technical release artifacts. Visibility controls whether the latest published snapshot is public, not whether draft changes are published.
+
+### Core Scope
+
+- Define draft profile versus published profile snapshot lifecycle.
+- Implement Save Draft as persistence of private draft state.
+- Implement Preview as rendering of private draft state without public exposure.
+- Implement Publish Changes as creation or replacement of a versioned published profile snapshot.
+- Record traceability between dataset, active release, draft source, published profile snapshot, timestamp, and validation result.
+- Implement Visible Publicly as a setting on the latest published snapshot or publication record.
+- Ensure public Home and Dataset Detail consume only published visible profile snapshots, with safe fallbacks where allowed.
+- Ensure visibility off hides or suppresses the dataset/card/detail according to the agreed public access rule.
+- Derive status labels such as Draft, Published, Hidden, Not Published, and Unpublished Changes.
+- Add tests for draft isolation, publishing determinism, visibility, and public/private boundary.
+
+### Out of Scope
+
+- Mutating model/release artifacts.
+- Republishing active release packages.
+- Implementing broad approval workflows.
+- Implementing multi-user audit trails.
+- Implementing public administration.
+- Creating database-backed history unless separately authorized.
+
+### Expected Deliverables
+
+- Draft/published profile snapshot lifecycle.
+- Publish validation and snapshot storage.
+- Visibility state handling.
+- Public runtime/profile resolution update.
+- Publishing tab behavior wired to backend semantics.
+- Status derivation.
+- Tests for determinism and boundary rules.
+
+### Implementation Documentation
+
+- Applicable strategy: schema and behavior must be documented if new artifact lifecycle is introduced.
+- Expected documentation update: profile snapshot lifecycle, if authorized.
+- Candidate documents: architecture update, publisher/profile notes, or operational release guide update.
+- Criterion not to update: do not document more operational process than has been implemented.
+
+### Dependencies
+
+- M34 profile draft model exists.
+- M35 Dataset Admin UI exists or publishing controls are ready.
+- Public Home/Dataset Detail can consume profile presentation state.
+- Publisher/release boundaries are understood.
+
+### Components or Areas Affected
+
+- Profile publishing service.
+- Private/admin API.
+- Public profile resolver.
+- Public Home.
+- Public Dataset Detail.
+- Dataset Admin Publishing tab.
+- Tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: profile snapshot lifecycle must be explicit.
+  - Possible issue type: bootstrap.
+  - Note: draft state must not leak publicly.
+- Criterion: publishing must be traceable.
+  - Possible issue type: bootstrap.
+  - Note: include release/profile validation references.
+- Criterion: visibility must be deterministic.
+  - Possible issue type: bootstrap.
+  - Note: visibility toggle must not publish draft changes.
+- Criterion: public surfaces must resolve published visible state.
+  - Possible issue type: bootstrap.
+  - Note: define fallback behavior carefully.
+
+### Definition of Done
+
+- Save Draft persists private draft only.
+- Preview renders private draft only.
+- Publish Changes creates a validated published profile snapshot.
+- Visible Publicly controls public exposure of the published snapshot.
+- Draft changes are not publicly visible before publish.
+- Public Home and Dataset Detail follow published/visible state.
+- Tests prove boundary and lifecycle rules.
+
+### Minimum Evidence
+
+- Tests for draft isolation pass.
+- Tests for publish snapshot creation pass.
+- Tests for visibility off/on behavior pass.
+- Public route checks confirm correct profile resolution.
+- Publishing evidence or metadata is produced.
+
+### Risks and Gaps
+
+- Risk of visibility toggle being mistaken for publishing.
+- Risk of public pages reading draft state.
+- Risk of snapshot storage becoming a hidden mutable release artifact.
+- Gap: richer approval/audit workflows remain out of scope.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- profile drafts exist;
+- public profile resolver can be modified;
+- publishing storage path is scoped;
+- visibility behavior is decided;
+- public/private boundary tests are possible.
+
+### Continuity Notes
+
+This milestone is critical to making Dataset Admin safe. It should prioritize deterministic semantics over visual polish.
+
+## M37 — Dataset Catalog Generalization and Hardcoded Dataset Exit
+
+### Objective
+
+Remove dependence on Telco and Bank as permanent product assumptions while preserving them as seeded examples or fixtures where useful.
+
+### Problem or Gap
+
+Telco and Bank helped bootstrap contract-driven development. As Atlas moves toward real datasets promoted from runs, the product must not require those datasets to exist in production logic, UI behavior, tests, or publication flow.
+
+### Context
+
+This milestone should not blindly delete existing example datasets. Instead, it should classify where Telco/Bank are examples, fixtures, release packages, registry entries, or hidden product assumptions, then generalize only the assumptions that block real datasets.
+
+### Core Scope
+
+- Inventory Telco/Bank references across registry, releases, predict views, tests, UI, documentation, and fixtures.
+- Classify references as example data, fixture data, compatibility data, documentation sample, or product assumption.
+- Preserve useful seeded examples in explicit dev/test fixture mode.
+- Remove or generalize product logic that assumes exact Telco/Bank slugs, counts, labels, metrics, or fields.
+- Ensure public Home handles zero, one, or many published datasets.
+- Ensure Dashboard handles zero, one, or many runs/datasets.
+- Ensure Dataset Admin handles arbitrary registry/profile-backed datasets.
+- Define a dataset onboarding path from run to public profile without code changes per dataset.
+- Update tests that incorrectly require exactly Telco/Bank.
+
+### Out of Scope
+
+- Deleting all sample releases just because they are examples.
+- Replacing registry with a database.
+- Implementing public upload.
+- Implementing automatic dataset discovery from arbitrary user uploads.
+- Implementing multi-tenant ownership.
+- Changing model training behavior unless required by generalized fixtures.
+
+### Expected Deliverables
+
+- Telco/Bank assumption inventory.
+- Explicit fixture/example classification.
+- Generalized registry/profile/public UI behavior.
+- Empty/seeded/dev mode behavior where necessary.
+- Tests updated to distinguish fixture expectations from product expectations.
+- Dataset onboarding notes if authorized by issue.
+
+### Implementation Documentation
+
+- Applicable strategy: inventory then implementation.
+- Expected documentation update: only document fixture/example mode or onboarding path if it becomes a stable behavior.
+- Candidate documents: dataset onboarding guide or fixture README, if authorized.
+- Criterion not to update: do not rewrite vision/architecture just to remove example assumptions.
+
+### Dependencies
+
+- M31 public UI data-driven behavior.
+- M33 Dashboard data model.
+- M34/M36 profile and publication state.
+- Current registry/releases/tests available for inventory.
+
+### Components or Areas Affected
+
+- Registry.
+- Published releases.
+- Predict-view registry.
+- Public Home.
+- Dataset Detail.
+- Dashboard.
+- Dataset Admin.
+- Tests and fixtures.
+- Documentation if authorized.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: Telco/Bank assumptions must be inventoried.
+  - Possible issue type: bootstrap.
+  - Note: classify before changing.
+- Criterion: fixtures must be separated from product logic.
+  - Possible issue type: bootstrap.
+  - Note: keep examples if useful.
+- Criterion: UI must handle arbitrary dataset counts.
+  - Possible issue type: bootstrap.
+  - Note: support zero/many states.
+- Criterion: tests must stop encoding product assumptions accidentally.
+  - Possible issue type: bootstrap.
+  - Note: fixture-specific tests may still name Telco/Bank.
+
+### Definition of Done
+
+- Telco and Bank are not required by product logic.
+- Telco and Bank remain only where explicitly classified as examples, fixtures, or compatibility data.
+- New published datasets can appear through registry/release/profile flow without UI code changes.
+- Public/admin screens handle zero, one, and many datasets.
+- Tests distinguish fixture data from general product behavior.
+
+### Minimum Evidence
+
+- Inventory exists or is embedded in issue evidence.
+- Generalized tests pass.
+- Public Home validated with more than one dataset and with empty state where feasible.
+- Dataset Admin selection does not assume fixed slugs.
+- No unclassified Telco/Bank product assumption remains in changed areas.
+
+### Risks and Gaps
+
+- Risk of deleting useful fixtures and destabilizing tests.
+- Risk of under-classifying hidden assumptions.
+- Risk of treating registry generalization as user-upload support.
+- Gap: fully automated dataset onboarding may require later milestones.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- public/profile/admin flow exists enough to reveal real assumptions;
+- current references can be searched;
+- fixture strategy can be separated from product behavior;
+- desired empty/seeded modes are scoped.
+
+### Continuity Notes
+
+This milestone should convert hardcoded examples into explicit examples, not erase the evidence that helped prove the system.
+
+## M38 — Settings, Help, and Admin Completion Pass
+
+### Objective
+
+Close the remaining private admin navigation gaps by implementing minimal Settings and Help screens aligned with the current product stage.
+
+### Problem or Gap
+
+The design/admin navigation anticipates Settings and Help, but these screens are not part of the core run/profile/publishing flow. Leaving them as dead navigation weakens the product surface, while overbuilding them would expand scope unnecessarily.
+
+### Context
+
+Settings should initially support only editing the displayed admin user name. Help should explain the implemented workflows and boundaries without exposing secrets, raw local paths, or future features as if they already exist.
+
+### Core Scope
+
+- Define minimal admin settings schema.
+- Implement Settings route.
+- Allow editing only the admin display user name initially.
+- Persist display name in safe local/admin settings storage or equivalent controlled file-based storage.
+- Reflect display name in the admin shell profile block where applicable.
+- Implement Help route with static guidance for Dashboard, Dataset Admin, draft, preview, publish, visibility, public/private boundary, and dataset onboarding limits.
+- Ensure Help content reflects implemented behavior only.
+- Add navigation wiring and tests/build validation.
+
+### Out of Scope
+
+- User account management.
+- Passwords, authentication, roles, teams, organizations, or permissions.
+- Editing email, avatar, billing, API keys, secrets, deployment settings, or model settings.
+- Dynamic documentation fetched from private files.
+- Public Help as a marketing/documentation site.
+- Claiming capabilities that remain future work.
+
+### Expected Deliverables
+
+- Minimal admin settings schema/storage.
+- Settings screen with display-name edit flow.
+- Admin shell display-name integration.
+- Help screen with implemented workflow guidance.
+- Tests or validation for navigation and settings persistence.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation with minimal durable docs only if behavior becomes operationally relevant.
+- Expected documentation update: none by default.
+- Candidate documentation: Help content itself.
+- Criterion not to update: do not create broad user manuals at this stage.
+
+### Dependencies
+
+- M30 admin shell exists.
+- M33 Dashboard exists or behavior is known.
+- M35/M36 Dataset Admin and publishing behavior exist or are sufficiently final to document truthfully.
+- Settings storage location can be scoped.
+
+### Components or Areas Affected
+
+- Web frontend.
+- Private admin shell.
+- Settings storage/service.
+- Help content.
+- Tests/build validation.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: settings schema must remain minimal.
+  - Possible issue type: bootstrap.
+  - Note: display name only.
+- Criterion: Settings route must not imply account management.
+  - Possible issue type: bootstrap.
+  - Note: keep scope narrow.
+- Criterion: Help must explain implemented behavior.
+  - Possible issue type: bootstrap.
+  - Note: no speculative future docs.
+- Criterion: navigation must not contain dead links.
+  - Possible issue type: bootstrap.
+  - Note: route and shell integration required.
+
+### Definition of Done
+
+- Settings route is implemented.
+- User display name can be edited and persisted.
+- Admin shell reflects the configured display name.
+- Help route is implemented and accurate to current behavior.
+- Help does not expose secrets, private paths, or unsupported capabilities.
+- Build/tests pass.
+
+### Minimum Evidence
+
+- Settings persistence validated.
+- Admin shell display name update validated.
+- Help route renders.
+- Scope review confirms only display name is editable.
+- Build/tests pass.
+
+### Risks and Gaps
+
+- Risk of expanding Settings into user/account management prematurely.
+- Risk of Help becoming stale or overclaiming future capabilities.
+- Risk of exposing private implementation details.
+- Gap: real authentication/authorization remains a separate future architectural decision if required.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- admin shell exists;
+- implemented Dashboard/Admin workflows are stable enough to explain;
+- display-name storage location is scoped;
+- Help content can be based on implemented behavior.
+
+### Continuity Notes
+
+This milestone is a completion pass for the private admin surface. It should close visible navigation gaps without expanding Atlas beyond the first complete public/admin cycle.
+

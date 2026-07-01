@@ -1,508 +1,533 @@
 {
-"schema_version": "milestone_state.v1",
-"artifact_type": "milestone_state",
-"project_id": "atlas-dataflow",
-"source_of_truth": {
-"milestones_document": "docs/milestones.md",
-"formal_issue_source": "support_workspace",
-"architecture_document": "docs/architecture.md",
-"vision_document": "docs/vision.md",
-"operational_state_document": "docs/project-status/milestone-state.json"
-},
-"formal_issue_location": {
-"workspace_alias": "project_support_root",
-"project_support_subpath": "atlas-dataflow",
-"formal_issues_index_pattern": "issues/{milestone_id}/formal-issues-index.json",
-"formal_issue_json_pattern": "issues/{milestone_id}/{issue_id}/formal-issue.json",
-"formal_issue_markdown_pattern": "issues/{milestone_id}/{issue_id}/issue.md",
-"github_role": "publication_target_or_human_reference"
-},
-"current_milestone": {
-"id": "M28",
-"title": "Operational Release Guide and Implementation Map",
-"status": "active"
-},
-"last_completed_milestone": {
-"id": "M27",
-"title": "Public Runtime and Browser Validation",
-"status": "completed"
-},
-"completed_milestones": [
-{
-"id": "M1",
-"title": "Documented Foundation and Initial Technical Scope",
-"status": "completed"
-},
-{
-"id": "M2",
-"title": "Minimal Public Technical Bootstrap",
-"status": "completed"
-},
-{
-"id": "M3",
-"title": "File-Based Registry and Publication Model",
-"status": "completed"
-},
-{
-"id": "M4",
-"title": "Contracts and Contract-First Validation",
-"status": "completed"
-},
-{
-"id": "M5",
-"title": "Internal Publisher and Release Candidate",
-"status": "completed"
-},
-{
-"id": "M6",
-"title": "Inference Runtime by Dataset and Active Release",
-"status": "completed"
-},
-{
-"id": "M7",
-"title": "First Public Dataset Experience",
-"status": "completed"
-},
-{
-"id": "M8",
-"title": "Containerized Public Deployment and Minimum Security",
-"status": "completed"
-},
-{
-"id": "M9",
-"title": "First Public Cycle Closure",
-"status": "completed"
-},
-{
-"id": "M10",
-"title": "Initial Private Internal Administration",
-"status": "completed"
-},
-{
-"id": "M11",
-"title": "Publisher Operational Release Flow",
-"status": "completed"
-},
-{
-"id": "M12",
-"title": "First Real Dataset Release",
-"status": "completed"
-},
-{
-"id": "M13",
-"title": "Contract Artifact Build Pipeline Foundation",
-"status": "completed"
-},
-{
-"id": "M14",
-"title": "Run Evidence and Traceability Layer",
-"status": "completed"
-},
-{
-"id": "M15",
-"title": "Controlled Expansion to a Second Dataset",
-"status": "completed"
-},
-{
-"id": "M16",
-"title": "Published Dataset Context Foundation",
-"status": "completed"
-},
-{
-"id": "M17",
-"title": "Published Shell and Dataset Home Experience",
-"status": "completed"
-},
-{
-"id": "M18",
-"title": "Predict View Foundation",
-"status": "completed"
-},
-{
-"id": "M19",
-"title": "Predict Experience Customization",
-"status": "completed"
-},
-{
-"id": "M20",
-"title": "Internal Admin Re-Evaluation",
-"status": "completed"
-},
-{
-"id": "M21",
-"title": "Publication Stabilization and Operational Hardening",
-"status": "completed"
-},
-{
-"id": "M22",
-"title": "Notebook-Driven Dataset Discovery",
-"status": "completed"
-},
-{
-"id": "M23",
-"title": "Human Contract to Execution Contract",
-"status": "completed"
-},
-{
-"id": "M24",
-"title": "Notebook-to-Pipeline Model Training",
-"status": "completed"
-},
-{
-"id": "M25",
-"title": "Inference Bundle Contract",
-"status": "completed"
-},
-{
-"id": "M26",
-"title": "Release Candidate from Real Dataflow Artifacts",
-"status": "completed"
-},
-{
-"id": "M27",
-"title": "Public Runtime and Browser Validation",
-"status": "completed"
-}
-],
-"locked_completed_milestones": [
-{
-"id": "M1",
-"title": "Documented Foundation and Initial Technical Scope",
-"status": "locked"
-},
-{
-"id": "M2",
-"title": "Minimal Public Technical Bootstrap",
-"status": "locked"
-},
-{
-"id": "M3",
-"title": "File-Based Registry and Publication Model",
-"status": "locked"
-},
-{
-"id": "M4",
-"title": "Contracts and Contract-First Validation",
-"status": "locked"
-},
-{
-"id": "M5",
-"title": "Internal Publisher and Release Candidate",
-"status": "locked"
-},
-{
-"id": "M6",
-"title": "Inference Runtime by Dataset and Active Release",
-"status": "locked"
-},
-{
-"id": "M7",
-"title": "First Public Dataset Experience",
-"status": "locked"
-},
-{
-"id": "M8",
-"title": "Containerized Public Deployment and Minimum Security",
-"status": "locked"
-},
-{
-"id": "M9",
-"title": "First Public Cycle Closure",
-"status": "locked"
-},
-{
-"id": "M10",
-"title": "Initial Private Internal Administration",
-"status": "locked"
-},
-{
-"id": "M11",
-"title": "Publisher Operational Release Flow",
-"status": "locked"
-},
-{
-"id": "M12",
-"title": "First Real Dataset Release",
-"status": "locked"
-},
-{
-"id": "M13",
-"title": "Contract Artifact Build Pipeline Foundation",
-"status": "locked"
-},
-{
-"id": "M14",
-"title": "Run Evidence and Traceability Layer",
-"status": "locked"
-},
-{
-"id": "M15",
-"title": "Controlled Expansion to a Second Dataset",
-"status": "locked"
-},
-{
-"id": "M16",
-"title": "Published Dataset Context Foundation",
-"status": "locked"
-},
-{
-"id": "M17",
-"title": "Published Shell and Dataset Home Experience",
-"status": "locked"
-},
-{
-"id": "M18",
-"title": "Predict View Foundation",
-"status": "locked"
-},
-{
-"id": "M19",
-"title": "Predict Experience Customization",
-"status": "locked"
-},
-{
-"id": "M20",
-"title": "Internal Admin Re-Evaluation",
-"status": "locked"
-},
-{
-"id": "M21",
-"title": "Publication Stabilization and Operational Hardening",
-"status": "locked"
-},
-{
-"id": "M22",
-"title": "Notebook-Driven Dataset Discovery",
-"status": "locked"
-},
-{
-"id": "M23",
-"title": "Human Contract to Execution Contract",
-"status": "locked"
-},
-{
-"id": "M24",
-"title": "Notebook-to-Pipeline Model Training",
-"status": "locked"
-},
-{
-"id": "M25",
-"title": "Inference Bundle Contract",
-"status": "locked"
-},
-{
-"id": "M26",
-"title": "Release Candidate from Real Dataflow Artifacts",
-"status": "locked"
-},
-{
-"id": "M27",
-"title": "Public Runtime and Browser Validation",
-"status": "locked"
-}
-],
-"reopen_records": [],
-"regression_policy": {
-"allow_return_to_completed_milestone": false,
-"requires_explicit_reopen_record": true
-},
-"validation_rules": {
-"current_milestone_must_exist_in_milestones_document": true,
-"current_milestone_must_not_be_completed": true,
-"current_milestone_must_not_be_locked": true,
-"completed_milestone_reopen_requires_record": true,
-"milestones_document_is_planning_not_operational_state": true,
-"implementation_documentation_strategy_is_not_defined_here": true
-},
-"implementation_documentation_boundary": {
-"strategy_source": "docs/architecture.md",
-"reflected_by": "docs/milestones.md",
-"selected_strategy": "milestones-only",
-"state_file_role": "This file records the operational milestone cursor only and does not create, update, or authorize implementation documentation."
-},
-"operational_boundary": {
-"state": "This file records the observable operational milestone state for the atlas-dataflow project.",
-"intent": "Project goals, milestone planning, architecture, and implementation documentation evaluation remain in project documents such as docs/vision.md, docs/architecture.md, and docs/milestones.md.",
-"control": "Workflows and scripts may validate this state before continuing the pipeline; this file does not execute work, define workflow logic, publish issues, or authorize implementation."
-},
-"known_milestones": [
-{
-"id": "M1",
-"title": "Documented Foundation and Initial Technical Scope",
-"status": "completed"
-},
-{
-"id": "M2",
-"title": "Minimal Public Technical Bootstrap",
-"status": "completed"
-},
-{
-"id": "M3",
-"title": "File-Based Registry and Publication Model",
-"status": "completed"
-},
-{
-"id": "M4",
-"title": "Contracts and Contract-First Validation",
-"status": "completed"
-},
-{
-"id": "M5",
-"title": "Internal Publisher and Release Candidate",
-"status": "completed"
-},
-{
-"id": "M6",
-"title": "Inference Runtime by Dataset and Active Release",
-"status": "completed"
-},
-{
-"id": "M7",
-"title": "First Public Dataset Experience",
-"status": "completed"
-},
-{
-"id": "M8",
-"title": "Containerized Public Deployment and Minimum Security",
-"status": "completed"
-},
-{
-"id": "M9",
-"title": "First Public Cycle Closure",
-"status": "completed"
-},
-{
-"id": "M10",
-"title": "Initial Private Internal Administration",
-"status": "completed"
-},
-{
-"id": "M11",
-"title": "Publisher Operational Release Flow",
-"status": "completed"
-},
-{
-"id": "M12",
-"title": "First Real Dataset Release",
-"status": "completed"
-},
-{
-"id": "M13",
-"title": "Contract Artifact Build Pipeline Foundation",
-"status": "completed"
-},
-{
-"id": "M14",
-"title": "Run Evidence and Traceability Layer",
-"status": "completed"
-},
-{
-"id": "M15",
-"title": "Controlled Expansion to a Second Dataset",
-"status": "completed"
-},
-{
-"id": "M16",
-"title": "Published Dataset Context Foundation",
-"status": "completed"
-},
-{
-"id": "M17",
-"title": "Published Shell and Dataset Home Experience",
-"status": "completed"
-},
-{
-"id": "M18",
-"title": "Predict View Foundation",
-"status": "completed"
-},
-{
-"id": "M19",
-"title": "Predict Experience Customization",
-"status": "completed"
-},
-{
-"id": "M20",
-"title": "Internal Admin Re-Evaluation",
-"status": "completed"
-},
-{
-"id": "M21",
-"title": "Publication Stabilization and Operational Hardening",
-"status": "completed"
-},
-{
-"id": "M22",
-"title": "Notebook-Driven Dataset Discovery",
-"status": "completed"
-},
-{
-"id": "M23",
-"title": "Human Contract to Execution Contract",
-"status": "completed"
-},
-{
-"id": "M24",
-"title": "Notebook-to-Pipeline Model Training",
-"status": "completed"
-},
-{
-"id": "M25",
-"title": "Inference Bundle Contract",
-"status": "completed"
-},
-{
-"id": "M26",
-"title": "Release Candidate from Real Dataflow Artifacts",
-"status": "completed"
-},
-{
-"id": "M27",
-"title": "Public Runtime and Browser Validation",
-"status": "completed"
-},
-{
-"id": "M28",
-"title": "Operational Release Guide and Implementation Map",
-"status": "active"
-}
-],
-"notes": [
-"This file records operational milestone state only.",
-"M28 is the current active milestone for Operational Release Guide and Implementation Map in Atlas DataFlow.",
-"M27 is marked as completed because Public Runtime and Browser Validation has been completed.",
-"M26 is marked as completed because Release Candidate from Real Dataflow Artifacts has been completed.",
-"M25 is marked as completed because Inference Bundle Contract has been completed.",
-"M24 is marked as completed because Notebook-to-Pipeline Model Training has been completed.",
-"M23 is marked as completed because Human Contract to Execution Contract has been completed.",
-"M22 is marked as completed because Notebook-Driven Dataset Discovery has been completed.",
-"M21 is marked as completed because Publication Stabilization and Operational Hardening has been completed.",
-"M20 is marked as completed because Internal Admin Re-Evaluation has been completed.",
-"M19 is marked as completed because Predict Experience Customization has been completed.",
-"M18 is marked as completed because Predict View Foundation has been completed.",
-"M17 is marked as completed because Published Shell and Dataset Home Experience has been completed.",
-"M16 is marked as completed because Published Dataset Context Foundation has been completed.",
-"M15 is marked as completed because Controlled Expansion to a Second Dataset has been completed.",
-"M14 is marked as completed because Run Evidence and Traceability Layer has been completed.",
-"M13 is marked as completed because Contract Artifact Build Pipeline Foundation has been completed.",
-"M12 is marked as completed because First Real Dataset Release has been completed.",
-"M11 is marked as completed because Publisher Operational Release Flow has been completed.",
-"M10 is marked as completed in the operational cursor because Initial Private Internal Administration was closed with documented deferral, not implemented as an admin surface.",
-"M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
-"M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-"M28 should be validated against docs/milestones.md before workflow continuation.",
-"Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
-"docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
-"docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
-"Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
-"This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-"The current milestone points to M28 because the next implementation focus is Operational Release Guide and Implementation Map."
-],
-"documentation_boundary": {
-"vision_document": "docs/vision.md",
-"architecture_document": "docs/architecture.md",
-"milestones_document": "docs/milestones.md",
-"implementation_documentation": "Defined by docs/architecture.md and reflected by docs/milestones.md when applicable; not decided by this state file.",
-"state_document": "docs/project-status/milestone-state.json"
-}
+  "schema_version": "milestone_state.v1",
+  "artifact_type": "milestone_state",
+  "project_id": "atlas-dataflow",
+  "source_of_truth": {
+    "milestones_document": "docs/milestones.md",
+    "formal_issue_source": "support_workspace",
+    "architecture_document": "docs/architecture.md",
+    "vision_document": "docs/vision.md",
+    "operational_state_document": "docs/project-status/milestone-state.json"
+  },
+  "formal_issue_location": {
+    "workspace_alias": "project_support_root",
+    "project_support_subpath": "atlas-dataflow",
+    "formal_issues_index_pattern": "issues/{milestone_id}/formal-issues-index.json",
+    "formal_issue_json_pattern": "issues/{milestone_id}/{issue_id}/formal-issue.json",
+    "formal_issue_markdown_pattern": "issues/{milestone_id}/{issue_id}/issue.md",
+    "github_role": "publication_target_or_human_reference"
+  },
+  "current_milestone": {
+    "id": "M29",
+    "title": "Design-Grounded Product Surface Reauthorization",
+    "status": "active"
+  },
+  "last_completed_milestone": {
+    "id": "M28",
+    "title": "Operational Release Guide and Implementation Map",
+    "status": "completed"
+  },
+  "completed_milestones": [
+    {
+      "id": "M1",
+      "title": "Documented Foundation and Initial Technical Scope",
+      "status": "completed"
+    },
+    {
+      "id": "M2",
+      "title": "Minimal Public Technical Bootstrap",
+      "status": "completed"
+    },
+    {
+      "id": "M3",
+      "title": "File-Based Registry and Publication Model",
+      "status": "completed"
+    },
+    {
+      "id": "M4",
+      "title": "Contracts and Contract-First Validation",
+      "status": "completed"
+    },
+    {
+      "id": "M5",
+      "title": "Internal Publisher and Release Candidate",
+      "status": "completed"
+    },
+    {
+      "id": "M6",
+      "title": "Inference Runtime by Dataset and Active Release",
+      "status": "completed"
+    },
+    {
+      "id": "M7",
+      "title": "First Public Dataset Experience",
+      "status": "completed"
+    },
+    {
+      "id": "M8",
+      "title": "Containerized Public Deployment and Minimum Security",
+      "status": "completed"
+    },
+    {
+      "id": "M9",
+      "title": "First Public Cycle Closure",
+      "status": "completed"
+    },
+    {
+      "id": "M10",
+      "title": "Initial Private Internal Administration",
+      "status": "completed"
+    },
+    {
+      "id": "M11",
+      "title": "Publisher Operational Release Flow",
+      "status": "completed"
+    },
+    {
+      "id": "M12",
+      "title": "First Real Dataset Release",
+      "status": "completed"
+    },
+    {
+      "id": "M13",
+      "title": "Contract Artifact Build Pipeline Foundation",
+      "status": "completed"
+    },
+    {
+      "id": "M14",
+      "title": "Run Evidence and Traceability Layer",
+      "status": "completed"
+    },
+    {
+      "id": "M15",
+      "title": "Controlled Expansion to a Second Dataset",
+      "status": "completed"
+    },
+    {
+      "id": "M16",
+      "title": "Published Dataset Context Foundation",
+      "status": "completed"
+    },
+    {
+      "id": "M17",
+      "title": "Published Shell and Dataset Home Experience",
+      "status": "completed"
+    },
+    {
+      "id": "M18",
+      "title": "Predict View Foundation",
+      "status": "completed"
+    },
+    {
+      "id": "M19",
+      "title": "Predict Experience Customization",
+      "status": "completed"
+    },
+    {
+      "id": "M20",
+      "title": "Internal Admin Re-Evaluation",
+      "status": "completed"
+    },
+    {
+      "id": "M21",
+      "title": "Publication Stabilization and Operational Hardening",
+      "status": "completed"
+    },
+    {
+      "id": "M22",
+      "title": "Notebook-Driven Dataset Discovery",
+      "status": "completed"
+    },
+    {
+      "id": "M23",
+      "title": "Human Contract to Execution Contract",
+      "status": "completed"
+    },
+    {
+      "id": "M24",
+      "title": "Notebook-to-Pipeline Model Training",
+      "status": "completed"
+    },
+    {
+      "id": "M25",
+      "title": "Inference Bundle Contract",
+      "status": "completed"
+    },
+    {
+      "id": "M26",
+      "title": "Release Candidate from Real Dataflow Artifacts",
+      "status": "completed"
+    },
+    {
+      "id": "M27",
+      "title": "Public Runtime and Browser Validation",
+      "status": "completed"
+    },
+    {
+      "id": "M28",
+      "title": "Operational Release Guide and Implementation Map",
+      "status": "completed"
+    }
+  ],
+  "locked_completed_milestones": [
+    {
+      "id": "M1",
+      "title": "Documented Foundation and Initial Technical Scope",
+      "status": "locked"
+    },
+    {
+      "id": "M2",
+      "title": "Minimal Public Technical Bootstrap",
+      "status": "locked"
+    },
+    {
+      "id": "M3",
+      "title": "File-Based Registry and Publication Model",
+      "status": "locked"
+    },
+    {
+      "id": "M4",
+      "title": "Contracts and Contract-First Validation",
+      "status": "locked"
+    },
+    {
+      "id": "M5",
+      "title": "Internal Publisher and Release Candidate",
+      "status": "locked"
+    },
+    {
+      "id": "M6",
+      "title": "Inference Runtime by Dataset and Active Release",
+      "status": "locked"
+    },
+    {
+      "id": "M7",
+      "title": "First Public Dataset Experience",
+      "status": "locked"
+    },
+    {
+      "id": "M8",
+      "title": "Containerized Public Deployment and Minimum Security",
+      "status": "locked"
+    },
+    {
+      "id": "M9",
+      "title": "First Public Cycle Closure",
+      "status": "locked"
+    },
+    {
+      "id": "M10",
+      "title": "Initial Private Internal Administration",
+      "status": "locked"
+    },
+    {
+      "id": "M11",
+      "title": "Publisher Operational Release Flow",
+      "status": "locked"
+    },
+    {
+      "id": "M12",
+      "title": "First Real Dataset Release",
+      "status": "locked"
+    },
+    {
+      "id": "M13",
+      "title": "Contract Artifact Build Pipeline Foundation",
+      "status": "locked"
+    },
+    {
+      "id": "M14",
+      "title": "Run Evidence and Traceability Layer",
+      "status": "locked"
+    },
+    {
+      "id": "M15",
+      "title": "Controlled Expansion to a Second Dataset",
+      "status": "locked"
+    },
+    {
+      "id": "M16",
+      "title": "Published Dataset Context Foundation",
+      "status": "locked"
+    },
+    {
+      "id": "M17",
+      "title": "Published Shell and Dataset Home Experience",
+      "status": "locked"
+    },
+    {
+      "id": "M18",
+      "title": "Predict View Foundation",
+      "status": "locked"
+    },
+    {
+      "id": "M19",
+      "title": "Predict Experience Customization",
+      "status": "locked"
+    },
+    {
+      "id": "M20",
+      "title": "Internal Admin Re-Evaluation",
+      "status": "locked"
+    },
+    {
+      "id": "M21",
+      "title": "Publication Stabilization and Operational Hardening",
+      "status": "locked"
+    },
+    {
+      "id": "M22",
+      "title": "Notebook-Driven Dataset Discovery",
+      "status": "locked"
+    },
+    {
+      "id": "M23",
+      "title": "Human Contract to Execution Contract",
+      "status": "locked"
+    },
+    {
+      "id": "M24",
+      "title": "Notebook-to-Pipeline Model Training",
+      "status": "locked"
+    },
+    {
+      "id": "M25",
+      "title": "Inference Bundle Contract",
+      "status": "locked"
+    },
+    {
+      "id": "M26",
+      "title": "Release Candidate from Real Dataflow Artifacts",
+      "status": "locked"
+    },
+    {
+      "id": "M27",
+      "title": "Public Runtime and Browser Validation",
+      "status": "locked"
+    },
+    {
+      "id": "M28",
+      "title": "Operational Release Guide and Implementation Map",
+      "status": "locked"
+    }
+  ],
+  "reopen_records": [],
+  "regression_policy": {
+    "allow_return_to_completed_milestone": false,
+    "requires_explicit_reopen_record": true
+  },
+  "validation_rules": {
+    "current_milestone_must_exist_in_milestones_document": true,
+    "current_milestone_must_not_be_completed": true,
+    "current_milestone_must_not_be_locked": true,
+    "completed_milestone_reopen_requires_record": true,
+    "milestones_document_is_planning_not_operational_state": true,
+    "implementation_documentation_strategy_is_not_defined_here": true
+  },
+  "implementation_documentation_boundary": {
+    "strategy_source": "docs/architecture.md",
+    "reflected_by": "docs/milestones.md",
+    "selected_strategy": "milestones-only",
+    "state_file_role": "This file records the operational milestone cursor only and does not create, update, or authorize implementation documentation."
+  },
+  "operational_boundary": {
+    "state": "This file records the observable operational milestone state for the atlas-dataflow project.",
+    "intent": "Project goals, milestone planning, architecture, and implementation documentation evaluation remain in project documents such as docs/vision.md, docs/architecture.md, and docs/milestones.md.",
+    "control": "Workflows and scripts may validate this state before continuing the pipeline; this file does not execute work, define workflow logic, publish issues, or authorize implementation."
+  },
+  "known_milestones": [
+    {
+      "id": "M1",
+      "title": "Documented Foundation and Initial Technical Scope",
+      "status": "completed"
+    },
+    {
+      "id": "M2",
+      "title": "Minimal Public Technical Bootstrap",
+      "status": "completed"
+    },
+    {
+      "id": "M3",
+      "title": "File-Based Registry and Publication Model",
+      "status": "completed"
+    },
+    {
+      "id": "M4",
+      "title": "Contracts and Contract-First Validation",
+      "status": "completed"
+    },
+    {
+      "id": "M5",
+      "title": "Internal Publisher and Release Candidate",
+      "status": "completed"
+    },
+    {
+      "id": "M6",
+      "title": "Inference Runtime by Dataset and Active Release",
+      "status": "completed"
+    },
+    {
+      "id": "M7",
+      "title": "First Public Dataset Experience",
+      "status": "completed"
+    },
+    {
+      "id": "M8",
+      "title": "Containerized Public Deployment and Minimum Security",
+      "status": "completed"
+    },
+    {
+      "id": "M9",
+      "title": "First Public Cycle Closure",
+      "status": "completed"
+    },
+    {
+      "id": "M10",
+      "title": "Initial Private Internal Administration",
+      "status": "completed"
+    },
+    {
+      "id": "M11",
+      "title": "Publisher Operational Release Flow",
+      "status": "completed"
+    },
+    {
+      "id": "M12",
+      "title": "First Real Dataset Release",
+      "status": "completed"
+    },
+    {
+      "id": "M13",
+      "title": "Contract Artifact Build Pipeline Foundation",
+      "status": "completed"
+    },
+    {
+      "id": "M14",
+      "title": "Run Evidence and Traceability Layer",
+      "status": "completed"
+    },
+    {
+      "id": "M15",
+      "title": "Controlled Expansion to a Second Dataset",
+      "status": "completed"
+    },
+    {
+      "id": "M16",
+      "title": "Published Dataset Context Foundation",
+      "status": "completed"
+    },
+    {
+      "id": "M17",
+      "title": "Published Shell and Dataset Home Experience",
+      "status": "completed"
+    },
+    {
+      "id": "M18",
+      "title": "Predict View Foundation",
+      "status": "completed"
+    },
+    {
+      "id": "M19",
+      "title": "Predict Experience Customization",
+      "status": "completed"
+    },
+    {
+      "id": "M20",
+      "title": "Internal Admin Re-Evaluation",
+      "status": "completed"
+    },
+    {
+      "id": "M21",
+      "title": "Publication Stabilization and Operational Hardening",
+      "status": "completed"
+    },
+    {
+      "id": "M22",
+      "title": "Notebook-Driven Dataset Discovery",
+      "status": "completed"
+    },
+    {
+      "id": "M23",
+      "title": "Human Contract to Execution Contract",
+      "status": "completed"
+    },
+    {
+      "id": "M24",
+      "title": "Notebook-to-Pipeline Model Training",
+      "status": "completed"
+    },
+    {
+      "id": "M25",
+      "title": "Inference Bundle Contract",
+      "status": "completed"
+    },
+    {
+      "id": "M26",
+      "title": "Release Candidate from Real Dataflow Artifacts",
+      "status": "completed"
+    },
+    {
+      "id": "M27",
+      "title": "Public Runtime and Browser Validation",
+      "status": "completed"
+    },
+    {
+      "id": "M28",
+      "title": "Operational Release Guide and Implementation Map",
+      "status": "completed"
+    },
+    {
+      "id": "M29",
+      "title": "Design-Grounded Product Surface Reauthorization",
+      "status": "active"
+    }
+  ],
+  "notes": [
+    "This file records operational milestone state only.",
+    "M29 is the current active milestone for Design-Grounded Product Surface Reauthorization in Atlas DataFlow.",
+    "M28 is marked as completed because Operational Release Guide and Implementation Map has been completed.",
+    "M27 is marked as completed because Public Runtime and Browser Validation has been completed.",
+    "M26 is marked as completed because Release Candidate from Real Dataflow Artifacts has been completed.",
+    "M25 is marked as completed because Inference Bundle Contract has been completed.",
+    "M24 is marked as completed because Notebook-to-Pipeline Model Training has been completed.",
+    "M23 is marked as completed because Human Contract to Execution Contract has been completed.",
+    "M22 is marked as completed because Notebook-Driven Dataset Discovery has been completed.",
+    "M21 is marked as completed because Publication Stabilization and Operational Hardening has been completed.",
+    "M20 is marked as completed because Internal Admin Re-Evaluation has been completed.",
+    "M19 is marked as completed because Predict Experience Customization has been completed.",
+    "M18 is marked as completed because Predict View Foundation has been completed.",
+    "M17 is marked as completed because Published Shell and Dataset Home Experience has been completed.",
+    "M16 is marked as completed because Published Dataset Context Foundation has been completed.",
+    "M15 is marked as completed because Controlled Expansion to a Second Dataset has been completed.",
+    "M14 is marked as completed because Run Evidence and Traceability Layer has been completed.",
+    "M13 is marked as completed because Contract Artifact Build Pipeline Foundation has been completed.",
+    "M12 is marked as completed because First Real Dataset Release has been completed.",
+    "M11 is marked as completed because Publisher Operational Release Flow has been completed.",
+    "M10 is marked as completed in the operational cursor because Initial Private Internal Administration was closed with documented deferral, not implemented as an admin surface.",
+    "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
+    "M9 is marked as completed because First Public Cycle Closure has been completed.",
+    "M8 is marked as completed because Containerized Public Deployment and Minimum Security has been completed.",
+    "M7 is marked as completed because First Public Dataset Experience has been completed.",
+    "M6 is marked as completed because Inference Runtime by Dataset and Active Release has been completed.",
+    "M5 is marked as completed because Internal Publisher and Release Candidate has been completed.",
+    "M4 is marked as completed because Contracts and Contract-First Validation has been completed.",
+    "M3 is marked as completed because File-Based Registry and Publication Model has been completed.",
+    "M2 is marked as completed because Minimal Public Technical Bootstrap has been completed.",
+    "M1 is marked as completed because Documented Foundation and Initial Technical Scope has been completed.",
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M29 should be validated against docs/milestones.md before workflow continuation.",
+    "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
+    "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
+    "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
+    "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
+    "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
+    "The current milestone points to M29 because the next implementation focus is Design-Grounded Product Surface Reauthorization."
+  ],
+  "documentation_boundary": {
+    "vision_document": "docs/vision.md",
+    "architecture_document": "docs/architecture.md",
+    "milestones_document": "docs/milestones.md",
+    "implementation_documentation": "Defined by docs/architecture.md and reflected by docs/milestones.md when applicable; not decided by this state file.",
+    "state_document": "docs/project-status/milestone-state.json"
+  }
 }

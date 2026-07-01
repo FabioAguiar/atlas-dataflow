@@ -8,25 +8,36 @@ It guides future technical decisions, milestone planning, issue generation, and 
 
 This document is not a roadmap, backlog, task list, execution plan, patch, complete infrastructure specification, or implementation map.
 
+At the current stage, this architecture also authorizes the transition from a contract-driven runtime foundation into a design-backed product surface composed of public dataset experiences and a private administrative curation layer.
+
 ## Architecture Summary
 
 Atlas DataFlow is a web platform for publishing predictive experiences per dataset.
 
-The proposed architecture is `dataset-centric`, `contract-first`, `release-oriented`, and suitable for deployment on a VPS with containers. Each published dataset has its own identity, an active release, and an associated public experience.
+The architecture is `dataset-centric`, `contract-first`, `release-oriented`, `profile-aware`, and suitable for deployment on a VPS with containers. Each published dataset has its own identity, an active release, an associated public experience, and public presentation state derived from controlled artifacts rather than frontend hardcoding.
 
-In the first public cycle, Atlas should operate with:
+The project has already established a contract-driven foundation. The next architectural stage makes that foundation visible through product screens while preserving deterministic boundaries between generated runs, release candidates, public profiles, drafts, previews, published snapshots, visibility, and runtime inference.
 
-- one public experience per dataset;
-- one active release per dataset;
-- an initial file-based registry;
-- runtime resolving publications by `dataset_slug` and `active_release`;
-- contracts as the source of truth for validation, inference, and guided rendering;
-- published releases treated as immutable;
-- an internal publisher for generating, validating, and promoting releases;
-- no public administration in the first cycle;
-- eventual internal administration accessible only through a private surface, such as a local network, SSH tunnel, or equivalent mechanism.
+In the next complete public/admin cycle, Atlas should operate with:
 
-The initial architecture does not depend on a database, multi-user operation, marketplace, public upload, complex administrative panel, or complete administrative framework.
+- one public experience per published dataset;
+- one active release per published dataset;
+- registry-driven dataset discovery;
+- published releases treated as immutable artifact packages;
+- contracts as the source of truth for validation, inference, form structure, and guided rendering;
+- public contract projections that expose only public-safe rendering data;
+- public dataset profiles for presentation metadata, home-card content, theme, ordering, and descriptive content;
+- deterministic draft, preview, published snapshot, and visibility semantics;
+- generated runs discoverable only through a private administrative surface;
+- a private Dashboard for run discovery and dataset publication preparation;
+- a private Dataset Admin screen for curation, preview, publishing, and visibility control;
+- minimal private Settings and Help screens;
+- Telco and Bank allowed as seeded examples or fixtures, but not as permanent hardcoded product assumptions;
+- public runtime resolving publications by `dataset_slug`, `active_release`, public snapshot, and visibility state;
+- internal publisher and validation logic remaining authoritative over publication rules;
+- no public upload, public retraining, public administration, marketplace, multi-tenant administration, or broad MLOps platform behavior.
+
+The initial architecture still does not require a database, multi-user operation, marketplace, public upload, complex authorization model, or complete administrative framework. These may be considered later only if they become necessary for correctness, security, or maintainability.
 
 ## Context Derived from the Vision
 
@@ -36,12 +47,15 @@ The points from the vision that most influence the architecture are:
 
 - each published dataset must have its own identity;
 - the public experience must present context, data information, metrics, visualizations, and predictive interaction;
-- contracts must act as the source of truth for forms, inference, and consistency;
+- contracts must act as the source of truth for forms, inference, validation, and consistency;
+- public-safe contract projections must provide categorical/select options and UI hints without leaking internal details;
 - the interface must not concentrate business logic;
-- published artifacts must maintain a traceable link between dataset, contract, model, metrics, and publication;
-- exploration, artifact generation, publication, and public consumption must be separated;
-- internal services must not be part of the public surface;
-- the first delivery must be small, safe, and demonstrable;
+- published artifacts must maintain a traceable link between dataset, run, contract, model, metrics, public profile, snapshot, and publication;
+- exploration, artifact generation, run discovery, curation, publication, runtime inference, and public consumption must be separated;
+- internal services, generated runs, operational tools, draft states, and administration routes must not be part of the public surface;
+- the first complete product surface must be small, safe, demonstrable, and aligned with the design documentation under `design/`;
+- design prototypes are implementation references for UX and layout, but they do not override contracts, publisher rules, artifact schemas, API boundaries, or tests;
+- hardcoded example datasets can bootstrap development, but the product architecture must evolve toward registry/artifact/profile-driven datasets;
 - the architecture must be simple enough to publish early and flexible enough to support new datasets later.
 
 ## Architectural Objectives
@@ -49,39 +63,46 @@ The points from the vision that most influence the architecture are:
 The architecture must ensure:
 
 - publication of predictive experiences per dataset;
-- explicit resolution of dataset and active release;
-- separation between public runtime, internal tooling, and published artifacts;
-- contracts as the primary reference for validation and guided rendering;
-- low coupling between interface, model, contract, and pipeline;
+- explicit resolution of dataset, active release, public profile, published snapshot, and visibility state;
+- separation between public runtime, private administration, internal tooling, and published artifacts;
+- contracts as the primary reference for validation, inference, form structure, and guided rendering;
+- public contract projections that are safe and sufficient for frontend rendering;
+- low coupling between interface, model, contract, profile, publisher, and pipeline;
 - secure public operation, with minimal exposure;
-- traceability between contract, bundle, metrics, model card, and release;
-- clear versioning of structural artifacts;
-- ability to validate releases before publication;
-- preservation of previous releases;
-- simplicity proportional to the first public cycle;
+- private-only access to administrative routes and run discovery;
+- traceability between run, contract, bundle, metrics, model card, public profile, public snapshot, and release;
+- clear versioning of structural artifacts and published state;
+- ability to validate releases and public publication state before activation;
+- preservation of previous releases or snapshots compatible with the current stage;
+- deterministic semantics for draft, preview, publish, and visibility;
+- removal of permanent Telco/Bank hardcoding as product logic;
+- simplicity proportional to the first complete public/admin cycle;
 - possibility of evolving toward multiple datasets without a complete redesign.
 
 ## Architectural Non-Objectives
 
-The initial architecture does not intend to solve:
+The current architecture does not intend to solve:
 
 - public upload of datasets;
 - public creation of pipelines by third parties;
-- model retraining through the public interface;
+- public dataset creation by third parties;
 - public editing of contracts;
-- complete administrative panel;
-- multi-user operation;
+- public execution of notebooks;
+- model retraining through the public interface;
+- public administration;
+- complex multi-user administration;
 - multiple organizations;
 - marketplace for models or datasets;
-- complex authentication and authorization;
-- sophisticated versioning of experiments;
+- complex authentication and authorization beyond what is necessary to keep the administrative surface private;
+- sophisticated experiment management;
 - distributed orchestration of pipelines;
 - mandatory queues and workers;
 - database as a mandatory source of truth;
-- public exposure of internal tools;
-- full coverage of the MLOps lifecycle.
+- public exposure of internal tools, generated runs, operational logs, databases, or volumes;
+- complete coverage of the MLOps lifecycle;
+- making visual prototypes override runtime contracts, publisher validation, or artifact schemas.
 
-These points may be reevaluated in future stages, but they should not guide the architecture of the first public cycle.
+These points may be reevaluated in future stages, but they should not guide the next implementation cycle.
 
 ## Architectural Drivers
 
@@ -90,13 +111,17 @@ The main architectural drivers are:
 - real web publication, not only local execution;
 - operation on a VPS with containers and HTTPS;
 - need to keep the public surface small;
+- need to keep admin private, proportional, and deterministic;
 - use of contracts to reduce rule duplication between backend and frontend;
-- need to trace published artifacts;
+- need to project contract fields safely for public rendering;
+- need to trace published artifacts and public presentation state;
 - expectation of multiple datasets in the future;
 - low initial maintenance cost;
-- low tolerance for coupling between pipeline and runtime;
-- need to validate releases before making them active;
-- incremental evolution, without anticipating complex administration;
+- low tolerance for coupling between pipeline, publisher, runtime, public profile, and frontend;
+- need to validate releases and publication state before making them active;
+- need to replace hardcoded datasets with registry/artifact/profile-driven availability;
+- need to use `design/` as the closest available deterministic UX reference;
+- incremental evolution, without anticipating a complex backoffice;
 - documentation searchable by humans and technical support tools.
 
 ## Principles and Constraints
@@ -104,81 +129,124 @@ The main architectural drivers are:
 The architecture must respect the following principles:
 
 - The dataset is the main unit of publication.
-- The release is the main unit of public versioning.
-- The public runtime resolves inference by `dataset_slug` and `active_release`.
+- The release is the main unit of artifact versioning.
+- The public snapshot is the main unit of public presentation publication.
+- The public runtime resolves publications by `dataset_slug`, `active_release`, public snapshot, and visibility state.
 - There must not be a global contract or bundle as the platform's source of truth.
 - The contract defines structure, validation, input domain, and interface hints.
-- The public interface interprets the public contract, but does not redefine validation semantics.
+- The public contract is a safe projection of runtime-relevant contract information.
+- The public interface interprets public contract and public profile data, but does not redefine validation semantics.
 - The model executes inference, but does not redefine the schema.
-- Publications must be explicit, validated, and traceable.
+- The public profile may customize presentation metadata, labels, ordering, theme, home-card content, and documentation, but it must not silently alter technical contract meaning.
+- Draft configuration, preview state, published snapshot, and public visibility must be explicit and deterministic.
+- Publications must be validated, explicit, and traceable.
 - Published releases must not be silently overwritten.
-- The internal publisher must exist before any web administration.
-- Internal administration, when it exists, must orchestrate publisher operations, not duplicate logic.
+- Published public snapshots must not be silently confused with drafts.
+- The internal publisher remains authoritative over release validation and promotion.
+- Private administration must orchestrate publisher/profile operations, not duplicate runtime or publication rules.
+- Generated runs are internal operational artifacts and must not be exposed through the public surface.
 - Internal services must not be exposed publicly.
 - Secrets, real environment variables, local databases, volumes, and raw logs must not be versioned.
+- Telco and Bank may remain as seeded examples, but new dataset support must not require frontend hardcoding.
 - Technical decisions must remain proportional to the goal of publishing a functional experience early.
 
 ## Main Components or Areas
 
-The architecture is organized into the following main areas:
+The architecture is organized into the following main areas.
 
 ### Public Web Experience
 
 Layer responsible for navigation and presentation of published experiences.
 
-It must present datasets, context, visualizations, metrics, predictive form, and inference result. The public web experience must consume data and contracts exposed by the public API, without concentrating business rules.
+It must present the public Home, Dataset Detail, context, visualizations, metrics, predictive form, inference result, and public error states. The public web experience must consume data and contracts exposed by the public API, without concentrating business rules.
 
 ### Public Runtime API
 
-Layer responsible for providing public endpoints for querying datasets, public contracts, metrics, and inference.
+Layer responsible for providing public endpoints for querying datasets, public presentation state, public contracts, metrics, visualizations, and inference.
 
-The public API must resolve the requested dataset, identify the active release, load the required published artifacts, validate inputs, and execute inference.
+The public API must resolve the requested dataset, identify the active release, respect visibility state, load the required published artifacts, validate inputs, execute inference, and hide internal details.
 
 ### Published Dataset Registry
 
 Source of resolution between datasets and active releases.
 
-In the first public cycle, the registry must be file-based. It declares which datasets are published, which release is active for each dataset, and which public metadata can be consumed.
+The registry must be explicit, file-based for the current stage, and validatable. It declares which datasets exist as publishable or published entries, which release is active for each dataset, and which public metadata or snapshot can be consumed.
 
 ### Published Releases
 
 Immutable packages that materialize a dataset publication.
 
-A release must contain the artifacts required for the public experience and for the inference runtime, including contracts, predictive bundle, metrics, model card, context, and manifest.
+A release must contain or reference the artifacts required for runtime inference and public explanation, including contracts, predictive bundle, metrics, model card, dataset context, public-safe metadata, visualization artifacts when available, and manifest.
+
+### Public Dataset Profile
+
+Presentation-oriented configuration associated with a dataset.
+
+A public profile stores curated fields such as title, subtitle, description, source information, home-card content, theme/icon selection, public documentation text, preferred score highlight, form presentation ordering, and other public-facing metadata. It must not replace the runtime contract, model, metrics, or release manifest as technical sources of truth.
+
+### Dataset Profile Draft
+
+Editable administrative state used before publication.
+
+A draft represents unpublished curation changes. It may be previewed privately, saved, updated, or discarded. A draft must not automatically change the public experience and must not be confused with a published snapshot.
+
+### Published Public Snapshot
+
+Versioned public presentation state produced from a validated draft/public profile publication operation.
+
+A snapshot is what the public surface consumes together with the active release. Publishing changes promotes the current draft/profile state into a deterministic public snapshot. Public visibility applies to the published snapshot, not to arbitrary draft edits.
 
 ### Contract Layer
 
 Area responsible for defining and validating contracts used by the runtime and by the interface.
 
-The architecture must differentiate runtime contract and public contract. The runtime contract guides validation and inference. The public contract provides a safe projection for rendering and consumption by the web experience.
+The architecture differentiates runtime contract and public contract. The runtime contract guides validation and inference. The public contract provides a safe projection for rendering and consumption by the web experience, including categorical/select options when public-safe.
 
 ### Inference Runtime
 
 Area responsible for loading published artifacts and executing predictions.
 
-The runtime must be deterministic with respect to the active release and must not execute training, data preparation, notebooks, or publication.
+The runtime must be deterministic with respect to the active release. It must not execute training, data preparation, notebooks, curation, or publication during public requests.
 
 ### Internal Publisher
 
-Internal tooling responsible for generating, validating, and promoting releases.
+Internal tooling responsible for generating, validating, and promoting releases and publication state.
 
-The publisher transforms artifacts generated by the pipeline into controlled publications. It validates completeness, calculates hashes, generates the manifest, and updates the registry explicitly.
+The publisher transforms artifacts generated by the pipeline into controlled publications. It validates completeness, calculates hashes, generates manifests, promotes releases, and updates registries explicitly. Future admin operations must call or reuse this logic rather than duplicating publication rules.
+
+### Generated Run Store
+
+Internal area where notebook or pipeline executions produce candidate artifacts.
+
+Runs are not public publications. They may contain technical outputs that can be inspected privately, promoted into release candidates, or removed. Run discovery must remain private.
 
 ### Artifact Build Pipeline
 
 Area responsible for preparation, training, evaluation, and generation of candidate artifacts.
 
-The pipeline is not part of the public surface. It produces artifacts that can be validated and promoted by the publisher.
+The pipeline is not part of the public surface. It produces runs and candidate artifacts that can be validated, promoted, and published by controlled internal operations.
 
-### Future Internal Administration
+### Private Administrative Web Experience
 
-Optional private surface for operating publication, validation, and querying internal states.
+Private UI surface for operators.
 
-This layer is not part of the first public cycle. When it exists, it must be accessible only through a private surface, such as an SSH tunnel, internal network, or equivalent mechanism, and must call existing publisher operations.
+It includes the Dashboard, Dataset Admin, Settings, and Help screens. It exists to discover runs, prepare dataset details, curate public profiles, preview drafts, publish snapshots, control visibility, and guide operation. It must remain outside the public surface and must not become the authority for contracts, models, validations, or publication rules.
+
+### Private Admin API or Internal Operations Layer
+
+Private backend surface or command layer used by the administrative UI.
+
+It may expose controlled operations for run listing, run promotion, draft management, preview data, publication, visibility, settings, and help content. It must remain private and must not expose internal paths, secrets, raw logs, or unrestricted filesystem access.
+
+### Design Documentation Layer
+
+The `design/` directory contains the closest available deterministic UX reference for upcoming screen implementation.
+
+Design markdown, visual specifications, responsive notes, and executable HTML/CSS/JS prototypes should guide layout, naming, interaction, and presentation. Inconsistencies between markdown and executable prototypes must be documented and resolved through implementation issues. Design documents do not override contracts, runtime semantics, publisher rules, artifact schemas, tests, or security boundaries.
 
 ### Deployment and Operations
 
-Area responsible for packaging, configuration, container execution, HTTPS, environment variables, and separation between public and internal surfaces.
+Area responsible for packaging, configuration, container execution, HTTPS, environment variables, public/private surface separation, and controlled access to admin.
 
 Operation must consider VPS and containerized environment from the beginning.
 
@@ -188,60 +256,80 @@ Operation must consider VPS and containerized environment from the beginning.
 
 Responsibilities:
 
-- list published datasets;
+- list publicly visible published datasets;
 - present public dataset information;
-- render predictive form from the public contract;
+- render public Home cards from registry/profile/snapshot state;
+- render Dataset Detail from public metadata, active release, metrics, visualizations, public contract, and public profile;
+- render predictive forms from the public contract;
+- render categorical/select inputs from public-safe contract options;
 - send inference payloads to the API;
 - present public responses and errors in an understandable way;
 - avoid duplicated business logic;
-- not access internal artifacts directly.
+- not access internal artifacts directly;
+- not expose draft state, run state, publisher operations, or admin controls.
 
 ### Public Runtime API
 
 Responsibilities:
 
 - expose a simple public healthcheck;
-- list published datasets;
+- list publicly visible datasets;
 - expose public dataset metadata;
-- expose public contract;
+- expose public published snapshot/profile data;
+- expose public contract projections;
 - expose public metrics;
+- expose public visualization metadata or artifacts when available;
 - receive inference requests;
 - validate payloads against the runtime contract;
 - load the active release bundle;
 - execute prediction;
-- return structured response;
-- hide internal paths and sensitive details.
+- return structured responses;
+- hide internal paths and sensitive details;
+- return predictable errors.
 
 ### Registry
 
 Responsibilities:
 
-- declare published datasets;
+- declare publishable and published datasets according to the current stage;
 - declare active release per dataset;
-- point to publication metadata and artifacts;
-- avoid heuristic discovery of publications;
-- allow structural validation of the published state.
+- point to publication metadata, snapshots, and artifacts;
+- avoid heuristic discovery of public publications;
+- allow structural validation of published state;
+- avoid frontend hardcoding as the mechanism for dataset availability.
 
 ### Release
 
 Responsibilities:
 
 - group artifacts of a publication;
-- preserve the link between contract, model, metrics, and experience;
+- preserve the link between run, contract, model, metrics, and experience;
 - record hashes and relevant metadata;
 - allow high-level operational reproducibility;
 - remain immutable after publication.
+
+### Public Dataset Profile and Snapshot
+
+Responsibilities:
+
+- store public-facing presentation metadata;
+- represent curated content without mutating technical contract fields;
+- provide data for Home cards and Dataset Detail presentation;
+- support draft, preview, published snapshot, and visibility semantics;
+- preserve traceability to dataset, release, and publication operation;
+- avoid becoming the authority for runtime validation, model execution, or contract meaning.
 
 ### Contracts
 
 Responsibilities:
 
 - define accepted features;
-- define types, domains, and validations;
+- define types, domains, options, and validations;
 - define interface hints when applicable;
 - guide inference payloads;
 - separate public projection from internal details;
-- carry schema version when applicable.
+- carry schema version when applicable;
+- keep public rendering data consistent with runtime validation.
 
 ### Inference Runtime
 
@@ -250,22 +338,34 @@ Responsibilities:
 - load artifacts from the active release;
 - validate inputs;
 - execute prediction;
-- produce stable response;
+- produce stable responses;
 - handle predictable errors;
-- not modify published artifacts.
+- not modify published artifacts;
+- not depend on frontend-invented validation rules.
 
 ### Internal Publisher
 
 Responsibilities:
 
-- validate release candidate;
+- validate release candidates;
 - calculate hashes;
-- generate manifest;
-- promote validated release;
+- generate manifests;
+- promote validated releases;
 - update registry explicitly;
 - preserve previous releases;
 - prevent publication of incomplete packages;
-- provide a future foundation for internal administration.
+- validate or produce public publication state when required;
+- provide the foundation for private administration.
+
+### Generated Run Store
+
+Responsibilities:
+
+- retain generated run outputs produced by notebooks or pipelines;
+- expose run summaries only through private operations;
+- support promotion of eligible runs into release candidates or dataset preparation state;
+- support controlled removal of obsolete runs when allowed;
+- avoid becoming a public dataset catalog.
 
 ### Pipeline
 
@@ -277,29 +377,68 @@ Responsibilities:
 - generate metrics;
 - generate contracts;
 - export bundle;
-- produce candidate artifacts for publication.
+- produce candidate artifacts for publication;
+- avoid performing public runtime or admin UI responsibilities.
 
-### Future Internal Administration
+### Private Administrative Web Experience
 
-Potential responsibilities:
+Responsibilities:
 
-- query releases and candidates;
-- trigger publisher validations;
-- promote release through controlled operation;
-- query operational evidence;
-- operate only on a private surface.
+- provide private Dashboard navigation;
+- list generated runs through private operations;
+- promote a run into dataset preparation when eligible;
+- show curated dataset detail configurations;
+- open Dataset Admin for curation;
+- edit public-facing metadata without changing technical contract fields;
+- configure Home card and theme presentation;
+- configure inference form presentation without changing runtime validation;
+- preview draft changes in a private Live Preview;
+- save drafts;
+- publish deterministic public snapshots;
+- control public visibility of the published snapshot;
+- provide clear drag-and-drop visual feedback;
+- provide minimal Settings and Help routes;
+- remain private.
 
-It is not the responsibility of internal administration to expose features to the external public.
+### Private Admin API or Internal Operations Layer
+
+Responsibilities:
+
+- mediate administrative actions;
+- enforce allowed operations;
+- call or reuse publisher/profile logic;
+- validate input payloads;
+- avoid leaking sensitive filesystem details;
+- avoid exposing public routes for admin behavior;
+- maintain deterministic state transitions.
+
+### Design Documentation Layer
+
+Responsibilities:
+
+- document intended screen content, visual structure, responsive behavior, and interactions;
+- provide executable prototypes for implementation guidance;
+- identify inconsistencies between markdown specifications and prototypes;
+- avoid becoming an API contract or runtime source of truth;
+- remain aligned with implemented behavior as milestones are completed.
 
 ## Boundaries
 
-### Public Experience vs Internal Surface
+### Public Experience vs Private Administrative Surface
 
 The public experience includes pages and endpoints required for consuming published datasets.
 
-Internal surfaces include publisher, pipeline, sensitive logs, operational tools, private administration, databases, volumes, and infrastructure.
+The private administrative surface includes Dashboard, Dataset Admin, Settings, Help, run discovery, draft editing, preview, publishing, and visibility controls.
 
-The internal surface must not be exposed directly to the public internet.
+The private administrative surface must not be exposed directly to the public internet.
+
+### Public Runtime API vs Private Admin API
+
+The public API serves public Home, Dataset Detail, public contract, public metrics, public visualizations, and inference.
+
+The private admin API or internal operations layer serves generated runs, drafts, previews, publication operations, and administrative settings.
+
+Public endpoints must never expose generated runs, draft states, internal paths, publisher controls, raw logs, operational files, or internal services.
 
 ### Pipeline vs Runtime
 
@@ -307,7 +446,7 @@ The pipeline builds artifacts.
 
 The runtime consumes published artifacts.
 
-The runtime must not train models, execute notebooks, prepare datasets, or publish releases during public requests.
+The runtime must not train models, execute notebooks, prepare datasets, curate profiles, or publish releases during public requests.
 
 ### Run vs Release Candidate vs Published Release
 
@@ -315,77 +454,167 @@ A run is a technical execution.
 
 A release candidate is a package candidate for publication.
 
-A published release is a validated and promoted package.
+A published release is a validated and promoted artifact package.
 
 Not every run should become a release. Promotion must be explicit.
+
+### Draft vs Preview vs Published Snapshot vs Visibility
+
+A draft is editable private curation state.
+
+A preview is a private rendering of draft state combined with active release/public contract data.
+
+A published snapshot is deterministic public presentation state produced by a publish operation.
+
+Visibility controls whether a published snapshot is publicly listed or reachable according to public rules. Visibility does not publish unsaved or unpublished draft changes.
 
 ### Dataset vs Release
 
 Dataset is the public identity.
 
-Release is the materialized version of that identity.
+Release is the materialized artifact version of that identity.
 
-A dataset may have multiple releases over time, but the first public cycle must operate with only one active release per dataset.
+A dataset may have multiple releases over time, but the current cycle operates with one active release per published dataset.
 
 ### Contract vs Model
 
-The contract defines the valid input structure and metadata required for consistency.
+The contract defines valid input structure and metadata required for consistency.
 
 The model executes inference.
 
 The model does not redefine the schema, and the contract must not assume nonexistent artifacts.
 
+### Contract vs Public Profile
+
+The contract defines technical and validation semantics.
+
+The public profile defines presentation metadata and curation state.
+
+The public profile may change labels, descriptions, ordering, theme, documentation, and home-card content. It must not silently redefine valid input domains, feature types, model behavior, or runtime validation.
+
 ### Contract vs Interface
 
 The public contract guides the interface.
 
-The interface must not invent canonical validations or accept payloads that the runtime contract would reject.
+The interface must not invent canonical validations, select options, or payload semantics that the runtime contract would reject.
 
-### Publisher vs Internal Administration
+### Publisher vs Private Administration
 
-The publisher contains the operational logic for validation and promotion.
+The publisher contains operational logic for validation and promotion.
 
-Internal administration, when it exists, must only orchestrate or trigger operations already available in the publisher.
+Private administration must only orchestrate or trigger operations already available in publisher/profile logic. It must not duplicate publication rules.
+
+### Design Prototype vs Implementation Contract
+
+The design prototypes guide visual and interaction implementation.
+
+They do not override backend contracts, schemas, release manifests, API response contracts, tests, security boundaries, or publisher validation.
+
+When design markdown and executable HTML/CSS/JS disagree, the inconsistency must be documented and resolved explicitly before implementation relies on that behavior.
+
+### Seeded Examples vs Product Model
+
+Telco and Bank may remain as example datasets, fixtures, or seeded records.
+
+They must not remain embedded in frontend logic or backend branching as the mechanism that defines what Atlas can publish.
 
 ### Application vs Infrastructure
 
-Containers, VPS, proxy, HTTPS, volumes, environment variables, and deployment tooling belong to infrastructure.
+Containers, VPS, proxy, HTTPS, volumes, environment variables, private admin access, and deployment tooling belong to infrastructure.
 
 These elements must support the application, but they do not compose the product's public experience.
 
 ## Main Flows
 
-### Internal Publication Flow
+### Internal Artifact Generation Flow
 
-Data study or pipeline
+Data study or notebook
 
-→ generation of candidate artifacts
+→ pipeline execution
 
-→ assembly of release candidate
+→ generated run under controlled internal location
 
-→ validation by the publisher
+→ generated contracts, metrics, model artifacts, bundle, model card, and candidate metadata
 
-→ hash calculation and manifest generation
+→ run becomes eligible or ineligible for promotion based on validation rules.
 
-→ explicit promotion to published release
+### Run Promotion Flow
 
-→ registry update
+Operator accesses private Dashboard
 
-→ availability in the public runtime
+→ private layer lists generated runs
+
+→ operator selects eligible run
+
+→ private layer validates minimal promotion prerequisites
+
+→ run is promoted into release candidate or dataset preparation state
+
+→ publisher/profile logic creates or updates controlled publication preparation artifacts
+
+→ operator can open Dataset Admin for curation.
+
+### Dataset Profile Draft Flow
+
+Operator opens Dataset Admin
+
+→ private layer loads active release, public contract projection, metrics, visualizations, and current public profile/draft
+
+→ operator edits public-facing metadata, Home card, theme, documentation, form presentation, or score highlight
+
+→ draft is saved as private state
+
+→ public experience remains unchanged until publication.
+
+### Private Live Preview Flow
+
+Operator opens Live Preview
+
+→ private layer combines draft profile state with public-safe active release data
+
+→ UI renders the same public Dataset Detail and Home-card patterns expected in the public experience
+
+→ preview reflects draft changes without changing public state
+
+→ preview must not expose internal-only artifacts to public users.
+
+### Publishing Snapshot Flow
+
+Operator chooses Publish changes
+
+→ private layer validates draft/profile state
+
+→ publisher or publication service creates deterministic public snapshot
+
+→ snapshot is linked to dataset, active release, profile version, and publication metadata
+
+→ registry or publication index is updated explicitly
+
+→ public runtime can consume the new snapshot if visibility allows it.
+
+### Visibility Flow
+
+Operator toggles public visibility for a published snapshot
+
+→ private layer changes visibility state for the published snapshot
+
+→ public Home and Dataset Detail respect visibility rules
+
+→ draft changes remain private regardless of visibility.
 
 ### Public Query Flow
 
-Visitor accesses a dataset experience
+Visitor accesses public Home or Dataset Detail
 
 → interface requests public metadata
 
 → API resolves `dataset_slug`
 
-→ registry informs `active_release`
+→ registry informs `active_release`, public snapshot, and visibility
 
 → API returns public dataset information
 
-→ interface presents context, visualizations, and metrics
+→ interface presents context, visualizations, metrics, profile content, and inference form.
 
 ### Public Inference Flow
 
@@ -407,23 +636,27 @@ Visitor fills out form
 
 → API returns structured response
 
-→ interface presents result
+→ interface presents result.
 
-### Future Internal Administration Flow
+### Settings Flow
 
-Operator accesses private surface
+Operator accesses private Settings
 
-→ queries release candidates or existing releases
+→ private layer loads minimal settings
 
-→ triggers controlled validation or promotion
+→ operator changes displayed user name
 
-→ internal layer calls the publisher
+→ setting is saved through controlled private state
 
-→ publisher validates and updates published state
+→ admin shell reflects the updated display name.
 
-→ operator queries result
+### Help Flow
 
-This flow must remain outside the public surface.
+Operator accesses private Help
+
+→ private layer or static admin bundle presents usage guidance
+
+→ help content explains Dashboard, Dataset Admin, draft/preview/publish/visibility semantics, and public/private boundaries.
 
 ## Relevant Data, Artifacts, or Documents
 
@@ -432,17 +665,27 @@ Artifacts relevant to the architecture:
 - `docs/vision.md`: source of the project's high-level direction;
 - `docs/architecture.md`: source of boundaries and architectural decisions;
 - `docs/milestones.md`: future incremental planning document;
+- `design/`: deterministic UX reference for public/admin screen implementation;
+- `design/screens/home/`: public Home design reference;
+- `design/screens/dataset-detail/`: public Dataset Detail design reference when present;
+- `design/screens/dataset-admin-home/`: private Dashboard design reference;
+- `design/screens/dataset-admin/`: private Dataset Admin design reference;
 - published dataset registry;
+- run index or generated run summaries;
+- dataset public profile;
+- dataset profile draft;
+- published public snapshot;
 - public dataset metadata;
 - release manifest;
 - runtime contract;
-- public contract;
+- public contract projection;
 - inference bundle;
 - public metrics;
 - model card;
 - public dataset context;
-- publishable visualizations or descriptions;
-- release validation evidence, when applicable.
+- publishable visualizations or visualization metadata;
+- release validation evidence;
+- publication validation evidence.
 
 Artifacts that must not be treated as the formal public source of truth:
 
@@ -453,7 +696,10 @@ Artifacts that must not be treated as the formal public source of truth:
 - real `.env`;
 - sensitive payloads;
 - temporary execution outputs;
-- intermediate files that have not been promoted.
+- generated runs that have not been promoted;
+- draft states that have not been published;
+- design mockups when they conflict with contracts, schemas, publisher rules, or tests;
+- frontend hardcoded dataset objects.
 
 ## Runtime, Tooling, and Workflows
 
@@ -461,31 +707,37 @@ Artifacts that must not be treated as the formal public source of truth:
 
 The public runtime is composed of the public API and the public web experience.
 
-It must operate only on published datasets and releases. It must not depend on temporary pipeline state, recent runs, or implicit local paths.
+It must operate only on published datasets, active releases, public snapshots, visibility state, and public-safe contract/profile data. It must not depend on temporary pipeline state, recent runs, implicit local paths, draft profile state, or frontend hardcoding.
+
+### Private Administration
+
+Private administration is composed of admin screens and controlled private operations.
+
+It may list generated runs, promote eligible runs, manage profile drafts, render previews, publish snapshots, control visibility, and expose minimal Settings and Help. It must remain private and must not duplicate publisher/runtime authority.
 
 ### Internal Tooling
 
-Internal tooling includes publisher, controlled scripts, validations, and eventual operational commands.
+Internal tooling includes publisher, controlled scripts, validations, and operational commands.
 
-This tooling may generate and promote releases, but it must not be exposed as a public feature.
+This tooling may generate and promote releases or publication state, but it must not be exposed as a public feature.
 
 ### Workflows
 
-Relevant workflows must remain simple in the first public cycle:
+Relevant workflows in the next product stage are:
 
 - generation of candidate artifacts;
+- run discovery;
+- run promotion;
 - release validation;
 - release promotion;
+- public profile draft editing;
+- private live preview;
+- deterministic snapshot publication;
+- public visibility control;
 - public consumption of the experience;
 - inference by contract and active release.
 
-More advanced automation may be added later, as long as it does not break the boundaries between pipeline, publisher, and runtime.
-
-### Internal Administration
-
-Internal administration is optional and future-facing.
-
-When it exists, it must be accessible only through a private surface and must consume publisher operations. It must not duplicate publication rules or turn long HTTP requests into fragile execution of heavy pipelines.
+More advanced automation may be added later, as long as it does not break the boundaries between pipeline, publisher, runtime, profile, private administration, and public experience.
 
 ## Security, Versioning, and Traceability
 
@@ -497,12 +749,15 @@ The architecture must preserve:
 - CORS restricted to the expected public domain;
 - no secrets in the frontend;
 - no versioned real `.env`;
-- no public endpoints for training, upload, or publication;
-- no public administrative panel in the first cycle;
+- no public endpoints for training, upload, run discovery, draft state, publication, or administration;
 - hiding internal paths in error responses;
 - payload limit for inference;
 - logs without unnecessary sensitive data;
-- internal services outside the public internet.
+- internal services outside the public internet;
+- private administrative access only through a private mechanism such as localhost-bound service, SSH tunnel, internal network, or equivalent control;
+- no admin route forwarded from the public HTTPS server block;
+- no public port mapping or public DNS entry for admin;
+- validation of all private admin payloads even when admin is private.
 
 ### Versioning
 
@@ -511,9 +766,14 @@ The architecture must explicitly version or identify:
 - registry schema;
 - release manifest schema;
 - contract schemas;
+- public contract projection schema;
 - dataset release;
 - inference bundle;
 - published metrics;
+- public dataset profile schema;
+- draft profile schema when persisted;
+- published public snapshot schema;
+- visualization metadata schema when present;
 - model card or public release documentation.
 
 ### Traceability
@@ -521,19 +781,26 @@ The architecture must explicitly version or identify:
 Each publication must make it possible to identify:
 
 - which dataset was published;
+- which run or release candidate originated the publication when applicable;
 - which release is active;
 - which contracts were used;
+- which public contract projection was exposed;
 - which bundle was used;
 - which metrics were published;
+- which public profile or snapshot was published;
 - which hashes validate the artifacts;
 - when the release was created or promoted;
-- which manifest describes the publication.
+- when the public snapshot was published;
+- which manifest describes the publication;
+- whether the published snapshot is publicly visible.
 
 ### Immutability
 
 Published releases must not be silently overwritten.
 
-Changes to contract, model, metrics, or public dataset documentation must generate a new release or a new controlled promotion, preserving history compatible with the stage of the project.
+Published public snapshots must not be silently replaced by draft edits.
+
+Changes to contract, model, metrics, or public dataset documentation must generate a new release, profile version, public snapshot, or controlled promotion according to the stage of the project.
 
 ### Public Error Policy
 
@@ -542,34 +809,62 @@ The public API must expose predictable and non-sensitive errors.
 Expected categories include:
 
 - dataset not found;
+- dataset not visible;
 - release not available;
+- public snapshot not available;
 - contract invalid or unavailable;
 - invalid payload;
 - inference unavailable;
 - internal failure without leaking sensitive details.
 
+### Private Admin Error Policy
+
+The private admin layer must expose actionable but non-sensitive errors.
+
+Expected categories include:
+
+- run not found;
+- run not eligible for promotion;
+- release candidate invalid;
+- draft invalid;
+- profile validation failed;
+- snapshot publication failed;
+- visibility update failed;
+- settings update failed;
+- operation unavailable;
+- internal failure without leaking unrestricted filesystem paths, secrets, or raw logs.
+
 ## Implementation Documentation Strategy
 
-Selected strategy: `milestones-only`.
+Selected current strategy: `milestones-only with explicit design alignment notes`.
 
 Justification:
 
-Atlas is still at the initial architectural definition stage. The architecture has multiple relevant areas, but the implementation should still start small, with one dataset, one active release, file-based registry, public runtime, and internal publisher. At this stage, `docs/milestones.md` should be sufficient to guide continuity without creating additional documentation maintenance cost.
+Atlas is moving from a contract-driven foundation into a multi-surface product implementation. The project now includes contracts, runtime, publisher, public UI, private admin UI, design references, public profiles, drafts, snapshots, and deployment/security boundaries. A full implementation map may become useful, but creating a large documentation framework before the new seams are implemented would add maintenance cost and may become inaccurate quickly.
 
-The absence of an Implementation Map is not a failure at this stage. A dedicated map would be premature before there is enough concrete implementation to justify navigation by area.
+For the next stage, milestones and issues should explicitly document:
 
-The decision must be reviewed when one or more of the following conditions occur:
+- which design directory or prototype is being implemented;
+- which design inconsistencies were accepted, corrected, or deferred;
+- which API and artifact contracts support the screen;
+- which public/private boundary is affected;
+- which tests validate behavior;
+- which hardcoded assumptions were removed or retained as fixtures;
+- how draft, preview, publish, and visibility semantics are preserved.
 
-- the project has multiple implemented areas evolving in parallel;
-- the context cost for AI-assisted continuity becomes high;
+The absence of an Implementation Map is not a failure at this stage. A dedicated map should be reviewed when one or more of the following conditions occur:
+
+- public Home, Dataset Detail, Dashboard, Dataset Admin, Settings, and Help are all implemented;
+- public profile and snapshot persistence become stable;
+- frontend/backend contracts become difficult to locate;
+- context cost for AI-assisted continuity becomes high;
 - handoffs begin to require navigation across many files and modules;
-- there is recurring difficulty locating responsibilities;
 - multiple internal flows start evolving independently;
-- publisher, runtime, contracts, frontend, pipeline, and deployment have their own operational documentation.
+- publisher, runtime, contracts, frontend, pipeline, deployment, and admin have their own operational documentation.
 
 If this review indicates a need for cumulative documentation, the next candidate strategy should be `implementation-map-single`. If the project grows into highly independent areas, `implementation-map-hierarchical` may be evaluated.
 
-When created, cumulative documentation must guide navigation and context. It must not replace real files, contracts, tests, manifests, code, or execution evidence.
+When created, cumulative documentation must guide navigation and context. It must not replace real files, contracts, tests, manifests, code, execution evidence, or issue handoffs.
 
 Cumulative documentation must not be used as a changelog, commit list, backlog, or absolute source of truth. Future issues and handoffs authorize concrete execution; architectural documentation and milestones only provide guidance.
 
@@ -577,68 +872,93 @@ Cumulative documentation must not be used as a changelog, commit list, backlog, 
 
 The architecture should guide future milestones to prioritize:
 
-- documented foundation and boundaries before broad implementation;
-- minimal bootstrap of the public API and web experience;
-- definition of the file-based registry;
-- definition of the minimum release format;
-- validation of contract and release before public inference;
-- implementation of the internal publisher before any web administration;
-- publication of a first dataset experience;
-- secure public deployment with containers and HTTPS;
-- security validations before public exposure;
-- postponement of multi-user operation, marketplace, public upload, and complex administration.
+- documented reauthorization of public/admin product surfaces before broad implementation;
+- design inventory and design consistency review before coding each screen;
+- frontend shell, routing, layout primitives, and design-system alignment before deep screen behavior;
+- public Home and Dataset Detail implementation using API/state instead of hardcoded frontend datasets;
+- public contract projection improvements, especially for categorical/select fields;
+- metrics and visualization presentation derived from published artifacts;
+- private Dashboard backend foundation for generated run discovery;
+- run promotion into dataset preparation state;
+- dataset public profile and draft persistence;
+- Dataset Admin curation and Live Preview behavior;
+- deterministic publication snapshot and visibility semantics;
+- removal of Telco/Bank as hardcoded product assumptions while preserving them as examples when useful;
+- minimal Settings and Help routes;
+- secure public/private deployment boundaries;
+- regression-safe increments validated by tests.
 
-Future milestones must preserve small, validatable, regression-safe increments, avoiding turning the architecture into a plan that is too large for the first public cycle.
+Future milestones must preserve small, validatable increments, avoiding turning the architecture into a plan that is too large for the next product stage.
 
 ## Risks and Trade-offs
 
 ### Simplicity vs Extensibility
 
-File-based registry reduces initial complexity, but may require future migration if there are many datasets, richer administration, or multi-user operation.
+File-based registry and profile state reduce initial complexity, but may require future migration if there are many datasets, richer administration, multi-user operation, audit queries, or concurrent operators.
 
 ### Internal Publisher vs Admin Web
 
-Starting with the internal publisher reduces risk and improves testability. The disadvantage is less operational comfort until an internal interface exists.
+Keeping the publisher authoritative reduces risk and improves testability. The disadvantage is that admin implementation must be careful not to duplicate publisher rules or create parallel publication behavior.
 
 ### Immutable Release vs Manual Agility
 
 Immutable releases increase traceability, but require discipline to generate a new publication when artifacts change.
 
+### Draft/Snapshot Semantics vs UI Convenience
+
+Explicit draft, preview, publish, and visibility semantics reduce ambiguity. The trade-off is more state modeling than a simple form directly editing public data.
+
 ### Public Contract vs Runtime Contract
 
-Separating public contract and runtime contract increases security and clarity, but adds responsibility for keeping projections consistent.
+Separating public contract and runtime contract increases security and clarity, but adds responsibility for keeping projections consistent, especially for select/categorical options.
+
+### Public Profile vs Contract Authority
+
+Public profile curation improves presentation, but it creates a risk of semantic drift if operators can rename, reorder, or describe fields in ways that conflict with technical meaning. Validation and documentation must keep this boundary clear.
 
 ### No Database Initially vs Advanced Querying
 
-Avoiding a database simplifies the first public cycle. Historical queries, permissions, and advanced administration may require structured persistence in the future.
+Avoiding a database simplifies the current cycle. Historical queries, permissions, concurrent editing, audit logs, and advanced administration may require structured persistence in the future.
 
 ### Private Admin vs Convenience
 
-Keeping admin outside the public surface reduces risk, but requires operation through an SSH tunnel, private network, or equivalent mechanism.
+Keeping admin outside the public surface reduces risk, but requires operation through an SSH tunnel, private network, localhost-bound server block, or equivalent mechanism.
 
-### No Complete Administrative Framework Initially
+### Design Fidelity vs Contract Correctness
 
-Avoiding a complete administrative framework keeps the focus on runtime and publisher. Future adoption can be reevaluated if requirements emerge for persistent CRUD, multi-user operation, permissions, and frequent manual management.
+The design prototypes are useful for deterministic UI implementation, but copying them mechanically may cause regressions if prototype data conflicts with real contracts, metrics, or API schemas.
 
-## Accepted First-Cycle Architectural Decisions
+### Seeded Examples vs Hardcoded Product Logic
 
-The following decisions are accepted for the first public cycle and define boundaries for later bootstrap issues. They are documentation-level architectural decisions, not implementation steps.
+Telco and Bank are useful examples. The risk is allowing them to remain embedded as product assumptions instead of migrating toward registry/artifact/profile-driven dataset availability.
 
-- Atlas starts as a dataset-centric, contract-first, release-oriented platform for publishing predictive experiences.
-- The first public cycle supports one public experience per dataset and one active release per dataset.
-- The public runtime resolves publications by `dataset_slug` and `active_release`.
-- The initial registry remains file-based, explicit, and validatable.
-- Published releases are immutable packages that connect dataset, contract, predictive bundle, metrics, model card, context, and manifest.
-- Traceability between dataset, contract, model, metrics, release, and publication is mandatory.
-- Pipeline, publisher, public runtime, public web experience, contracts, and published artifacts remain separate responsibilities.
-- The internal publisher validates completeness, calculates hashes, generates the manifest, and promotes releases explicitly before any web administration exists.
-- The public surface exposes only public experiences, public contracts, public metadata, metrics, and inference endpoints required for application consumption.
-- Internal tooling, publisher operations, pipeline work, sensitive logs, operational tools, databases, volumes, infrastructure, and future administration remain outside the public surface.
-- No public administration exists in the first public cycle.
-- Future internal administration, if introduced, must use a private surface and orchestrate existing publisher operations instead of duplicating publication logic.
-- The first public cycle does not require a database, multi-user operation, marketplace, public upload, public retraining, or complex administration.
-- Public deployment is considered part of the initial path and must preserve secure boundaries around secrets, internal services, logs, and runtime artifacts.
-- The implementation documentation strategy for the initial stage is `milestones-only`; a dedicated Implementation Map is deferred until concrete implementation complexity justifies it.
+## Accepted Current-Cycle Architectural Decisions
+
+The following decisions are accepted for the next public/admin cycle and define boundaries for later bootstrap issues. They are documentation-level architectural decisions, not implementation steps.
+
+- Atlas remains a dataset-centric, contract-first, release-oriented platform for publishing predictive experiences.
+- The next product stage implements both public dataset experiences and a private administrative curation layer.
+- The public runtime resolves publications by `dataset_slug`, `active_release`, published public snapshot, and visibility state.
+- The registry remains explicit, file-based for the current stage, and validatable.
+- Published releases are immutable packages that connect dataset, run, contract, predictive bundle, metrics, model card, context, and manifest.
+- Public dataset profiles may curate presentation metadata, but must not redefine contract, model, metrics, or inference semantics.
+- Draft, preview, published snapshot, and visibility are distinct states.
+- Visibility applies to the published public snapshot, not to unpublished draft edits.
+- The private Dashboard may discover generated runs and initiate controlled promotion.
+- The private Dataset Admin may curate public profile state, preview drafts, publish snapshots, and control visibility.
+- Minimal private Settings and Help routes are in scope.
+- Drag-and-drop UX must provide clear visual feedback when used for ordering or curation interactions.
+- Public Home and Dataset Detail must move toward registry/artifact/profile-driven data rather than frontend hardcoded datasets.
+- Telco and Bank may remain as seeded examples or fixtures, but not as permanent product assumptions in UI logic.
+- Traceability between dataset, run, contract, model, metrics, profile, snapshot, release, and publication is mandatory.
+- Pipeline, publisher, public runtime, private administration, public web experience, contracts, public profiles, and published artifacts remain separate responsibilities.
+- The internal publisher validates completeness, calculates hashes, generates manifests, and promotes releases explicitly.
+- Private administration must orchestrate existing publisher/profile operations instead of duplicating publication logic.
+- The public surface exposes only public experiences, public contracts, public metadata, metrics, visualizations when available, and inference endpoints required for application consumption.
+- Internal tooling, publisher operations, generated runs, draft states, pipeline work, sensitive logs, operational tools, databases, volumes, infrastructure, and private administration remain outside the public surface.
+- The current cycle does not require a database, multi-user operation, marketplace, public upload, public retraining, or complex administration.
+- Public deployment must preserve secure boundaries around secrets, internal services, logs, runtime artifacts, and admin routes.
+- The implementation documentation strategy is `milestones-only with explicit design alignment notes`; a dedicated Implementation Map remains deferred until concrete implementation complexity justifies it.
 
 Pending product and technical choices remain outside this accepted list.
 
@@ -646,38 +966,54 @@ Pending product and technical choices remain outside this accepted list.
 
 Pending decisions:
 
-- define the operational backup strategy for releases;
-- define the minimum log policy;
-- access mechanism for future internal administration — narrowed by M20-02: the required mechanism is a private Caddy server block bound to localhost only (127.0.0.1:<port>), not routed through the public :443 server block, accessible only via SSH tunnel or equivalent private channel. The specific localhost port is an open choice to be set when admin is created. Boundary rules that must apply when admin is created: (1) the admin Caddy server block must listen on localhost only, never on a public interface; (2) it must not appear in or be forwarded from the public :443 server block; (3) admin must not be reachable through any public port mapping or public DNS entry. Admin creation remains deferred per M20-01. Public exposure review (M20-02) confirmed: no admin path in Caddyfile, no admin route in api/main.py, no admin service port in docker-compose.yml or docker-compose.prod.yml.
-- define whether the publisher will be exposed only as a CLI or also as an internal service in a later stage.
+- define the operational backup strategy for releases, public profiles, drafts, and published snapshots;
+- define the minimum log policy for public and private operations;
+- define the exact persistence model for dataset public profiles, drafts, snapshots, and visibility state;
+- define how generated notebook runs should be indexed, validated, promoted, and removed;
+- define whether run promotion creates a release candidate, a dataset preparation record, or both;
+- define which visualization artifacts are required for a complete public dataset experience and which remain optional;
+- define how public-safe categorical/select options are projected from runtime contracts;
+- define how metrics nested in artifacts should be normalized for public display;
+- define whether the publisher will be exposed only as a CLI, as an internal service, or through shared backend functions;
+- define the specific localhost/private port for the admin surface when deployed;
+- define the minimum privacy/security mechanism required before the administrative surface can be considered private;
+- define whether publication snapshots need human-readable version names in addition to technical identifiers;
+- define whether Settings should remain local/simple or evolve into a broader admin preference model later.
 
 Known gaps:
 
 - the expected scale of datasets is not yet defined;
 - the expected inference volume is not yet defined;
 - the future need for a database is not yet confirmed;
-
 - the observability strategy still needs to be made proportional;
-- the semantic versioning policy for schemas still needs to be detailed.
+- the semantic versioning policy for schemas still needs to be detailed;
+- the exact relationship between design markdown, visual specs, responsive specs, and executable prototypes must be checked per screen before implementation;
+- the design currently covers primary admin/public screens, while Settings and Help still need minimal design/implementation definition.
 
 ## Architectural Validation Criteria
 
 The architecture will be considered adequate if it:
 
 - is aligned with the Atlas vision;
-- allows a first public experience per dataset;
-- resolves runtime by `dataset_slug` and `active_release`;
+- allows a public experience per published dataset;
+- supports a private Dashboard for run discovery and dataset preparation;
+- supports a private Dataset Admin for profile curation, preview, publishing, and visibility;
+- resolves runtime by `dataset_slug`, `active_release`, public snapshot, and visibility state;
 - avoids a global contract or bundle as the source of truth;
-- keeps the initial registry file-based;
-- separates pipeline, publisher, runtime, and web experience;
-- preserves the contract as the source of truth for validation and guided rendering;
+- keeps the initial registry explicit, file-based, and validatable;
+- separates pipeline, generated run store, publisher, profile state, runtime, private administration, and public web experience;
+- preserves contracts as the source of truth for validation, inference, and guided rendering;
+- exposes public-safe contract projections for frontend rendering;
 - prevents the interface from concentrating business logic;
 - treats published releases as immutable;
+- treats draft, preview, published snapshot, and visibility as distinct states;
 - keeps administration outside the public surface;
-- does not require a database, multi-user operation, or complex admin in the first cycle;
-- preserves traceability between dataset, contract, bundle, metrics, and release;
+- does not require a database, multi-user operation, or complex admin in the current cycle;
+- preserves traceability between dataset, run, contract, bundle, metrics, profile, snapshot, release, and publication;
 - considers public deployment with containers, HTTPS, and environment-based configuration;
-- does not expose secrets, raw logs, internal paths, or internal services;
+- does not expose secrets, raw logs, internal paths, generated runs, draft states, publisher controls, or internal services through public routes;
+- uses `design/` as a deterministic UX reference without making it override contracts, tests, schemas, or security boundaries;
+- removes hardcoded dataset assumptions from product logic while allowing seeded examples;
 - guides future milestones without becoming a roadmap;
 - declares a proportional documentation strategy;
 - records risks and pending decisions without resolving them by inference.
@@ -686,16 +1022,25 @@ The architecture will be considered adequate if it:
 
 Future milestones must use this architecture as a scope boundary, not as an implementation list.
 
-Incremental planning should begin with the minimum foundations:
+Incremental planning should begin with the minimum foundations for the next stage:
 
-- contracts and registry;
-- release manifest;
-- public runtime;
-- internal publisher;
-- public web experience;
-- minimum security;
-- containerized deployment.
+- architecture/vision alignment for the design-backed product surface;
+- design inventory and consistency review;
+- frontend shell and route structure;
+- public Home implementation;
+- public Dataset Detail implementation;
+- public contract projection repair for categorical/select fields;
+- metrics and visualization normalization;
+- private Dashboard backend foundation;
+- generated run discovery;
+- run promotion into controlled preparation state;
+- dataset public profile and draft model;
+- Dataset Admin curation UI;
+- private Live Preview aligned with public Dataset Detail behavior;
+- deterministic snapshot publication;
+- public visibility control;
+- hardcoded dataset exit;
+- minimal Settings and Help;
+- security review for public/private separation.
 
-Internal administration should be considered only after the publisher is defined, testable, and capable of validating and promoting releases without depending on a web interface.
-
-Features such as public upload, multi-user operation, marketplace, multiple organizations, complex administration, mandatory database, and public retraining must remain outside the first stages unless there is an explicit future architectural decision.
+Features such as public upload, public dataset creation by third parties, multi-user operation, marketplace, multiple organizations, complex permissions, mandatory database, and public retraining must remain outside the current stage unless there is an explicit future architectural decision.

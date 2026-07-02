@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M29",
-    "title": "Design-Grounded Product Surface Reauthorization",
+    "id": "M30",
+    "title": "Frontend Shell, Routing, and Design System Foundation",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M28",
-    "title": "Operational Release Guide and Implementation Map",
+    "id": "M29",
+    "title": "Design-Grounded Product Surface Reauthorization",
     "status": "completed"
   },
   "completed_milestones": [
@@ -167,6 +167,11 @@
       "id": "M28",
       "title": "Operational Release Guide and Implementation Map",
       "status": "completed"
+    },
+    {
+      "id": "M29",
+      "title": "Design-Grounded Product Surface Reauthorization",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -308,6 +313,11 @@
     {
       "id": "M28",
       "title": "Operational Release Guide and Implementation Map",
+      "status": "locked"
+    },
+    {
+      "id": "M29",
+      "title": "Design-Grounded Product Surface Reauthorization",
       "status": "locked"
     }
   ],
@@ -479,12 +489,18 @@
     {
       "id": "M29",
       "title": "Design-Grounded Product Surface Reauthorization",
+      "status": "completed"
+    },
+    {
+      "id": "M30",
+      "title": "Frontend Shell, Routing, and Design System Foundation",
       "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M29 is the current active milestone for Design-Grounded Product Surface Reauthorization in Atlas DataFlow.",
+    "M30 is the current active milestone for Frontend Shell, Routing, and Design System Foundation in Atlas DataFlow.",
+    "M29 is marked as completed because Design-Grounded Product Surface Reauthorization has been completed.",
     "M28 is marked as completed because Operational Release Guide and Implementation Map has been completed.",
     "M27 is marked as completed because Public Runtime and Browser Validation has been completed.",
     "M26 is marked as completed because Release Candidate from Real Dataflow Artifacts has been completed.",
@@ -503,7 +519,7 @@
     "M13 is marked as completed because Contract Artifact Build Pipeline Foundation has been completed.",
     "M12 is marked as completed because First Real Dataset Release has been completed.",
     "M11 is marked as completed because Publisher Operational Release Flow has been completed.",
-    "M10 is marked as completed in the operational cursor because Initial Private Internal Administration was closed with documented deferral, not implemented as an admin surface.",
+    "M10 is marked as completed because Initial Private Internal Administration has been completed.",
     "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
     "M9 is marked as completed because First Public Cycle Closure has been completed.",
     "M8 is marked as completed because Containerized Public Deployment and Minimum Security has been completed.",
@@ -514,14 +530,14 @@
     "M3 is marked as completed because File-Based Registry and Publication Model has been completed.",
     "M2 is marked as completed because Minimal Public Technical Bootstrap has been completed.",
     "M1 is marked as completed because Documented Foundation and Initial Technical Scope has been completed.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M29 should be validated against docs/milestones.md before workflow continuation.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "The current milestone points to M29 because the next implementation focus is Design-Grounded Product Surface Reauthorization."
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M30 should be validated against docs/milestones.md before workflow continuation.",
+    "The current milestone points to M30 because the next implementation focus is Frontend Shell, Routing, and Design System Foundation."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Routes, Route, Link } from "react-router-dom";
 import "./App.css";
+import { Badge, Card, EmptyState, ErrorState, StatusPill } from "./components/ui";
 import DatasetPage from "./pages/DatasetPage";
 import DatasetViewPage from "./pages/DatasetViewPage";
 
@@ -62,29 +63,42 @@ function Home() {
       </section>
 
       {state.status === "loading" && (
-        <section aria-label="Loading datasets">
+        <Card aria-label="Loading datasets">
           <p>Loading datasets…</p>
-        </section>
+        </Card>
       )}
 
       {state.status === "error" && (
-        <section aria-label="Datasets unavailable">
-          <p>Datasets unavailable. Please check that the API is running.</p>
-        </section>
+        <ErrorState
+          title="Datasets unavailable"
+          message="Please check that the API is running."
+        />
       )}
 
       {state.status === "ready" && (
         <section className="dataset-listing" aria-label="Available datasets">
-          <ul>
-            {state.datasets.map((ds) => (
-              <li key={ds.dataset_slug}>
-                <Link to={`/dataset/${ds.dataset_slug}`}>
-                  {ds.title || ds.dataset_slug}
-                </Link>
-                {ds.summary && <p>{ds.summary}</p>}
-              </li>
-            ))}
-          </ul>
+          {state.datasets.length === 0 ? (
+            <EmptyState title="No datasets available" message="Published datasets will appear here." />
+          ) : (
+            <ul>
+              {state.datasets.map((ds) => (
+                <li key={ds.dataset_slug}>
+                  <Card>
+                    <div>
+                      <Link to={`/dataset/${ds.dataset_slug}`}>
+                        {ds.title || ds.dataset_slug}
+                      </Link>
+                      {ds.summary && <p>{ds.summary}</p>}
+                    </div>
+                    <div className="dataset-listing__meta">
+                      <StatusPill tone="info">{ds.visibility}</StatusPill>
+                      {ds.domain && <Badge>{ds.domain}</Badge>}
+                    </div>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </main>

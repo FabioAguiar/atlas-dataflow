@@ -33,7 +33,7 @@
       "required": ["name", "label", "input_type", "optional", "display_order"],
       "additionalProperties": false,
       "title": "Public Contract Feature",
-      "description": "A single public contract feature. Derived from a runtime contract feature by applying explicit projection rules. Required fields: name (CARRIED), label (FRESH), input_type (DERIVED), optional (INVERTED), display_order (FRESH). Optional field: description (OPTIONAL-CARRIED). The runtime contract fields type and domain_constraints are never included.",
+      "description": "A single public contract feature. Derived from a runtime contract feature by applying explicit projection rules. Required fields: name (CARRIED), label (FRESH), input_type (DERIVED), optional (INVERTED), display_order (FRESH). Optional fields: description (OPTIONAL-CARRIED), options (OPTIONAL-DERIVED, select fields only). The runtime contract fields type and domain_constraints are never included verbatim.",
       "properties": {
         "name": {
           "type": "string",
@@ -51,7 +51,7 @@
           "type": "string",
           "enum": ["number", "select", "checkbox"],
           "title": "Input Type Hint",
-          "description": "Projection rule DERIVED: input_type is derived from the runtime feature type using the mapping numeric → 'number', categorical → 'select', boolean → 'checkbox'. This field is a form input widget descriptor only — it describes the expected widget class for rendering. It does not encode domain bounds, accepted value ranges, or enumerated value lists. For 'select': indicates a choice input widget; the accepted values are defined exclusively in the runtime contract domain_constraints.values and must not appear in the public contract. The runtime contract type field is not included in the public contract feature."
+          "description": "Projection rule DERIVED: input_type is derived from the runtime feature type using the mapping numeric → 'number', categorical → 'select', boolean → 'checkbox'. This field is a form input widget descriptor only — it describes the expected widget class for rendering. It does not encode domain bounds or accepted value ranges. For 'select': indicates a choice input widget; safe rendering options for the widget, when available, are carried separately in the sibling options field — options is rendering guidance only and is never authoritative for payload validation, which always happens against the runtime contract. The runtime contract type field is not included in the public contract feature."
         },
         "optional": {
           "type": "boolean",
@@ -68,6 +68,36 @@
           "type": "string",
           "title": "Feature Description",
           "description": "Projection rule OPTIONAL-CARRIED: description is carried from the runtime contract feature.description if present. It is safe to expose — carries no domain constraints or validation semantics. It is plain documentation text and may be displayed by the web experience as supplementary field context. May be omitted when the runtime contract feature has no description."
+        },
+        "options": {
+          "type": "array",
+          "title": "Safe Option Projection",
+          "description": "Projection rule OPTIONAL-DERIVED: present only for a categorical runtime feature (input_type 'select') whose domain_constraints.values is a non-empty list. Each entry is a minimal safe rendering option — a value identifier and a display label — derived from the runtime domain, never the runtime domain_constraints object itself. Must be entirely absent (not an empty array) when the runtime feature has no domain_constraints or an empty values list, giving the web experience a deterministic signal to fall back to an unguided input. This field is rendering guidance only; it is never authoritative for payload validation, which always happens against the runtime contract.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/public_feature_option"
+          }
+        }
+      }
+    },
+    "public_feature_option": {
+      "type": "object",
+      "required": ["value", "label"],
+      "additionalProperties": false,
+      "title": "Public Contract Feature Option",
+      "description": "A single safe rendering option for a select-type public contract feature. Required fields: value (CARRIED verbatim from the runtime domain value), label (FRESH display text for that value). Carries no domain bounds, validation semantics, or runtime-only structure.",
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Option Value",
+          "description": "Projection rule CARRIED: value is carried verbatim from a single entry of the runtime contract feature's domain_constraints.values. Must match the value accepted by runtime payload validation for this feature."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "title": "Option Display Label",
+          "description": "Projection rule FRESH: label has no runtime contract equivalent and is independently derived for display purposes from the option value."
         }
       }
     }

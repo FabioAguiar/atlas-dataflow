@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M31",
-    "title": "Public Home and Dataset Detail Design Implementation",
+    "id": "M32",
+    "title": "Public Contract Projection and Inference Presentation Upgrade",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M30",
-    "title": "Frontend Shell, Routing, and Design System Foundation",
+    "id": "M31",
+    "title": "Public Home and Dataset Detail Design Implementation",
     "status": "completed"
   },
   "completed_milestones": [
@@ -177,6 +177,11 @@
       "id": "M30",
       "title": "Frontend Shell, Routing, and Design System Foundation",
       "status": "completed"
+    },
+    {
+      "id": "M31",
+      "title": "Public Home and Dataset Detail Design Implementation",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -328,6 +333,11 @@
     {
       "id": "M30",
       "title": "Frontend Shell, Routing, and Design System Foundation",
+      "status": "locked"
+    },
+    {
+      "id": "M31",
+      "title": "Public Home and Dataset Detail Design Implementation",
       "status": "locked"
     }
   ],
@@ -509,12 +519,18 @@
     {
       "id": "M31",
       "title": "Public Home and Dataset Detail Design Implementation",
+      "status": "completed"
+    },
+    {
+      "id": "M32",
+      "title": "Public Contract Projection and Inference Presentation Upgrade",
       "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M31 is the current active milestone for Public Home and Dataset Detail Design Implementation in Atlas DataFlow.",
+    "M32 is the current active milestone for Public Contract Projection and Inference Presentation Upgrade in Atlas DataFlow.",
+    "M31 is marked as completed because Public Home and Dataset Detail Design Implementation has been completed.",
     "M30 is marked as completed because Frontend Shell, Routing, and Design System Foundation has been completed.",
     "M29 is marked as completed because Design-Grounded Product Surface Reauthorization has been completed.",
     "M28 is marked as completed because Operational Release Guide and Implementation Map has been completed.",
@@ -551,9 +567,9 @@
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M31 should be validated against docs/milestones.md before workflow continuation.",
-    "The current milestone points to M31 because the next implementation focus is Public Home and Dataset Detail Design Implementation."
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M32 should be validated against docs/milestones.md before workflow continuation.",
+    "The current milestone points to M32 because the next implementation focus is Public Contract Projection and Inference Presentation Upgrade."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

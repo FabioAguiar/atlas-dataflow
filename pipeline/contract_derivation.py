@@ -18,6 +18,16 @@ Study authors must order features intentionally in the runtime contract document
 Pipeline-derived labels are templates for study-author refinement, not production-ready
 UI strings.
 
+Categorical (select) features additionally carry an options projection (M32-01):
+- options: present only when the runtime feature has a non-empty
+  domain_constraints.values list. Each entry is a safe {value, label} pair —
+  value CARRIED verbatim from the runtime domain value, label FRESH-derived via
+  _fresh_label, in source declaration order. Entirely absent (not an empty list)
+  when domain_constraints or values are missing, so the web experience has a
+  deterministic signal to fall back to an unguided input. Never present for
+  numeric or boolean features. The raw domain_constraints object itself is never
+  copied into the public feature — only newly constructed {value, label} dicts.
+
 _RUNTIME_ONLY_KEYS mirrors api/public_contract_loader.py._RUNTIME_ONLY_KEYS.
 If that module's constant changes, this constant must be updated to match.
 """
@@ -94,6 +104,22 @@ def _fresh_label(name):
     return name.replace("_", " ").replace("-", " ").title()
 
 
+def _derive_public_options(feature):
+    """Derive a safe options projection for a categorical feature, or None.
+
+    Returns a list of {value, label} dicts sourced from a non-empty
+    domain_constraints.values, in source declaration order. Returns None
+    (absence, never an empty list) when the feature is not categorical, or
+    has no domain_constraints, or has an empty values list.
+    """
+    if feature["type"] != "categorical":
+        return None
+    values = feature.get("domain_constraints", {}).get("values")
+    if not values:
+        return None
+    return [{"value": value, "label": _fresh_label(value)} for value in values]
+
+
 def _derive_public_feature(feature, display_order):
     """Apply projection rules to a single runtime feature to produce a public feature."""
     public = {}
@@ -109,6 +135,10 @@ def _derive_public_feature(feature, display_order):
     public["label"] = _fresh_label(feature["name"])
     # FRESH: display_order from 1-based position
     public["display_order"] = display_order
+    # OPTIONAL-DERIVED: options, categorical features with declared values only
+    options = _derive_public_options(feature)
+    if options is not None:
+        public["options"] = options
     return public
 
 

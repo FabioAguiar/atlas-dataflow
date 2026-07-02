@@ -1,5 +1,5 @@
 {
-  "_example_note": "Demonstration artifact. Derived from the M4-01 runtime contract example (contracts/examples/runtime-contract.example.json) by applying the M4-02 projection rules. Domain constraints (min, max, categorical values) have been stripped. Rendering hints (label, input_type, optional, display_order) have been added. Does not represent a specific real dataset.",
+  "_example_note": "Demonstration artifact. Derived from the M4-01 runtime contract example (contracts/examples/runtime-contract.example.json) by applying the M4-02 projection rules and the M32-01 safe options projection. Domain bounds (min, max) have been stripped. Rendering hints (label, input_type, optional, display_order) have been added. A categorical feature's raw domain_constraints.values list is never copied verbatim; only a safe {value, label} options projection is added, sourced from those values. Does not represent a specific real dataset.",
   "schema_version": "1.0.0",
   "features": [
     {
@@ -16,7 +16,13 @@
       "input_type": "select",
       "optional": false,
       "display_order": 2,
-      "description": "Highest completed level of education."
+      "description": "Highest completed level of education.",
+      "options": [
+        { "value": "primary", "label": "Primary" },
+        { "value": "secondary", "label": "Secondary" },
+        { "value": "tertiary", "label": "Tertiary" },
+        { "value": "postgraduate", "label": "Postgraduate" }
+      ]
     },
     {
       "name": "employed",

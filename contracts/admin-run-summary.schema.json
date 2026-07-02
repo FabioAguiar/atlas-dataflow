@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Admin Run Summary",
+  "description": "Private/admin-only projection of an internal pipeline/run-evidence.schema.json record for Dashboard run discovery. This schema is a bounded, safe summary shape only -- it is not a public contract, not a release candidate, not a published release, and not publication authority. It must never be exposed through a public route. Raw absolute paths, secrets, arbitrary file contents, raw logs, and raw runtime payloads must never appear in an instance of this schema. Missing, malformed, incomplete, and unsafe source run evidence must produce a deterministic 'unavailable' or 'invalid' summary instead of a partially populated or guessed record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "status",
+    "dataset_candidate",
+    "created_at",
+    "trace_reference",
+    "validation_summary"
+  ],
+  "properties": {
+    "_example_note": {
+      "type": "string",
+      "description": "Optional annotation for example or demonstration artifacts only. Omit in production admin run summary records."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "admin-run-summary.v1",
+      "description": "Schema version for this admin/private run summary projection."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable run identifier carried verbatim from the source run evidence's run_identity.run_id. Must not expose private session details, raw execution identifiers, or secrets."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["available", "unavailable", "invalid"],
+      "description": "Deterministic readiness/status of this summary. 'available' means the source run evidence was found and is well-formed. 'unavailable' means no source run evidence could be located. 'invalid' means source run evidence was located but is malformed or incomplete. This field is distinct from the underlying run_status (accepted/rejected/failed) carried inside validation_summary."
+    },
+    "dataset_candidate": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Best-effort dataset slug for this run, populated only when confidently resolved from the source run evidence's input/output references. Must be null rather than a low-confidence guess, and must never contain a raw absolute path. Required to be null when status is not 'available'."
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp the run started, carried verbatim from the source run evidence's run_timestamps.started_at. Required to be null when status is not 'available'."
+    },
+    "trace_reference": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Reduced, path-shaped reference to the run's primary output artifact, carried verbatim from the source run evidence's run_outputs.output_ref. Must never be an absolute filesystem path and must never embed raw artifact contents. Required to be null when status is not 'available'.",
+      "not": {
+        "type": "string",
+        "pattern": "^(/|[A-Za-z]:\\\\)"
+      }
+    },
+    "validation_summary": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "description": "Reduced validation outcome for this run, derived from the source run evidence's run_status and, when present, failure_info. Required to be null when status is not 'available'.",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["accepted", "rejected", "failed", "unknown"],
+          "description": "Outcome of the underlying run. Must not expose raw exit codes, raw runtime signals, or raw error payloads."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional short reduced reason for a rejected or failed outcome, sourced from the run evidence's failure_info.failure_reason or failure_info.rejection_reason. Must not embed raw log output or raw exception details."
+        }
+      }
+    },
+    "unavailable_reason": {
+      "type": "string",
+      "enum": ["source_run_evidence_missing", "source_run_evidence_unreadable"],
+      "description": "Deterministic reason code required when status is 'unavailable'. Must not embed raw filesystem paths or raw error text."
+    },
+    "invalid_reason": {
+      "type": "string",
+      "enum": [
+        "source_run_evidence_malformed",
+        "source_run_evidence_incomplete",
+        "source_run_evidence_schema_invalid"
+      ],
+      "description": "Deterministic reason code required when status is 'invalid'. Must not embed raw filesystem paths or raw error text."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"enum": ["unavailable", "invalid"]}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "dataset_candidate": {"const": null},
+          "created_at": {"const": null},
+          "trace_reference": {"const": null},
+          "validation_summary": {"const": null}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "unavailable"}},
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["unavailable_reason"]
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "invalid"}},
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["invalid_reason"]
+      }
+    }
+  ]
+}

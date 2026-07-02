@@ -1,0 +1,13 @@
+{
+  "_example_note": "Invalid admin-run-summary instance. Otherwise well-formed, but carries an unsafe raw_absolute_path field that contracts/admin-run-summary.schema.json's additionalProperties: false must reject. Used by tests/test_admin_run_summary_schema.py to prove unsafe fields are excluded by construction, not merely by prose.",
+  "schema_version": "admin-run-summary.v1",
+  "run_id": "run-20260620-001",
+  "status": "available",
+  "dataset_candidate": "telco-customer-churn",
+  "created_at": "2026-06-20T14:00:00Z",
+  "trace_reference": "releases/candidates/telco-customer-churn/release-20260620-001",
+  "validation_summary": {
+    "outcome": "accepted"
+  },
+  "raw_absolute_path": "/workspace/projects/atlas-dataflow/publisher/runs/validate-20260619T213122Z"
+}

@@ -1,0 +1,11 @@
+{
+  "_example_note": "Valid 'unavailable' admin-run-summary instance, demonstrating the deterministic absence semantics required when no source run evidence can be located. All projection fields are explicitly null rather than omitted or guessed.",
+  "schema_version": "admin-run-summary.v1",
+  "run_id": "run-20260701-003",
+  "status": "unavailable",
+  "dataset_candidate": null,
+  "created_at": null,
+  "trace_reference": null,
+  "validation_summary": null,
+  "unavailable_reason": "source_run_evidence_missing"
+}

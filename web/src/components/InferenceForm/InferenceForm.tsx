@@ -2,6 +2,11 @@ import { FormEvent, useState } from "react";
 import InferenceResult, { PredictionResult } from "../InferenceResult/InferenceResult";
 import ErrorState from "../ErrorState/ErrorState";
 
+export type FeatureOption = {
+  value: string;
+  label: string;
+};
+
 export type Feature = {
   name: string;
   label: string;
@@ -9,6 +14,7 @@ export type Feature = {
   optional: boolean;
   display_order: number;
   description?: string;
+  options?: FeatureOption[];
 };
 
 export type ContractPayload = {
@@ -103,6 +109,18 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
           name={feature.name}
           required={!feature.optional}
         />
+      ) : feature.input_type === "select" && feature.options && feature.options.length > 0 ? (
+        <select
+          id={`field-${feature.name}`}
+          name={feature.name}
+          required={!feature.optional}
+        >
+          {feature.options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       ) : (
         <input
           type={feature.input_type === "number" ? "number" : "text"}

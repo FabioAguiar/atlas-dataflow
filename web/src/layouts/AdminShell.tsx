@@ -160,9 +160,9 @@ export default function AdminShell() {
               Safe navigation structure for future admin workflows.
             </p>
           </div>
-          <div aria-label="Unavailable admin controls" style={headerControlsStyle}>
+          <div aria-label="Admin controls" style={headerControlsStyle}>
             <button disabled style={disabledControlStyle} type="button">
-              Run discovery unavailable
+              Run discovery private
             </button>
             <button disabled style={disabledControlStyle} type="button">
               Publishing unavailable

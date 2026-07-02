@@ -210,7 +210,7 @@ app.add_middleware(
     allow_origins=[os.environ.get("CORS_ALLOWED_ORIGIN", "")],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Admin-Token"],
 )
 
 

@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import secrets
 import sys
 import tarfile
 from pathlib import Path
@@ -65,6 +66,7 @@ from public_predict_view_customization_loader import (  # noqa: E402
     CustomizationNotFoundError,
     load_public_predict_view_customization,
 )
+from admin_runs import list_admin_run_summaries  # noqa: E402
 
 METRICS_UNAVAILABLE = PublicError(
     status_code=503,
@@ -128,6 +130,28 @@ def _inference_releases_root() -> Path:
     if env_root:
         return Path(env_root)
     return _REPO_ROOT / "releases"
+
+
+# GET /admin/runs must not be reachable without a correct token, and it must
+# fail closed (deny) whenever ADMIN_API_TOKEN is unset, so a missing operator
+# configuration blocks the route instead of silently exposing it. The token
+# is read only from the process environment; it is never read from a file.
+def _admin_request_authorized(request: Request) -> bool:
+    expected = os.environ.get("ADMIN_API_TOKEN")
+    if not expected:
+        return False
+    provided = request.headers.get("x-admin-token")
+    if not provided:
+        return False
+    return secrets.compare_digest(provided, expected)
+
+
+# On an access-control failure this must be byte-for-byte the same response
+# an unmatched route would produce (FastAPI/Starlette's default 404 body),
+# so an unauthenticated caller cannot distinguish "route exists but token is
+# wrong" from "route does not exist".
+def _admin_route_not_found_response() -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
 def _load_bundle(bundle_path: Path):
@@ -479,6 +503,13 @@ def get_predict_view_customization(dataset_slug: str, view_id: str):
         return public_error_response(CUSTOMIZATION_NOT_FOUND)
 
     return customization
+
+
+@app.get("/admin/runs")
+def list_admin_runs(request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    return list_admin_run_summaries()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 """
-Admin run listing tests for M33-02.
+Admin run listing tests for M33-02 and M33-05 validation evidence.
 
 Exercises api/admin_runs.py's safe run-summary derivation and api/main.py's
 GET /admin/runs access-control boundary. Tests use direct function/module
@@ -67,6 +67,29 @@ _REJECTED_VALIDATION_RESULT = {
     },
 }
 
+_SAFE_RUN_SUMMARY_KEYS = {
+    "schema_version",
+    "run_id",
+    "status",
+    "dataset_candidate",
+    "created_at",
+    "trace_reference",
+    "validation_summary",
+    "unavailable_reason",
+    "invalid_reason",
+}
+
+_PRIVATE_MARKERS = (
+    "/private/generated-runs",
+    "/tmp/",
+    "C:\\",
+    "secret",
+    "token",
+    "raw_log",
+    "raw_runtime",
+    "database.sqlite",
+)
+
 
 def _write_run_dir(root: Path, run_id: str, manifest: dict | None, validation_result: dict | None) -> Path:
     run_dir = root / run_id
@@ -76,6 +99,12 @@ def _write_run_dir(root: Path, run_id: str, manifest: dict | None, validation_re
     if validation_result is not None:
         _write_json(run_dir / "validation-result.json", validation_result)
     return run_dir
+
+
+def _assert_no_private_markers(value: object) -> None:
+    serialized = json.dumps(value, sort_keys=True)
+    for marker in _PRIVATE_MARKERS:
+        assert marker not in serialized
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +135,41 @@ def test_happy_path_returns_available_entry_conformant_to_schema():
         assert entry["validation_summary"] == {"outcome": "accepted"}
         assert "unavailable_reason" not in entry
         assert "invalid_reason" not in entry
+
+
+def test_available_entry_exposes_only_safe_projection_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        manifest = json.loads(json.dumps(_VALID_MANIFEST))
+        manifest["private_path"] = "/private/generated-runs/validate-safe"
+        manifest["secret_token"] = "secret-token-value"
+        manifest["raw_runtime_payload"] = {"database": "database.sqlite"}
+        manifest["raw_logs"] = ["raw_log line"]
+        validation_result = json.loads(json.dumps(_REJECTED_VALIDATION_RESULT))
+        validation_result["private_diagnostics"] = {
+            "raw_path": "/tmp/private/generated-runs/validate-safe",
+            "credential_hint": "token",
+        }
+        _write_run_dir(root, "validate-safe", manifest, validation_result)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.list_admin_run_summaries()
+        finally:
+            admin_runs._admin_runs_root = original
+
+        entry = result["runs"][0]
+        assert set(entry) <= _SAFE_RUN_SUMMARY_KEYS
+        assert entry["schema_version"] == "admin-run-summary.v1"
+        assert entry["run_id"] == "validate-safe"
+        assert entry["dataset_candidate"] == "example-dataset"
+        assert entry["validation_summary"] == {
+            "outcome": "rejected",
+            "reason": "metrics artifact missing",
+        }
+        assert entry["trace_reference"] is not None
+        assert not entry["trace_reference"].startswith("/")
+        _assert_no_private_markers(entry)
 
 
 def test_rejected_validation_result_carries_reduced_reason():
@@ -248,6 +312,26 @@ def test_dataset_candidate_null_when_slug_does_not_match_pattern():
         assert entry["dataset_candidate"] is None
 
 
+def test_run_id_does_not_allow_path_traversal_to_private_details():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_run_dir(root, "safe-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+        nested = root / "nested"
+        nested.mkdir()
+        _write_run_dir(nested, "private-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.list_admin_run_summaries()
+        finally:
+            admin_runs._admin_runs_root = original
+
+        run_ids = [entry["run_id"] for entry in result["runs"]]
+        assert "safe-run" in run_ids
+        assert "private-run" not in run_ids
+        _assert_no_private_markers(result)
+
+
 # ---------------------------------------------------------------------------
 # GET /admin/runs: access-control boundary
 # ---------------------------------------------------------------------------
@@ -313,6 +397,34 @@ def test_route_returns_listing_when_token_correct():
         admin_runs._admin_runs_root = original_root
 
 
+def test_route_listing_is_sanitized_even_when_source_contains_private_fields():
+    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    original_root = admin_runs._admin_runs_root
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = json.loads(json.dumps(_VALID_MANIFEST))
+            manifest["private_file"] = "/private/generated-runs/validate-route/manifest.json"
+            manifest["secret"] = "secret-token-value"
+            _write_run_dir(root, "validate-route", manifest, _REJECTED_VALIDATION_RESULT)
+            admin_runs._admin_runs_root = lambda: root
+            request = _make_request({"X-Admin-Token": "correct-token"})
+            response = api_main.list_admin_runs(request)
+
+            assert response["runs_root_status"] == "available"
+            assert len(response["runs"]) == 1
+            entry = response["runs"][0]
+            assert set(entry) <= _SAFE_RUN_SUMMARY_KEYS
+            assert entry["validation_summary"] == {
+                "outcome": "rejected",
+                "reason": "metrics artifact missing",
+            }
+            _assert_no_private_markers(response)
+    finally:
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+
+
 # ---------------------------------------------------------------------------
 # Public surface non-exposure
 # ---------------------------------------------------------------------------
@@ -338,6 +450,9 @@ def test_admin_route_registered_and_public_dataset_routes_unchanged():
 
     dataset_paths = {path for path in paths if path.startswith("/datasets")}
     assert dataset_paths == _EXPECTED_PUBLIC_DATASET_PATHS
+
+    public_paths = {path for path in paths if not path.startswith("/admin")}
+    assert not any("runs" in path for path in public_paths)
 
 
 if __name__ == "__main__":

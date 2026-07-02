@@ -26,6 +26,17 @@ type AdminRunsResponse = {
   runs: AdminRunSummary[];
 };
 
+const validationOutcomes: ValidationOutcome[] = ["accepted", "rejected", "failed", "unknown"];
+const unavailableReasons: Array<NonNullable<AdminRunSummary["unavailable_reason"]>> = [
+  "source_run_evidence_missing",
+  "source_run_evidence_unreadable",
+];
+const invalidReasons: Array<NonNullable<AdminRunSummary["invalid_reason"]>> = [
+  "source_run_evidence_malformed",
+  "source_run_evidence_incomplete",
+  "source_run_evidence_schema_invalid",
+];
+
 type DashboardState =
   | { status: "idle" }
   | { status: "loading" }
@@ -149,6 +160,31 @@ const disabledIntentButtonStyle: CSSProperties = {
   width: "fit-content",
 };
 
+function isSafeTraceReference(value: string | null): boolean {
+  if (value === null) {
+    return true;
+  }
+
+  return !value.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(value) && !value.includes("..");
+}
+
+function isValidationSummary(value: unknown): value is AdminRunSummary["validation_summary"] {
+  if (value === null) {
+    return true;
+  }
+
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Partial<NonNullable<AdminRunSummary["validation_summary"]>>;
+  return (
+    typeof record.outcome === "string" &&
+    validationOutcomes.includes(record.outcome as ValidationOutcome) &&
+    (record.reason === undefined || typeof record.reason === "string")
+  );
+}
+
 function isAdminRunSummary(value: unknown): value is AdminRunSummary {
   if (!value || typeof value !== "object") {
     return false;
@@ -156,6 +192,12 @@ function isAdminRunSummary(value: unknown): value is AdminRunSummary {
 
   const record = value as Partial<AdminRunSummary>;
   const validStatus = record.status === "available" || record.status === "unavailable" || record.status === "invalid";
+  const validUnavailableReason =
+    record.unavailable_reason === undefined ||
+    unavailableReasons.includes(record.unavailable_reason as NonNullable<AdminRunSummary["unavailable_reason"]>);
+  const validInvalidReason =
+    record.invalid_reason === undefined ||
+    invalidReasons.includes(record.invalid_reason as NonNullable<AdminRunSummary["invalid_reason"]>);
 
   return (
     record.schema_version === "admin-run-summary.v1" &&
@@ -165,7 +207,10 @@ function isAdminRunSummary(value: unknown): value is AdminRunSummary {
     (typeof record.dataset_candidate === "string" || record.dataset_candidate === null) &&
     (typeof record.created_at === "string" || record.created_at === null) &&
     (typeof record.trace_reference === "string" || record.trace_reference === null) &&
-    (typeof record.validation_summary === "object" || record.validation_summary === null)
+    isSafeTraceReference(record.trace_reference) &&
+    isValidationSummary(record.validation_summary) &&
+    validUnavailableReason &&
+    validInvalidReason
   );
 }
 
@@ -328,7 +373,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <section aria-labelledby="admin-dashboard-title" style={pageStyle}>
+    <section aria-labelledby="admin-dashboard-title" data-dashboard-state={state.status} style={pageStyle}>
       <div style={headerStyle}>
         <div>
           <p className="eyebrow">Dashboard</p>
@@ -380,23 +425,23 @@ export default function DashboardPage() {
 
       {state.status === "ready" && (
         <>
-          <div style={statusGridStyle}>
-            <Card aria-label="Total runs">
+          <div data-runs-root-status={state.data.runs_root_status} style={statusGridStyle}>
+            <Card aria-label="Total runs" data-run-count={counters.total}>
               <Badge>{rootStatusMessage(state.data.runs_root_status)}</Badge>
               <strong style={counterValueStyle}>{counters.total}</strong>
               <span style={mutedTextStyle}>Runs returned</span>
             </Card>
-            <Card aria-label="Available runs">
+            <Card aria-label="Available runs" data-run-count={counters.available}>
               <StatusPill tone="success">Available</StatusPill>
               <strong style={counterValueStyle}>{counters.available}</strong>
               <span style={mutedTextStyle}>Ready for review</span>
             </Card>
-            <Card aria-label="Invalid runs">
+            <Card aria-label="Invalid runs" data-run-count={counters.invalid}>
               <StatusPill tone="danger">Invalid</StatusPill>
               <strong style={counterValueStyle}>{counters.invalid}</strong>
               <span style={mutedTextStyle}>Incomplete source evidence</span>
             </Card>
-            <Card aria-label="Unavailable runs">
+            <Card aria-label="Unavailable runs" data-run-count={counters.unavailable}>
               <StatusPill tone="warning">Unavailable</StatusPill>
               <strong style={counterValueStyle}>{counters.unavailable}</strong>
               <span style={mutedTextStyle}>Missing or unreadable evidence</span>
@@ -461,7 +506,7 @@ export default function DashboardPage() {
               {filteredRuns.length === 0 ? (
                 <EmptyState title="No matching runs" message="Adjust the Dashboard filters to view returned summaries." />
               ) : (
-                <div role="table" aria-label="Run summaries" style={tableStyle}>
+                <div role="table" aria-label="Run summaries" data-filtered-run-count={filteredRuns.length} style={tableStyle}>
                   <div role="row" style={tableHeaderStyle}>
                     <span role="columnheader">Run ID</span>
                     <span role="columnheader">Dataset</span>
@@ -480,13 +525,14 @@ export default function DashboardPage() {
                         </>
                       }
                     >
-                      <div style={rowContentStyle}>
+                      <div data-run-status={run.status} style={rowContentStyle}>
                         <strong>{run.run_id}</strong>
                         <span>{run.dataset_candidate ?? "Not resolved"}</span>
                         <span>{formatCreatedAt(run.created_at)}</span>
                         <StatusPill tone={statusTone(run.status)}>{statusLabel(run.status)}</StatusPill>
                         <span style={promotionIntentStyle}>
                           <Button
+                            data-promotion-intent="disabled"
                             disabled
                             style={disabledIntentButtonStyle}
                             title="Promotion remains disabled until a later publisher/profile workflow owns validation."

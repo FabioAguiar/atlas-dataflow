@@ -9,10 +9,11 @@ const TAB_ITEMS: TabItem[] = [
 ];
 
 type DatasetDetailTabsProps = {
+  overviewContent: ReactNode;
   inferenceContent: ReactNode;
 };
 
-export default function DatasetDetailTabs({ inferenceContent }: DatasetDetailTabsProps) {
+export default function DatasetDetailTabs({ overviewContent, inferenceContent }: DatasetDetailTabsProps) {
   const [selectedId, setSelectedId] = useState<string>("overview");
 
   return (
@@ -25,7 +26,7 @@ export default function DatasetDetailTabs({ inferenceContent }: DatasetDetailTab
       />
 
       <div className="dataset-detail-tabs__panel" hidden={selectedId !== "overview"} role="tabpanel">
-        <p className="dataset-detail-tabs__placeholder">Overview content is coming soon.</p>
+        {overviewContent}
       </div>
 
       <div className="dataset-detail-tabs__panel" hidden={selectedId !== "inference"} role="tabpanel">

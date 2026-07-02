@@ -4,7 +4,7 @@ import DatasetDetailHeader, {
   type DatasetDetailMetadataItem,
 } from "../components/DatasetDetail/DatasetDetailHeader";
 import DatasetDetailTabs from "../components/DatasetDetail/DatasetDetailTabs";
-import MetricsDisplay from "../components/MetricsDisplay/MetricsDisplay";
+import PerformanceSummary from "../components/DatasetDetail/PerformanceSummary";
 import ModelCard from "../components/ModelCard/ModelCard";
 import DatasetVisualizations, { VisualizationsPayload } from "../components/DatasetVisualizations/DatasetVisualizations";
 import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
@@ -56,6 +56,10 @@ type PredictViewListPayload = {
   dataset_slug: string;
   views: PredictViewItem[];
 };
+
+function getProblemSummaryText(context: PublicContextPayload | null): string | null {
+  return context?.description || context?.use_case || context?.summary || null;
+}
 
 function extractInstanceCount(metrics: MetricsData): string | null {
   const evaluation = metrics["evaluation"];
@@ -365,6 +369,28 @@ export default function DatasetPage() {
     </>
   );
 
+  const problemSummaryText = getProblemSummaryText(context);
+
+  const overviewContent = (
+    <>
+      {contextState.status === "loading" && <LoadingState />}
+      {contextState.status === "ready" && problemSummaryText && (
+        <section className="dataset-detail-overview__problem-summary">
+          <h3>Problem summary</h3>
+          <p>{problemSummaryText}</p>
+        </section>
+      )}
+
+      {metricsState.status === "loading" && <LoadingState />}
+      {metricsState.status === "ready" && (
+        <PerformanceSummary metrics={metricsState.data} />
+      )}
+      {metricsState.status === "unavailable" && (
+        <ErrorState message="Metrics are temporarily unavailable." />
+      )}
+    </>
+  );
+
   return (
     <div className="dataset-detail">
       <DatasetDetailHeader
@@ -374,15 +400,7 @@ export default function DatasetPage() {
         subtitle={datasetSubtitle}
       />
 
-      <DatasetDetailTabs inferenceContent={inferenceContent} />
-
-      {metricsState.status === "loading" && <LoadingState />}
-      {metricsState.status === "ready" && (
-        <MetricsDisplay metrics={metricsState.data} />
-      )}
-      {metricsState.status === "unavailable" && (
-        <ErrorState message="Metrics are temporarily unavailable." />
-      )}
+      <DatasetDetailTabs overviewContent={overviewContent} inferenceContent={inferenceContent} />
 
       {modelCardState.status === "loading" && <LoadingState />}
       {modelCardState.status === "ready" && (

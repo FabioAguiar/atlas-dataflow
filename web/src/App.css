@@ -501,9 +501,59 @@ h1 {
   gap: var(--atlas-space-4);
 }
 
-.dataset-detail-tabs__placeholder {
+.dataset-detail-overview__problem-summary h3 {
+  margin: 0 0 var(--atlas-space-2);
+}
+
+.dataset-detail-overview__problem-summary p {
   margin: 0;
+  max-width: 42rem;
+  color: var(--atlas-color-text-muted);
+  line-height: var(--atlas-line-relaxed);
+}
+
+.performance-summary h3 {
+  margin: 0;
+}
+
+.performance-summary__scores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--atlas-space-4);
+  margin: 0;
+}
+
+.performance-summary__score {
+  display: grid;
+  gap: var(--atlas-space-1);
+}
+
+.performance-summary__score dt {
+  display: flex;
+  align-items: center;
+  gap: var(--atlas-space-2);
   color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.performance-summary__score dd {
+  margin: 0;
+  color: var(--atlas-color-text);
+  font-size: var(--atlas-text-lg);
+  font-weight: 700;
+}
+
+.performance-summary__score--emphasized dd {
+  color: var(--atlas-color-accent-strong);
+}
+
+.performance-summary__score-pending {
+  color: var(--atlas-color-text-subtle);
+  font-weight: 500;
+  font-style: italic;
+  font-size: var(--atlas-text-sm);
 }
 
 @media (max-width: 767px) {

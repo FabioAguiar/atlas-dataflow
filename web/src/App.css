@@ -1,11 +1,33 @@
-.app-shell {
+.public-shell {
   min-height: 100vh;
-  display: grid;
-  align-content: center;
-  gap: var(--atlas-space-8);
-  width: min(100% - 2rem, 880px);
+  background: var(--atlas-color-background);
+}
+
+.public-shell__header {
+  display: flex;
+  align-items: center;
+  min-height: 4.5rem;
+  width: min(100% - 2rem, 960px);
   margin: 0 auto;
-  padding: var(--atlas-space-16) 0;
+}
+
+.public-shell__brand {
+  color: var(--atlas-color-text);
+  font-size: var(--atlas-text-lg);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.public-shell__brand:hover {
+  color: var(--atlas-color-accent-strong);
+}
+
+.app-shell {
+  display: grid;
+  gap: var(--atlas-space-8);
+  width: min(100% - 2rem, 960px);
+  margin: 0 auto;
+  padding: var(--atlas-space-10) 0 var(--atlas-space-16);
 }
 
 .intro {

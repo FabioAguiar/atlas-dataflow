@@ -138,25 +138,25 @@ export default function DatasetViewPage() {
 
   if (viewState.status === "loading") {
     return (
-      <main className="app-shell">
+      <>
         <LoadingState />
-      </main>
+      </>
     );
   }
 
   if (viewState.status === "not_found") {
     return (
-      <main className="app-shell">
+      <>
         <p>This predict view is not available.</p>
-      </main>
+      </>
     );
   }
 
   if (viewState.status === "unavailable") {
     return (
-      <main className="app-shell">
+      <>
         <ErrorState message="This predict view is temporarily unavailable. Please try again later." />
-      </main>
+      </>
     );
   }
 
@@ -170,7 +170,7 @@ export default function DatasetViewPage() {
     customization?.view_copy?.heading ?? view.display.title ?? view.view_id;
 
   return (
-    <main className="app-shell">
+    <>
       <section aria-labelledby="view-title">
         <h1 id="view-title">{displayHeading}</h1>
         {customization?.view_copy?.description && (
@@ -197,6 +197,6 @@ export default function DatasetViewPage() {
       {contractState.status === "unavailable" && (
         <ErrorState message="The prediction form is temporarily unavailable." />
       )}
-    </main>
+    </>
   );
 }

@@ -294,25 +294,25 @@ export default function DatasetPage() {
 
   if (state.status === "loading") {
     return (
-      <main className="app-shell">
+      <>
         <p>Loading…</p>
-      </main>
+      </>
     );
   }
 
   if (state.status === "not_found") {
     return (
-      <main className="app-shell">
+      <>
         <p>Dataset not found.</p>
-      </main>
+      </>
     );
   }
 
   if (state.status === "unavailable") {
     return (
-      <main className="app-shell">
+      <>
         <p>Dataset information is currently unavailable. Please try again later.</p>
-      </main>
+      </>
     );
   }
 
@@ -320,7 +320,7 @@ export default function DatasetPage() {
   const contextTags = Array.isArray(context?.tags) ? context.tags : state.data.tags;
 
   return (
-    <main className="app-shell">
+    <>
       <DatasetHeader
         title={context?.title || state.data.title}
         summary={context?.summary || context?.description || state.data.summary}
@@ -370,6 +370,6 @@ export default function DatasetPage() {
       {contractState.status === "unavailable" && (
         <ErrorState message="The prediction form is temporarily unavailable." />
       )}
-    </main>
+    </>
   );
 }

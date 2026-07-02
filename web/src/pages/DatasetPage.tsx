@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import DatasetHeader from "../components/DatasetHeader";
+import DatasetDetailHeader, {
+  type DatasetDetailMetadataItem,
+} from "../components/DatasetDetail/DatasetDetailHeader";
+import DatasetDetailTabs from "../components/DatasetDetail/DatasetDetailTabs";
 import MetricsDisplay from "../components/MetricsDisplay/MetricsDisplay";
 import ModelCard from "../components/ModelCard/ModelCard";
 import DatasetVisualizations, { VisualizationsPayload } from "../components/DatasetVisualizations/DatasetVisualizations";
@@ -53,6 +56,17 @@ type PredictViewListPayload = {
   dataset_slug: string;
   views: PredictViewItem[];
 };
+
+function extractInstanceCount(metrics: MetricsData): string | null {
+  const evaluation = metrics["evaluation"];
+  if (evaluation && typeof evaluation === "object") {
+    const sampleSize = (evaluation as Record<string, unknown>)["sample_size"];
+    if (typeof sampleSize === "number" && Number.isFinite(sampleSize)) {
+      return sampleSize.toLocaleString();
+    }
+  }
+  return null;
+}
 
 export default function DatasetPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -317,19 +331,50 @@ export default function DatasetPage() {
   }
 
   const context = contextState.status === "ready" ? contextState.data : null;
-  const contextTags = Array.isArray(context?.tags) ? context.tags : state.data.tags;
+
+  const datasetTitle = context?.title || state.data.title;
+  const datasetSubtitle = context?.summary || context?.description || state.data.summary;
+  const analysisType = context?.problem_type;
+
+  const metadataItems: DatasetDetailMetadataItem[] = [
+    { label: "Source", value: null },
+    {
+      label: "Instances",
+      value: metricsState.status === "ready" ? extractInstanceCount(metricsState.data) : null,
+    },
+    {
+      label: "Features",
+      value: contractState.status === "ready" ? String(contractState.data.features.length) : null,
+    },
+    {
+      label: "Target",
+      value: context?.prediction_target_description || context?.problem_type || null,
+    },
+    { label: "Release", value: null, hint: "Format: dd/mm/yyyy" },
+  ];
+
+  const inferenceContent = (
+    <>
+      {contractState.status === "loading" && <LoadingState />}
+      {contractState.status === "ready" && (
+        <InferenceForm contract={contractState.data} slug={slug!} />
+      )}
+      {contractState.status === "unavailable" && (
+        <ErrorState message="The prediction form is temporarily unavailable." />
+      )}
+    </>
+  );
 
   return (
-    <>
-      <DatasetHeader
-        title={context?.title || state.data.title}
-        summary={context?.summary || context?.description || state.data.summary}
-        domain={context?.domain || state.data.domain}
-        tags={contextTags}
-        useCase={context?.use_case}
-        problemType={context?.problem_type}
-        predictionTargetDescription={context?.prediction_target_description}
+    <div className="dataset-detail">
+      <DatasetDetailHeader
+        analysisType={analysisType}
+        datasetTitle={datasetTitle}
+        metadata={metadataItems}
+        subtitle={datasetSubtitle}
       />
+
+      <DatasetDetailTabs inferenceContent={inferenceContent} />
 
       {metricsState.status === "loading" && <LoadingState />}
       {metricsState.status === "ready" && (
@@ -362,14 +407,6 @@ export default function DatasetPage() {
       {viewsState.status === "unavailable" && (
         <ErrorState message="Predict views are temporarily unavailable." />
       )}
-
-      {contractState.status === "loading" && <LoadingState />}
-      {contractState.status === "ready" && (
-        <InferenceForm contract={contractState.data} slug={slug!} />
-      )}
-      {contractState.status === "unavailable" && (
-        <ErrorState message="The prediction form is temporarily unavailable." />
-      )}
-    </>
+    </div>
   );
 }

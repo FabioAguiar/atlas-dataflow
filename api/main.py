@@ -67,6 +67,7 @@ from public_predict_view_customization_loader import (  # noqa: E402
     load_public_predict_view_customization,
 )
 from admin_runs import list_admin_run_summaries  # noqa: E402
+from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
 
 METRICS_UNAVAILABLE = PublicError(
     status_code=503,
@@ -115,6 +116,20 @@ CUSTOMIZATION_NOT_FOUND = PublicError(
     error_type="customization_not_found",
     error_code="CUSTOMIZATION_NOT_FOUND",
     message="No customization is available for this predict view.",
+)
+
+PROFILE_DRAFT_DATASET_SLUG_INVALID = PublicError(
+    status_code=422,
+    error_type="profile_draft_dataset_slug_invalid",
+    error_code="PROFILE_DRAFT_DATASET_SLUG_INVALID",
+    message="The dataset_slug is missing or does not match the required pattern.",
+)
+
+PROFILE_DRAFT_INVALID = PublicError(
+    status_code=422,
+    error_type="profile_draft_invalid",
+    error_code="PROFILE_DRAFT_INVALID",
+    message="The profile draft failed validation.",
 )
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -510,6 +525,33 @@ def list_admin_runs(request: Request):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
     return list_admin_run_summaries()
+
+
+@app.get("/admin/datasets/{dataset_slug}/profile-draft")
+def get_admin_profile_draft(dataset_slug: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    try:
+        return read_profile_draft(dataset_slug)
+    except ValueError:
+        return public_error_response(PROFILE_DRAFT_DATASET_SLUG_INVALID)
+
+
+@app.put("/admin/datasets/{dataset_slug}/profile-draft")
+def put_admin_profile_draft(
+    dataset_slug: str, request: Request, profile: dict = Body(...)
+):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    try:
+        result = save_profile_draft(dataset_slug, profile)
+    except ValueError:
+        return public_error_response(PROFILE_DRAFT_DATASET_SLUG_INVALID)
+
+    if not result["saved"]:
+        return PROFILE_DRAFT_INVALID.response(errors=result["errors"])
+
+    return result
 
 
 if __name__ == "__main__":

@@ -21,6 +21,12 @@ INVALID_UNSUPPORTED_THEME_PATH = (
     / "examples"
     / "invalid-dataset-public-profile-unsupported-theme.example.json"
 )
+INVALID_UNSUPPORTED_ICON_PATH = (
+    REPO_ROOT
+    / "contracts"
+    / "examples"
+    / "invalid-dataset-public-profile-unsupported-icon.example.json"
+)
 
 
 def _load_json(path: Path) -> dict:
@@ -64,5 +70,19 @@ def test_dataset_public_profile_rejects_unsupported_theme():
     assert errors
     assert any(
         "is not one of" in error.message or "midnight-purple" in error.message
+        for error in errors
+    )
+
+
+def test_dataset_public_profile_rejects_unsupported_icon():
+    schema = _load_json(SCHEMA_PATH)
+    example = _load_json(INVALID_UNSUPPORTED_ICON_PATH)
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
+    assert any(
+        "is not one of" in error.message or "satellite" in error.message
         for error in errors
     )

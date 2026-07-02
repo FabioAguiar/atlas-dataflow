@@ -95,6 +95,34 @@ def test_profile_with_valid_bound_predict_view_id_passes():
     assert result["valid"] is True, f"Expected valid, got errors: {result['errors']}"
 
 
+def test_duplicate_predict_view_id_uses_first_match_deterministically():
+    duplicate_registry = {
+        "schema_version": "atlas.dataflow.predict-views.v1",
+        "predict_views": [
+            {"view_id": "churn-risk-overview", "dataset_slug": "telco-customer-churn"},
+            {"view_id": "churn-risk-overview", "dataset_slug": "bank-marketing"},
+        ],
+    }
+    profile = _profile(
+        inference_presentation={"bound_predict_view_id": "churn-risk-overview"},
+    )
+
+    first_result = validate_profile_references(
+        profile,
+        duplicate_registry,
+        _MOCK_RELEASE_METRICS,
+    )
+    second_result = validate_profile_references(
+        profile,
+        duplicate_registry,
+        _MOCK_RELEASE_METRICS,
+    )
+
+    assert first_result == second_result
+    assert first_result["valid"] is True, f"Expected valid, got errors: {first_result['errors']}"
+    assert first_result["errors"] == []
+
+
 def test_profile_with_valid_primary_metric_key_passes():
     result = validate_profile_references(
         _profile(home_card={"primary_metric_key": "accuracy"}),
@@ -186,6 +214,7 @@ if __name__ == "__main__":
         test_profile_with_no_references_passes,
         test_profile_with_null_references_passes,
         test_profile_with_valid_bound_predict_view_id_passes,
+        test_duplicate_predict_view_id_uses_first_match_deterministically,
         test_profile_with_valid_primary_metric_key_passes,
         test_bound_predict_view_not_found_rejected,
         test_bound_predict_view_dataset_mismatch_rejected,

@@ -1,0 +1,7 @@
+{
+  "schema_version": "0.1.0",
+  "dataset_slug": "telco-customer-churn",
+  "home_card": {
+    "icon": "satellite"
+  }
+}

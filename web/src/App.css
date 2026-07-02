@@ -556,6 +556,20 @@ h1 {
   font-size: var(--atlas-text-sm);
 }
 
+.dataset-detail-visualization {
+  display: grid;
+  gap: var(--atlas-space-4);
+}
+
+.dataset-detail-visualization h3 {
+  margin: 0;
+}
+
+.dataset-detail-visualization__chart {
+  width: 100%;
+  min-height: 300px;
+}
+
 @media (max-width: 767px) {
   .dataset-detail-header__metadata {
     display: block;

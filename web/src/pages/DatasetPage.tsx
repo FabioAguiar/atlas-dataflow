@@ -4,9 +4,10 @@ import DatasetDetailHeader, {
   type DatasetDetailMetadataItem,
 } from "../components/DatasetDetail/DatasetDetailHeader";
 import DatasetDetailTabs from "../components/DatasetDetail/DatasetDetailTabs";
+import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary from "../components/DatasetDetail/PerformanceSummary";
+import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import ModelCard from "../components/ModelCard/ModelCard";
-import DatasetVisualizations, { VisualizationsPayload } from "../components/DatasetVisualizations/DatasetVisualizations";
 import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
@@ -388,6 +389,18 @@ export default function DatasetPage() {
       {metricsState.status === "unavailable" && (
         <ErrorState message="Metrics are temporarily unavailable." />
       )}
+
+      {visualizationsState.status === "loading" && <LoadingState />}
+      {visualizationsState.status !== "loading" && (
+        <>
+          <TargetDistribution
+            visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
+          />
+          <FeatureImportance
+            visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
+          />
+        </>
+      )}
     </>
   );
 
@@ -408,14 +421,6 @@ export default function DatasetPage() {
       )}
       {modelCardState.status === "unavailable" && (
         <ErrorState message="The model card is temporarily unavailable." />
-      )}
-
-      {visualizationsState.status === "loading" && <LoadingState />}
-      {visualizationsState.status === "ready" && (
-        <DatasetVisualizations visualizations={visualizationsState.data} />
-      )}
-      {visualizationsState.status === "unavailable" && (
-        <ErrorState message="Visualizations are temporarily unavailable." />
       )}
 
       {viewsState.status === "loading" && <LoadingState />}

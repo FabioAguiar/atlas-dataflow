@@ -1,0 +1,38 @@
+{
+  "schema_version": "0.1.0",
+  "dataset_slug": "telco-customer-churn",
+  "display": {
+    "title": "Telco Customer Churn",
+    "subtitle": "Predicting customer churn for a telecommunications provider.",
+    "problem_summary_title": "Problem summary",
+    "problem_summary_body": "Explore which service and account features are associated with a customer canceling their subscription, and predict churn likelihood for new customers.",
+    "source_name": "Kaggle",
+    "source_url": "https://www.kaggle.com/datasets/blastchar/telco-customer-churn",
+    "release_date_label": "20/06/2026",
+    "date_format": "dd/mm/yyyy",
+    "canonical_name_fallback": true
+  },
+  "home_card": {
+    "icon": "telecom",
+    "background_image_ref": null,
+    "short_description": "Customer churn prediction for a telecommunications provider.",
+    "primary_metric_key": "auc_roc"
+  },
+  "theme": {
+    "preset": "atlas-green"
+  },
+  "inference_presentation": {
+    "bound_predict_view_id": null
+  },
+  "result_card": {
+    "probability_label": "Churn probability",
+    "submit_button_label": "Run Prediction",
+    "model_label": "Model",
+    "badge_preset": "risk",
+    "badge_labels": {
+      "high": "High risk",
+      "medium": "Medium risk",
+      "low": "Low risk"
+    }
+  }
+}

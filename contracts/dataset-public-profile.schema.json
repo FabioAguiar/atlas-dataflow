@@ -1,0 +1,216 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Dataset Public Profile Draft",
+  "description": "Admin-editable draft of the public presentation state for a dataset: curated display copy, home-card metadata, a bounded theme preset, a reference-only binding to the existing predict view customization surface, and result-card presentation copy. This schema is presentation state, not contract, model, metric, inference, release, snapshot, or publication authority. It must never carry runtime contract fields, trained model data, calculated metrics, inference bundle contents, registry/release identity beyond dataset_slug, or publication/visibility status -- those remain owned by their own canonical artifacts and are represented here, when needed, only as bounded references. dataset_slug is the primary identity and must match the registry slug pattern; it is not replaced or aliased by this contract. This schema defines the editable draft shape only -- publication into a public snapshot is a separate, later operation.",
+  "type": "object",
+  "required": ["schema_version", "dataset_slug"],
+  "additionalProperties": false,
+  "not": {
+    "anyOf": [
+      {"required": ["contract"]},
+      {"required": ["runtime_contract"]},
+      {"required": ["public_contract"]},
+      {"required": ["model"]},
+      {"required": ["model_card"]},
+      {"required": ["metrics"]},
+      {"required": ["features"]},
+      {"required": ["validation_rules"]},
+      {"required": ["inference_bundle"]},
+      {"required": ["registry"]},
+      {"required": ["release_manifest"]},
+      {"required": ["active_release"]},
+      {"required": ["snapshot"]},
+      {"required": ["publishing"]}
+    ]
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Profile Schema Version",
+      "description": "Semantic version of this profile draft schema structure in MAJOR.MINOR.PATCH format. Required. Independent from any other contract's schema_version."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "title": "Dataset Slug",
+      "description": "Primary identity of the dataset this draft profile applies to. Must match the registry slug pattern: lowercase ASCII letters, digits, and single hyphen separators. Carried from the registry -- do not encode local paths, private names, release details, or alternate routing semantics in this field."
+    },
+    "display": {
+      "$ref": "#/definitions/display"
+    },
+    "home_card": {
+      "$ref": "#/definitions/home_card"
+    },
+    "theme": {
+      "$ref": "#/definitions/theme"
+    },
+    "inference_presentation": {
+      "$ref": "#/definitions/inference_presentation"
+    },
+    "result_card": {
+      "$ref": "#/definitions/result_card"
+    },
+    "_example_note": {
+      "type": "string",
+      "description": "Optional annotation for example or demonstration artifacts only. Omit in production profile draft records."
+    }
+  },
+  "definitions": {
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated public-facing copy for the dataset. All fields are presentation text or presentation-format labels only and must not carry validation rules, technical metadata, or business logic. This is admin-editable curation, distinct from -- and layered above -- the technical dataset context narrative.",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public display title, overriding the default dataset title for presentation purposes only."
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public subtitle."
+        },
+        "problem_summary_title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated heading for the public problem-summary section."
+        },
+        "problem_summary_body": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public-safe explanatory text for the problem-summary section. Must not restate or redefine the real problem_type or prediction target owned by technical artifacts."
+        },
+        "source_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe label naming the dataset's original source."
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Optional public-safe URL for the dataset's original source."
+        },
+        "release_date_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional presentation label for a release date, formatted for display only. This is a curated label, never the technical release timestamp itself."
+        },
+        "date_format": {
+          "type": "string",
+          "enum": ["dd/mm/yyyy", "mm/dd/yyyy", "yyyy-mm-dd"],
+          "description": "Optional selected display format for date-shaped labels in this profile. Constrained to a small closed set of supported formats."
+        },
+        "canonical_name_fallback": {
+          "type": "boolean",
+          "description": "Optional flag indicating whether the public experience should fall back to the canonical dataset name when no curated title is set."
+        }
+      }
+    },
+    "home_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated Home card presentation metadata. Fields are presentation-only and must not duplicate or redefine technical dataset identity, metrics, or model behavior.",
+      "properties": {
+        "icon": {
+          "type": "string",
+          "enum": ["telecom", "bank", "generic"],
+          "description": "Optional selected Home card icon. Constrained to the icon vocabulary already supported by the public frontend's deterministic icon fallback (telecom, bank, generic); values outside this set are not renderable and must be rejected."
+        },
+        "background_image_ref": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Optional reference/handle to an uploaded Home card background image. This is a bounded reference only -- never raw image bytes, a local filesystem path, or arbitrary URL content. Null when no background image is set."
+        },
+        "short_description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated short public-safe description shown on the Home card."
+        },
+        "primary_metric_key": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Optional reference to a metric name/key that may exist in the dataset's release metrics evaluation data, used to select which metric is highlighted on the Home card. This is a reference to a metric identifier only -- never a duplicated numeric metric value. Null when no primary metric is selected."
+        }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional selected visual theme preset for the dataset's public presentation. Constrained to a small closed set of presets actually supported by the frontend's design tokens; must not accept arbitrary strings, hex colors, or raw CSS.",
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": ["atlas-green"],
+          "description": "Optional selected theme preset identifier. Constrained to the single preset currently supported by the frontend's design-token set; extend only alongside an actual additional supported preset."
+        }
+      }
+    },
+    "inference_presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional reference-only binding from this profile draft to an existing predict view customization record. Field-level presentation hints, grouping, and view copy for the prediction experience are owned entirely by contracts/predict-view-customization.schema.json and must not be redefined here.",
+      "properties": {
+        "bound_predict_view_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Optional reference to an existing predict view's view_id. Must match a view_id in the predict view registry. Does not carry field hints, groups, or view copy -- those remain owned by contracts/predict-view-customization.schema.json. Null when no predict view is bound."
+        }
+      }
+    },
+    "result_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated presentation copy for the prediction result card. Fields are presentation text or a bounded preset/label selection only and must not carry inference logic, scoring rules, or model behavior.",
+      "properties": {
+        "probability_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the displayed prediction probability."
+        },
+        "submit_button_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the prediction submit action."
+        },
+        "model_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public-safe label identifying the model in the result presentation. Must not disclose internal model identifiers or technical model configuration."
+        },
+        "badge_preset": {
+          "type": "string",
+          "enum": ["risk"],
+          "description": "Optional selected result badge interpretation preset. Constrained to the single preset currently confirmed by the Dataset Admin presentation design; extend only alongside an actual additional confirmed preset."
+        },
+        "badge_labels": {
+          "$ref": "#/definitions/badge_labels"
+        }
+      }
+    },
+    "badge_labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated public-safe labels for result badge levels. Presentation text only.",
+      "properties": {
+        "high": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the high badge level."
+        },
+        "medium": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the medium badge level."
+        },
+        "low": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the low badge level."
+        }
+      }
+    }
+  }
+}

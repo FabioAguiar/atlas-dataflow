@@ -1,0 +1,10 @@
+{
+  "schema_version": "0.1.0",
+  "dataset_slug": "telco-customer-churn",
+  "display": {
+    "title": "Telco Customer Churn"
+  },
+  "metrics": {
+    "auc_roc": 0.91
+  }
+}

@@ -106,7 +106,8 @@ const tableStyle: CSSProperties = {
 
 const tableHeaderStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1.2fr) minmax(8rem, 0.8fr) minmax(8rem, 0.8fr) minmax(8rem, 0.8fr)",
+  gridTemplateColumns:
+    "minmax(0, 1.1fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(11rem, 0.85fr)",
   gap: "var(--atlas-space-4)",
   borderBottom: "1px solid var(--atlas-color-border-strong)",
   paddingBottom: "var(--atlas-space-3)",
@@ -118,13 +119,34 @@ const tableHeaderStyle: CSSProperties = {
 
 const rowContentStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1.2fr) minmax(8rem, 0.8fr) minmax(8rem, 0.8fr) minmax(8rem, 0.8fr)",
+  gridTemplateColumns:
+    "minmax(0, 1.1fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(11rem, 0.85fr)",
   gap: "var(--atlas-space-4)",
   alignItems: "center",
 };
 
 const mutedTextStyle: CSSProperties = {
   color: "var(--atlas-color-text-muted)",
+};
+
+const intentBoundaryStyle: CSSProperties = {
+  display: "grid",
+  gap: "var(--atlas-space-2)",
+  border: "1px solid var(--atlas-color-border-strong)",
+  borderRadius: "var(--atlas-radius-md)",
+  padding: "var(--atlas-space-4)",
+  background: "var(--atlas-color-surface-muted)",
+};
+
+const promotionIntentStyle: CSSProperties = {
+  display: "grid",
+  gap: "var(--atlas-space-2)",
+};
+
+const disabledIntentButtonStyle: CSSProperties = {
+  cursor: "not-allowed",
+  opacity: 0.75,
+  width: "fit-content",
 };
 
 function isAdminRunSummary(value: unknown): value is AdminRunSummary {
@@ -211,6 +233,14 @@ function rootStatusMessage(status: RunsRootStatus): string {
   return status === "available"
     ? "Runs root available"
     : "Runs root unavailable";
+}
+
+function promotionIntentMessage(run: AdminRunSummary): string {
+  if (run.status === "available") {
+    return "Future publisher and profile validation required.";
+  }
+
+  return "Resolve run evidence before future promotion review.";
 }
 
 export default function DashboardPage() {
@@ -393,6 +423,15 @@ export default function DashboardPage() {
                 </h2>
               </div>
 
+              <div aria-label="Promotion boundary" style={intentBoundaryStyle}>
+                <StatusPill tone="warning">Promotion intent disabled</StatusPill>
+                <p style={{ ...mutedTextStyle, margin: 0 }}>
+                  Dashboard promotion is a future workflow entry point only. It does not create drafts, release
+                  candidates, publications, published snapshot visibility changes, registry updates, or release artifact
+                  mutations.
+                </p>
+              </div>
+
               <div aria-label="Run filters" style={filterBarStyle}>
                 <label style={fieldStyle}>
                   <span style={labelStyle}>Search</span>
@@ -428,6 +467,7 @@ export default function DashboardPage() {
                     <span role="columnheader">Dataset</span>
                     <span role="columnheader">Created at</span>
                     <span role="columnheader">Status</span>
+                    <span role="columnheader">Promotion intent</span>
                   </div>
 
                   {filteredRuns.map((run) => (
@@ -445,6 +485,17 @@ export default function DashboardPage() {
                         <span>{run.dataset_candidate ?? "Not resolved"}</span>
                         <span>{formatCreatedAt(run.created_at)}</span>
                         <StatusPill tone={statusTone(run.status)}>{statusLabel(run.status)}</StatusPill>
+                        <span style={promotionIntentStyle}>
+                          <Button
+                            disabled
+                            style={disabledIntentButtonStyle}
+                            title="Promotion remains disabled until a later publisher/profile workflow owns validation."
+                            variant="secondary"
+                          >
+                            Future workflow
+                          </Button>
+                          <span style={mutedTextStyle}>{promotionIntentMessage(run)}</span>
+                        </span>
                       </div>
                     </TableRow>
                   ))}

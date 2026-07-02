@@ -931,6 +931,90 @@ def test_real_route_contract_invalid_prediction_payloads_fail_before_prediction_
 
 
 # ---------------------------------------------------------------------------
+# Real-route select-path categorical domain validation: M32-03
+# ---------------------------------------------------------------------------
+
+_M32_SELECT_PATH_RUNTIME_CONTRACT = {
+    "schema_version": "atlas.dataflow.runtime_contract.v1",
+    "features": [
+        {
+            "name": "customer_segment",
+            "type": "categorical",
+            "required": True,
+            "domain_constraints": {"values": ["standard", "premium", "enterprise"]},
+        },
+    ],
+}
+
+
+def test_real_route_select_projected_categorical_value_domain_validation():
+    """
+    Confirms payload_validator's DOMAIN_VIOLATION check governs a categorical
+    value shaped like a real M32-01 options projection (contract_derivation's
+    _derive_public_options derives {value, label} pairs from
+    domain_constraints.values, in declaration order -- the same values a
+    real <select> populated from those options would submit) for both an
+    accepted in-options value and a rejected out-of-options value, exercised
+    through the real inference route.
+    """
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_releases_root = api_main._inference_releases_root
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-m32-03-select-path-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _M32_SELECT_PATH_RUNTIME_CONTRACT
+
+        with tempfile.TemporaryDirectory() as releases_root:
+            release_dir = Path(releases_root) / "release-m32-03-select-path-fixture"
+            release_dir.mkdir(parents=True)
+            (release_dir / "manifest.json").write_text(
+                json.dumps({"artifacts": []}), encoding="utf-8"
+            )
+            api_main._inference_releases_root = lambda: Path(releases_root)
+            api_main.execute_prediction = lambda *_args, **_kwargs: {
+                "prediction": {"label": "accepted", "confidence": 0.5}
+            }
+
+            accepted_response = api_main.validate_dataset_inference_payload(
+                "fixture-dataset",
+                payload={"customer_segment": "premium"},
+            )
+
+            assert not hasattr(accepted_response, "status_code")
+            prediction = accepted_response["prediction"]
+            assert prediction["label"] == "accepted"
+            assert prediction["confidence"] == 0.5
+            _assert_no_internal_public_exposure(accepted_response)
+
+        api_main.execute_prediction = (
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("out-of-options payload should fail before prediction execution")
+            )
+        )
+
+        rejected_response = api_main.validate_dataset_inference_payload(
+            "fixture-dataset",
+            payload={"customer_segment": "unsupported"},
+        )
+
+        _assert_invalid_payload_response(
+            rejected_response,
+            "customer_segment",
+            "DOMAIN_VIOLATION",
+            "domain_violation",
+        )
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        api_main._inference_releases_root = original_releases_root
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -975,6 +1059,7 @@ if __name__ == "__main__":
         test_real_release_valid_prediction_flow_uses_public_route_and_bundle,
         test_real_route_non_object_prediction_payload_fails_before_runtime_resolution,
         test_real_route_contract_invalid_prediction_payloads_fail_before_prediction_execution,
+        test_real_route_select_projected_categorical_value_domain_validation,
     ]
     passed = 0
     failed = 0

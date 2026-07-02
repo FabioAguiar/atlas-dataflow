@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M34",
-    "title": "Dataset Public Profile Draft Model",
+    "id": "M35",
+    "title": "Dataset Admin UI, Live Preview, and Drag-and-Drop UX",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M33",
-    "title": "Run Discovery and Dashboard Backend Foundation",
+    "id": "M34",
+    "title": "Dataset Public Profile Draft Model",
     "status": "completed"
   },
   "completed_milestones": [
@@ -192,6 +192,11 @@
       "id": "M33",
       "title": "Run Discovery and Dashboard Backend Foundation",
       "status": "completed"
+    },
+    {
+      "id": "M34",
+      "title": "Dataset Public Profile Draft Model",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -358,6 +363,11 @@
     {
       "id": "M33",
       "title": "Run Discovery and Dashboard Backend Foundation",
+      "status": "locked"
+    },
+    {
+      "id": "M34",
+      "title": "Dataset Public Profile Draft Model",
       "status": "locked"
     }
   ],
@@ -554,12 +564,18 @@
     {
       "id": "M34",
       "title": "Dataset Public Profile Draft Model",
+      "status": "completed"
+    },
+    {
+      "id": "M35",
+      "title": "Dataset Admin UI, Live Preview, and Drag-and-Drop UX",
       "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M34 is the current active milestone for Dataset Public Profile Draft Model in Atlas DataFlow.",
+    "M35 is the current active milestone for Dataset Admin UI, Live Preview, and Drag-and-Drop UX in Atlas DataFlow.",
+    "M34 is marked as completed because Dataset Public Profile Draft Model has been completed.",
     "M33 is marked as completed because Run Discovery and Dashboard Backend Foundation has been completed.",
     "M32 is marked as completed because Public Contract Projection and Inference Presentation Upgrade has been completed.",
     "M31 is marked as completed because Public Home and Dataset Detail Design Implementation has been completed.",
@@ -599,9 +615,9 @@
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M34 should be validated against docs/milestones.md before workflow continuation.",
-    "The current milestone points to M34 because the next implementation focus is Dataset Public Profile Draft Model."
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M35 should be validated against docs/milestones.md before workflow continuation.",
+    "The current milestone points to M35 because the next implementation focus is Dataset Admin UI, Live Preview, and Drag-and-Drop UX."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

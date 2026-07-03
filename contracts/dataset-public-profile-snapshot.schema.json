@@ -1,0 +1,246 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Dataset Published Profile Snapshot",
+  "description": "Deterministic public presentation state produced by a Publish Changes operation from a validated dataset public profile draft (contracts/dataset-public-profile.schema.json). This schema is presentation state, not contract, model, metric, inference, release, or registry authority. It must never carry runtime contract fields, trained model data, calculated metrics, inference bundle contents, or registry/release identity beyond dataset_slug and active_release_at_publish_time -- those remain owned by their own canonical artifacts. One snapshot file exists per dataset_slug; publishing again replaces it deterministically (with a backup of the previous snapshot kept alongside it), not as a growing history.",
+  "type": "object",
+  "required": ["schema_version", "dataset_slug", "published_at", "active_release_at_publish_time", "profile"],
+  "additionalProperties": false,
+  "not": {
+    "anyOf": [
+      {"required": ["contract"]},
+      {"required": ["runtime_contract"]},
+      {"required": ["public_contract"]},
+      {"required": ["model"]},
+      {"required": ["model_card"]},
+      {"required": ["metrics"]},
+      {"required": ["features"]},
+      {"required": ["validation_rules"]},
+      {"required": ["inference_bundle"]},
+      {"required": ["registry"]},
+      {"required": ["release_manifest"]},
+      {"required": ["active_release"]},
+      {"required": ["snapshot"]},
+      {"required": ["publishing"]}
+    ]
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Snapshot Schema Version",
+      "description": "Semantic version of this published snapshot schema structure in MAJOR.MINOR.PATCH format. Required. Independent from contracts/dataset-public-profile.schema.json's own schema_version."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "title": "Dataset Slug",
+      "description": "Primary identity of the dataset this published snapshot applies to. Must match the registry slug pattern. Carried from the registry -- do not encode local paths, private names, or alternate routing semantics in this field."
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Published At",
+      "description": "UTC timestamp of the publish operation that created or replaced this snapshot. Used, together with dataset_slug, to make the snapshot explicitly identifiable and deterministic without requiring a separate history store."
+    },
+    "active_release_at_publish_time": {
+      "type": "string",
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "title": "Active Release At Publish Time",
+      "description": "The dataset's registry active_release identifier at the moment of publish, recorded for traceability only. This is a reference, not a copy of release artifact content, and must never be treated as this snapshot's own release authority."
+    },
+    "source_draft_schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Source Draft Schema Version",
+      "description": "Optional schema_version of the draft profile (contracts/dataset-public-profile.schema.json) that was validated and published into this snapshot, recorded for traceability only."
+    },
+    "profile": {
+      "$ref": "#/definitions/profile",
+      "title": "Published Presentation Profile",
+      "description": "The validated presentation state published from the draft. Field vocabulary matches contracts/dataset-public-profile.schema.json's display/home_card/theme/inference_presentation/result_card definitions exactly; this snapshot never introduces its own presentation field vocabulary."
+    },
+    "_example_note": {
+      "type": "string",
+      "description": "Optional annotation for example or demonstration artifacts only. Omit in production snapshot records."
+    }
+  },
+  "definitions": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The published presentation fields, reusing the draft schema's own field vocabulary and constraints exactly.",
+      "properties": {
+        "display": {
+          "$ref": "#/definitions/display"
+        },
+        "home_card": {
+          "$ref": "#/definitions/home_card"
+        },
+        "theme": {
+          "$ref": "#/definitions/theme"
+        },
+        "inference_presentation": {
+          "$ref": "#/definitions/inference_presentation"
+        },
+        "result_card": {
+          "$ref": "#/definitions/result_card"
+        }
+      }
+    },
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated public-facing copy for the dataset. All fields are presentation text or presentation-format labels only and must not carry validation rules, technical metadata, or business logic.",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public display title, overriding the default dataset title for presentation purposes only."
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public subtitle."
+        },
+        "problem_summary_title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated heading for the public problem-summary section."
+        },
+        "problem_summary_body": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public-safe explanatory text for the problem-summary section."
+        },
+        "source_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional public-safe label naming the dataset's original source."
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Optional public-safe URL for the dataset's original source."
+        },
+        "release_date_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional presentation label for a release date, formatted for display only."
+        },
+        "date_format": {
+          "type": "string",
+          "enum": ["dd/mm/yyyy", "mm/dd/yyyy", "yyyy-mm-dd"],
+          "description": "Optional selected display format for date-shaped labels in this profile."
+        },
+        "canonical_name_fallback": {
+          "type": "boolean",
+          "description": "Optional flag indicating whether the public experience should fall back to the canonical dataset name when no curated title is set."
+        }
+      }
+    },
+    "home_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated Home card presentation metadata. Fields are presentation-only and must not duplicate or redefine technical dataset identity, metrics, or model behavior.",
+      "properties": {
+        "icon": {
+          "type": "string",
+          "enum": ["telecom", "bank", "generic"],
+          "description": "Optional selected Home card icon."
+        },
+        "background_image_ref": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Optional reference/handle to an uploaded Home card background image."
+        },
+        "short_description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated short public-safe description shown on the Home card."
+        },
+        "primary_metric_key": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Optional reference to a metric name/key that may exist in the dataset's release metrics evaluation data."
+        }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional selected visual theme preset for the dataset's public presentation.",
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": ["atlas-green"],
+          "description": "Optional selected theme preset identifier."
+        }
+      }
+    },
+    "inference_presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional reference-only binding from this snapshot to an existing predict view customization record.",
+      "properties": {
+        "bound_predict_view_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Optional reference to an existing predict view's view_id."
+        }
+      }
+    },
+    "result_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated presentation copy for the prediction result card.",
+      "properties": {
+        "probability_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the displayed prediction probability."
+        },
+        "submit_button_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the prediction submit action."
+        },
+        "model_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated public-safe label identifying the model in the result presentation."
+        },
+        "badge_preset": {
+          "type": "string",
+          "enum": ["risk"],
+          "description": "Optional selected result badge interpretation preset."
+        },
+        "badge_labels": {
+          "$ref": "#/definitions/badge_labels"
+        }
+      }
+    },
+    "badge_labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional curated public-safe labels for result badge levels.",
+      "properties": {
+        "high": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the high badge level."
+        },
+        "medium": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the medium badge level."
+        },
+        "low": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional curated label for the low badge level."
+        }
+      }
+    }
+  }
+}

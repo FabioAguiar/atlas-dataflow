@@ -68,6 +68,7 @@ from public_predict_view_customization_loader import (  # noqa: E402
 )
 from admin_runs import list_admin_run_summaries  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
+from admin_profile_publish import publish_profile  # noqa: E402
 from admin_predict_view_customizations import (  # noqa: E402
     read_predict_view_customization,
     save_predict_view_customization,
@@ -134,6 +135,20 @@ PROFILE_DRAFT_INVALID = PublicError(
     error_type="profile_draft_invalid",
     error_code="PROFILE_DRAFT_INVALID",
     message="The profile draft failed validation.",
+)
+
+PROFILE_PUBLISH_DATASET_SLUG_INVALID = PublicError(
+    status_code=422,
+    error_type="profile_publish_dataset_slug_invalid",
+    error_code="PROFILE_PUBLISH_DATASET_SLUG_INVALID",
+    message="The dataset_slug is missing or does not match the required pattern.",
+)
+
+PROFILE_PUBLISH_FAILED = PublicError(
+    status_code=422,
+    error_type="profile_publish_failed",
+    error_code="PROFILE_PUBLISH_FAILED",
+    message="The profile could not be published.",
 )
 
 PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID = PublicError(
@@ -568,6 +583,21 @@ def put_admin_profile_draft(
 
     if not result["saved"]:
         return PROFILE_DRAFT_INVALID.response(errors=result["errors"])
+
+    return result
+
+
+@app.put("/admin/datasets/{dataset_slug}/publish")
+def put_admin_profile_publish(dataset_slug: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    try:
+        result = publish_profile(dataset_slug)
+    except ValueError:
+        return public_error_response(PROFILE_PUBLISH_DATASET_SLUG_INVALID)
+
+    if not result["published"]:
+        return PROFILE_PUBLISH_FAILED.response(errors=result["errors"])
 
     return result
 

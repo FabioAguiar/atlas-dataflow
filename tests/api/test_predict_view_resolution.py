@@ -13,6 +13,10 @@ references. Tests confirm:
   - Registry unavailable returns REGISTRY_UNAVAILABLE (503).
   - Response never contains active_release, binding internals,
     contract_precedence, schema_version, or internal registry keys.
+  - A synthetic, non-Telco/Bank dataset_slug/view_id pair resolves through
+    load_public_predict_view via an isolated fixture registry file (M37-03),
+    proving predict-view resolution is not hardcoded to the two seeded
+    example datasets.
 
 Run from the repository root:
     python -m pytest tests/api/test_predict_view_resolution.py -v
@@ -22,6 +26,7 @@ or directly:
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -346,6 +351,66 @@ def test_loader_resolves_bank_marketing_view():
 
 
 # ---------------------------------------------------------------------------
+# Arbitrary-dataset proof (M37-03): synthetic, non-Telco/Bank dataset
+# ---------------------------------------------------------------------------
+#
+# Uses an isolated fixture predict-views.json passed via predict_views_path,
+# mirroring the loader-unit-tests above rather than test_public_profile_fallback.py's
+# heavier fake-repo-root convention, since load_public_predict_view already
+# accepts a direct path override and never touches the real
+# registry/predict-views.json.
+
+_FIXTURE_PREDICT_VIEWS_REGISTRY = {
+    "schema_version": "atlas.dataflow.predict-views.v1",
+    "predict_views": [
+        {
+            "schema_version": "1.0.0",
+            "view_id": "fixture-arbitrary-view",
+            "dataset_slug": "fixture-arbitrary-dataset",
+            "display": {
+                "title": "Fixture Arbitrary View",
+                "summary": "Synthetic predict view for a non-Telco/Bank dataset.",
+                "description": "Proves predict-view resolution is dataset-agnostic.",
+                "tags": ["fixture"],
+            },
+            "intent": {
+                "prediction_goal": "Resolve a synthetic, non-Telco/Bank dataset/view pair.",
+                "audience": "Test-only.",
+                "usage_notes": "Not a real product-facing predict view.",
+            },
+            "binding": {
+                "dataset_slug": "fixture-arbitrary-dataset",
+                "release": {"mode": "active"},
+            },
+            "contract_precedence": {
+                "canonical_contracts_are_source_of_truth": True,
+                "view_metadata_defines_runtime_validation": False,
+                "view_metadata_duplicates_contract": False,
+            },
+        }
+    ],
+}
+
+
+def test_loader_resolves_synthetic_non_telco_bank_dataset():
+    from public_predict_view_loader import load_public_predict_view
+    with tempfile.TemporaryDirectory() as tmp:
+        registry_path = Path(tmp) / "predict-views.json"
+        registry_path.write_text(
+            json.dumps(_FIXTURE_PREDICT_VIEWS_REGISTRY), encoding="utf-8"
+        )
+        result = load_public_predict_view(
+            "fixture-arbitrary-dataset",
+            "fixture-arbitrary-view",
+            predict_views_path=registry_path,
+        )
+    assert result["view_id"] == "fixture-arbitrary-view"
+    assert result["dataset_slug"] == "fixture-arbitrary-dataset"
+    assert result["release_mode"] == "active"
+    assert set(result.keys()) == {"view_id", "dataset_slug", "display", "intent", "release_mode"}
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -370,6 +435,7 @@ if __name__ == "__main__":
         test_loader_result_excludes_binding_internals,
         test_loader_result_keys_are_public_only,
         test_loader_resolves_bank_marketing_view,
+        test_loader_resolves_synthetic_non_telco_bank_dataset,
     ]
     passed = 0
     failed = 0

@@ -10,6 +10,11 @@ files and monkey-patched validator/contract dependencies. Tests confirm:
     validate_customization (treated as absent).
   - The returned dict does not include internal registry metadata.
   - Registry unavailable conditions raise CustomizationNotFoundError.
+  - A synthetic, non-Telco/Bank dataset_slug/view_id pair resolves a matching
+    customization record when one exists in an isolated fixture registry,
+    and raises CustomizationNotFoundError when the pair is otherwise valid
+    but has no customization entry -- mirroring bank-marketing's real
+    no-customization path (M37-03).
 
 Run from the repository root:
     python -m pytest tests/api/test_predict_view_customization_loader.py -v
@@ -332,6 +337,107 @@ def test_existing_records_unaffected_by_hidden_field_check():
 
 
 # ---------------------------------------------------------------------------
+# Arbitrary-dataset proof (M37-03): synthetic, non-Telco/Bank dataset
+# ---------------------------------------------------------------------------
+#
+# Uses the same fixture-arbitrary-dataset/fixture-arbitrary-view pair as
+# tests/api/test_predict_view_resolution.py's synthetic predict-view test,
+# so the two files tell a coherent cross-loader story for the same
+# non-Telco/Bank dataset. The customization-absent case deliberately reuses
+# a registry containing only the real telco-customer-churn entry, mirroring
+# bank-marketing's real production no-customization path -- distinct from
+# test_raises_not_found_for_unknown_view_id/test_raises_not_found_for_unknown_dataset_slug
+# above, which exercise invented, never-registered slugs rather than a
+# genuinely valid but uncustomized dataset/view pair.
+
+_FIXTURE_ARBITRARY_CUSTOMIZATION = {
+    "schema_version": "1.0.0",
+    "view_id": "fixture-arbitrary-view",
+    "dataset_slug": "fixture-arbitrary-dataset",
+    "view_copy": {
+        "heading": "Fixture Arbitrary View",
+        "description": "Synthetic customization for a non-Telco/Bank dataset.",
+        "usage_guidance": "Test-only.",
+    },
+    "field_hints": [
+        {
+            "field_name": "tenure",
+            "display_label": "Tenure",
+            "explanatory_copy": "Fixture field hint.",
+            "display_order_hint": 1,
+            "group": "fixture-group",
+        }
+    ],
+    "groups": [
+        {
+            "group_id": "fixture-group",
+            "label": "Fixture Group",
+            "description": "Fixture-only grouping.",
+        }
+    ],
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "customization_defines_runtime_validation": False,
+        "customization_duplicates_contract": False,
+    },
+}
+
+_FIXTURE_ARBITRARY_REGISTRY = {
+    "schema_version": "atlas.dataflow.predict-view-customizations.v1",
+    "predict_view_customizations": [_FIXTURE_ARBITRARY_CUSTOMIZATION],
+}
+
+
+def test_load_returns_customization_record_for_synthetic_non_telco_bank_dataset():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_customization_registry(Path(tmp), _FIXTURE_ARBITRARY_REGISTRY)
+
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
+                result = load_public_predict_view_customization(
+                    "fixture-arbitrary-dataset",
+                    "fixture-arbitrary-view",
+                    customizations_path=path,
+                )
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
+
+        assert result["view_id"] == "fixture-arbitrary-view"
+        assert result["dataset_slug"] == "fixture-arbitrary-dataset"
+        assert "view_copy" in result
+        assert "field_hints" in result
+
+
+def test_raises_customization_not_found_for_valid_arbitrary_dataset_with_no_customization_entry():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_customization_registry(Path(tmp), _VALID_REGISTRY)
+
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            with mock.patch.object(loader_module, "load_public_contract", _stub_load_contract):
+                raised = False
+                try:
+                    load_public_predict_view_customization(
+                        "fixture-arbitrary-dataset",
+                        "fixture-arbitrary-view",
+                        customizations_path=path,
+                    )
+                except CustomizationNotFoundError:
+                    raised = True
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
+        assert raised, (
+            "Expected CustomizationNotFoundError for a valid but uncustomized "
+            "arbitrary dataset/view pair"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Direct runner
 # ---------------------------------------------------------------------------
 
@@ -348,6 +454,8 @@ if __name__ == "__main__":
         test_hidden_optional_field_passes_validation,
         test_hidden_required_field_produces_required_field_hidden,
         test_existing_records_unaffected_by_hidden_field_check,
+        test_load_returns_customization_record_for_synthetic_non_telco_bank_dataset,
+        test_raises_customization_not_found_for_valid_arbitrary_dataset_with_no_customization_entry,
     ]
     passed = 0
     failed = 0

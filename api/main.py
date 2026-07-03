@@ -71,6 +71,7 @@ from admin_runs import list_admin_run_summaries  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
 from admin_profile_publish import publish_profile  # noqa: E402
 from admin_profile_visibility import set_dataset_visibility  # noqa: E402
+from admin_settings import read_admin_settings, write_admin_settings  # noqa: E402
 from admin_predict_view_customizations import (  # noqa: E402
     read_predict_view_customization,
     save_predict_view_customization,
@@ -165,6 +166,13 @@ PROFILE_VISIBILITY_PAYLOAD_INVALID = PublicError(
     error_type="profile_visibility_payload_invalid",
     error_code="PROFILE_VISIBILITY_PAYLOAD_INVALID",
     message="The visibility payload must be a JSON object with a boolean 'visible' field.",
+)
+
+ADMIN_SETTINGS_INVALID = PublicError(
+    status_code=422,
+    error_type="admin_settings_invalid",
+    error_code="ADMIN_SETTINGS_INVALID",
+    message="The admin settings payload failed validation.",
 )
 
 PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID = PublicError(
@@ -577,6 +585,25 @@ def list_admin_runs(request: Request):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
     return list_admin_run_summaries()
+
+
+@app.get("/admin/settings")
+def get_admin_settings_route(request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    return read_admin_settings()
+
+
+@app.put("/admin/settings")
+def put_admin_settings_route(request: Request, settings: dict = Body(...)):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    result = write_admin_settings(settings)
+    if not result["saved"]:
+        return ADMIN_SETTINGS_INVALID.response(errors=result["errors"])
+
+    return result
 
 
 @app.get("/admin/datasets/{dataset_slug}/profile-draft")

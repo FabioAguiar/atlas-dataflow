@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Admin Settings",
+  "description": "Minimal private/admin settings shape for the displayed admin user name. This schema is presentation-only: display_name is not an authentication principal, authorization subject, owner, actor, audit identity, account profile, or operational configuration record. It must not carry credentials, secrets, raw local paths, raw logs, raw payloads, runtime state, deployment settings, model settings, or unrelated configuration.",
+  "type": "object",
+  "required": ["display_name"],
+  "additionalProperties": false,
+  "properties": {
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?=.*\\S)[^\\r\\n\\t]+$",
+      "title": "Display Name",
+      "description": "Presentation-only name shown in the private admin experience. It must not be used as authentication, authorization, ownership, or audit identity."
+    }
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Dataset Public Profile Snapshot Evidence",
+  "description": "Reduced, deterministic traceability evidence for a single published profile snapshot, produced by registry/dataset_public_profile_snapshot_evidence.py and written alongside registry/profile-snapshots/<dataset_slug>.json. Mirrors publisher/evidence.py's and pipeline/evidence.py's established reduced-evidence-writer convention. Must never carry raw runtime logs, raw API payloads, secrets, or embedded repository file contents. The visibility_at_publish_time value is a read-only capture of registry/datasets.json's existing public_metadata.visibility field and must never be treated as this evidence's own authoritative source for that field.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evidence_kind",
+    "dataset_slug",
+    "snapshot_identifier",
+    "published_at",
+    "active_release_at_publish_time",
+    "draft_source_reference",
+    "candidate_validation",
+    "visibility_at_publish_time",
+    "evidence_safety"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "dataset-public-profile-snapshot-evidence.v1",
+      "title": "Evidence Schema Version"
+    },
+    "evidence_kind": {
+      "type": "string",
+      "const": "profile_publication_evidence",
+      "title": "Evidence Kind"
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "title": "Dataset Slug",
+      "description": "Must match the published snapshot's own dataset_slug."
+    },
+    "snapshot_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Snapshot Identifier",
+      "description": "Deterministic composite identifier derived from dataset_slug and published_at, never a randomly generated identifier."
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Published At",
+      "description": "Must match the published snapshot's own published_at."
+    },
+    "active_release_at_publish_time": {
+      "type": "string",
+      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "title": "Active Release At Publish Time",
+      "description": "Must match the published snapshot's own active_release_at_publish_time. Reference only, not release artifact content."
+    },
+    "draft_source_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "source_draft_schema_version"],
+      "title": "Draft Source Reference",
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^registry/profile-drafts/[a-z0-9]+(?:-[a-z0-9]+)*\\.json$",
+          "title": "Draft Path",
+          "description": "The private draft profile source this snapshot was published from."
+        },
+        "source_draft_schema_version": {
+          "type": ["string", "null"],
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "title": "Source Draft Schema Version"
+        }
+      }
+    },
+    "candidate_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validation_outcome", "errors", "validated_at"],
+      "title": "Candidate Validation",
+      "description": "Reduced accept/reject validation outcome already computed by publish_snapshot's own schema/reference validation. Never raw jsonschema exception payloads or file contents.",
+      "properties": {
+        "validation_outcome": {
+          "type": "string",
+          "enum": ["accepted", "rejected"]
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "field", "message"],
+            "properties": {
+              "code": {"type": "string", "minLength": 1},
+              "field": {"type": ["string", "null"]},
+              "message": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "visibility_at_publish_time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source_field", "read_only_snapshot", "captured_at"],
+      "title": "Visibility At Publish Time",
+      "description": "Read-only capture of registry/datasets.json's existing public_metadata.visibility value for this dataset_slug at publish time. Not a redefinition, mutation, or new authoritative source for that field.",
+      "properties": {
+        "value": {
+          "type": ["string", "null"]
+        },
+        "source_field": {
+          "type": "string",
+          "const": "registry/datasets.json:public_metadata.visibility"
+        },
+        "read_only_snapshot": {
+          "type": "boolean",
+          "const": true
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "evidence_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reduced_evidence_only",
+        "raw_logs_persisted",
+        "raw_runtime_persisted",
+        "raw_api_payloads_persisted",
+        "secrets_persisted",
+        "raw_artifact_contents_embedded"
+      ],
+      "title": "Evidence Safety",
+      "properties": {
+        "reduced_evidence_only": {"type": "boolean", "const": true},
+        "raw_logs_persisted": {"type": "boolean", "const": false},
+        "raw_runtime_persisted": {"type": "boolean", "const": false},
+        "raw_api_payloads_persisted": {"type": "boolean", "const": false},
+        "secrets_persisted": {"type": "boolean", "const": false},
+        "raw_artifact_contents_embedded": {"type": "boolean", "const": false}
+      }
+    }
+  }
+}

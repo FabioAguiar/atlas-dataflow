@@ -1,13 +1,18 @@
 """
-Dataset published profile snapshot store tests for M36-03.
+Dataset published profile snapshot store tests for M36-03/M36-04.
 
 Verifies publish_snapshot and get_snapshot against an isolated fake
 repository root (pytest tmp_path), so no test writes into the real
 registry/profile-snapshots/ location or any other real repository path.
-The real contracts/dataset-public-profile.schema.json and
-contracts/dataset-public-profile-snapshot.schema.json are copied into the
-fake repo root so schema validation exercises the real schemas, not a
-hand-authored replica.
+The real contracts/dataset-public-profile.schema.json,
+contracts/dataset-public-profile-snapshot.schema.json, and
+registry/evidence/dataset-public-profile-snapshot-evidence.schema.json are
+copied into the fake repo root so schema validation exercises the real
+schemas, not a hand-authored replica.
+
+Also verifies (M36-04) that a successful publish writes a reduced
+traceability evidence file alongside the snapshot, and that a rejected
+publish creates or replaces neither the snapshot nor the evidence file.
 
 Run from the repository root:
     python -m pytest tests/registry/test_dataset_public_profile_snapshot_store.py -v
@@ -93,6 +98,10 @@ def _write_predict_views_registry(fake_repo: Path, registry: dict) -> None:
     )
 
 
+def _evidence_path(fake_repo: Path, dataset_slug: str) -> Path:
+    return fake_repo / "registry" / "profile-snapshots" / f"{dataset_slug}.evidence.json"
+
+
 @pytest.fixture
 def fake_repo(tmp_path):
     contracts_dir = tmp_path / "contracts"
@@ -108,6 +117,12 @@ def fake_repo(tmp_path):
 
     registry_dir = tmp_path / "registry"
     registry_dir.mkdir()
+    evidence_schema_dir = registry_dir / "evidence"
+    evidence_schema_dir.mkdir()
+    shutil.copy2(
+        REPO_ROOT / "registry" / "evidence" / "dataset-public-profile-snapshot-evidence.schema.json",
+        evidence_schema_dir / "dataset-public-profile-snapshot-evidence.schema.json",
+    )
     _write_predict_views_registry(tmp_path, _MOCK_PREDICT_VIEWS_REGISTRY)
     _write_datasets_registry(tmp_path, _MOCK_DATASETS_REGISTRY)
 
@@ -128,6 +143,7 @@ def test_publish_rejects_when_no_draft_exists(fake_repo):
     assert "NO_DRAFT_TO_PUBLISH" in _codes(result)
     snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
     assert not snapshot_path.exists()
+    assert not _evidence_path(fake_repo, "telco-customer-churn").exists()
 
 
 def test_publish_creates_deterministic_snapshot_file(fake_repo):
@@ -153,6 +169,37 @@ def test_publish_creates_deterministic_snapshot_file(fake_repo):
     assert "metrics" not in persisted
 
 
+def test_publish_writes_traceability_evidence_alongside_snapshot(fake_repo):
+    create_draft(
+        "telco-customer-churn",
+        _profile(display={"title": "Churn Risk"}),
+        repo_root=fake_repo,
+    )
+
+    result = publish_snapshot("telco-customer-churn", repo_root=fake_repo)
+    assert result["published"] is True
+
+    evidence_path = _evidence_path(fake_repo, "telco-customer-churn")
+    assert evidence_path.is_file()
+
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["dataset_slug"] == "telco-customer-churn"
+    assert evidence["published_at"] == result["snapshot"]["published_at"]
+    assert evidence["active_release_at_publish_time"] == "release-20260101-001"
+    assert evidence["snapshot_identifier"] == (
+        f"telco-customer-churn@{result['snapshot']['published_at']}"
+    )
+    assert evidence["draft_source_reference"]["path"] == (
+        "registry/profile-drafts/telco-customer-churn.json"
+    )
+    assert evidence["candidate_validation"]["validation_outcome"] == "accepted"
+    assert evidence["candidate_validation"]["errors"] == []
+    assert evidence["visibility_at_publish_time"]["value"] == "public"
+    assert evidence["visibility_at_publish_time"]["read_only_snapshot"] is True
+    assert evidence["evidence_safety"]["raw_logs_persisted"] is False
+    assert evidence["evidence_safety"]["secrets_persisted"] is False
+
+
 def test_publish_replace_creates_previous_backup_and_replaces_content(fake_repo):
     create_draft(
         "telco-customer-churn", _profile(display={"title": "First Title"}), repo_root=fake_repo
@@ -174,6 +221,14 @@ def test_publish_replace_creates_previous_backup_and_replaces_content(fake_repo)
     current = json.loads(snapshot_path.read_text(encoding="utf-8"))
     assert backup["profile"]["display"]["title"] == "First Title"
     assert current["profile"]["display"]["title"] == "Second Title"
+
+    evidence_path = _evidence_path(fake_repo, "telco-customer-churn")
+    assert evidence_path.is_file()
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["published_at"] == second["snapshot"]["published_at"]
+    assert evidence["snapshot_identifier"] == (
+        f"telco-customer-churn@{second['snapshot']['published_at']}"
+    )
 
 
 def test_publish_rejects_when_no_active_release_registered(fake_repo):
@@ -201,6 +256,7 @@ def test_publish_rejects_when_no_active_release_registered(fake_repo):
     assert "ACTIVE_RELEASE_NOT_FOUND" in _codes(result)
     snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
     assert not snapshot_path.exists()
+    assert not _evidence_path(fake_repo, "telco-customer-churn").exists()
 
 
 def test_publish_rejects_when_bound_predict_view_removed_before_publish(fake_repo):
@@ -231,6 +287,7 @@ def test_publish_rejects_when_bound_predict_view_removed_before_publish(fake_rep
     assert "NO_DRAFT_TO_PUBLISH" in _codes(result)
     snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
     assert not snapshot_path.exists()
+    assert not _evidence_path(fake_repo, "telco-customer-churn").exists()
 
 
 def test_publish_rejects_when_primary_metric_key_removed_before_publish(fake_repo):
@@ -260,6 +317,7 @@ def test_publish_rejects_when_primary_metric_key_removed_before_publish(fake_rep
     assert "NO_DRAFT_TO_PUBLISH" in _codes(result)
     snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
     assert not snapshot_path.exists()
+    assert not _evidence_path(fake_repo, "telco-customer-churn").exists()
 
 
 def test_release_artifacts_not_modified_by_publish(fake_repo):

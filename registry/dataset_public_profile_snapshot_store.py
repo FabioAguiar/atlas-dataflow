@@ -28,6 +28,15 @@ This module never reads from or writes to releases/ or publisher/'s own
 output directories, and never mutates registry/datasets.json. It has no
 HTTP caller; endpoint wiring is explicit scope for
 api/admin_profile_publish.py.
+
+Every successful publish also writes a reduced, deterministic traceability
+evidence file (registry/dataset_public_profile_snapshot_evidence.py) to
+registry/profile-snapshots/<dataset_slug>.evidence.json, alongside the
+snapshot itself, for M36-04. This is wired here rather than left as a
+decoupled step (unlike publisher/evidence.py's own external-caller
+invocation) because this module's publish flow is a single synchronous
+call with no separate caller to supply the equivalent of a registry-update
+result. No evidence file is created or replaced on a rejected publish.
 """
 
 import json
@@ -36,6 +45,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from registry.dataset_public_profile_snapshot_evidence import write_snapshot_evidence
 from registry.dataset_public_profile_store import ProfileDraftNotFoundError, get_draft
 from registry.dataset_public_profile_validate import validate_profile_references
 
@@ -115,6 +125,27 @@ def _resolve_active_release(dataset_slug: str, repo_root: Path) -> str | None:
         if isinstance(entry, dict) and entry.get("dataset_slug") == dataset_slug:
             active_release = entry.get("active_release")
             return active_release if isinstance(active_release, str) and active_release else None
+
+    return None
+
+
+def _resolve_visibility(dataset_slug: str, repo_root: Path) -> str | None:
+    datasets_path = repo_root / "registry" / "datasets.json"
+    try:
+        registry = json.loads(datasets_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(registry, dict):
+        return None
+
+    for entry in registry.get("datasets", []):
+        if isinstance(entry, dict) and entry.get("dataset_slug") == dataset_slug:
+            public_metadata = entry.get("public_metadata")
+            if not isinstance(public_metadata, dict):
+                return None
+            visibility = public_metadata.get("visibility")
+            return visibility if isinstance(visibility, str) and visibility else None
 
     return None
 
@@ -199,6 +230,11 @@ def publish_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:
     created or replaced) if no draft currently exists for this dataset_slug,
     if no active_release is resolvable for this dataset_slug, or if the
     candidate snapshot fails schema/reference validation.
+
+    On a successful publish, also writes a reduced traceability evidence
+    file alongside the snapshot (see
+    registry.dataset_public_profile_snapshot_evidence.write_snapshot_evidence).
+    No evidence file is created or replaced on a rejected publish.
     """
     repo_root = _resolve_repo_root(repo_root)
     path = _snapshot_path(dataset_slug, repo_root)
@@ -243,6 +279,9 @@ def publish_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(candidate, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    visibility_value = _resolve_visibility(dataset_slug, repo_root)
+    write_snapshot_evidence(candidate, errors, visibility_value, repo_root)
 
     return {
         "published": True,

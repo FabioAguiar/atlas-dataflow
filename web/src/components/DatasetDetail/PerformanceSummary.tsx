@@ -5,6 +5,7 @@ type MetricsData = Record<string, unknown>;
 
 type PerformanceSummaryProps = {
   metrics: MetricsData;
+  emphasizedMetricKey?: string | null;
 };
 
 const SCORE_ORDER: NormalizedMetricKey[] = ["auc_roc", "precision", "recall", "f1_score"];
@@ -22,7 +23,21 @@ function formatScore(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-export default function PerformanceSummary({ metrics }: PerformanceSummaryProps) {
+/**
+ * primary_metric_key is free-text admin input, unlike the closed
+ * NormalizedMetricKey set this component actually computes -- an
+ * unrecognized value must fall back to the default emphasis rather than
+ * being applied, per the "unsupported values are rejected" requirement.
+ */
+function resolveEmphasizedScore(emphasizedMetricKey: string | null | undefined): NormalizedMetricKey {
+  const candidate = emphasizedMetricKey?.trim();
+  if (candidate && (SCORE_ORDER as string[]).includes(candidate)) {
+    return candidate as NormalizedMetricKey;
+  }
+  return EMPHASIZED_SCORE;
+}
+
+export default function PerformanceSummary({ metrics, emphasizedMetricKey }: PerformanceSummaryProps) {
   const normalized = normalizeMetrics(metrics);
   const hasAnyScore = SCORE_ORDER.some((key) => normalized[key] !== null);
 
@@ -30,13 +45,15 @@ export default function PerformanceSummary({ metrics }: PerformanceSummaryProps)
     return null;
   }
 
+  const resolvedEmphasis = resolveEmphasizedScore(emphasizedMetricKey);
+
   return (
     <Card className="performance-summary">
       <h3>Performance Summary</h3>
       <dl className="performance-summary__scores">
         {SCORE_ORDER.map((key) => {
           const value = normalized[key];
-          const emphasized = key === EMPHASIZED_SCORE;
+          const emphasized = key === resolvedEmphasis;
           const itemClasses = [
             "performance-summary__score",
             emphasized ? "performance-summary__score--emphasized" : "",

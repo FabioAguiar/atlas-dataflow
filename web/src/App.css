@@ -337,6 +337,18 @@ h1 {
   gap: var(--atlas-space-5);
 }
 
+/*
+ * Theme-preset visual scope: connects a dataset's theme.preset draft field
+ * to a bounded, explicit CSS scope. The profile schema currently enumerates
+ * only "atlas-green", so this scope re-asserts the existing default tokens
+ * rather than introducing a visual change -- it establishes the wiring
+ * mechanism. Add another [data-theme-preset="..."] block only when the
+ * schema enumerates an additional supported preset.
+ */
+[data-theme-preset="atlas-green"] {
+  --atlas-color-accent: var(--atlas-color-accent);
+}
+
 .dataset-card {
   position: relative;
   display: grid;

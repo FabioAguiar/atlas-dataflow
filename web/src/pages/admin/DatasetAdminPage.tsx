@@ -6,10 +6,12 @@ import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummar
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import ModelCard from "../../components/ModelCard/ModelCard";
+import InferenceResult from "../../components/InferenceResult/InferenceResult";
 import {
   projectDatasetDetailPreview,
   projectHomeCardPreview,
   projectModelCardPreview,
+  projectResultCardPreview,
   toVisualizationsPayload,
 } from "../../lib/livePreviewProjection";
 
@@ -959,10 +961,24 @@ function DatasetDetailLivePreview({
         metadata={preview.metadata}
         subtitle={preview.subtitle}
       />
-      <PerformanceSummary metrics={metrics ?? {}} />
+      <PerformanceSummary metrics={metrics ?? {}} emphasizedMetricKey={form.primary_metric_key} />
       <TargetDistribution visualizations={visualizations} />
       <FeatureImportance visualizations={visualizations} />
       {modelCardPreview && <ModelCard modelCard={modelCardPreview} />}
+    </div>
+  );
+}
+
+function ResultCardLivePreview({ form }: { form: DraftForm }) {
+  const { result, previewLabels } = projectResultCardPreview(form);
+
+  return (
+    <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
+      <p style={mutedTextStyle}>
+        Placeholder preview only, not a real prediction. Submit button will read:{" "}
+        <strong>{form.submit_button_label.trim() || "Submit"}</strong>
+      </p>
+      <InferenceResult result={result} previewLabels={previewLabels} />
     </div>
   );
 }
@@ -976,7 +992,13 @@ function LivePreviewTab({
   form: DraftForm;
   readOnlyData: ReadOnlyData;
 }) {
-  const [previewMode, setPreviewMode] = useState<"detail" | "card">("detail");
+  const [previewMode, setPreviewMode] = useState<"detail" | "card" | "result">("detail");
+
+  const previewModeLabels: Record<"detail" | "card" | "result", string> = {
+    detail: "Dataset detail",
+    card: "Home card",
+    result: "Result card",
+  };
 
   return (
     <>
@@ -988,25 +1010,27 @@ function LivePreviewTab({
         </p>
       </div>
       <div aria-label="Preview mode" style={buttonRowStyle}>
-        {(["detail", "card"] as const).map((mode) => (
+        {(["detail", "card", "result"] as const).map((mode) => (
           <button
             key={mode}
             onClick={() => setPreviewMode(mode)}
             style={previewMode === mode ? secondaryButtonStyle : disabledButtonStyle}
             type="button"
           >
-            {mode === "detail" ? "Dataset detail" : "Home card"}
+            {previewModeLabels[mode]}
           </button>
         ))}
       </div>
-      <div style={previewCardStyle}>
-        {previewMode === "card" ? (
+      <div style={previewCardStyle} data-theme-preset={form.theme_preset || "atlas-green"}>
+        {previewMode === "card" && (
           <div style={{ maxWidth: "22rem" }}>
             <DatasetCard {...projectHomeCardPreview(dataset, form)} />
           </div>
-        ) : (
+        )}
+        {previewMode === "detail" && (
           <DatasetDetailLivePreview dataset={dataset} form={form} readOnlyData={readOnlyData} />
         )}
+        {previewMode === "result" && <ResultCardLivePreview form={form} />}
       </div>
     </>
   );

@@ -10,6 +10,7 @@ type DatasetCardProps = {
   domain?: string;
   tags?: string[];
   problemType?: string;
+  iconOverride?: DatasetIconName;
 };
 
 function TelecomIcon() {
@@ -42,8 +43,16 @@ const DATASET_ICONS: Record<DatasetIconName, ReactElement> = {
   generic: <GenericDatasetIcon />,
 };
 
-export default function DatasetCard({ slug, title, summary, domain, tags = [], problemType }: DatasetCardProps) {
-  const icon = getDatasetIcon(domain, tags);
+export default function DatasetCard({
+  slug,
+  title,
+  summary,
+  domain,
+  tags = [],
+  problemType,
+  iconOverride,
+}: DatasetCardProps) {
+  const icon = iconOverride ?? getDatasetIcon(domain, tags);
   const analysisLabel = getProblemTypeLabel(problemType);
 
   return (

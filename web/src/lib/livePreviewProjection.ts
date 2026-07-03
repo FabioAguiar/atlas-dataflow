@@ -1,5 +1,7 @@
 import type { DatasetDetailMetadataItem } from "../components/DatasetDetail/DatasetDetailHeader";
 import type { VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
+import type { ResultPreviewLabels, PredictionResult } from "../components/InferenceResult/InferenceResult";
+import type { DatasetIconName } from "./datasetPresentation";
 
 /**
  * Live Preview input shapes are declared locally (structurally compatible
@@ -58,12 +60,27 @@ type PreviewDraftForm = {
   short_description: string;
 };
 
+type PreviewResultCardForm = {
+  probability_label: string;
+  model_label: string;
+  badge_preset: "" | "risk";
+  badge_high: string;
+  badge_medium: string;
+  badge_low: string;
+};
+
 export type HomeCardPreviewProps = {
   slug: string;
   title: string;
   summary: string;
   domain?: string;
   tags?: string[];
+  iconOverride?: DatasetIconName;
+};
+
+export type ResultCardPreview = {
+  result: PredictionResult;
+  previewLabels: ResultPreviewLabels;
 };
 
 export type DatasetDetailPreview = {
@@ -102,7 +119,7 @@ function extractInstanceCount(metrics: PreviewMetrics | null): string | null {
  */
 export function projectHomeCardPreview(
   dataset: PreviewDataset | undefined,
-  form: Pick<PreviewDraftForm, "display_title" | "display_subtitle" | "short_description">,
+  form: Pick<PreviewDraftForm, "display_title" | "display_subtitle" | "short_description" | "home_card_icon">,
 ): HomeCardPreviewProps {
   const title = form.display_title.trim() || dataset?.title || dataset?.dataset_slug || "";
   const summary = form.short_description.trim() || form.display_subtitle.trim() || dataset?.summary || "";
@@ -113,6 +130,7 @@ export function projectHomeCardPreview(
     summary,
     domain: dataset?.domain,
     tags: dataset?.tags ?? [],
+    iconOverride: form.home_card_icon || undefined,
   };
 }
 
@@ -171,4 +189,38 @@ export function projectModelCardPreview(modelCard: PreviewModelCard | null): Mod
     return { content: modelCard.content, format: "markdown" };
   }
   return null;
+}
+
+/**
+ * Fixed, explicitly-labeled placeholder outcome -- never a real /inference
+ * response -- so result_card settings can be previewed without implying a
+ * genuine prediction was made.
+ */
+const RESULT_CARD_PLACEHOLDER_RESULT: PredictionResult = {
+  label: "sample_outcome",
+  confidence: 0.72,
+};
+
+/**
+ * badge_preset "risk" is the only enumerated preset today; its badge_labels
+ * (high/medium/low) are interpreted as risk-level labels for the danger
+ * (high risk) / warning (medium risk) / success (low risk) confidence tones
+ * confidenceTone() already buckets into.
+ */
+export function projectResultCardPreview(form: PreviewResultCardForm): ResultCardPreview {
+  const toneLabels: ResultPreviewLabels["toneLabels"] = {};
+  if (form.badge_preset === "risk") {
+    if (form.badge_high.trim()) toneLabels.danger = form.badge_high.trim();
+    if (form.badge_medium.trim()) toneLabels.warning = form.badge_medium.trim();
+    if (form.badge_low.trim()) toneLabels.success = form.badge_low.trim();
+  }
+
+  return {
+    result: RESULT_CARD_PLACEHOLDER_RESULT,
+    previewLabels: {
+      confidenceLabel: form.probability_label.trim() || undefined,
+      modelLabel: form.model_label.trim() || undefined,
+      toneLabels: Object.keys(toneLabels).length ? toneLabels : undefined,
+    },
+  };
 }

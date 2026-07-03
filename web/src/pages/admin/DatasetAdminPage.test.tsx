@@ -360,4 +360,92 @@ describe("DatasetAdminPage", () => {
       expect(Element.prototype.setPointerCapture).toHaveBeenCalledWith(2);
     });
   });
+
+  it("shows a disabled selector and a blank read-only panel when no datasets are registered", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({ datasets: [] });
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DatasetAdminPage />);
+
+    const select = await screen.findByLabelText("Dataset");
+    await waitFor(() => expect(select).toBeDisabled());
+    expect(within(select).getByText("No datasets available")).toBeInTheDocument();
+
+    const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
+    expect(within(panel).getAllByText("Not provided")).toHaveLength(6);
+  });
+
+  it("populates the selector for a multi-dataset listing including a synthetic non-Telco/Bank dataset and updates the read-only panel on selection change", async () => {
+    const datasetOne = {
+      dataset_slug: "synthetic-retail-forecast",
+      title: "Synthetic Retail Forecast",
+      summary: "Synthetic retail demand forecasting dataset",
+      domain: "retail",
+      visibility: "public",
+      tags: ["retail"],
+    };
+    const datasetTwo = {
+      dataset_slug: "synthetic-energy-usage",
+      title: "Synthetic Energy Usage",
+      summary: "Synthetic household energy usage dataset",
+      domain: "energy",
+      visibility: "public",
+      tags: ["energy"],
+    };
+    const datasetThree = {
+      dataset_slug: "synthetic-agri-yield",
+      title: "Synthetic Agricultural Yield",
+      summary: "Synthetic crop yield dataset",
+      domain: "agriculture",
+      visibility: "internal",
+      tags: ["agriculture"],
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({ datasets: [datasetOne, datasetTwo, datasetThree] });
+      }
+      if (url.endsWith(`/datasets/${datasetOne.dataset_slug}`)) {
+        return jsonResponse(datasetOne);
+      }
+      if (url.endsWith(`/datasets/${datasetTwo.dataset_slug}`)) {
+        return jsonResponse(datasetTwo);
+      }
+      if (url.endsWith(`/datasets/${datasetThree.dataset_slug}`)) {
+        return jsonResponse(datasetThree);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DatasetAdminPage />);
+
+    const select = await screen.findByLabelText("Dataset");
+    await waitFor(() => expect(select).toHaveValue(datasetOne.dataset_slug));
+
+    const optionValues = Array.from(select.querySelectorAll("option")).map((option) => (option as HTMLOptionElement).value);
+    expect(optionValues).toEqual([datasetOne.dataset_slug, datasetTwo.dataset_slug, datasetThree.dataset_slug]);
+
+    const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
+    await waitFor(() => {
+      expect(within(panel).getByText(datasetOne.dataset_slug)).toBeInTheDocument();
+    });
+    expect(within(panel).getByText(datasetOne.title)).toBeInTheDocument();
+    expect(within(panel).getByText(datasetOne.domain)).toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: datasetTwo.dataset_slug } });
+
+    await waitFor(() => {
+      expect(within(panel).getByText(datasetTwo.dataset_slug)).toBeInTheDocument();
+    });
+    expect(within(panel).getByText(datasetTwo.title)).toBeInTheDocument();
+    expect(within(panel).getByText(datasetTwo.domain)).toBeInTheDocument();
+  });
 });

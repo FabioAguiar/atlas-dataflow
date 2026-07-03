@@ -524,6 +524,33 @@ Containers, VPS, proxy, HTTPS, volumes, environment variables, private admin acc
 
 These elements must support the application, but they do not compose the product's public experience.
 
+## Dataset Profile Lifecycle Definition
+
+This section gives the draft/preview/publish/visibility vocabulary used throughout this document an explicit, non-overlapping, action-by-action definition, and states which parts are implemented today versus still pending. It extends the "Draft vs Preview vs Published Snapshot vs Visibility" boundary above; it does not introduce new states beyond the ones already named there.
+
+### States
+
+- **Draft profile state** — editable, private curation state for a dataset's public profile. Exists independently of publication.
+- **Preview state** — a private rendering of draft state combined with public-safe active-release data. Not a separate persisted state; it is a read-time composition of the draft.
+- **Published profile snapshot** — deterministic public presentation state produced by a publish operation from validated draft state. Distinct from both the draft and from release artifacts.
+- **Public visibility state** — whether the latest published profile snapshot is publicly reachable. Applies to the published snapshot, never to draft state.
+
+### Actions
+
+**Save Draft** persists edited profile curation as private draft state and must not publish changes or become publicly reachable. Implemented: `registry/dataset_public_profile_store.py` (`create_draft`/`update_draft`/`get_draft`) persists drafts per `dataset_slug`, validated against `contracts/dataset-public-profile.schema.json` and reference rules before any write, and never writes to `releases/` or a snapshot path; `api/admin_profile_drafts.py` exposes this privately to the Dataset Admin screen.
+
+**Preview** renders private draft state through the same presentation components the public experience uses, without changing or exposing public state. Implemented: the Dataset Admin Live Preview tab renders draft state through the shared public Home-card and Dataset Detail components in a non-submitting mode.
+
+**Publish Changes** creates or replaces a versioned published profile snapshot from the current validated draft state; it must not mutate release artifacts, runtime contracts, model artifacts, or metrics, and it must not by itself change public visibility. Not implemented. The Dataset Admin Publishing tab is currently a stub that states publishing, snapshots, release mutation, and visibility changes remain unavailable, with a disabled Publish control. No published-snapshot storage format, schema, or persistence path exists yet; defining one is explicit scope for a later M36 issue, grounded in this definition rather than invented ad hoc.
+
+**Visible Publicly** controls public exposure of the latest published profile snapshot; it must never publish unpublished draft changes, and toggling it off must hide or suppress the public presentation without altering draft or snapshot content. Not implemented as a snapshot-level control. `registry/datasets.json` already carries a per-dataset `visibility` field (currently `"public"` for both seeded datasets), but that field predates the published-snapshot concept and has no defined relationship to one yet. Whether Visible Publicly reuses this existing field, extends it, or becomes a distinct property attached to the snapshot itself is an implementation decision left to the later M36 issue that adds Publish Changes persistence; it is not settled by this definition.
+
+### Boundary this definition preserves
+
+- A published profile snapshot is presentation state only; it must never mutate release artifacts, runtime contracts, model artifacts, metrics, or become a competing source of technical truth for them.
+- Draft state must remain private and must never be read by a public route. `api/public_profile_loader.py`'s `load_dataset_profile` already composes a draft (falling back to a generated profile only when no draft exists) with no publish/visibility gate at all; it is confirmed not wired to any route in `api/main.py` today, so no public/private leak currently exists, but it must not be wired into a public route until a published-snapshot/visibility gate exists, since doing so unchanged would serve unpublished draft content publicly.
+- The backend logic referenced above is organized as top-level modules (`api/`, `registry/`, `publisher/`, `pipeline/`) at the repository root; there is no `backend/` directory in this repository.
+
 ## Main Flows
 
 ### Internal Artifact Generation Flow

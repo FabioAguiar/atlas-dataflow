@@ -26,6 +26,47 @@ import {
   projectResultCardPreview,
   toVisualizationsPayload,
 } from "../../lib/livePreviewProjection";
+import type { DatasetIconName } from "../../lib/datasetPresentation";
+
+// Curator-facing labels for Atlas's full controlled icon bank (see
+// contracts/dataset-public-profile.schema.json's home_card.icon enum).
+// A curator may hand-select any of these regardless of dataset domain,
+// independent of the automatic domain-keyword fallback in
+// datasetPresentation.ts's getDatasetIcon.
+// livePreviewProjection.ts's PreviewDraftForm.home_card_icon is still
+// declared as the original closed "" | "telecom" | "bank" | "generic" union
+// (out of this issue's edit scope, same as projectDatasetDetailPreview's
+// {fields?} shape below). projectDatasetDetailPreview's own body never
+// actually reads home_card_icon (Dataset Detail preview has no icon), so
+// this narrowing only satisfies that stale parameter type and has no
+// effect on what's rendered; adapt the shape here rather than modifying
+// livePreviewProjection.ts.
+function toLegacyPreviewIcon(
+  icon: DraftForm["home_card_icon"],
+): "" | "telecom" | "bank" | "generic" {
+  return icon === "telecom" || icon === "bank" || icon === "generic" ? icon : "";
+}
+
+const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> = [
+  { value: "telecom", label: "Telecom" },
+  { value: "bank", label: "Bank" },
+  { value: "generic", label: "Generic" },
+  { value: "telecom-users", label: "Telecom (Users)" },
+  { value: "bank-building", label: "Bank (Building)" },
+  { value: "chart-line", label: "Chart Line" },
+  { value: "heart", label: "Heart" },
+  { value: "shopping-cart", label: "Shopping Cart" },
+  { value: "airplane", label: "Airplane" },
+  { value: "shield", label: "Shield" },
+  { value: "education-cap", label: "Education Cap" },
+  { value: "energy-bolt", label: "Energy Bolt" },
+  { value: "home-house", label: "Home / House" },
+  { value: "agro-leaf", label: "Agriculture Leaf" },
+  { value: "logistics-truck", label: "Logistics Truck" },
+  { value: "factory", label: "Factory" },
+  { value: "weather-cloud", label: "Weather Cloud" },
+  { value: "database", label: "Database" },
+];
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -67,7 +108,7 @@ type ProfileDraft = {
     canonical_name_fallback?: boolean;
   };
   home_card?: {
-    icon?: "telecom" | "bank" | "generic";
+    icon?: DatasetIconName;
     background_image_ref?: string | null;
     short_description?: string;
     primary_metric_key?: string | null;
@@ -102,7 +143,7 @@ type DraftForm = {
   release_date_label: string;
   date_format: "" | "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd";
   canonical_name_fallback: boolean;
-  home_card_icon: "" | "telecom" | "bank" | "generic";
+  home_card_icon: "" | DatasetIconName;
   background_image_ref: string;
   short_description: string;
   primary_metric_key: string;
@@ -1041,9 +1082,11 @@ function MetadataCardTab({
             value={form.home_card_icon}
           >
             <option value="">No curated icon</option>
-            <option value="telecom">Telecom</option>
-            <option value="bank">Bank</option>
-            <option value="generic">Generic</option>
+            {HOME_CARD_ICON_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
         </label>
         <label style={fieldStyle}>
@@ -1707,7 +1750,8 @@ function DatasetDetailLivePreview({
   // the real {features} contract shape into that shape here rather than
   // modifying livePreviewProjection.ts.
   const previewContract = contract ? { fields: contract.features } : null;
-  const preview = projectDatasetDetailPreview(dataset, form, context, previewContract, metrics);
+  const previewForm = { ...form, home_card_icon: toLegacyPreviewIcon(form.home_card_icon) };
+  const preview = projectDatasetDetailPreview(dataset, previewForm, context, previewContract, metrics);
   const modelCardPreview = projectModelCardPreview(modelCard);
 
   return (
@@ -1821,7 +1865,21 @@ function LivePreviewTab({
       <div style={previewCardStyle} data-theme-preset={form.theme_preset || "atlas-green"}>
         {previewMode === "card" && (
           <div style={{ maxWidth: "22rem" }}>
-            <DatasetCard {...projectHomeCardPreview(dataset, form)} />
+            <DatasetCard
+              {...projectHomeCardPreview(dataset, {
+                ...form,
+                // projectHomeCardPreview's own parameter type still declares
+                // home_card_icon as the legacy closed union (out of this
+                // issue's edit scope), but its body only ever forwards the
+                // value unchanged as HomeCardPreviewProps.iconOverride, whose
+                // type is already the full widened DatasetIconName -- and
+                // DatasetCard now renders any curated value safely (see
+                // DATASET_ICONS's Partial fallback). Casting here preserves
+                // an accurate Home card preview for every curated icon
+                // instead of only the original three.
+                home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
+              })}
+            />
           </div>
         )}
         {previewMode === "detail" && (

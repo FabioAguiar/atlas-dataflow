@@ -116,8 +116,27 @@
       "properties": {
         "icon": {
           "type": "string",
-          "enum": ["telecom", "bank", "generic"],
-          "description": "Optional selected Home card icon. Constrained to the icon vocabulary already supported by the public frontend's deterministic icon fallback (telecom, bank, generic); values outside this set are not renderable and must be rejected."
+          "enum": [
+            "telecom",
+            "bank",
+            "generic",
+            "telecom-users",
+            "bank-building",
+            "chart-line",
+            "heart",
+            "shopping-cart",
+            "airplane",
+            "shield",
+            "education-cap",
+            "energy-bolt",
+            "home-house",
+            "agro-leaf",
+            "logistics-truck",
+            "factory",
+            "weather-cloud",
+            "database"
+          ],
+          "description": "Optional selected Home card icon. \"telecom\", \"bank\", and \"generic\" are the original deterministic-fallback values and remain supported for backward compatibility with already-published data. The remaining values are Atlas's controlled curated icon bank, selectable by an authoring curator regardless of dataset domain; values outside this set are not renderable and must be rejected."
         },
         "background_image_ref": {
           "type": ["string", "null"],

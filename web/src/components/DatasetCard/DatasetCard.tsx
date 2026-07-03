@@ -37,7 +37,13 @@ function GenericDatasetIcon() {
   );
 }
 
-const DATASET_ICONS: Record<DatasetIconName, ReactElement> = {
+// DatasetIconName now spans Atlas's full curated icon bank (see
+// contracts/dataset-public-profile.schema.json's home_card.icon enum), but
+// this component only ships bespoke artwork for the three original icons.
+// Deliberately Partial (not an exhaustive Record): any other curated value
+// renders the generic icon below until dedicated artwork is added, instead
+// of an undefined lookup.
+const DATASET_ICONS: Partial<Record<DatasetIconName, ReactElement>> = {
   telecom: <TelecomIcon />,
   bank: <BankIcon />,
   generic: <GenericDatasetIcon />,
@@ -63,7 +69,7 @@ export default function DatasetCard({
         aria-label={`Explorar dataset ${title}`}
       />
       <span className="dataset-card__icon" aria-hidden="true">
-        {DATASET_ICONS[icon]}
+        {DATASET_ICONS[icon] ?? <GenericDatasetIcon />}
       </span>
       <div className="dataset-card__body">
         <h3 className="dataset-card__title">{title}</h3>

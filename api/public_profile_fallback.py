@@ -58,12 +58,28 @@ _REPO_ROOT = Path(__file__).parent.parent
 # summaries.
 _METRIC_PREFERENCE_ORDER = ["f1_score", "auc_roc", "accuracy", "precision", "recall"]
 
-# Mirrors web/src/lib/datasetPresentation.ts's getDatasetIcon keyword rule
-# exactly, so the backend fallback and the frontend's own existing
-# deterministic fallback never diverge for the same field.
+# Kept in lockstep with web/src/lib/datasetPresentation.ts's getDatasetIcon
+# keyword rule, so the backend fallback and the frontend's own existing
+# deterministic fallback never diverge for the same field. This list is not
+# exhaustive of Atlas's full curated icon bank (see
+# contracts/dataset-public-profile.schema.json's home_card.icon enum) -- it
+# only covers domains this module can confidently infer automatically from
+# registry/datasets.json's public_metadata.domain/tags. A domain matching
+# none of these keyword families deterministically falls back to "generic",
+# which is itself a normal, renderable icon value, not a rejection -- this
+# fallback never requires telecom or bank to exist in the registry to
+# produce a valid, schema-conformant result for any dataset domain. An
+# authoring curator may still hand-select any other icon from the full
+# bank for a given dataset via web/src/pages/admin/DatasetAdminPage.tsx.
 _DOMAIN_ICON_RULES = [
     ("telecom", ["telecom", "telco"]),
     ("bank", ["bank", "financ"]),
+    ("heart", ["health", "medical", "clinic", "hospital"]),
+    ("shopping-cart", ["retail", "commerce", "shop"]),
+    ("education-cap", ["education", "school", "university"]),
+    ("energy-bolt", ["energy", "utility", "power"]),
+    ("logistics-truck", ["logistics", "shipping", "freight"]),
+    ("shield", ["insurance", "security"]),
 ]
 
 

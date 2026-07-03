@@ -51,6 +51,11 @@ def test_telco_fallback_is_schema_valid_and_deterministic():
 
 
 def test_bank_marketing_fallback_is_schema_valid_and_deterministic():
+    """Deliberately reconciled for M37-02 decision-03: bank-marketing's
+    registry domain ("banking-marketing") and tags (including "banking")
+    still substring-match the "bank" keyword family under the generalized
+    _DOMAIN_ICON_RULES, so this fixture-scoped assertion is intentionally
+    kept unchanged rather than rewritten."""
     first = generate_fallback_profile("bank-marketing")
     second = generate_fallback_profile("bank-marketing")
 
@@ -150,7 +155,36 @@ _FAKE_REGISTRY = {
                 "visibility": "public",
                 "tags": ["telco"],
             },
-        }
+        },
+        # Fixture datasets below exercise the generalized icon-derivation
+        # rule (api/public_profile_fallback.py's _DOMAIN_ICON_RULES) added
+        # for M37-02, without touching the real registry/datasets.json
+        # (out of scope for this issue) and without requiring a distinct
+        # release package: registry entries may share an active_release,
+        # since load_public_metrics/load_public_model_card key only on
+        # active_release, not dataset_slug.
+        {
+            "dataset_slug": "fixture-dataset-healthcare",
+            "active_release": _FAKE_RELEASE_ID,
+            "public_metadata": {
+                "title": "Fixture Healthcare Dataset",
+                "summary": "Fixture for icon-generalization regression tests.",
+                "domain": "healthcare",
+                "visibility": "public",
+                "tags": ["healthcare"],
+            },
+        },
+        {
+            "dataset_slug": "fixture-dataset-unrecognized-domain",
+            "active_release": _FAKE_RELEASE_ID,
+            "public_metadata": {
+                "title": "Fixture Unrecognized-Domain Dataset",
+                "summary": "Fixture for generic-icon-fallback regression tests.",
+                "domain": "aerospace",
+                "visibility": "public",
+                "tags": ["aerospace"],
+            },
+        },
     ],
 }
 
@@ -239,6 +273,30 @@ def test_invalid_json_model_card_omits_model_label_deterministically():
 
     assert result["sources_used"]["model_card"] is True
     assert "result_card" not in result["profile"]
+
+
+def test_fixture_healthcare_domain_resolves_to_a_curated_non_generic_icon():
+    """A dataset domain outside telecom/bank must not be stuck at "generic"
+    (M37-02 decision-02): the generalized _DOMAIN_ICON_RULES recognizes
+    "healthcare" and resolves it to Atlas's curated "heart" icon."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp), manifest_artifacts=_FULL_MANIFEST_ARTIFACTS)
+        result = generate_fallback_profile("fixture-dataset-healthcare", repo_root=fake_repo)
+
+    assert result["profile"]["home_card"]["icon"] == "heart"
+
+
+def test_fixture_unrecognized_domain_still_falls_back_to_generic_icon():
+    """A domain with no matching keyword family still safely resolves to
+    "generic" -- the generalized rule set is additive, not a requirement
+    that every domain now have a curated match."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp), manifest_artifacts=_FULL_MANIFEST_ARTIFACTS)
+        result = generate_fallback_profile(
+            "fixture-dataset-unrecognized-domain", repo_root=fake_repo
+        )
+
+    assert result["profile"]["home_card"]["icon"] == "generic"
 
 
 def test_fixture_fallback_is_deterministic_across_repeated_calls():

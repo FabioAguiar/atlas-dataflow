@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { Tabs, type TabItem } from "../../components/ui";
+import DatasetCard from "../../components/DatasetCard";
+import DatasetDetailHeader from "../../components/DatasetDetail/DatasetDetailHeader";
+import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
+import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
+import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
+import ModelCard from "../../components/ModelCard/ModelCard";
+import {
+  projectDatasetDetailPreview,
+  projectHomeCardPreview,
+  projectModelCardPreview,
+  toVisualizationsPayload,
+} from "../../lib/livePreviewProjection";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -921,34 +933,59 @@ function PublishingTab({ draftState }: { draftState: DraftState }) {
   );
 }
 
-function DatasetPreview({ dataset, form, mode }: { dataset?: DatasetListing; form: DraftForm; mode: "card" | "detail" }) {
-  const title = form.display_title.trim() || getDatasetLabel(dataset);
-  const summary = form.short_description.trim() || form.display_subtitle.trim() || dataset?.summary;
+function DatasetDetailLivePreview({
+  dataset,
+  form,
+  readOnlyData,
+}: {
+  dataset?: DatasetListing;
+  form: DraftForm;
+  readOnlyData: ReadOnlyData;
+}) {
+  const context = stateValue(readOnlyData.context);
+  const contract = stateValue(readOnlyData.contract);
+  const metrics = stateValue(readOnlyData.metrics);
+  const modelCard = stateValue(readOnlyData.modelCard);
+  const visualizations = toVisualizationsPayload(stateValue(readOnlyData.visualizations));
+
+  const preview = projectDatasetDetailPreview(dataset, form, context, contract, metrics);
+  const modelCardPreview = projectModelCardPreview(modelCard);
+
   return (
-    <article aria-label={`${mode === "detail" ? "Detail" : "Card"} preview`} style={previewCardStyle}>
-      <span className="atlas-status-pill">{dataset?.visibility || "visibility unavailable"}</span>
-      <h3 style={{ margin: 0 }}>{title}</h3>
-      <p style={mutedTextStyle}>{summary || "Draft presentation appears here after editing."}</p>
-      {mode === "detail" && (
-        <div style={sectionGridStyle}>
-          <ReadOnlyField label="Slug" value={dataset?.dataset_slug || ""} />
-          <ReadOnlyField label="Read-only domain" value={dataset?.domain || ""} />
-          <ReadOnlyField label="Primary metric reference" value={form.primary_metric_key || ""} />
-        </div>
-      )}
-      <DatasetTags tags={dataset?.tags ?? []} />
-    </article>
+    <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
+      <DatasetDetailHeader
+        analysisType={preview.analysisType}
+        datasetTitle={preview.datasetTitle}
+        metadata={preview.metadata}
+        subtitle={preview.subtitle}
+      />
+      <PerformanceSummary metrics={metrics ?? {}} />
+      <TargetDistribution visualizations={visualizations} />
+      <FeatureImportance visualizations={visualizations} />
+      {modelCardPreview && <ModelCard modelCard={modelCardPreview} />}
+    </div>
   );
 }
 
-function LivePreviewTab({ dataset, form }: { dataset?: DatasetListing; form: DraftForm }) {
+function LivePreviewTab({
+  dataset,
+  form,
+  readOnlyData,
+}: {
+  dataset?: DatasetListing;
+  form: DraftForm;
+  readOnlyData: ReadOnlyData;
+}) {
   const [previewMode, setPreviewMode] = useState<"detail" | "card">("detail");
 
   return (
     <>
       <div>
         <h2 style={{ marginTop: 0 }}>Live Preview</h2>
-        <p style={mutedTextStyle}>Preview uses editable draft presentation fields over read-only dataset context.</p>
+        <p style={mutedTextStyle}>
+          Preview renders the same shared public Home card and Dataset Detail components used on the public site,
+          fed by the current draft and the read-only Atlas context already loaded above.
+        </p>
       </div>
       <div aria-label="Preview mode" style={buttonRowStyle}>
         {(["detail", "card"] as const).map((mode) => (
@@ -962,7 +999,15 @@ function LivePreviewTab({ dataset, form }: { dataset?: DatasetListing; form: Dra
           </button>
         ))}
       </div>
-      <DatasetPreview dataset={dataset} form={form} mode={previewMode} />
+      <div style={previewCardStyle}>
+        {previewMode === "card" ? (
+          <div style={{ maxWidth: "22rem" }}>
+            <DatasetCard {...projectHomeCardPreview(dataset, form)} />
+          </div>
+        ) : (
+          <DatasetDetailLivePreview dataset={dataset} form={form} readOnlyData={readOnlyData} />
+        )}
+      </div>
     </>
   );
 }
@@ -987,7 +1032,7 @@ function renderSelectedTab(
     case "publishing":
       return <PublishingTab draftState={draftState} />;
     case "live-preview":
-      return <LivePreviewTab dataset={dataset} form={form} />;
+      return <LivePreviewTab dataset={dataset} form={form} readOnlyData={readOnlyData} />;
     case "public-content":
     default:
       return <PublicContentTab dataset={dataset} form={form} setField={setField} />;

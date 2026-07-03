@@ -66,9 +66,11 @@ from public_predict_view_customization_loader import (  # noqa: E402
     CustomizationNotFoundError,
     load_public_predict_view_customization,
 )
+from public_profile_visibility import resolve_dataset_visibility  # noqa: E402
 from admin_runs import list_admin_run_summaries  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
 from admin_profile_publish import publish_profile  # noqa: E402
+from admin_profile_visibility import set_dataset_visibility  # noqa: E402
 from admin_predict_view_customizations import (  # noqa: E402
     read_predict_view_customization,
     save_predict_view_customization,
@@ -149,6 +151,20 @@ PROFILE_PUBLISH_FAILED = PublicError(
     error_type="profile_publish_failed",
     error_code="PROFILE_PUBLISH_FAILED",
     message="The profile could not be published.",
+)
+
+PROFILE_VISIBILITY_DATASET_SLUG_INVALID = PublicError(
+    status_code=422,
+    error_type="profile_visibility_dataset_slug_invalid",
+    error_code="PROFILE_VISIBILITY_DATASET_SLUG_INVALID",
+    message="The dataset_slug is missing or does not match the required pattern.",
+)
+
+PROFILE_VISIBILITY_PAYLOAD_INVALID = PublicError(
+    status_code=422,
+    error_type="profile_visibility_payload_invalid",
+    error_code="PROFILE_VISIBILITY_PAYLOAD_INVALID",
+    message="The visibility payload must be a JSON object with a boolean 'visible' field.",
 )
 
 PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID = PublicError(
@@ -278,7 +294,8 @@ def list_datasets_endpoint():
         datasets = list_datasets()
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
-    return {"datasets": [d._asdict() for d in datasets]}
+    visible_datasets = [d for d in datasets if resolve_dataset_visibility(d.dataset_slug)]
+    return {"datasets": [d._asdict() for d in visible_datasets]}
 
 
 @app.get("/datasets/{dataset_slug}")
@@ -291,6 +308,8 @@ def get_dataset(dataset_slug: str):
         return public_error_response(RELEASE_UNAVAILABLE)
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
+    if not resolve_dataset_visibility(dataset_slug):
+        return public_error_response(DATASET_NOT_FOUND)
     try:
         all_listed = list_datasets()
     except RegistryInvalidError:
@@ -600,6 +619,23 @@ def put_admin_profile_publish(dataset_slug: str, request: Request):
         return PROFILE_PUBLISH_FAILED.response(errors=result["errors"])
 
     return result
+
+
+@app.put("/admin/datasets/{dataset_slug}/visibility")
+def put_admin_profile_visibility(
+    dataset_slug: str, request: Request, payload: dict = Body(...)
+):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    visible = payload.get("visible") if isinstance(payload, dict) else None
+    if not isinstance(visible, bool):
+        return public_error_response(PROFILE_VISIBILITY_PAYLOAD_INVALID)
+
+    try:
+        return set_dataset_visibility(dataset_slug, visible)
+    except ValueError:
+        return public_error_response(PROFILE_VISIBILITY_DATASET_SLUG_INVALID)
 
 
 @app.get("/admin/datasets/{dataset_slug}/views/{view_id}/customization")

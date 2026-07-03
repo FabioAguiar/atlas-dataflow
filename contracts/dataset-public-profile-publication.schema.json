@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Atlas DataFlow Dataset Public Profile Publication Record",
+  "description": "Deterministic Visible Publicly setting for a dataset, decoupled from the immutable published profile snapshot (contracts/dataset-public-profile-snapshot.schema.json). One publication record file exists per dataset_slug; setting visibility again replaces it deterministically, not as a growing history. This record controls whether an existing published snapshot may be exposed on public routes; it never controls publishing itself, never changes release package availability, and never carries presentation, contract, model, or metric content.",
+  "type": "object",
+  "required": ["schema_version", "dataset_slug", "visible", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Publication Record Schema Version",
+      "description": "Semantic version of this publication record schema structure in MAJOR.MINOR.PATCH format. Independent from contracts/dataset-public-profile-snapshot.schema.json's own schema_version."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 1,
+      "title": "Dataset Slug",
+      "description": "Primary identity of the dataset this publication record applies to. Must match the registry slug pattern."
+    },
+    "visible": {
+      "type": "boolean",
+      "title": "Visible Publicly",
+      "description": "Whether this dataset's published profile snapshot may currently be exposed on public routes. Does not affect whether a snapshot exists, and never changes release package availability."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Updated At",
+      "description": "UTC timestamp of the last write to this publication record."
+    }
+  }
+}

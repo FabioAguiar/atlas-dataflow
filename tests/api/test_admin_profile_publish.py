@@ -11,10 +11,14 @@ os.environ entries -- never through a .env file or the real repository's
 registry/profile-drafts/ or registry/profile-snapshots/ directories.
 
 Draft and snapshot persistence are isolated onto a fake repository root
-(pytest tmp_path) with the real contracts/dataset-public-profile.schema.json
-and contracts/dataset-public-profile-snapshot.schema.json copied in, the
-same isolation convention tests/registry/test_dataset_public_profile_snapshot_store.py
-uses for the M36-03 persistence module directly.
+(pytest tmp_path) with the real contracts/dataset-public-profile.schema.json,
+contracts/dataset-public-profile-snapshot.schema.json, and
+registry/evidence/dataset-public-profile-snapshot-evidence.schema.json
+copied in, the same isolation convention
+tests/registry/test_dataset_public_profile_snapshot_store.py uses for the
+M36-03/M36-04 persistence modules directly -- the evidence schema is
+required because publish_snapshot's M36-04 write_snapshot_evidence side
+effect loads it unconditionally on every successful publish.
 
 Run from the repository root:
     python -m pytest tests/api/test_admin_profile_publish.py -v
@@ -71,6 +75,13 @@ def _build_fake_repo(tmp_root: Path) -> Path:
 
     registry_dir = tmp_root / "registry"
     registry_dir.mkdir(parents=True)
+
+    evidence_schema_dir = registry_dir / "evidence"
+    evidence_schema_dir.mkdir()
+    shutil.copy2(
+        REPO_ROOT / "registry" / "evidence" / "dataset-public-profile-snapshot-evidence.schema.json",
+        evidence_schema_dir / "dataset-public-profile-snapshot-evidence.schema.json",
+    )
     (registry_dir / "datasets.json").write_text(
         json.dumps({
             "schema_version": "atlas.dataflow.registry.v1",

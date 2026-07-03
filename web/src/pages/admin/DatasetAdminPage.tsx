@@ -123,6 +123,22 @@ type DraftError = {
   message?: string;
 };
 
+type PublishSnapshot = {
+  schema_version?: string;
+  source_draft_schema_version?: string;
+  published_at?: string;
+  profile?: Partial<ProfileDraft>;
+};
+
+type PublicationState =
+  | { status: "idle"; visible: boolean; publishedProfile: ProfileDraft | null; message: string }
+  | { status: "publishing"; visible: boolean; publishedProfile: ProfileDraft | null }
+  | { status: "saving_visibility"; visible: boolean; publishedProfile: ProfileDraft | null }
+  | { status: "published"; visible: boolean; publishedProfile: ProfileDraft; publishedAt?: string }
+  | { status: "visibility_saved"; visible: boolean; publishedProfile: ProfileDraft | null; updatedAt?: string }
+  | { status: "invalid"; visible: boolean; publishedProfile: ProfileDraft | null; errors: DraftError[] }
+  | { status: "unavailable"; visible: boolean; publishedProfile: ProfileDraft | null; message: string };
+
 type DraftState =
   | { status: "idle"; message: string }
   | { status: "loading" }
@@ -350,6 +366,13 @@ const emptyReadOnlyData: ReadOnlyData = {
   modelCard: { status: "idle" },
   visualizations: { status: "idle" },
   views: { status: "idle" },
+};
+
+const emptyPublicationState: PublicationState = {
+  status: "idle",
+  visible: true,
+  publishedProfile: null,
+  message: "No published snapshot is known in this admin session.",
 };
 
 const adminTabs: TabItem[] = [
@@ -689,6 +712,51 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   return profile;
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sameProfile(left: ProfileDraft | null, right: ProfileDraft | null): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+  const normalizedLeft = profileFromForm(formFromProfile(left, left.dataset_slug), left.dataset_slug);
+  const normalizedRight = profileFromForm(formFromProfile(right, right.dataset_slug), right.dataset_slug);
+  return stableJson(normalizedLeft) === stableJson(normalizedRight);
+}
+
+function backendDraftProfile(draftState: DraftState): ProfileDraft | null {
+  if (draftState.status === "ready") {
+    return draftState.profile;
+  }
+  if (draftState.status === "saved") {
+    return draftState.profile;
+  }
+  return null;
+}
+
+function profileFromSnapshot(snapshot: PublishSnapshot | null | undefined, datasetSlug: string): ProfileDraft | null {
+  const profile = snapshot?.profile;
+  if (!profile || typeof profile !== "object") {
+    return null;
+  }
+  return {
+    ...profile,
+    schema_version: snapshot?.source_draft_schema_version || profile.schema_version || "1.0.0",
+    dataset_slug: datasetSlug,
+  };
+}
+
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div style={readOnlyFieldStyle}>
@@ -874,6 +942,18 @@ function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
     return <p style={mutedTextStyle}>Loading draft profile...</p>;
   }
   return <p style={mutedTextStyle}>{draftState.message}</p>;
+}
+
+function ErrorList({ errors }: { errors: DraftError[] }) {
+  return (
+    <ul style={{ margin: 0, paddingLeft: "var(--atlas-space-5)" }}>
+      {errors.map((error, index) => (
+        <li key={`${error.code ?? "error"}-${error.field ?? "field"}-${index}`}>
+          {[error.field, error.code, error.message].filter(Boolean).join(" - ")}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function PublicContentTab({
@@ -1472,28 +1552,137 @@ function ResultCardTab({
   );
 }
 
-function PublishingTab({ draftState }: { draftState: DraftState }) {
+function publishingStatusLabel({
+  draftState,
+  hasPublishedSnapshot,
+  hasUnpublishedChanges,
+  hasUnsavedDraftChanges,
+  visible,
+}: {
+  draftState: DraftState;
+  hasPublishedSnapshot: boolean;
+  hasUnpublishedChanges: boolean;
+  hasUnsavedDraftChanges: boolean;
+  visible: boolean;
+}) {
+  if (hasPublishedSnapshot && !visible) {
+    return "Hidden";
+  }
+  if (hasPublishedSnapshot && hasUnpublishedChanges) {
+    return "Unpublished Changes";
+  }
+  if (hasPublishedSnapshot) {
+    return "Published";
+  }
+  if (hasUnsavedDraftChanges || draftState.status === "ready" || draftState.status === "saved" || draftState.status === "invalid") {
+    return "Draft";
+  }
+  return "Not Published";
+}
+
+function publicationMessage(publicationState: PublicationState): string {
+  switch (publicationState.status) {
+    case "published":
+      return publicationState.publishedAt ? `Published at ${publicationState.publishedAt}.` : "Published snapshot updated.";
+    case "visibility_saved":
+      return publicationState.visible ? "Latest published snapshot is visible publicly." : "Latest published snapshot is hidden publicly.";
+    case "publishing":
+      return "Publishing saved draft snapshot...";
+    case "saving_visibility":
+      return "Saving public exposure setting...";
+    case "invalid":
+      return "Publishing action rejected by backend validation.";
+    case "unavailable":
+      return publicationState.message;
+    case "idle":
+    default:
+      return publicationState.message;
+  }
+}
+
+function PublishingTab({
+  draftState,
+  hasPublishedSnapshot,
+  hasUnpublishedChanges,
+  hasUnsavedDraftChanges,
+  onPreviewDraft,
+  onPublish,
+  onSaveDraft,
+  onSetVisibility,
+  publicationState,
+  publishDisabledReason,
+  selectedSlug,
+}: {
+  draftState: DraftState;
+  hasPublishedSnapshot: boolean;
+  hasUnpublishedChanges: boolean;
+  hasUnsavedDraftChanges: boolean;
+  onPreviewDraft: () => void;
+  onPublish: () => void;
+  onSaveDraft: () => void;
+  onSetVisibility: (visible: boolean) => void;
+  publicationState: PublicationState;
+  publishDisabledReason: string | null;
+  selectedSlug: string;
+}) {
+  const busy = publicationState.status === "publishing" || publicationState.status === "saving_visibility";
+  const publishDisabled = Boolean(publishDisabledReason) || busy;
+  const visibilityDisabled = !selectedSlug || !hasPublishedSnapshot || busy;
+  const statusLabel = publishingStatusLabel({
+    draftState,
+    hasPublishedSnapshot,
+    hasUnpublishedChanges,
+    hasUnsavedDraftChanges,
+    visible: publicationState.visible,
+  });
+
   return (
     <>
       <div>
         <h2 style={{ marginTop: 0 }}>Publishing</h2>
         <p style={mutedTextStyle}>
-          M35-02 saves a draft only. Publishing, snapshots, release mutation and visibility changes remain unavailable.
+          Save Draft updates private draft state. Preview opens a private draft preview. Publish Changes creates the
+          latest published snapshot, and Visible Publicly controls exposure of that snapshot only.
         </p>
       </div>
       <div style={sectionGridStyle}>
-        <ReadOnlyField label="Profile draft" value={draftState.status === "saved" ? "Saved" : "Editable draft"} />
-        <ReadOnlyField label="Public visibility" value="No semantic change from this screen" />
-        <ReadOnlyField label="Release artifacts" value="Read-only" />
+        <ReadOnlyField label="Lifecycle status" value={statusLabel} />
+        <ReadOnlyField
+          label="Private draft"
+          value={hasUnsavedDraftChanges ? "Unsaved local changes" : draftState.status === "saved" ? "Saved" : "Editable draft"}
+        />
+        <ReadOnlyField label="Public exposure" value={publicationState.visible ? "Visible Publicly" : "Hidden"} />
+        <ReadOnlyField label="Release artifacts" value="Read-only; not changed by Publishing tab" />
       </div>
       <div style={buttonRowStyle}>
-        <button disabled style={disabledButtonStyle} type="button">
-          Publish disabled
+        <button disabled={!selectedSlug || draftState.status === "loading"} onClick={onSaveDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
+          Save Draft
         </button>
-        <button disabled style={disabledButtonStyle} type="button">
-          Snapshot disabled
+        <button disabled={!selectedSlug} onClick={onPreviewDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
+          Preview Draft
         </button>
+        <button disabled={publishDisabled} onClick={onPublish} style={publishDisabled ? disabledButtonStyle : actionButtonStyle} type="button">
+          Publish Changes
+        </button>
+        <label style={{ ...fieldStyle, alignItems: "start", gap: "var(--atlas-space-1)" }}>
+          <span style={labelStyle}>Visible Publicly</span>
+          <input
+            checked={publicationState.visible}
+            disabled={visibilityDisabled}
+            onChange={(event) => onSetVisibility(event.target.checked)}
+            type="checkbox"
+          />
+        </label>
       </div>
+      {publishDisabledReason && <p style={mutedTextStyle}>{publishDisabledReason}</p>}
+      <article
+        className={publicationState.status === "published" || publicationState.status === "visibility_saved" ? "atlas-status-pill atlas-status-pill--success" : undefined}
+        role="status"
+        style={publicationState.status === "invalid" || publicationState.status === "unavailable" ? alertStyle : undefined}
+      >
+        <strong>{publicationMessage(publicationState)}</strong>
+        {publicationState.status === "invalid" && <ErrorList errors={publicationState.errors} />}
+      </article>
     </>
   );
 }
@@ -1661,8 +1850,13 @@ function renderSelectedTab(
   selectedSlug: string,
   customizationEditorState: CustomizationEditorState,
   onLoadCustomization: () => void,
+  onPreviewDraft: () => void,
+  onPublish: () => void,
+  onSaveDraft: () => void,
+  onSetVisibility: (visible: boolean) => void,
   onSaveCustomization: () => void,
   onUpdateCustomizationDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void,
+  publicationState: PublicationState,
 ) {
   switch (selectedTab) {
     case "metadata-card":
@@ -1684,7 +1878,37 @@ function renderSelectedTab(
     case "result-card":
       return <ResultCardTab form={form} setField={setField} />;
     case "publishing":
-      return <PublishingTab draftState={draftState} />;
+      {
+        const currentProfile = selectedSlug ? profileFromForm(form, selectedSlug) : null;
+        const lastBackendDraft = backendDraftProfile(draftState);
+        const hasUnsavedDraftChanges = Boolean(currentProfile && lastBackendDraft && !sameProfile(currentProfile, lastBackendDraft));
+        const publishedProfile = publicationState.publishedProfile;
+        const hasPublishedSnapshot = Boolean(publishedProfile);
+        const hasUnpublishedChanges = Boolean(currentProfile && publishedProfile && !sameProfile(currentProfile, publishedProfile));
+        const publishDisabledReason = !selectedSlug
+          ? "Select a dataset before publishing."
+          : !lastBackendDraft
+          ? "Load or save a private draft before publishing changes."
+          : hasUnsavedDraftChanges
+          ? "Save Draft before publishing; Publish Changes uses the saved backend draft, not unsaved form edits."
+          : null;
+
+        return (
+          <PublishingTab
+            draftState={draftState}
+            hasPublishedSnapshot={hasPublishedSnapshot}
+            hasUnpublishedChanges={hasUnpublishedChanges}
+            hasUnsavedDraftChanges={hasUnsavedDraftChanges}
+            onPreviewDraft={onPreviewDraft}
+            onPublish={onPublish}
+            onSaveDraft={onSaveDraft}
+            onSetVisibility={onSetVisibility}
+            publicationState={publicationState}
+            publishDisabledReason={publishDisabledReason}
+            selectedSlug={selectedSlug}
+          />
+        );
+      }
     case "live-preview":
       return (
         <LivePreviewTab
@@ -1715,6 +1939,7 @@ export default function DatasetAdminPage() {
   const [customizationEditorState, setCustomizationEditorState] = useState<CustomizationEditorState>(
     emptyCustomizationEditorState,
   );
+  const [publicationState, setPublicationState] = useState<PublicationState>(emptyPublicationState);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1755,6 +1980,7 @@ export default function DatasetAdminPage() {
       setReadOnlyData(emptyReadOnlyData);
       setDraftForm(emptyDraftForm());
       setCustomizationEditorState(emptyCustomizationEditorState);
+      setPublicationState(emptyPublicationState);
       return;
     }
 
@@ -1764,6 +1990,7 @@ export default function DatasetAdminPage() {
       message: "Load the private/admin draft before saving profile edits.",
     });
     setCustomizationEditorState(emptyCustomizationEditorState);
+    setPublicationState(emptyPublicationState);
 
     const controller = new AbortController();
     setReadOnlyData({
@@ -1910,6 +2137,160 @@ export default function DatasetAdminPage() {
   }
 
   const boundPredictViewId = draftForm.bound_predict_view_id;
+
+  function publishChanges() {
+    if (!selectedSlug) {
+      return;
+    }
+    const token = adminToken.trim();
+    if (!token) {
+      setPublicationState((current) => ({
+        status: "unavailable",
+        visible: current.visible,
+        publishedProfile: current.publishedProfile,
+        message: "Enter the operator token before publishing changes.",
+      }));
+      return;
+    }
+
+    const lastBackendDraft = backendDraftProfile(draftState);
+    const currentProfile = profileFromForm(draftForm, selectedSlug);
+    if (!lastBackendDraft || !sameProfile(lastBackendDraft, currentProfile)) {
+      setPublicationState((current) => ({
+        status: "unavailable",
+        visible: current.visible,
+        publishedProfile: current.publishedProfile,
+        message: "Save Draft before publishing; Publish Changes uses the saved backend draft.",
+      }));
+      return;
+    }
+
+    setPublicationState((current) => ({
+      status: "publishing",
+      visible: current.visible,
+      publishedProfile: current.publishedProfile,
+    }));
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/publish`, {
+      method: "PUT",
+      headers: { "X-Admin-Token": token },
+    })
+      .then((response) => {
+        if (response.status === 404) {
+          setPublicationState((current) => ({
+            status: "unavailable",
+            visible: current.visible,
+            publishedProfile: current.publishedProfile,
+            message: "Publish endpoint unavailable for this session. Confirm the operator token and API configuration.",
+          }));
+          return null;
+        }
+        return response.json().then((body: { published?: boolean; snapshot?: PublishSnapshot | null; errors?: DraftError[] }) => ({
+          ok: response.ok,
+          body,
+        }));
+      })
+      .then((result) => {
+        if (!result) {
+          return;
+        }
+        if (!result.ok || !result.body.published) {
+          setPublicationState((current) => ({
+            status: "invalid",
+            visible: current.visible,
+            publishedProfile: current.publishedProfile,
+            errors: result.body.errors ?? [{ message: "Profile publish failed validation." }],
+          }));
+          return;
+        }
+        const publishedProfile = profileFromSnapshot(result.body.snapshot, selectedSlug) ?? currentProfile;
+        setPublicationState((current) => ({
+          status: "published",
+          visible: current.visible,
+          publishedProfile,
+          publishedAt: result.body.snapshot?.published_at,
+        }));
+      })
+      .catch(() => {
+        setPublicationState((current) => ({
+          status: "unavailable",
+          visible: current.visible,
+          publishedProfile: current.publishedProfile,
+          message: "Profile could not be published. Check API reachability.",
+        }));
+      });
+  }
+
+  function setPublicVisibility(visible: boolean) {
+    if (!selectedSlug) {
+      return;
+    }
+    const token = adminToken.trim();
+    if (!token) {
+      setPublicationState((current) => ({
+        status: "unavailable",
+        visible: current.visible,
+        publishedProfile: current.publishedProfile,
+        message: "Enter the operator token before changing public exposure.",
+      }));
+      return;
+    }
+
+    setPublicationState((current) => ({
+      status: "saving_visibility",
+      visible: current.visible,
+      publishedProfile: current.publishedProfile,
+    }));
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/visibility`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+      body: JSON.stringify({ visible }),
+    })
+      .then((response) => {
+        if (response.status === 404) {
+          setPublicationState((current) => ({
+            status: "unavailable",
+            visible: current.visible,
+            publishedProfile: current.publishedProfile,
+            message: "Visibility endpoint unavailable for this session. Confirm the operator token and API configuration.",
+          }));
+          return null;
+        }
+        return response.json().then((body: { visible?: boolean; updated_at?: string; error_code?: string; message?: string; errors?: DraftError[] }) => ({
+          ok: response.ok,
+          body,
+        }));
+      })
+      .then((result) => {
+        if (!result) {
+          return;
+        }
+        if (!result.ok || typeof result.body.visible !== "boolean") {
+          setPublicationState((current) => ({
+            status: "invalid",
+            visible: current.visible,
+            publishedProfile: current.publishedProfile,
+            errors:
+              result.body.errors ??
+              [{ code: result.body.error_code, message: result.body.message ?? "Visibility change failed validation." }],
+          }));
+          return;
+        }
+        setPublicationState((current) => ({
+          status: "visibility_saved",
+          visible: result.body.visible ?? visible,
+          publishedProfile: current.publishedProfile,
+          updatedAt: result.body.updated_at,
+        }));
+      })
+      .catch(() => {
+        setPublicationState((current) => ({
+          status: "unavailable",
+          visible: current.visible,
+          publishedProfile: current.publishedProfile,
+          message: "Public exposure could not be saved. Check API reachability.",
+        }));
+      });
+  }
 
   useEffect(() => {
     if (!boundPredictViewId) {
@@ -2133,7 +2514,7 @@ export default function DatasetAdminPage() {
           >
             Save draft
           </button>
-          <span style={mutedTextStyle}>Saves only the schema-backed draft; publishing remains disabled.</span>
+          <span style={mutedTextStyle}>Saves only the schema-backed draft; publishing controls are in the Publishing tab.</span>
         </div>
         <Tabs ariaLabel="Dataset admin tabs" items={adminTabs} onSelect={setSelectedTab} selectedId={selectedTab} />
         <div
@@ -2151,8 +2532,13 @@ export default function DatasetAdminPage() {
             selectedSlug,
             customizationEditorState,
             loadCustomization,
+            () => setSelectedTab("live-preview"),
+            publishChanges,
+            saveDraft,
+            setPublicVisibility,
             saveCustomization,
             updateCustomizationDraft,
+            publicationState,
           )}
         </div>
       </section>

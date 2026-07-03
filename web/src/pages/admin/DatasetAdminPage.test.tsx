@@ -85,47 +85,96 @@ const customization = {
   },
 };
 
-function installFetchMock(options: { rejectProfileSave?: boolean } = {}) {
+function installFetchMock(options: { rejectProfileSave?: boolean; rejectPublish?: boolean; rejectVisibility?: boolean } = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
     if (url.endsWith("/datasets")) {
-      return jsonResponse([
-        {
-          dataset_slug: datasetSlug,
-          title: "Telco Customer Churn",
-          summary: "Customer churn prediction dataset",
-          domain: "telecom",
-          tags: ["telecom"],
-          problem_type: "binary_classification",
-        },
-      ]);
+      return jsonResponse({
+        datasets: [
+          {
+            dataset_slug: datasetSlug,
+            title: "Telco Customer Churn",
+            summary: "Customer churn prediction dataset",
+            domain: "telecom",
+            visibility: "public",
+            tags: ["telecom"],
+            problem_type: "binary_classification",
+          },
+        ],
+      });
     }
     if (url.includes("/context")) {
       return jsonResponse({
-        problem_summary: "Baseline churn problem summary",
-        source: "Atlas public context",
+        context: {
+          title: "Telco Customer Churn",
+          summary: "Baseline churn problem summary",
+          domain: "telecom",
+          tags: ["telecom"],
+          problem_type: "binary_classification",
+          prediction_target_description: "Customer churn",
+        },
       });
     }
     if (url.includes("/contract")) {
       return jsonResponse({
-        features: [
-          { name: "tenure", optional: true, type: "number" },
-          { name: "MonthlyCharges", optional: true, type: "number" },
-        ],
+        contract: {
+          schema_version: "1.0.0",
+          features: [
+            { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
+            { name: "MonthlyCharges", label: "Monthly charges", input_type: "number", optional: true, display_order: 2 },
+          ],
+        },
       });
     }
     if (url.includes("/metrics")) {
-      return jsonResponse({ auc_roc: 0.93, accuracy: 0.86 });
+      return jsonResponse({ metrics: { evaluation: { metrics: { auc_roc: 0.93, accuracy: 0.86 } } } });
     }
     if (url.includes("/model-card")) {
-      return jsonResponse({ model_name: "Validation model", model_type: "Classifier" });
+      return jsonResponse({ model_card: { content: JSON.stringify({ model_summary: "Validation model" }) } });
     }
     if (url.includes("/visualizations")) {
-      return jsonResponse({});
+      return jsonResponse({ visualizations: {} });
     }
     if (url.endsWith(`/datasets/${datasetSlug}/views`)) {
-      return jsonResponse([{ view_id: viewId, title: "Churn risk overview" }]);
+      return jsonResponse({ views: [{ view_id: viewId, display: { title: "Churn risk overview" } }] });
+    }
+    if (url.endsWith(`/admin/datasets/${datasetSlug}/publish`) && init?.method === "PUT") {
+      if (options.rejectPublish) {
+        return jsonResponse(
+          {
+            published: false,
+            errors: [{ field: "profile", code: "PROFILE_PUBLISH_FAILED", message: "Snapshot validation failed." }],
+          },
+          422,
+        );
+      }
+      return jsonResponse({
+        published: true,
+        snapshot: {
+          source_draft_schema_version: publicProfile.schema_version,
+          published_at: "2026-07-03T17:30:00Z",
+          profile: publicProfile,
+        },
+        errors: [],
+      });
+    }
+    if (url.endsWith(`/admin/datasets/${datasetSlug}/visibility`) && init?.method === "PUT") {
+      if (options.rejectVisibility) {
+        return jsonResponse(
+          {
+            error_code: "PROFILE_VISIBILITY_PAYLOAD_INVALID",
+            message: "Visibility payload is invalid.",
+          },
+          400,
+        );
+      }
+      const body = typeof init.body === "string" ? (JSON.parse(init.body) as { visible?: boolean }) : {};
+      return jsonResponse({
+        dataset_slug: datasetSlug,
+        visible: body.visible ?? true,
+        updated_at: "2026-07-03T17:35:00Z",
+      });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) && init?.method === "PUT") {
       if (options.rejectProfileSave) {
@@ -156,11 +205,14 @@ function installFetchMock(options: { rejectProfileSave?: boolean } = {}) {
   return fetchMock;
 }
 
-async function loadDraftAndCustomization() {
+async function loadDraftOnly() {
   fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
   fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
   expect(await screen.findByText("Draft loaded.")).toBeInTheDocument();
+}
 
+async function loadDraftAndCustomization() {
+  await loadDraftOnly();
   fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
   fireEvent.click(screen.getByRole("button", { name: "Load customization" }));
   expect(await screen.findByText("Customization loaded.")).toBeInTheDocument();
@@ -176,21 +228,55 @@ describe("DatasetAdminPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("loads draft data, validates save feedback, and keeps publishing unavailable", async () => {
+  it("wires Publishing tab actions and derives lifecycle labels from saved, published, and visibility state", async () => {
     const fetchMock = installFetchMock();
     render(<DatasetAdminPage />);
 
-    await loadDraftAndCustomization();
-
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
-
+    await waitFor(() => {
+      expect(screen.getByLabelText("Dataset")).toHaveValue(datasetSlug);
+    });
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(screen.getByRole("button", { name: "Publish disabled" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Snapshot disabled" })).toBeDisabled();
-    expect(screen.getByText("No semantic change from this screen")).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("publish"), expect.anything());
-    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("snapshot"), expect.anything());
+    expect(screen.getByText("Not Published")).toBeInTheDocument();
+
+    await loadDraftOnly();
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish Changes" }));
+    expect(await screen.findByText("Published")).toBeInTheDocument();
+    expect(screen.getByText("Published at 2026-07-03T17:30:00Z.")).toBeInTheDocument();
+
+    const publishCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`));
+    expect(publishCall?.[1]).toMatchObject({
+      method: "PUT",
+      headers: { "X-Admin-Token": "operator-token" },
+    });
+
+    fireEvent.click(screen.getByLabelText("Visible Publicly"));
+    expect(await screen.findByText("Hidden")).toBeInTheDocument();
+    expect(screen.getByText("Latest published snapshot is hidden publicly.")).toBeInTheDocument();
+
+    const visibilityCalls = fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`));
+    expect(visibilityCalls).toHaveLength(1);
+    expect(visibilityCalls[0]?.[1]).toMatchObject({
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Admin-Token": "operator-token" },
+      body: JSON.stringify({ visible: false }),
+    });
+    expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(1);
+
+    fireEvent.click(screen.getByLabelText("Visible Publicly"));
+    expect(await screen.findByText("Published")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Display title"), { target: { value: "Edited churn profile" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    expect(screen.getByText("Unpublished Changes")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish Changes" })).toBeDisabled();
+    expect(screen.getByText(/Save Draft before publishing/)).toBeInTheDocument();
   });
 
   it("surfaces backend profile validation feedback without publishing side effects", async () => {
@@ -203,6 +289,20 @@ describe("DatasetAdminPage", () => {
 
     expect(await screen.findByText("Draft rejected by backend validation")).toBeInTheDocument();
     expect(screen.getByText(/display.title - TITLE_REQUIRED - Title is required./)).toBeInTheDocument();
+  });
+
+  it("surfaces publish validation feedback without changing visibility state", async () => {
+    installFetchMock({ rejectPublish: true });
+    render(<DatasetAdminPage />);
+
+    await loadDraftOnly();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish Changes" }));
+
+    expect(await screen.findByText("Publishing action rejected by backend validation.")).toBeInTheDocument();
+    expect(screen.getByText(/profile - PROFILE_PUBLISH_FAILED - Snapshot validation failed./)).toBeInTheDocument();
+    expect(screen.getByText("Draft")).toBeInTheDocument();
   });
 
   it("renders all Live Preview modes from the loaded draft and customization", async () => {

@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Tabs, type TabItem } from "../../components/ui";
 import DatasetCard from "../../components/DatasetCard";
 import DatasetDetailHeader from "../../components/DatasetDetail/DatasetDetailHeader";
@@ -228,6 +235,17 @@ type CustomizationEditorState =
   | { status: "invalid"; draft: CustomizationEditorDraft; errors: CustomizationError[] }
   | { status: "unavailable"; message: string };
 
+type DragItemKind = "field" | "group";
+
+type CustomizationDragState = {
+  kind: DragItemKind;
+  sourceIndex: number;
+  targetIndex: number;
+  pointerX: number;
+  pointerY: number;
+  label: string;
+};
+
 const emptyCustomizationEditorState: CustomizationEditorState = { status: "no_view_bound" };
 
 function emptyCustomizationDraft(fields: ContractField[]): CustomizationEditorDraft {
@@ -305,6 +323,22 @@ function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
   if (target < 0 || target >= items.length) return items;
   const next = [...items];
   [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
+
+function moveItemToIndex<T>(items: T[], sourceIndex: number, targetIndex: number): T[] {
+  if (
+    sourceIndex === targetIndex ||
+    sourceIndex < 0 ||
+    targetIndex < 0 ||
+    sourceIndex >= items.length ||
+    targetIndex >= items.length
+  ) {
+    return items;
+  }
+  const next = [...items];
+  const [item] = next.splice(sourceIndex, 1);
+  next.splice(targetIndex, 0, item);
   return next;
 }
 
@@ -454,6 +488,38 @@ const disabledButtonStyle: CSSProperties = {
   color: "var(--atlas-color-text-subtle)",
   background: "var(--atlas-color-surface-muted)",
   cursor: "not-allowed",
+};
+
+const dragHandleStyle: CSSProperties = {
+  ...secondaryButtonStyle,
+  cursor: "grab",
+  touchAction: "none",
+};
+
+const dragSourceStyle: CSSProperties = {
+  opacity: 0.45,
+  outline: "2px solid var(--atlas-color-accent)",
+  outlineOffset: "2px",
+};
+
+const dragTargetStyle: CSSProperties = {
+  borderColor: "var(--atlas-color-accent)",
+  boxShadow: "0 0 0 2px color-mix(in srgb, var(--atlas-color-accent) 24%, transparent)",
+};
+
+const dragGhostStyle: CSSProperties = {
+  position: "fixed",
+  zIndex: 2000,
+  pointerEvents: "none",
+  transform: "translate(0.75rem, 0.75rem)",
+  maxWidth: "22rem",
+  border: "1px solid var(--atlas-color-accent)",
+  borderRadius: "var(--atlas-radius-md)",
+  padding: "var(--atlas-space-3)",
+  color: "var(--atlas-color-text)",
+  background: "var(--atlas-color-surface)",
+  boxShadow: "var(--atlas-shadow-md)",
+  fontWeight: 800,
 };
 
 const previewCardStyle: CSSProperties = {
@@ -1015,6 +1081,8 @@ function CustomizationEditor({
   draft: CustomizationEditorDraft;
   onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
 }) {
+  const [dragState, setDragState] = useState<CustomizationDragState | null>(null);
+
   function updateFieldHint(index: number, patch: Partial<FieldHintDraft>) {
     onUpdateDraft((current) => ({
       ...current,
@@ -1051,6 +1119,79 @@ function CustomizationEditor({
     }));
   }
 
+  function getTargetIndex(kind: DragItemKind, clientX: number, clientY: number, fallbackIndex: number) {
+    const element = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest<HTMLElement>("[data-customization-drag-kind][data-customization-drag-index]");
+    if (!element || element.dataset.customizationDragKind !== kind) {
+      return fallbackIndex;
+    }
+    const targetIndex = Number(element.dataset.customizationDragIndex);
+    return Number.isInteger(targetIndex) ? targetIndex : fallbackIndex;
+  }
+
+  function startDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    kind: DragItemKind,
+    sourceIndex: number,
+    label: string,
+  ) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragState({
+      kind,
+      sourceIndex,
+      targetIndex: sourceIndex,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      label,
+    });
+  }
+
+  function updateDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!dragState) return;
+    event.preventDefault();
+    const targetIndex = getTargetIndex(dragState.kind, event.clientX, event.clientY, dragState.targetIndex);
+    setDragState({
+      ...dragState,
+      targetIndex,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+    });
+  }
+
+  function finishDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!dragState) return;
+    event.preventDefault();
+    const finalTargetIndex = getTargetIndex(dragState.kind, event.clientX, event.clientY, dragState.targetIndex);
+    const { kind, sourceIndex } = dragState;
+    setDragState(null);
+
+    onUpdateDraft((current) => {
+      if (kind === "field") {
+        return { ...current, fieldHints: moveItemToIndex(current.fieldHints, sourceIndex, finalTargetIndex) };
+      }
+      return { ...current, groups: moveItemToIndex(current.groups, sourceIndex, finalTargetIndex) };
+    });
+  }
+
+  function cancelDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!dragState) return;
+    event.preventDefault();
+    setDragState(null);
+  }
+
+  function getDragItemStyle(kind: DragItemKind, index: number): CSSProperties {
+    const isSource = dragState?.kind === kind && dragState.sourceIndex === index;
+    const isTarget = dragState?.kind === kind && dragState.targetIndex === index && dragState.sourceIndex !== index;
+    return {
+      ...panelStyle,
+      padding: "var(--atlas-space-3)",
+      ...(isSource ? dragSourceStyle : {}),
+      ...(isTarget ? dragTargetStyle : {}),
+    };
+  }
+
   return (
     <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
       <section aria-label="Groups" style={readOnlyFieldStyle}>
@@ -1065,8 +1206,24 @@ function CustomizationEditor({
         ) : (
           <div style={{ display: "grid", gap: "var(--atlas-space-3)" }}>
             {draft.groups.map((group, index) => (
-              <div key={group.group_id} style={{ ...panelStyle, padding: "var(--atlas-space-3)" }}>
+              <div
+                data-customization-drag-index={index}
+                data-customization-drag-kind="group"
+                key={group.group_id}
+                style={getDragItemStyle("group", index)}
+              >
                 <div style={buttonRowStyle}>
+                  <button
+                    aria-label={`Drag group ${group.label || group.group_id || index + 1}`}
+                    onPointerCancel={cancelDrag}
+                    onPointerDown={(event) => startDrag(event, "group", index, group.label || group.group_id || `Group ${index + 1}`)}
+                    onPointerMove={updateDrag}
+                    onPointerUp={finishDrag}
+                    style={dragHandleStyle}
+                    type="button"
+                  >
+                    Drag
+                  </button>
                   <button
                     disabled={index === 0}
                     onClick={() => moveGroup(index, -1)}
@@ -1109,10 +1266,26 @@ function CustomizationEditor({
         ) : (
           <div style={{ display: "grid", gap: "var(--atlas-space-3)" }}>
             {draft.fieldHints.map((field, index) => (
-              <div key={field.field_name} style={{ ...panelStyle, padding: "var(--atlas-space-3)" }}>
+              <div
+                data-customization-drag-index={index}
+                data-customization-drag-kind="field"
+                key={field.field_name}
+                style={getDragItemStyle("field", index)}
+              >
                 <div style={buttonRowStyle}>
                   <strong>{field.field_name}</strong>
                   {field.required && <span style={tagStyle}>required</span>}
+                  <button
+                    aria-label={`Drag field ${field.display_label || field.field_name}`}
+                    onPointerCancel={cancelDrag}
+                    onPointerDown={(event) => startDrag(event, "field", index, field.display_label || field.field_name)}
+                    onPointerMove={updateDrag}
+                    onPointerUp={finishDrag}
+                    style={dragHandleStyle}
+                    type="button"
+                  >
+                    Drag
+                  </button>
                   <button
                     disabled={index === 0}
                     onClick={() => moveFieldHint(index, -1)}
@@ -1176,6 +1349,18 @@ function CustomizationEditor({
           </div>
         )}
       </section>
+      {dragState && (
+        <div
+          aria-hidden="true"
+          style={{
+            ...dragGhostStyle,
+            left: dragState.pointerX,
+            top: dragState.pointerY,
+          }}
+        >
+          {dragState.label}
+        </div>
+      )}
     </div>
   );
 }

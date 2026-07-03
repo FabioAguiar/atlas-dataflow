@@ -7,6 +7,11 @@ import TargetDistribution from "../../components/DatasetDetail/TargetDistributio
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import ModelCard from "../../components/ModelCard/ModelCard";
 import InferenceResult from "../../components/InferenceResult/InferenceResult";
+import InferenceForm, {
+  type FieldHint,
+  type GroupDef,
+  type PredictViewCustomization,
+} from "../../components/InferenceForm/InferenceForm";
 import {
   projectDatasetDetailPreview,
   projectHomeCardPreview,
@@ -126,18 +131,22 @@ type MetricsPayload = {
   };
 };
 
+// Matches GET /datasets/{slug}/contract's real response shape -- the same
+// shape web/src/components/InferenceForm/InferenceForm.tsx's ContractPayload
+// requires -- not a speculative {fields|inputs|input_schema} guess.
 type ContractField = {
-  name?: string;
-  type?: string;
-  required?: boolean;
+  name: string;
+  label: string;
+  input_type: "number" | "select" | "checkbox";
+  optional: boolean;
+  display_order: number;
+  description?: string;
+  options?: { value: string; label: string }[];
 };
 
 type ContractPayload = {
-  fields?: ContractField[];
-  inputs?: ContractField[];
-  input_schema?: {
-    fields?: ContractField[];
-  };
+  schema_version: string;
+  features: ContractField[];
 };
 
 type ContextPayload = {
@@ -174,8 +183,130 @@ type ReadOnlyData = {
   modelCard: SectionState<ModelCardPayload>;
   visualizations: SectionState<unknown>;
   views: SectionState<PredictView[]>;
-  customization: SectionState<unknown>;
 };
+
+// One editable row per contract field. Array order IS the field's
+// display_order_hint (index + 1 at save time) -- there is no separate
+// order input, only up/down reordering, so ordering always stays a
+// coherent, gap-free 1..N sequence as fields are moved.
+type FieldHintDraft = {
+  field_name: string;
+  display_label: string;
+  explanatory_copy: string;
+  group: string;
+  hidden: boolean;
+  required: boolean;
+};
+
+// Array order IS the rendered group order (contracts/predict-view-customization
+// .schema.json's groups[] carries no separate order field; InferenceForm's
+// renderGrouped() iterates groups in array order), so group ordering is also
+// edited via up/down reordering only.
+type GroupDraft = {
+  group_id: string;
+  label: string;
+  description: string;
+};
+
+type CustomizationEditorDraft = {
+  fieldHints: FieldHintDraft[];
+  groups: GroupDraft[];
+};
+
+type CustomizationError = {
+  code?: string;
+  field?: string | null;
+  message?: string;
+};
+
+type CustomizationEditorState =
+  | { status: "no_view_bound" }
+  | { status: "idle"; message: string }
+  | { status: "loading" }
+  | { status: "ready"; draft: CustomizationEditorDraft; recordExists: boolean }
+  | { status: "saved"; draft: CustomizationEditorDraft }
+  | { status: "invalid"; draft: CustomizationEditorDraft; errors: CustomizationError[] }
+  | { status: "unavailable"; message: string };
+
+const emptyCustomizationEditorState: CustomizationEditorState = { status: "no_view_bound" };
+
+function emptyCustomizationDraft(fields: ContractField[]): CustomizationEditorDraft {
+  return {
+    fieldHints: fields.map((field) => ({
+      field_name: field.name,
+      display_label: "",
+      explanatory_copy: "",
+      group: "",
+      hidden: false,
+      required: !field.optional,
+    })),
+    groups: [],
+  };
+}
+
+function customizationDraftFromRecord(
+  record: PredictViewCustomization,
+  fields: ContractField[],
+): CustomizationEditorDraft {
+  const hintMap = new Map(record.field_hints.map((hint) => [hint.field_name, hint]));
+  const requiredMap = new Map(fields.map((field) => [field.name, !field.optional]));
+
+  const sortedFields = [...fields].sort((a, b) => {
+    const hintA = hintMap.get(a.name);
+    const hintB = hintMap.get(b.name);
+    const keyA = hintA?.display_order_hint ?? a.display_order;
+    const keyB = hintB?.display_order_hint ?? b.display_order;
+    return keyA - keyB;
+  });
+
+  return {
+    fieldHints: sortedFields.map((field) => {
+      const hint = hintMap.get(field.name);
+      return {
+        field_name: field.name,
+        display_label: hint?.display_label ?? "",
+        explanatory_copy: hint?.explanatory_copy ?? "",
+        group: hint?.group ?? "",
+        hidden: hint?.hidden ?? false,
+        required: requiredMap.get(field.name) ?? false,
+      };
+    }),
+    groups: record.groups.map((group) => ({
+      group_id: group.group_id,
+      label: group.label,
+      description: group.description ?? "",
+    })),
+  };
+}
+
+function customizationDraftToRecord(draft: CustomizationEditorDraft): {
+  field_hints: FieldHint[];
+  groups: GroupDef[];
+} {
+  return {
+    field_hints: draft.fieldHints.map((field, index) => {
+      const hint: FieldHint = { field_name: field.field_name, display_order_hint: index + 1 };
+      if (field.display_label.trim()) hint.display_label = field.display_label.trim();
+      if (field.explanatory_copy.trim()) hint.explanatory_copy = field.explanatory_copy.trim();
+      if (field.group) hint.group = field.group;
+      if (field.hidden) hint.hidden = true;
+      return hint;
+    }),
+    groups: draft.groups.map((group) => {
+      const def: GroupDef = { group_id: group.group_id, label: group.label };
+      if (group.description.trim()) def.description = group.description.trim();
+      return def;
+    }),
+  };
+}
+
+function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction;
+  if (target < 0 || target >= items.length) return items;
+  const next = [...items];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
 
 const emptyReadOnlyData: ReadOnlyData = {
   dataset: { status: "idle" },
@@ -185,7 +316,6 @@ const emptyReadOnlyData: ReadOnlyData = {
   modelCard: { status: "idle" },
   visualizations: { status: "idle" },
   views: { status: "idle" },
-  customization: { status: "idle" },
 };
 
 const adminTabs: TabItem[] = [
@@ -558,7 +688,7 @@ function metricKeys(metrics: MetricsPayload | null): string[] {
 }
 
 function contractFields(contract: ContractPayload | null): ContractField[] {
-  return contract?.fields ?? contract?.inputs ?? contract?.input_schema?.fields ?? [];
+  return contract?.features ?? [];
 }
 
 function extractModelCardText(modelCard: ModelCardPayload | null): string {
@@ -822,23 +952,267 @@ function ThemePresetTab({
   );
 }
 
+function CustomizationStatusPanel({ state }: { state: CustomizationEditorState }) {
+  if (state.status === "no_view_bound") {
+    return (
+      <article role="status" style={alertStyle}>
+        <strong>No predict view bound</strong>
+        <p style={mutedTextStyle}>Bind a predict view above, then load its customization.</p>
+      </article>
+    );
+  }
+  if (state.status === "ready") {
+    return (
+      <article style={readOnlyFieldStyle}>
+        <strong>{state.recordExists ? "Customization loaded" : "No customization yet"}</strong>
+        <p style={mutedTextStyle}>
+          {state.recordExists
+            ? "Editable fields were populated from the existing customization record."
+            : "Saving will create a customization record for this predict view."}
+        </p>
+      </article>
+    );
+  }
+  if (state.status === "saved") {
+    return (
+      <article className="atlas-status-pill atlas-status-pill--success" role="status">
+        Customization saved.
+      </article>
+    );
+  }
+  if (state.status === "invalid") {
+    return (
+      <article role="status" style={alertStyle}>
+        <strong>Customization rejected by backend validation</strong>
+        <ul style={{ margin: 0, paddingLeft: "var(--atlas-space-5)" }}>
+          {state.errors.map((error, index) => (
+            <li key={`${error.code ?? "error"}-${error.field ?? "field"}-${index}`}>
+              {[error.field, error.code, error.message].filter(Boolean).join(" - ")}
+            </li>
+          ))}
+        </ul>
+      </article>
+    );
+  }
+  if (state.status === "unavailable") {
+    return (
+      <article role="status" style={alertStyle}>
+        <strong>Customization unavailable</strong>
+        <p style={mutedTextStyle}>{state.message}</p>
+      </article>
+    );
+  }
+  if (state.status === "loading") {
+    return <p style={mutedTextStyle}>Loading customization...</p>;
+  }
+  return <p style={mutedTextStyle}>{state.message}</p>;
+}
+
+function CustomizationEditor({
+  draft,
+  onUpdateDraft,
+}: {
+  draft: CustomizationEditorDraft;
+  onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
+}) {
+  function updateFieldHint(index: number, patch: Partial<FieldHintDraft>) {
+    onUpdateDraft((current) => ({
+      ...current,
+      fieldHints: current.fieldHints.map((field, i) => (i === index ? { ...field, ...patch } : field)),
+    }));
+  }
+
+  function moveFieldHint(index: number, direction: -1 | 1) {
+    onUpdateDraft((current) => ({ ...current, fieldHints: moveItem(current.fieldHints, index, direction) }));
+  }
+
+  function moveGroup(index: number, direction: -1 | 1) {
+    onUpdateDraft((current) => ({ ...current, groups: moveItem(current.groups, index, direction) }));
+  }
+
+  function addGroup() {
+    onUpdateDraft((current) => ({
+      ...current,
+      groups: [...current.groups, { group_id: `group-${current.groups.length + 1}`, label: "", description: "" }],
+    }));
+  }
+
+  function updateGroup(index: number, patch: Partial<GroupDraft>) {
+    onUpdateDraft((current) => ({
+      ...current,
+      groups: current.groups.map((group, i) => (i === index ? { ...group, ...patch } : group)),
+    }));
+  }
+
+  function removeGroup(groupId: string) {
+    onUpdateDraft((current) => ({
+      groups: current.groups.filter((group) => group.group_id !== groupId),
+      fieldHints: current.fieldHints.map((field) => (field.group === groupId ? { ...field, group: "" } : field)),
+    }));
+  }
+
+  return (
+    <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
+      <section aria-label="Groups" style={readOnlyFieldStyle}>
+        <div style={buttonRowStyle}>
+          <span style={labelStyle}>Groups</span>
+          <button onClick={addGroup} style={secondaryButtonStyle} type="button">
+            Add group
+          </button>
+        </div>
+        {draft.groups.length === 0 ? (
+          <p style={mutedTextStyle}>No groups defined. Fields without a group render ungrouped.</p>
+        ) : (
+          <div style={{ display: "grid", gap: "var(--atlas-space-3)" }}>
+            {draft.groups.map((group, index) => (
+              <div key={group.group_id} style={{ ...panelStyle, padding: "var(--atlas-space-3)" }}>
+                <div style={buttonRowStyle}>
+                  <button
+                    disabled={index === 0}
+                    onClick={() => moveGroup(index, -1)}
+                    style={index === 0 ? disabledButtonStyle : secondaryButtonStyle}
+                    type="button"
+                  >
+                    Move up
+                  </button>
+                  <button
+                    disabled={index === draft.groups.length - 1}
+                    onClick={() => moveGroup(index, 1)}
+                    style={index === draft.groups.length - 1 ? disabledButtonStyle : secondaryButtonStyle}
+                    type="button"
+                  >
+                    Move down
+                  </button>
+                  <button onClick={() => removeGroup(group.group_id)} style={secondaryButtonStyle} type="button">
+                    Remove
+                  </button>
+                </div>
+                <div style={twoColumnGridStyle}>
+                  <TextField label="Group ID" onChange={(value) => updateGroup(index, { group_id: value })} value={group.group_id} />
+                  <TextField label="Label" onChange={(value) => updateGroup(index, { label: value })} value={group.label} />
+                </div>
+                <TextField
+                  label="Description"
+                  onChange={(value) => updateGroup(index, { description: value })}
+                  value={group.description}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section aria-label="Field presentation" style={readOnlyFieldStyle}>
+        <span style={labelStyle}>Fields</span>
+        {draft.fieldHints.length === 0 ? (
+          <p style={mutedTextStyle}>Contract field list unavailable.</p>
+        ) : (
+          <div style={{ display: "grid", gap: "var(--atlas-space-3)" }}>
+            {draft.fieldHints.map((field, index) => (
+              <div key={field.field_name} style={{ ...panelStyle, padding: "var(--atlas-space-3)" }}>
+                <div style={buttonRowStyle}>
+                  <strong>{field.field_name}</strong>
+                  {field.required && <span style={tagStyle}>required</span>}
+                  <button
+                    disabled={index === 0}
+                    onClick={() => moveFieldHint(index, -1)}
+                    style={index === 0 ? disabledButtonStyle : secondaryButtonStyle}
+                    type="button"
+                  >
+                    Move up
+                  </button>
+                  <button
+                    disabled={index === draft.fieldHints.length - 1}
+                    onClick={() => moveFieldHint(index, 1)}
+                    style={index === draft.fieldHints.length - 1 ? disabledButtonStyle : secondaryButtonStyle}
+                    type="button"
+                  >
+                    Move down
+                  </button>
+                </div>
+                <div style={twoColumnGridStyle}>
+                  <TextField
+                    label="Display label"
+                    onChange={(value) => updateFieldHint(index, { display_label: value })}
+                    value={field.display_label}
+                  />
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Group</span>
+                    <select
+                      onChange={(event) => updateFieldHint(index, { group: event.target.value })}
+                      style={inputStyle}
+                      value={field.group}
+                    >
+                      <option value="">No group</option>
+                      {draft.groups.map((group) => (
+                        <option key={group.group_id} value={group.group_id}>
+                          {group.label || group.group_id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>Explanatory copy</span>
+                  <textarea
+                    onChange={(event) => updateFieldHint(index, { explanatory_copy: event.target.value })}
+                    style={textareaStyle}
+                    value={field.explanatory_copy}
+                  />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "var(--atlas-space-2)" }}>
+                  <input
+                    checked={field.hidden}
+                    disabled={field.required}
+                    onChange={(event) => updateFieldHint(index, { hidden: event.target.checked })}
+                    type="checkbox"
+                  />
+                  <span style={mutedTextStyle}>
+                    {field.required ? "Required fields cannot be hidden." : "Hidden"}
+                  </span>
+                </label>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function InferenceFormTab({
   form,
   setField,
   readOnlyData,
+  customizationEditorState,
+  onLoadCustomization,
+  onSaveCustomization,
+  onUpdateDraft,
 }: {
   form: DraftForm;
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
   readOnlyData: ReadOnlyData;
+  customizationEditorState: CustomizationEditorState;
+  onLoadCustomization: () => void;
+  onSaveCustomization: () => void;
+  onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
 }) {
-  const contract = stateValue(readOnlyData.contract);
   const views = stateValue(readOnlyData.views) ?? [];
-  const fields = contractFields(contract);
+  const draft =
+    customizationEditorState.status === "ready" ||
+    customizationEditorState.status === "saved" ||
+    customizationEditorState.status === "invalid"
+      ? customizationEditorState.draft
+      : null;
+
   return (
     <>
       <div>
         <h2 style={{ marginTop: 0 }}>Inference Form</h2>
-        <p style={mutedTextStyle}>The draft stores only an optional predict view binding; contract fields are read-only.</p>
+        <p style={mutedTextStyle}>
+          Edit the grouping, ordering, and visibility of the bound predict view's fields. Contracts remain the
+          source of truth for field existence and validation; this editor can only organize presentation.
+        </p>
       </div>
       <label style={fieldStyle}>
         <span style={labelStyle}>Bound predict view</span>
@@ -855,20 +1229,24 @@ function InferenceFormTab({
           ))}
         </select>
       </label>
-      <section aria-label="Read-only contract fields" style={readOnlyFieldStyle}>
-        <span style={labelStyle}>Contract fields</span>
-        {fields.length === 0 ? (
-          <p style={mutedTextStyle}>Contract field list unavailable.</p>
-        ) : (
-          <ul style={{ ...tagListStyle, marginTop: "var(--atlas-space-2)" }}>
-            {fields.slice(0, 20).map((field, index) => (
-              <li key={`${field.name ?? "field"}-${index}`} style={tagStyle}>
-                {field.name ?? "Unnamed"} {field.required ? "(required)" : ""}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+
+      <CustomizationStatusPanel state={customizationEditorState} />
+
+      <div style={buttonRowStyle}>
+        <button
+          disabled={!form.bound_predict_view_id}
+          onClick={onLoadCustomization}
+          style={!form.bound_predict_view_id ? disabledButtonStyle : secondaryButtonStyle}
+          type="button"
+        >
+          Load customization
+        </button>
+        <button disabled={!draft} onClick={onSaveCustomization} style={!draft ? disabledButtonStyle : actionButtonStyle} type="button">
+          Save customization
+        </button>
+      </div>
+
+      {draft && <CustomizationEditor draft={draft} onUpdateDraft={onUpdateDraft} />}
     </>
   );
 }
@@ -950,7 +1328,12 @@ function DatasetDetailLivePreview({
   const modelCard = stateValue(readOnlyData.modelCard);
   const visualizations = toVisualizationsPayload(stateValue(readOnlyData.visualizations));
 
-  const preview = projectDatasetDetailPreview(dataset, form, context, contract, metrics);
+  // livePreviewProjection.ts's projectDatasetDetailPreview expects its own
+  // locally-declared {fields?} shape (out of this issue's edit scope); adapt
+  // the real {features} contract shape into that shape here rather than
+  // modifying livePreviewProjection.ts.
+  const previewContract = contract ? { fields: contract.features } : null;
+  const preview = projectDatasetDetailPreview(dataset, form, context, previewContract, metrics);
   const modelCardPreview = projectModelCardPreview(modelCard);
 
   return (
@@ -983,21 +1366,60 @@ function ResultCardLivePreview({ form }: { form: DraftForm }) {
   );
 }
 
+function FormLayoutLivePreview({
+  readOnlyData,
+  selectedSlug,
+  customizationEditorState,
+}: {
+  readOnlyData: ReadOnlyData;
+  selectedSlug: string;
+  customizationEditorState: CustomizationEditorState;
+}) {
+  const contract = stateValue(readOnlyData.contract);
+  const draft =
+    customizationEditorState.status === "ready" ||
+    customizationEditorState.status === "saved" ||
+    customizationEditorState.status === "invalid"
+      ? customizationEditorState.draft
+      : null;
+
+  if (!contract) {
+    return <p style={mutedTextStyle}>Contract fields are unavailable for this dataset.</p>;
+  }
+  if (!draft) {
+    return (
+      <p style={mutedTextStyle}>
+        Load a predict view's customization in the Inference Form tab to preview its layout here.
+      </p>
+    );
+  }
+
+  const { field_hints, groups } = customizationDraftToRecord(draft);
+  const customization: PredictViewCustomization = { field_hints, groups };
+
+  return <InferenceForm contract={contract} customization={customization} previewMode slug={selectedSlug} />;
+}
+
 function LivePreviewTab({
   dataset,
   form,
   readOnlyData,
+  selectedSlug,
+  customizationEditorState,
 }: {
   dataset?: DatasetListing;
   form: DraftForm;
   readOnlyData: ReadOnlyData;
+  selectedSlug: string;
+  customizationEditorState: CustomizationEditorState;
 }) {
-  const [previewMode, setPreviewMode] = useState<"detail" | "card" | "result">("detail");
+  const [previewMode, setPreviewMode] = useState<"detail" | "card" | "result" | "form">("detail");
 
-  const previewModeLabels: Record<"detail" | "card" | "result", string> = {
+  const previewModeLabels: Record<"detail" | "card" | "result" | "form", string> = {
     detail: "Dataset detail",
     card: "Home card",
     result: "Result card",
+    form: "Inference form layout",
   };
 
   return (
@@ -1006,11 +1428,12 @@ function LivePreviewTab({
         <h2 style={{ marginTop: 0 }}>Live Preview</h2>
         <p style={mutedTextStyle}>
           Preview renders the same shared public Home card and Dataset Detail components used on the public site,
-          fed by the current draft and the read-only Atlas context already loaded above.
+          fed by the current draft and the read-only Atlas context already loaded above. Inference form layout
+          reuses the real InferenceForm rendering logic in a non-submitting preview mode.
         </p>
       </div>
       <div aria-label="Preview mode" style={buttonRowStyle}>
-        {(["detail", "card", "result"] as const).map((mode) => (
+        {(["detail", "card", "result", "form"] as const).map((mode) => (
           <button
             key={mode}
             onClick={() => setPreviewMode(mode)}
@@ -1031,6 +1454,13 @@ function LivePreviewTab({
           <DatasetDetailLivePreview dataset={dataset} form={form} readOnlyData={readOnlyData} />
         )}
         {previewMode === "result" && <ResultCardLivePreview form={form} />}
+        {previewMode === "form" && (
+          <FormLayoutLivePreview
+            customizationEditorState={customizationEditorState}
+            readOnlyData={readOnlyData}
+            selectedSlug={selectedSlug}
+          />
+        )}
       </div>
     </>
   );
@@ -1043,6 +1473,11 @@ function renderSelectedTab(
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void,
   readOnlyData: ReadOnlyData,
   draftState: DraftState,
+  selectedSlug: string,
+  customizationEditorState: CustomizationEditorState,
+  onLoadCustomization: () => void,
+  onSaveCustomization: () => void,
+  onUpdateCustomizationDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void,
 ) {
   switch (selectedTab) {
     case "metadata-card":
@@ -1050,13 +1485,31 @@ function renderSelectedTab(
     case "theme-preset":
       return <ThemePresetTab form={form} setField={setField} />;
     case "inference-form":
-      return <InferenceFormTab form={form} readOnlyData={readOnlyData} setField={setField} />;
+      return (
+        <InferenceFormTab
+          customizationEditorState={customizationEditorState}
+          form={form}
+          onLoadCustomization={onLoadCustomization}
+          onSaveCustomization={onSaveCustomization}
+          onUpdateDraft={onUpdateCustomizationDraft}
+          readOnlyData={readOnlyData}
+          setField={setField}
+        />
+      );
     case "result-card":
       return <ResultCardTab form={form} setField={setField} />;
     case "publishing":
       return <PublishingTab draftState={draftState} />;
     case "live-preview":
-      return <LivePreviewTab dataset={dataset} form={form} readOnlyData={readOnlyData} />;
+      return (
+        <LivePreviewTab
+          customizationEditorState={customizationEditorState}
+          dataset={dataset}
+          form={form}
+          readOnlyData={readOnlyData}
+          selectedSlug={selectedSlug}
+        />
+      );
     case "public-content":
     default:
       return <PublicContentTab dataset={dataset} form={form} setField={setField} />;
@@ -1074,6 +1527,9 @@ export default function DatasetAdminPage() {
   });
   const [draftForm, setDraftForm] = useState<DraftForm>(emptyDraftForm());
   const [readOnlyData, setReadOnlyData] = useState<ReadOnlyData>(emptyReadOnlyData);
+  const [customizationEditorState, setCustomizationEditorState] = useState<CustomizationEditorState>(
+    emptyCustomizationEditorState,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1113,6 +1569,7 @@ export default function DatasetAdminPage() {
     if (!selectedSlug) {
       setReadOnlyData(emptyReadOnlyData);
       setDraftForm(emptyDraftForm());
+      setCustomizationEditorState(emptyCustomizationEditorState);
       return;
     }
 
@@ -1121,6 +1578,7 @@ export default function DatasetAdminPage() {
       status: "idle",
       message: "Load the private/admin draft before saving profile edits.",
     });
+    setCustomizationEditorState(emptyCustomizationEditorState);
 
     const controller = new AbortController();
     setReadOnlyData({
@@ -1131,7 +1589,6 @@ export default function DatasetAdminPage() {
       modelCard: { status: "loading" },
       visualizations: { status: "loading" },
       views: { status: "loading" },
-      customization: { status: "idle" },
     });
 
     async function loadReadOnlyAtlasValues() {
@@ -1145,14 +1602,6 @@ export default function DatasetAdminPage() {
         fetchJson<{ visualizations: unknown }>(`/datasets/${encoded}/visualizations`, controller.signal),
         fetchJson<{ views: PredictView[] }>(`/datasets/${encoded}/views`, controller.signal),
       ]);
-      const views = viewsResponse.status === "ready" ? viewsResponse.data.views : [];
-      const firstView = views.find((view) => typeof view.view_id === "string");
-      const customization = firstView?.view_id
-        ? await fetchJson<unknown>(
-            `/datasets/${encoded}/views/${encodeURIComponent(firstView.view_id)}/customization`,
-            controller.signal,
-          )
-        : ({ status: "idle" } as SectionState<unknown>);
 
       setReadOnlyData({
         dataset,
@@ -1162,7 +1611,6 @@ export default function DatasetAdminPage() {
         modelCard: mapSection(modelCard, (data) => data.model_card),
         visualizations: mapSection(visualizations, (data) => data.visualizations),
         views: mapSection(viewsResponse, (data) => data.views),
-        customization,
       });
     }
 
@@ -1276,6 +1724,159 @@ export default function DatasetAdminPage() {
       });
   }
 
+  const boundPredictViewId = draftForm.bound_predict_view_id;
+
+  useEffect(() => {
+    if (!boundPredictViewId) {
+      setCustomizationEditorState({ status: "no_view_bound" });
+      return;
+    }
+    setCustomizationEditorState({
+      status: "idle",
+      message: "Enter an operator token and load the customization for the bound predict view.",
+    });
+  }, [boundPredictViewId]);
+
+  function loadCustomization() {
+    if (!selectedSlug || !boundPredictViewId) {
+      return;
+    }
+    const token = adminToken.trim();
+    if (!token) {
+      setCustomizationEditorState({
+        status: "unavailable",
+        message: "Enter the operator token to request the predict view customization.",
+      });
+      return;
+    }
+
+    const contractState = stateValue(readOnlyData.contract);
+    const fields = contractFields(contractState);
+
+    setCustomizationEditorState({ status: "loading" });
+    fetch(
+      `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
+      { headers: { "X-Admin-Token": token } },
+    )
+      .then((response) => {
+        if (response.status === 404) {
+          setCustomizationEditorState({
+            status: "unavailable",
+            message: "Customization endpoint unavailable for this session. Confirm the operator token and API configuration.",
+          });
+          return null;
+        }
+        if (!response.ok) {
+          setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded from the admin API." });
+          return null;
+        }
+        return response.json() as Promise<{
+          customization_exists: boolean;
+          customization: PredictViewCustomization | null;
+        }>;
+      })
+      .then((data) => {
+        if (!data) {
+          return;
+        }
+        const draft = data.customization
+          ? customizationDraftFromRecord(data.customization, fields)
+          : emptyCustomizationDraft(fields);
+        setCustomizationEditorState({ status: "ready", draft, recordExists: data.customization_exists });
+      })
+      .catch(() => {
+        setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded. Check API reachability." });
+      });
+  }
+
+  function saveCustomization() {
+    if (!selectedSlug || !boundPredictViewId) {
+      return;
+    }
+    if (customizationEditorState.status !== "ready" && customizationEditorState.status !== "saved" && customizationEditorState.status !== "invalid") {
+      return;
+    }
+    const token = adminToken.trim();
+    if (!token) {
+      setCustomizationEditorState({
+        status: "unavailable",
+        message: "Enter the operator token before saving the customization.",
+      });
+      return;
+    }
+
+    const draft = customizationEditorState.draft;
+    const { field_hints, groups } = customizationDraftToRecord(draft);
+    const payload = {
+      schema_version: "1.0.0",
+      view_id: boundPredictViewId,
+      dataset_slug: selectedSlug,
+      field_hints,
+      groups,
+      contract_precedence: {
+        canonical_contracts_are_source_of_truth: true,
+        customization_defines_runtime_validation: false,
+        customization_duplicates_contract: false,
+      },
+    };
+
+    fetch(
+      `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+        body: JSON.stringify(payload),
+      },
+    )
+      .then((response) => {
+        if (response.status === 404) {
+          setCustomizationEditorState({
+            status: "unavailable",
+            message: "Customization endpoint unavailable for this session. Confirm the operator token and API configuration.",
+          });
+          return null;
+        }
+        return response.json().then((body: { saved?: boolean; customization?: PredictViewCustomization; errors?: CustomizationError[] }) => ({
+          ok: response.ok,
+          body,
+        }));
+      })
+      .then((result) => {
+        if (!result) {
+          return;
+        }
+        if (!result.ok || !result.body.saved) {
+          setCustomizationEditorState({
+            status: "invalid",
+            draft,
+            errors: result.body.errors ?? [{ message: "Customization failed validation." }],
+          });
+          return;
+        }
+        const contractState = stateValue(readOnlyData.contract);
+        const fields = contractFields(contractState);
+        const savedDraft = result.body.customization
+          ? customizationDraftFromRecord(result.body.customization, fields)
+          : draft;
+        setCustomizationEditorState({ status: "saved", draft: savedDraft });
+      })
+      .catch(() => {
+        setCustomizationEditorState({ status: "unavailable", message: "Customization could not be saved. Check API reachability." });
+      });
+  }
+
+  function updateCustomizationDraft(updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) {
+    setCustomizationEditorState((current) => {
+      if (current.status === "ready") {
+        return { status: "ready", draft: updater(current.draft), recordExists: current.recordExists };
+      }
+      if (current.status === "saved" || current.status === "invalid") {
+        return { status: "ready", draft: updater(current.draft), recordExists: true };
+      }
+      return current;
+    });
+  }
+
   return (
     <section aria-labelledby="dataset-admin-title" style={pageStyle}>
       <header style={headerStyle}>
@@ -1355,7 +1956,19 @@ export default function DatasetAdminPage() {
           role="tabpanel"
           style={tabPanelStyle}
         >
-          {renderSelectedTab(selectedTab, selectedDataset, draftForm, setField, readOnlyData, draftState)}
+          {renderSelectedTab(
+            selectedTab,
+            selectedDataset,
+            draftForm,
+            setField,
+            readOnlyData,
+            draftState,
+            selectedSlug,
+            customizationEditorState,
+            loadCustomization,
+            saveCustomization,
+            updateCustomizationDraft,
+          )}
         </div>
       </section>
     </section>

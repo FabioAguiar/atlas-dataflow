@@ -68,6 +68,10 @@ from public_predict_view_customization_loader import (  # noqa: E402
 )
 from admin_runs import list_admin_run_summaries  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
+from admin_predict_view_customizations import (  # noqa: E402
+    read_predict_view_customization,
+    save_predict_view_customization,
+)
 
 METRICS_UNAVAILABLE = PublicError(
     status_code=503,
@@ -130,6 +134,20 @@ PROFILE_DRAFT_INVALID = PublicError(
     error_type="profile_draft_invalid",
     error_code="PROFILE_DRAFT_INVALID",
     message="The profile draft failed validation.",
+)
+
+PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID = PublicError(
+    status_code=422,
+    error_type="predict_view_customization_identifier_invalid",
+    error_code="PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID",
+    message="The dataset_slug or view_id is missing or does not match the required pattern.",
+)
+
+PREDICT_VIEW_CUSTOMIZATION_INVALID = PublicError(
+    status_code=422,
+    error_type="predict_view_customization_invalid",
+    error_code="PREDICT_VIEW_CUSTOMIZATION_INVALID",
+    message="The predict view customization failed validation.",
 )
 from registry.list import list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -550,6 +568,33 @@ def put_admin_profile_draft(
 
     if not result["saved"]:
         return PROFILE_DRAFT_INVALID.response(errors=result["errors"])
+
+    return result
+
+
+@app.get("/admin/datasets/{dataset_slug}/views/{view_id}/customization")
+def get_admin_predict_view_customization(dataset_slug: str, view_id: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    try:
+        return read_predict_view_customization(dataset_slug, view_id)
+    except ValueError:
+        return public_error_response(PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID)
+
+
+@app.put("/admin/datasets/{dataset_slug}/views/{view_id}/customization")
+def put_admin_predict_view_customization(
+    dataset_slug: str, view_id: str, request: Request, customization: dict = Body(...)
+):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    try:
+        result = save_predict_view_customization(dataset_slug, view_id, customization)
+    except ValueError:
+        return public_error_response(PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID)
+
+    if not result["saved"]:
+        return PREDICT_VIEW_CUSTOMIZATION_INVALID.response(errors=result["errors"])
 
     return result
 

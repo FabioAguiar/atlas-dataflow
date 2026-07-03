@@ -75,6 +75,16 @@ type Props = {
   contract: ContractPayload;
   slug: string;
   customization?: PredictViewCustomization;
+  /**
+   * When true, disables the real POST /datasets/{slug}/inference submit
+   * path (and the InferenceResult/ErrorState outcome states) so this
+   * component can be reused as a non-executing Live Preview of the current
+   * grouping/ordering/visibility layout. All rendering logic (buildHintMap,
+   * presentationSortKey, renderGrouped, renderFields, hidden-field
+   * suppression) is reused unchanged. Defaults to false, so existing real
+   * callers (e.g. DatasetViewPage.tsx) are unaffected.
+   */
+  previewMode?: boolean;
 };
 
 function buildHintMap(customization: PredictViewCustomization | undefined): Map<string, FieldHint> {
@@ -135,7 +145,7 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
   );
 }
 
-export default function InferenceForm({ contract, slug, customization }: Props) {
+export default function InferenceForm({ contract, slug, customization, previewMode = false }: Props) {
   const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
 
   const hintMap = buildHintMap(customization);
@@ -148,6 +158,11 @@ export default function InferenceForm({ contract, slug, customization }: Props) 
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (previewMode) {
+      return;
+    }
+
     setSubmission({ status: "submitting" });
 
     const form = event.currentTarget;
@@ -249,15 +264,19 @@ export default function InferenceForm({ contract, slug, customization }: Props) 
       <h2>Make a Prediction</h2>
       <form onSubmit={handleSubmit}>
         {hasGroups ? renderGrouped() : renderFields(sortedForPresentation)}
-        <button type="submit" disabled={submission.status === "submitting"}>
-          {submission.status === "submitting" ? "Submitting…" : "Submit"}
+        <button type="submit" disabled={previewMode || submission.status === "submitting"}>
+          {previewMode
+            ? "Preview only"
+            : submission.status === "submitting"
+              ? "Submitting…"
+              : "Submit"}
         </button>
       </form>
 
-      {submission.status === "result" && (
+      {!previewMode && submission.status === "result" && (
         <InferenceResult result={submission.data} />
       )}
-      {submission.status === "error" && (
+      {!previewMode && submission.status === "error" && (
         <ErrorState message={submission.message} />
       )}
     </section>

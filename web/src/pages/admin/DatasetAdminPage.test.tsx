@@ -241,6 +241,14 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
     expect(screen.getByText("Draft")).toBeInTheDocument();
 
+    const callsBeforePreview = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Preview Draft" }));
+    expect(screen.getByRole("heading", { name: "Curated churn profile" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls).toHaveLength(callsBeforePreview);
+    expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`))).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
     expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
     expect(screen.getByText("Draft")).toBeInTheDocument();

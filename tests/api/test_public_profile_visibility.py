@@ -35,6 +35,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 API_ROOT = REPO_ROOT / "api"
@@ -43,6 +44,7 @@ sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
 from fastapi import Request  # noqa: E402
+from public_context_loader import PublicContextUnavailableError  # noqa: E402
 from public_profile_visibility import (  # noqa: E402
     resolve_dataset_visibility,
     resolve_public_presentation_overlay,
@@ -52,6 +54,7 @@ from registry.dataset_public_profile_publication_store import (  # noqa: E402
     set_visibility,
 )
 from registry.list import _snapshot_overlay_fields  # noqa: E402
+from registry.resolve import ReleaseUnavailableError  # noqa: E402
 
 _SEEDED_DATASET_SLUGS = ["telco-customer-churn", "bank-marketing"]
 _TARGET_SLUG = "telco-customer-churn"
@@ -495,6 +498,129 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
         expected = dict(_CURATED_OVERLAY)
         assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == expected
         assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == expected
+
+
+# ---------------------------------------------------------------------------
+# problem_type resolution for M39-02: GET /datasets and GET /datasets/{slug}
+# must include a real, fail-open problem_type sourced from each dataset's
+# active-release public context (api/public_context_loader.py), the same
+# source GET /datasets/{slug}/context already uses. Unlike the M39-04 overlay
+# fields above (which come from the published snapshot store), problem_type
+# has no snapshot-path equivalent, so it is resolved directly in api/main.py's
+# _resolve_problem_type helper.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_problem_type_returns_value_when_context_available():
+    original_load_public_context = api_main.load_public_context
+    api_main.load_public_context = lambda active_release: {"problem_type": "binary_classification"}
+    try:
+        assert api_main._resolve_problem_type(_TARGET_SLUG) == "binary_classification"
+    finally:
+        api_main.load_public_context = original_load_public_context
+
+
+def test_resolve_problem_type_none_when_context_unavailable():
+    original_load_public_context = api_main.load_public_context
+
+    def raise_context_unavailable(_active_release):
+        raise PublicContextUnavailableError("unavailable")
+
+    api_main.load_public_context = raise_context_unavailable
+    try:
+        assert api_main._resolve_problem_type(_TARGET_SLUG) is None
+    finally:
+        api_main.load_public_context = original_load_public_context
+
+
+def test_resolve_problem_type_none_when_dataset_unknown():
+    assert api_main._resolve_problem_type("dataset-that-does-not-exist") is None
+
+
+def test_resolve_problem_type_none_when_release_unavailable():
+    original_resolve_dataset = api_main.resolve_dataset
+
+    def raise_release_unavailable(_dataset_slug):
+        raise ReleaseUnavailableError("missing release")
+
+    api_main.resolve_dataset = raise_release_unavailable
+    try:
+        assert api_main._resolve_problem_type(_TARGET_SLUG) is None
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+
+
+def test_resolve_problem_type_none_when_value_not_a_string():
+    original_load_public_context = api_main.load_public_context
+    api_main.load_public_context = lambda active_release: {"problem_type": 123}
+    try:
+        assert api_main._resolve_problem_type(_TARGET_SLUG) is None
+    finally:
+        api_main.load_public_context = original_load_public_context
+
+
+def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset():
+    original_visibility = api_main.resolve_dataset_visibility
+    original_load_public_context = api_main.load_public_context
+
+    api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.load_public_context = lambda active_release: {"problem_type": "binary_classification"}
+    try:
+        response = api_main.list_datasets_endpoint()
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.load_public_context = original_load_public_context
+
+    assert set(_SEEDED_DATASET_SLUGS) <= {entry["dataset_slug"] for entry in response["datasets"]}
+    for entry in response["datasets"]:
+        assert entry["problem_type"] == "binary_classification"
+
+
+def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excluding_it():
+    """
+    One dataset's release/context lookup failing must not exclude it from the
+    listing -- only that dataset's own problem_type resolves to None, and
+    every other dataset in the same listing call is unaffected.
+    """
+    original_visibility = api_main.resolve_dataset_visibility
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_public_context = api_main.load_public_context
+
+    def fake_resolve_dataset(dataset_slug):
+        return SimpleNamespace(dataset_slug=dataset_slug, active_release="release-fake-001")
+
+    def fake_load_public_context(active_release):
+        raise PublicContextUnavailableError("unavailable")
+
+    api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.resolve_dataset = fake_resolve_dataset
+    api_main.load_public_context = fake_load_public_context
+    try:
+        response = api_main.list_datasets_endpoint()
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_public_context = original_load_public_context
+
+    slugs = {entry["dataset_slug"] for entry in response["datasets"]}
+    assert set(_SEEDED_DATASET_SLUGS) <= slugs
+    for entry in response["datasets"]:
+        assert entry["problem_type"] is None
+
+
+def test_get_dataset_includes_problem_type_when_available():
+    original_visibility = api_main.resolve_dataset_visibility
+    original_load_public_context = api_main.load_public_context
+
+    api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.load_public_context = lambda active_release: {"problem_type": "regression"}
+    try:
+        response = api_main.get_dataset(_TARGET_SLUG)
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.load_public_context = original_load_public_context
+
+    assert response["problem_type"] == "regression"
 
 
 if __name__ == "__main__":

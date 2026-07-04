@@ -21,6 +21,7 @@ type DatasetListing = {
   display_subtitle?: string | null;
   home_card_icon?: string | null;
   short_description?: string | null;
+  problem_type?: string | null;
 };
 
 type DatasetListingResponse = {
@@ -130,6 +131,7 @@ export default function HomePage() {
                   summary={ds.short_description || ds.display_subtitle || ds.summary}
                   domain={ds.domain}
                   tags={ds.tags}
+                  problemType={ds.problem_type ?? undefined}
                   iconOverride={resolveDatasetIcon(ds.home_card_icon, ds.domain, ds.tags)}
                 />
               ))}

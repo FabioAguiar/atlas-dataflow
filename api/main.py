@@ -200,6 +200,24 @@ from registry.resolve import (  # noqa: E402
 )
 
 
+def _resolve_problem_type(dataset_slug: str) -> str | None:
+    """
+    Resolve the real problem_type for dataset_slug via its active release's
+    public context, defaulting to None (fail-open) whenever the dataset,
+    release, or context is unavailable rather than raising or blocking the
+    entire listing. Kept in the api layer (not registry/list.py) so it
+    reuses load_public_context directly without introducing a registry ->
+    api dependency.
+    """
+    try:
+        resolved = resolve_dataset(dataset_slug)
+        context = load_public_context(resolved.active_release)
+    except (DatasetUnavailableError, ReleaseUnavailableError, RegistryInvalidError, PublicContextUnavailableError):
+        return None
+    problem_type = context.get("problem_type") if isinstance(context, dict) else None
+    return problem_type if isinstance(problem_type, str) else None
+
+
 def _inference_releases_root() -> Path:
     env_root = os.environ.get("RELEASES_ROOT")
     if env_root:
@@ -306,7 +324,12 @@ def list_datasets_endpoint():
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
     visible_datasets = [d for d in datasets if resolve_dataset_visibility(d.dataset_slug)]
-    return {"datasets": [d._asdict() for d in visible_datasets]}
+    return {
+        "datasets": [
+            {**d._asdict(), "problem_type": _resolve_problem_type(d.dataset_slug)}
+            for d in visible_datasets
+        ]
+    }
 
 
 @app.get("/datasets/{dataset_slug}")
@@ -339,6 +362,7 @@ def get_dataset(dataset_slug: str):
                 "home_card_icon": listed.home_card_icon,
                 "short_description": listed.short_description,
                 "theme_preset": listed.theme_preset,
+                "problem_type": _resolve_problem_type(listed.dataset_slug),
             }
     return public_error_response(DATASET_NOT_FOUND)
 

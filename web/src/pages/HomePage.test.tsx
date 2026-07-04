@@ -26,6 +26,8 @@ type DatasetListingFixture = {
   domain: string;
   visibility: string;
   tags: string[];
+  problem_type?: string | null;
+  home_card_icon?: string | null;
 };
 
 // Mirrors the real GET /datasets response envelope confirmed at
@@ -48,7 +50,7 @@ function installDatasetsFetchMock(datasets: DatasetListingFixture[]) {
 }
 
 function renderHomePage() {
-  render(
+  return render(
     <MemoryRouter initialEntries={["/"]}>
       <HomePage />
     </MemoryRouter>,
@@ -122,5 +124,88 @@ describe("HomePage dataset-count states", () => {
     expect(screen.getByText("Synthetic Demo Dataset Two")).toBeInTheDocument();
     expect(screen.getByText("Synthetic Demo Dataset Three")).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: /Explorar dataset/ })).toHaveLength(3);
+  });
+});
+
+// Mirrors DatasetCard.tsx's DATASET_ICONS path data so tests can prove which
+// icon actually rendered -- this component has no test-id convention
+// distinguishing TelecomIcon/BankIcon/GenericDatasetIcon in the DOM today.
+const TELECOM_ICON_PATH_D =
+  "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3.5 19a4.5 4.5 0 0 1 9 0m-1.5-5.5A5.5 5.5 0 0 1 20.5 19";
+const BANK_ICON_PATH_D = "M4 10h16L12 5 4 10Zm2 0v8m4-8v8m4-8v8m4-8v8M4 19h16";
+
+describe("HomePage problem_type and curated icon rendering", () => {
+  it("renders the real analysis-type label when problem_type is present", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "synthetic-classification-dataset",
+        title: "Synthetic Classification Dataset",
+        summary: "Synthetic dataset with a curated problem_type.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: ["synthetic"],
+        problem_type: "binary_classification",
+      },
+    ]);
+
+    renderHomePage();
+
+    expect(await screen.findByText("Classificação binária")).toBeInTheDocument();
+  });
+
+  it("falls back to the default analysis-type label when problem_type is absent", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "synthetic-no-problem-type-dataset",
+        title: "Synthetic No Problem Type Dataset",
+        summary: "Synthetic dataset with no curated problem_type.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: ["synthetic"],
+      },
+    ]);
+
+    renderHomePage();
+
+    expect(await screen.findByText("Análise preditiva")).toBeInTheDocument();
+  });
+
+  it("prefers a curated home_card_icon over the domain/tags keyword-derived fallback", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "synthetic-curated-icon-dataset",
+        title: "Synthetic Curated Icon Dataset",
+        summary: "Domain keywords would suggest telecom, but home_card_icon is curated as bank.",
+        domain: "telecom",
+        visibility: "public",
+        tags: ["telecom"],
+        home_card_icon: "bank",
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Synthetic Curated Icon Dataset");
+
+    const iconPath = container.querySelector(".dataset-card__icon path");
+    expect(iconPath?.getAttribute("d")).toBe(BANK_ICON_PATH_D);
+  });
+
+  it("falls back to the domain/tags keyword-derived icon when no curated home_card_icon is present", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "synthetic-fallback-icon-dataset",
+        title: "Synthetic Fallback Icon Dataset",
+        summary: "No curated home_card_icon; domain keywords should drive the fallback.",
+        domain: "telecom",
+        visibility: "public",
+        tags: ["telecom"],
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Synthetic Fallback Icon Dataset");
+
+    const iconPath = container.querySelector(".dataset-card__icon path");
+    expect(iconPath?.getAttribute("d")).toBe(TELECOM_ICON_PATH_D);
   });
 });

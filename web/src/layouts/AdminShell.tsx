@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
+import { AdminSettingsProvider, useAdminSettings } from "./AdminSettingsContext";
+
 const navItems = [
   { label: "Dashboard", to: "/admin" },
   { label: "Dataset Admin", to: "/admin/dataset-admin" },
@@ -101,79 +103,89 @@ const mainStyle: CSSProperties = {
   padding: "var(--atlas-space-8)",
 };
 
+function AdminProfileBlock() {
+  const { displayName } = useAdminSettings();
+
+  return (
+    <section aria-label="Current admin profile" style={profileBlockStyle}>
+      <span style={{ color: "var(--atlas-color-text-subtle)", fontSize: "var(--atlas-text-xs)", fontWeight: 800 }}>
+        PROFILE
+      </span>
+      <strong style={{ color: "var(--atlas-color-text)" }}>{displayName}</strong>
+      <span style={{ color: "var(--atlas-color-text-muted)", fontSize: "var(--atlas-text-sm)" }}>
+        Static shell state. Profile editing is not available here.
+      </span>
+    </section>
+  );
+}
+
 export default function AdminShell() {
   return (
-    <div style={shellStyle}>
-      <aside aria-label="Private admin navigation" style={sidebarStyle}>
-        <div style={brandStyle}>
-          <strong style={{ color: "var(--atlas-color-text)", fontSize: "var(--atlas-text-lg)" }}>
-            Atlas Admin
-          </strong>
-          <span style={{ color: "var(--atlas-color-text-subtle)", fontSize: "var(--atlas-text-sm)" }}>
-            Internal shell
-          </span>
+    <AdminSettingsProvider>
+      <div style={shellStyle}>
+        <aside aria-label="Private admin navigation" style={sidebarStyle}>
+          <div style={brandStyle}>
+            <strong style={{ color: "var(--atlas-color-text)", fontSize: "var(--atlas-text-lg)" }}>
+              Atlas Admin
+            </strong>
+            <span style={{ color: "var(--atlas-color-text-subtle)", fontSize: "var(--atlas-text-sm)" }}>
+              Internal shell
+            </span>
+          </div>
+
+          <nav aria-label="Admin sections" style={navStyle}>
+            {navItems.map((item) => (
+              <NavLink
+                end={item.to === "/admin"}
+                key={item.to}
+                style={({ isActive }) => ({
+                  ...baseNavLinkStyle,
+                  background: isActive ? "var(--atlas-color-accent-muted)" : "transparent",
+                  color: isActive ? "var(--atlas-color-accent-strong)" : "var(--atlas-color-text-muted)",
+                })}
+                to={item.to}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+
+          <AdminProfileBlock />
+        </aside>
+
+        <div style={workspaceStyle}>
+          <header style={headerStyle}>
+            <div>
+              <p
+                style={{
+                  margin: 0,
+                  color: "var(--atlas-color-accent)",
+                  fontSize: "var(--atlas-text-sm)",
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                }}
+              >
+                Private administration
+              </p>
+              <p style={{ margin: 0, color: "var(--atlas-color-text-muted)" }}>
+                Safe navigation structure for future admin workflows.
+              </p>
+            </div>
+            <div aria-label="Admin controls" style={headerControlsStyle}>
+              <button disabled style={disabledControlStyle} type="button">
+                Run discovery private
+              </button>
+              <button disabled style={disabledControlStyle} type="button">
+                Publishing unavailable
+              </button>
+            </div>
+          </header>
+
+          <main style={mainStyle}>
+            <Outlet />
+          </main>
         </div>
-
-        <nav aria-label="Admin sections" style={navStyle}>
-          {navItems.map((item) => (
-            <NavLink
-              end={item.to === "/admin"}
-              key={item.to}
-              style={({ isActive }) => ({
-                ...baseNavLinkStyle,
-                background: isActive ? "var(--atlas-color-accent-muted)" : "transparent",
-                color: isActive ? "var(--atlas-color-accent-strong)" : "var(--atlas-color-text-muted)",
-              })}
-              to={item.to}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-
-        <section aria-label="Current admin profile" style={profileBlockStyle}>
-          <span style={{ color: "var(--atlas-color-text-subtle)", fontSize: "var(--atlas-text-xs)", fontWeight: 800 }}>
-            PROFILE
-          </span>
-          <strong style={{ color: "var(--atlas-color-text)" }}>Internal operator</strong>
-          <span style={{ color: "var(--atlas-color-text-muted)", fontSize: "var(--atlas-text-sm)" }}>
-            Static shell state. Profile editing is not available here.
-          </span>
-        </section>
-      </aside>
-
-      <div style={workspaceStyle}>
-        <header style={headerStyle}>
-          <div>
-            <p
-              style={{
-                margin: 0,
-                color: "var(--atlas-color-accent)",
-                fontSize: "var(--atlas-text-sm)",
-                fontWeight: 800,
-                textTransform: "uppercase",
-              }}
-            >
-              Private administration
-            </p>
-            <p style={{ margin: 0, color: "var(--atlas-color-text-muted)" }}>
-              Safe navigation structure for future admin workflows.
-            </p>
-          </div>
-          <div aria-label="Admin controls" style={headerControlsStyle}>
-            <button disabled style={disabledControlStyle} type="button">
-              Run discovery private
-            </button>
-            <button disabled style={disabledControlStyle} type="button">
-              Publishing unavailable
-            </button>
-          </div>
-        </header>
-
-        <main style={mainStyle}>
-          <Outlet />
-        </main>
       </div>
-    </div>
+    </AdminSettingsProvider>
   );
 }

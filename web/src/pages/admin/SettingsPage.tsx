@@ -1,5 +1,7 @@
 import { useState, type CSSProperties, type FormEvent } from "react";
 
+import { useAdminSettings } from "../../layouts/AdminSettingsContext";
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
 type SettingsError = {
@@ -147,6 +149,7 @@ function SettingsStatusPanel({ state }: { state: SettingsState }) {
 }
 
 export default function SettingsPage() {
+  const { setDisplayName: setSharedDisplayName } = useAdminSettings();
   const [adminToken, setAdminToken] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [state, setState] = useState<SettingsState>({
@@ -177,7 +180,11 @@ export default function SettingsPage() {
         if (!data) {
           return;
         }
-        setDisplayName(data.settings?.display_name ?? "");
+        const loadedDisplayName = data.settings?.display_name ?? "";
+        setDisplayName(loadedDisplayName);
+        if (loadedDisplayName) {
+          setSharedDisplayName(loadedDisplayName);
+        }
         setState({ status: "ready" });
       })
       .catch(() => {
@@ -215,7 +222,11 @@ export default function SettingsPage() {
           });
           return;
         }
-        setDisplayName(result.body.settings?.display_name ?? displayName);
+        const savedDisplayName = result.body.settings?.display_name ?? displayName;
+        setDisplayName(savedDisplayName);
+        if (savedDisplayName) {
+          setSharedDisplayName(savedDisplayName);
+        }
         setState({ status: "saved" });
       })
       .catch(() => {

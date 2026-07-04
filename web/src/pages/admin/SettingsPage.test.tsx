@@ -2,7 +2,22 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AdminSettingsProvider, useAdminSettings } from "../../layouts/AdminSettingsContext";
 import SettingsPage from "./SettingsPage";
+
+function SharedDisplayNameProbe() {
+  const { displayName } = useAdminSettings();
+  return <span data-testid="shared-display-name">{displayName}</span>;
+}
+
+function renderSettingsPage() {
+  return render(
+    <AdminSettingsProvider>
+      <SettingsPage />
+      <SharedDisplayNameProbe />
+    </AdminSettingsProvider>,
+  );
+}
 
 type MockResponse = {
   ok: boolean;
@@ -61,7 +76,7 @@ describe("SettingsPage", () => {
 
   it("renders the display-name-only edit form with no unsupported settings controls", () => {
     installFetchMock();
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     expect(screen.getByRole("heading", { name: "Admin settings" })).toBeInTheDocument();
     expect(screen.getByLabelText("Display name")).toBeInTheDocument();
@@ -71,7 +86,7 @@ describe("SettingsPage", () => {
 
   it("requires an operator token before loading settings", () => {
     installFetchMock();
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     fireEvent.click(screen.getByRole("button", { name: "Load settings" }));
 
@@ -80,16 +95,17 @@ describe("SettingsPage", () => {
 
   it("loads the current display name through GET /admin/settings", async () => {
     installFetchMock();
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     await loadSettings();
 
     expect(screen.getByLabelText("Display name")).toHaveValue("Internal operator");
+    expect(screen.getByTestId("shared-display-name")).toHaveTextContent("Internal operator");
   });
 
   it("saves an edited display name through PUT /admin/settings", async () => {
     installFetchMock();
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     await loadSettings();
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "New operator name" } });
@@ -97,11 +113,12 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByText("Display name saved.")).toBeInTheDocument();
     expect(screen.getByLabelText("Display name")).toHaveValue("New operator name");
+    expect(screen.getByTestId("shared-display-name")).toHaveTextContent("New operator name");
   });
 
   it("surfaces backend validation errors without clearing the entered display name", async () => {
     installFetchMock({ rejectSave: true });
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     await loadSettings();
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "" } });

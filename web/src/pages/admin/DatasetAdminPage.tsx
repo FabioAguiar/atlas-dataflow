@@ -1680,6 +1680,7 @@ function PublishingTab({
   hasPublishedSnapshot,
   hasUnpublishedChanges,
   hasUnsavedDraftChanges,
+  lastPublishedAt,
   onPreviewDraft,
   onPublish,
   onSaveDraft,
@@ -1692,6 +1693,7 @@ function PublishingTab({
   hasPublishedSnapshot: boolean;
   hasUnpublishedChanges: boolean;
   hasUnsavedDraftChanges: boolean;
+  lastPublishedAt: string | undefined;
   onPreviewDraft: () => void;
   onPublish: () => void;
   onSaveDraft: () => void;
@@ -1717,7 +1719,9 @@ function PublishingTab({
         <h2 style={{ marginTop: 0 }}>Publishing</h2>
         <p style={mutedTextStyle}>
           Save Draft updates private draft state. Preview opens a private draft preview. Publish Changes creates the
-          latest published snapshot, and Visible Publicly controls exposure of that snapshot only.
+          latest published snapshot, and Visible Publicly controls exposure of that snapshot only. Publication status
+          and last-published information below reflect only actions taken in this admin session; reselecting the
+          dataset or reloading the page resets them.
         </p>
       </div>
       <div style={sectionGridStyle}>
@@ -1727,6 +1731,10 @@ function PublishingTab({
           value={hasUnsavedDraftChanges ? "Unsaved local changes" : draftState.status === "saved" ? "Saved" : "Editable draft"}
         />
         <ReadOnlyField label="Public exposure" value={publicationState.visible ? "Visible Publicly" : "Hidden"} />
+        <ReadOnlyField
+          label="Last published"
+          value={lastPublishedAt ? `${lastPublishedAt} (this session)` : "Not published in this session"}
+        />
         <ReadOnlyField label="Release artifacts" value="Read-only; not changed by Publishing tab" />
       </div>
       <div style={buttonRowStyle}>
@@ -1782,7 +1790,19 @@ function DatasetDetailLivePreview({
   // the real {features} contract shape into that shape here rather than
   // modifying livePreviewProjection.ts.
   const previewContract = contract ? { fields: contract.features } : null;
-  const previewForm = { ...form, home_card_icon: toLegacyPreviewIcon(form.home_card_icon) };
+  // Force the Release hint to the same fixed "dd/mm/yyyy" wording the public
+  // Dataset Detail page currently and always renders (web/src/pages/DatasetPage.tsx
+  // hardcodes this; its PublicContextPayload type never declares a date_format
+  // field), instead of exposing per-dataset precision the public page does not
+  // yet honor. Clamped here rather than in livePreviewProjection.ts because
+  // that module's colocated unit test (livePreviewProjection.test.ts) asserts
+  // the general date_format-forwarding contract in isolation and is outside
+  // this issue's declared edit scope.
+  const previewForm = {
+    ...form,
+    date_format: "" as DraftForm["date_format"],
+    home_card_icon: toLegacyPreviewIcon(form.home_card_icon),
+  };
   const preview = projectDatasetDetailPreview(dataset, previewForm, context, previewContract, metrics);
   const modelCardPreview = projectModelCardPreview(modelCard);
 
@@ -1951,6 +1971,7 @@ function renderSelectedTab(
   onSaveCustomization: () => void,
   onUpdateCustomizationDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void,
   publicationState: PublicationState,
+  lastPublishedAt: string | undefined,
 ) {
   switch (selectedTab) {
     case "metadata-card":
@@ -1993,6 +2014,7 @@ function renderSelectedTab(
             hasPublishedSnapshot={hasPublishedSnapshot}
             hasUnpublishedChanges={hasUnpublishedChanges}
             hasUnsavedDraftChanges={hasUnsavedDraftChanges}
+            lastPublishedAt={lastPublishedAt}
             onPreviewDraft={onPreviewDraft}
             onPublish={onPublish}
             onSaveDraft={onSaveDraft}
@@ -2035,6 +2057,7 @@ export default function DatasetAdminPage() {
     emptyCustomizationEditorState,
   );
   const [publicationState, setPublicationState] = useState<PublicationState>(emptyPublicationState);
+  const [lastPublishedAt, setLastPublishedAt] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2077,6 +2100,7 @@ export default function DatasetAdminPage() {
       setDraftForm(emptyDraftForm());
       setCustomizationEditorState(emptyCustomizationEditorState);
       setPublicationState(emptyPublicationState);
+      setLastPublishedAt(undefined);
       return;
     }
 
@@ -2087,6 +2111,7 @@ export default function DatasetAdminPage() {
     });
     setCustomizationEditorState(emptyCustomizationEditorState);
     setPublicationState(emptyPublicationState);
+    setLastPublishedAt(undefined);
 
     const controller = new AbortController();
     setReadOnlyData({
@@ -2332,6 +2357,7 @@ export default function DatasetAdminPage() {
           publishedProfile,
           publishedAt: result.body.snapshot?.published_at,
         }));
+        setLastPublishedAt(result.body.snapshot?.published_at);
       })
       .catch(() => {
         setPublicationState((current) => ({
@@ -2678,6 +2704,7 @@ export default function DatasetAdminPage() {
             saveCustomization,
             updateCustomizationDraft,
             publicationState,
+            lastPublishedAt,
           )}
         </div>
       </section>

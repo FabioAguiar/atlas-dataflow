@@ -329,6 +329,25 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
   });
 
+  it("surfaces visibility validation feedback without changing public exposure", async () => {
+    installFetchMock({ rejectVisibility: true });
+    render(<DatasetAdminPage />);
+
+    await loadDraftOnly();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish Changes" }));
+    await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
+    expect(screen.getByLabelText("Visible Publicly")).toBeChecked();
+
+    fireEvent.click(screen.getByLabelText("Visible Publicly"));
+
+    expect(await screen.findByText("Publishing action rejected by backend validation.")).toBeInTheDocument();
+    expect(screen.getByText(/PROFILE_VISIBILITY_PAYLOAD_INVALID - Visibility payload is invalid./)).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published");
+    expect(screen.getByLabelText("Visible Publicly")).toBeChecked();
+  });
+
   it("saves a schema-valid profile-draft payload for supported icon, primary metric, theme preset, and result-card values", async () => {
     // contracts/dataset-public-profile.schema.json's closed enums: home_card.icon, theme.preset,
     // and result_card.badge_preset. Asserting membership here proves the saved payload stays

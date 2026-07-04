@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from "react";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 
 type PublicShellProps = {
@@ -64,6 +64,17 @@ function isDesktopViewport() {
 
 export default function PublicShell({ children }: PublicShellProps) {
   const [navOpen, setNavOpen] = useState<boolean>(isDesktopViewport);
+  const [isDesktop, setIsDesktop] = useState<boolean>(isDesktopViewport);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(min-width: 768px)");
+    const handleChange = (event: MediaQueryListEvent) => setIsDesktop(event.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
 
   return (
     <div className={`public-shell${navOpen ? " public-shell--nav-open" : ""}`}>
@@ -80,7 +91,7 @@ export default function PublicShell({ children }: PublicShellProps) {
         <span aria-hidden="true" />
       </button>
 
-      {navOpen && (
+      {navOpen && !isDesktop && (
         <div
           className="public-shell__nav-overlay"
           aria-hidden="true"

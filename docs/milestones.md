@@ -201,6 +201,8 @@ Conditions that may motivate a future review of the strategy:
 | M36 | Draft preview, publishing snapshot, and visibility semantics | Drafts, previews, published snapshots, and public visibility behave deterministically | With reservations |
 | M37 | Dataset catalog generalization and hardcoded dataset exit | Telco/Bank become examples or fixtures, not product assumptions | With reservations |
 | M38 | Settings, Help, and admin completion pass | Admin navigation gaps are closed with minimal Settings and Help screens | With reservations |
+| M39 | Public surface design parity closure | Public Home, Dataset Detail, PublicShell, and shared public components match the support-root designs | With reservations |
+| M40 | Private admin design parity closure | AdminShell, Dashboard, Dataset Admin, Publishing, and Live Preview match the support-root designs | With reservations |
 
 ## M1 — Documented Foundation and Initial Technical Scope
 
@@ -4990,3 +4992,326 @@ The milestone will be ready to derive issues when:
 
 This milestone is a completion pass for the private admin surface. It should close visible navigation gaps without expanding Atlas beyond the first complete public/admin cycle.
 
+## M39 — Public Surface Design Parity Closure
+
+### Objective
+
+Close the final design-parity gap for the public Atlas surfaces by aligning `PublicShell`, Public Home, Dataset Detail, shared public components, and the public-component contract consumed by Dataset Admin Live Preview with the latest support-root designs.
+
+This milestone must preserve the functional foundation delivered from M29 through M38 while making the public React experience visually and structurally match the current `design/screens/home/` and `design/screens/dataset-detail/` references.
+
+### Problem or Gap
+
+The M29 through M38 sequence created useful frontend, profile, publishing, visibility, and admin foundations. However, the current React implementation still reflects an earlier implementation stage in several public areas: some design details from the refined prototypes are missing or ordered differently, public profile presentation fields are not consistently projected into the public pages, and shared public components need to be stable enough for both real public routes and Dataset Admin Live Preview.
+
+The support-root public designs are more specific than the current React implementation for navigation behavior, Home hero ordering, dataset-card presentation, Dataset Detail metadata, tab hierarchy, inference/result presentation, and responsive behavior. The implementation must close these gaps without changing publisher rules, runtime validation, contracts, release artifacts, or admin workflows unnecessarily.
+
+### Context
+
+`design/screens/home/` and `design/screens/dataset-detail/` contain desktop, tablet, and mobile executable prototypes plus Markdown content and visual specifications. They are deterministic UX references, not API or schema sources of truth.
+
+The current React application already contains reusable public shell and public components under `web/src/layouts/PublicShell.tsx`, `web/src/pages/HomePage.tsx`, `web/src/pages/DatasetPage.tsx`, `web/src/components/DatasetCard/`, `web/src/components/DatasetDetail/`, `web/src/components/InferenceForm/`, `web/src/components/InferenceResult/`, and shared UI styles. This milestone should refine and reuse those components rather than replace them with copied prototype code.
+
+### Core Scope
+
+- Align `PublicShell` with the latest public navigation reference: side navigation items, always-visible toggle behavior, public/private separation, link labels, brand treatment, responsive behavior, and focus/overlay states.
+- Align Public Home `/` with `design/screens/home/`: final hero content order, primary links, footer, dataset grid, dataset-card content, interaction states, empty/error/loading states, and mobile/tablet/desktop spacing.
+- Replace placeholder integration values that remain visible in production-facing public UI only when a real, documented value is available; otherwise record the unresolved integration value explicitly in issue evidence instead of inventing it.
+- Align `DatasetCard` with the design/card rules: thematic icon behavior, public analysis-type label, full-card click behavior, Home-card short description, and icon/image fallback behavior supported by current profile data.
+- Align Dataset Detail `/dataset/:slug` with `design/screens/dataset-detail/`: breadcrumb, title/subtitle, analysis badge, metadata summary, three-tab model, Overview content, Inference tab structure, empty Documentation tab, and responsive metadata behavior.
+- Compose public display fields from the authoritative public publication/profile path where already available, ensuring the public route never exposes private unsaved drafts.
+- Preserve runtime contract authority for prediction fields, validation, and inference submission.
+- Preserve existing dataset-view routes unless a derived issue explicitly classifies and relocates their presentation relative to the current Dataset Detail design.
+- Make public shared components safe and explicit as the reusable rendering substrate for Dataset Admin Live Preview.
+- Add or update frontend tests that verify public design parity and profile/publication boundaries without relying on Telco/Bank as permanent product assumptions.
+
+### Out of Scope
+
+- Implementing private Dashboard or Dataset Admin visual parity.
+- Changing admin draft editing workflows beyond the shared public components consumed by Live Preview.
+- Broad backend redesign.
+- Publisher, registry, release, runtime, notebook, or model behavior changes.
+- Contract/schema enum expansion for unsupported presentation presets.
+- Authentication or authorization changes.
+- Public upload, public administration, retraining, marketplace, database migration, or multi-tenant behavior.
+- Copying support-root HTML/CSS/JS into React without adaptation.
+
+### Expected Deliverables
+
+- Public shell visually aligned with the current public Home and Dataset Detail prototypes.
+- Public Home aligned with support-root content, layout, dataset-card behavior, and responsive rules.
+- Dataset Detail aligned with support-root header, metadata, tab, overview, inference/result, and documentation structure.
+- Public profile/snapshot presentation fields used only through an authoritative public resolution path and never from private unsaved drafts.
+- Shared public components remain reusable by the real public pages and Dataset Admin Live Preview.
+- Updated public frontend tests and build evidence.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation-first with issue evidence.
+- Expected documentation update: only update `docs/milestones.md` or a narrow design-parity note if a derived issue finds a design/API/profile boundary that cannot be safely resolved in code.
+- Candidate documentation: a short parity evidence note only if multiple public-component exceptions remain after implementation.
+- Criterion not to update: do not create a broad implementation map or rewrite architecture during this milestone.
+
+### Dependencies
+
+- M29 design-reference boundary accepted.
+- M30 shared shell and UI primitives exist.
+- M31 public Home and Dataset Detail implementation exists.
+- M32 inference contract projection exists.
+- M34 through M36 profile draft, snapshot, and visibility foundations exist where public presentation needs them.
+- M37 dataset-count generalization exists.
+- Current support-root public designs are available for comparison.
+
+### Components or Areas Affected
+
+- `web/src/layouts/PublicShell.tsx`.
+- `web/src/pages/HomePage.tsx`.
+- `web/src/pages/DatasetPage.tsx`.
+- `web/src/components/DatasetCard/`.
+- `web/src/components/DatasetDetail/`.
+- `web/src/components/InferenceForm/`.
+- `web/src/components/InferenceResult/`.
+- `web/src/lib/datasetPresentation.ts`.
+- `web/src/lib/livePreviewProjection.ts`, only where necessary to preserve parity with public components.
+- `web/src/App.css`, `web/src/index.css`, `web/src/styles/tokens.css`, and shared UI CSS.
+- Public frontend tests under `web/src/**/*.test.tsx`.
+- Public API composition only if an existing public profile/snapshot resolution function must be wired for public-safe presentation fields.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: public navigation parity must be closed.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M39-01 PublicShell navigation and responsive parity.
+  - Note: preserve public/private separation and do not add private admin links to public navigation.
+- Criterion: Public Home must match the current support-root reference.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M39-02 Public Home and dataset-card parity.
+  - Note: keep dataset listing data-driven and count-agnostic.
+- Criterion: Dataset Detail must match the current support-root reference.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M39-03 Dataset Detail header, metadata, tabs, overview, and inference/result parity.
+  - Note: preserve runtime validation authority and avoid exposing drafts.
+- Criterion: public profile/snapshot presentation must be resolved through an authoritative path.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M39-04 Public profile projection wiring and boundary tests.
+  - Note: use existing profile/snapshot/visibility foundations where available; do not create broad backend behavior.
+- Criterion: Live Preview must depend on real public components.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M39-05 Shared public component parity contract for Live Preview.
+  - Note: define component props and fallback behavior rather than fixed mockups.
+- Criterion: validation evidence must prove design parity without hardcoded dataset assumptions.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M39-06 Public surface parity validation.
+  - Note: include responsive checks for mobile/tablet/desktop public surfaces when feasible.
+
+### Definition of Done
+
+- Public Home visibly matches the latest `design/screens/home/` reference within React constraints.
+- Dataset Detail visibly matches the latest `design/screens/dataset-detail/` reference within React constraints.
+- The public shell uses the same public navigation model across Home and Dataset Detail.
+- Public presentation fields come from public-safe dataset/profile/snapshot resolution and not from unsaved private drafts.
+- Dataset cards and detail components remain reusable for Dataset Admin Live Preview.
+- Existing public behavior remains data-driven and count-agnostic.
+- Frontend tests and build validation pass or any environment blocker is recorded with exact command output.
+
+### Minimum Evidence
+
+- File-level summary of changed public React components and styles.
+- Before/after parity checklist against `design/screens/home/content.md`, `visual-spec.md`, and prototypes.
+- Before/after parity checklist against `design/screens/dataset-detail/content.md`, `visual-spec.md`, and prototypes.
+- Tests proving zero/one/many datasets still render safely.
+- Tests proving private draft state is not exposed publicly before publication.
+- Tests or manual evidence proving published/visible profile fields affect public presentation when that path is wired.
+- Build and frontend test command evidence.
+
+### Risks and Gaps
+
+- Risk of treating design prototypes as API contracts instead of UX references.
+- Risk of hiding already implemented public functionality, such as dataset-view routes, merely because it is not prominent in the current design reference.
+- Risk of exposing private drafts while trying to make public profile fields visible.
+- Risk of changing inference validation in the frontend instead of preserving runtime authority.
+- Gap: unsupported presentation preset values must remain deferred until schema and frontend support are explicitly authorized.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- the current repo and support-root design ZIPs are available;
+- current public React files can be compared to `design/screens/home/` and `design/screens/dataset-detail/`;
+- the profile/snapshot/public-visibility path is inspected and classified as wired, partially wired, or absent from public page rendering;
+- frontend validation commands are known;
+- issue scope confirms no private admin redesign is included in M39.
+
+### Continuity Notes
+
+M39 is the public half of final design parity. It depends on M29 through M38 but does not reopen them. It should make the public experience and its reusable components stable before M40 aligns the private admin screens that consume those components in Live Preview.
+
+
+## M40 — Private Admin Design Parity Closure
+
+### Objective
+
+Close the final design-parity gap for the private Atlas administration surface by aligning `AdminShell`, Dashboard `/admin`, Dataset Admin `/admin/dataset-admin`, and Dataset Admin Live Preview with the latest support-root designs while preserving M33 through M38 backend, draft, publishing, visibility, settings, and help boundaries.
+
+### Problem or Gap
+
+The current private React implementation contains important operational foundations, including admin routing, run discovery, draft editing, predict-view customization, Live Preview, Save Draft, Publish Changes, Visible Publicly, Settings, and Help. However, its visual and structural shape still differs materially from the refined support-root `dataset-admin-home` and `dataset-admin` designs.
+
+The biggest differences are in the admin shell branding/navigation, Dashboard information architecture, Dataset Admin header, tab panel composition, icon/theme/result controls, Publishing tab layout, and Live Preview substructure. Some support-root controls are prototype-only or require schema-backed values that are not currently supported. This milestone must separate real design-parity work from unsupported prototype-only behavior.
+
+### Context
+
+`design/screens/dataset-admin-home/` is the design reference for the private Dashboard/Admin Home route `/admin`, not for the public Home route `/`.
+
+`design/screens/dataset-admin/` is the design reference for the private Dataset Admin route `/admin/dataset-admin`.
+
+Both admin design references are desktop-first. Their responsive notes explicitly treat `1360x768` as a compact desktop target, not as mobile or tablet. Mobile/tablet admin implementations remain future work unless separately authorized.
+
+### Core Scope
+
+- Align `AdminShell` with the support-root admin sidebar and shell: Atlas DataFlow brand/logo treatment, Dashboard/Public Home/Dataset Detail/Settings/Help navigation labels, active states, user/admin footer block, compact desktop density, and removal or relocation of misleading disabled global controls.
+- Preserve the current private/admin access boundary. If a token/session control remains necessary, place it in a design-compatible way without weakening access checks or implying public admin access.
+- Align Dashboard `/admin` with `design/screens/dataset-admin-home/`: title `Dashboard`, exposed search control, four summary cards, Runs panel, Dataset Details panel, table structure, status pills, row actions, empty states, and compact desktop behavior.
+- Keep run discovery governed by the safe admin run-summary projection; do not let the Dashboard directly read arbitrary `/run` content in the browser.
+- Represent promotion/removal/open-admin actions only when the implementation has a safe owner for them. If an action remains intent-only, the UI must communicate that truthfully while matching the design language.
+- Align Dataset Admin `/admin/dataset-admin` with `design/screens/dataset-admin/`: title `Dataset — <dataset>`, helper text, filterable dataset selector, publication status pill, single tabbed workspace, and desktop compact density.
+- Remove repeated tab-level headings/subtitles/scope badges where the current design specifies that panels start directly with controls.
+- Replace simple select-only controls with design-aligned controls where the underlying schema already supports the values: 15-icon Home card selector, Home card preview, problem-type display, primary score highlight, and result-card preview.
+- Reconcile presentation preset gaps explicitly: do not enable persistable Theme Preset or Result Card values that are not accepted by `contracts/dataset-public-profile.schema.json`; either keep unsupported choices disabled/preview-only with clear labeling or derive a separate schema-backed issue before enabling them.
+- Align the Publishing tab with the deterministic draft → preview → publish → visibility model: Public visibility card, Last published, content/access separation note, Actions card, Current state summary, and feedback states.
+- Align Live Preview with the final design by reusing public components from M39 and limiting preview modes to the current documented public experience unless a derived issue records an intentional extension.
+- Add frontend tests and, where necessary, backend/API projection tests for any minimal safe private data projection needed by Dashboard design parity.
+
+### Out of Scope
+
+- Rewriting the frontend architecture.
+- Replacing file-based storage with a database.
+- Changing publisher validation, release artifact generation, model behavior, runtime validation, notebooks, or registry authority.
+- Public administration or authentication redesign.
+- Mobile/tablet admin implementation.
+- Arbitrary CSS/theme editing or raw image upload handling that bypasses schema-backed references.
+- Enabling unsupported theme/result preset values without schema and test authorization.
+- Broad dataset onboarding automation.
+- Copying support-root HTML/CSS/JS into React without adapting to the real codebase and contracts.
+
+### Expected Deliverables
+
+- Admin shell aligned with the latest support-root admin sidebar and desktop density.
+- Dashboard aligned with the `dataset-admin-home` design while preserving safe run/data boundaries.
+- Dataset Admin aligned with the `dataset-admin` design while preserving schema-backed draft editing and publishing semantics.
+- Publishing tab that visibly distinguishes private draft, preview, published snapshot, and public visibility.
+- Live Preview using real public components and reflecting public content, Home card, primary score, inference layout, result-card labels, and supported theme/icon state without fixed divergent mockups.
+- Explicit evidence for any support-root design element that cannot be implemented because it is not currently schema/API-backed.
+- Frontend tests, build evidence, and any narrowly required admin API/projection tests.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation-first with strict evidence and narrow exception notes.
+- Expected documentation update: only update this milestones document or a targeted parity exception note if a design element cannot be implemented safely without a separate schema/API decision.
+- Candidate documentation: a short admin design-parity exception list if unsupported theme/result preset values remain intentionally disabled.
+- Criterion not to update: do not rewrite `docs/architecture.md` unless a derived issue explicitly resolves a new architecture decision.
+
+### Dependencies
+
+- M30 admin shell foundation exists.
+- M33 safe run discovery foundation exists.
+- M34 profile draft store and admin draft API exist.
+- M35 Dataset Admin UI and Live Preview foundation exists.
+- M36 Save Draft, Publish Changes, snapshot, traceability, and Visible Publicly semantics exist.
+- M37 dataset-count generalization exists.
+- M38 Settings and Help routes exist or are completed before M40 execution.
+- M39 public shared components are aligned enough for Live Preview reuse.
+- Current support-root admin designs are available for comparison.
+
+### Components or Areas Affected
+
+- `web/src/layouts/AdminShell.tsx` and admin settings context integration.
+- `web/src/pages/admin/DashboardPage.tsx`.
+- `web/src/pages/admin/DatasetAdminPage.tsx`.
+- `web/src/pages/admin/SettingsPage.tsx` and `web/src/pages/admin/HelpPage.tsx` only if shell/navigation integration requires safe polish.
+- `web/src/components/ui/` and shared CSS tokens/styles.
+- `web/src/lib/livePreviewProjection.ts`.
+- `web/src/components/DatasetCard/`, `web/src/components/DatasetDetail/`, `web/src/components/InferenceForm/`, and `web/src/components/InferenceResult/` as consumed by Live Preview.
+- `contracts/dataset-public-profile.schema.json` only if a derived issue explicitly authorizes presentation enum reconciliation; otherwise unsupported values must remain disabled/preview-only.
+- Minimal admin API/projection files only if Dashboard design parity cannot be represented from existing safe projections.
+- Admin frontend tests under `web/src/**/*.test.tsx` and targeted backend tests if a projection is added.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: admin shell and route labeling must match the support-root admin reference.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M40-01 AdminShell brand, navigation, profile block, and compact desktop parity.
+  - Note: preserve private boundary and do not introduce public admin links.
+- Criterion: Dashboard must be mapped correctly from `dataset-admin-home` to `/admin`.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M40-02 Dashboard summary, Runs table, Dataset Details table, search, and safe action-state parity.
+  - Note: promotion/removal must not imply unimplemented mutation.
+- Criterion: Dataset Admin header and tab frame must match `dataset-admin`.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M40-03 Dataset Admin header, filterable selector, status pill, tab shell, and compact density parity.
+  - Note: keep route `/admin/dataset-admin` unless a routing issue explicitly changes it.
+- Criterion: Dataset Admin content tabs must be visually and structurally aligned.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M40-04 Public Content, Metadata & Card, Inference Form, Result Card, and Theme Preset parity within schema-backed limits.
+  - Note: 15-icon support is schema-backed; unsupported theme/result presets require explicit reconciliation.
+- Criterion: Publishing tab must express deterministic lifecycle semantics.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M40-05 Publishing tab lifecycle, visibility, action, and current-state parity.
+  - Note: preserve the M36 separation between draft, preview, snapshot, and visibility.
+- Criterion: Live Preview must stop diverging from public components.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M40-06 Dataset Admin Live Preview parity using M39 public components.
+  - Note: avoid fixed mockups and document any intentional preview-only extension.
+- Criterion: unsupported presentation enum gaps must not be hidden.
+  - Possible issue type: decision or bootstrap, depending on the chosen resolution.
+  - Candidate issue: M40-07 Theme/result preset schema reconciliation or explicit disabled-state evidence.
+  - Note: do not enable values rejected by the current profile schema.
+- Criterion: validation must prove no regression in admin workflows.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M40-08 Admin parity validation and regression evidence.
+  - Note: include draft save, publish, visibility, dataset switching, run states, and Settings/Help navigation smoke tests.
+
+### Definition of Done
+
+- `dataset-admin-home` is correctly understood and implemented as Dashboard `/admin`, not as Public Home `/`.
+- `dataset-admin` is correctly understood and implemented as Dataset Admin `/admin/dataset-admin`.
+- AdminShell visually matches the support-root admin shell while preserving private access boundaries.
+- Dashboard has the designed summary cards, search, Runs section, Dataset Details section, status states, and safe action semantics.
+- Dataset Admin has the designed header, dataset selector behavior, tab structure, core controls, Publishing tab, and Live Preview structure.
+- Unsupported design controls are either implemented through authorized schema/API support or visibly documented as disabled/preview-only exceptions.
+- Draft, preview, publish, snapshot, and visibility semantics remain deterministic and tested.
+- Frontend tests and build validation pass or any environment blocker is recorded with exact command output.
+
+### Minimum Evidence
+
+- File-level summary of changed admin React components and styles.
+- Parity checklist against `design/screens/dataset-admin-home/content.md`, `visual-spec.md`, `responsive.md`, and desktop prototype.
+- Parity checklist against `design/screens/dataset-admin/content.md`, `visual-spec.md`, `responsive.md`, and desktop prototype.
+- Tests proving Dashboard run states and dataset-detail states do not overclaim unavailable mutations.
+- Tests proving Dataset Admin still saves drafts, publishes snapshots, changes visibility, and rejects invalid backend responses safely.
+- Tests proving Live Preview uses real public components and responds to supported draft changes.
+- Evidence that unsupported theme/result preset values are not persisted unless schema support is explicitly implemented.
+- Compact desktop evidence for approximately `1360x768` and standard desktop evidence for approximately `1440x900` or wider.
+
+### Risks and Gaps
+
+- Risk of weakening admin access controls while trying to match a static prototype that has no real token/auth behavior.
+- Risk of implementing local prototype-only actions as real mutations without publisher/profile ownership.
+- Risk of exposing unsupported presentation values that fail schema validation on save.
+- Risk of regressing the functional M34 through M36 draft/publish/visibility foundations while polishing visuals.
+- Risk of making Live Preview a separate mockup instead of a consumer of public components.
+- Gap: full dataset onboarding automation remains deferred and must not be smuggled into Dashboard parity.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M39 public component parity is complete or the reusable public component exceptions are explicitly known;
+- the current admin React files can be compared to `design/screens/dataset-admin-home/` and `design/screens/dataset-admin/`;
+- current profile schema enums are inspected before deriving Theme Preset or Result Card work;
+- any missing Dashboard dataset-summary projection is classified as already available, minimally required, or deferred;
+- the issue scope confirms no publisher/runtime/notebook redesign is included.
+
+### Continuity Notes
+
+M40 is the private/admin half of final design parity. It should preserve the useful M33 through M38 backend and workflow foundations, but bring the operator-facing UI into alignment with the refined support-root designs. It should be treated as a closure milestone, not as a rewrite or expansion into broader administration.

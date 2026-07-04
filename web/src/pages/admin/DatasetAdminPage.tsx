@@ -428,24 +428,43 @@ const adminTabs: TabItem[] = [
 
 const pageStyle: CSSProperties = {
   display: "grid",
-  gap: "var(--atlas-space-5)",
+  gap: "var(--atlas-space-4)",
 };
 
 const headerStyle: CSSProperties = {
   display: "grid",
-  gap: "var(--atlas-space-4)",
+  gap: "var(--atlas-space-3)",
 };
 
 const headerControlsStyle: CSSProperties = {
-  display: "grid",
+  display: "flex",
+  flexWrap: "wrap",
   gap: "var(--atlas-space-3)",
-  gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
   alignItems: "end",
+};
+
+const headerMetaStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "var(--atlas-space-2)",
+  alignItems: "center",
 };
 
 const fieldStyle: CSSProperties = {
   display: "grid",
   gap: "var(--atlas-space-2)",
+};
+
+const datasetSelectorStyle: CSSProperties = {
+  ...fieldStyle,
+  flex: "1 1 18rem",
+  minWidth: "18rem",
+};
+
+const tokenControlStyle: CSSProperties = {
+  ...fieldStyle,
+  flex: "1 1 20rem",
+  minWidth: "20rem",
 };
 
 const labelStyle: CSSProperties = {
@@ -475,10 +494,10 @@ const textareaStyle: CSSProperties = {
 
 const panelStyle: CSSProperties = {
   display: "grid",
-  gap: "var(--atlas-space-4)",
+  gap: "var(--atlas-space-3)",
   border: "1px solid var(--atlas-color-border)",
   borderRadius: "var(--atlas-radius-md)",
-  padding: "var(--atlas-space-5)",
+  padding: "var(--atlas-space-4)",
   background: "var(--atlas-color-surface)",
   boxShadow: "var(--atlas-shadow-sm)",
 };
@@ -626,6 +645,16 @@ const alertStyle: CSSProperties = {
 
 function getDatasetLabel(dataset?: DatasetListing) {
   return dataset?.title || dataset?.dataset_slug || "No dataset selected";
+}
+
+function getDatasetSelectorValue(dataset?: DatasetListing) {
+  if (!dataset) {
+    return "";
+  }
+  if (dataset.title && dataset.title !== dataset.dataset_slug) {
+    return `${dataset.title} -- ${dataset.dataset_slug}`;
+  }
+  return dataset.dataset_slug;
 }
 
 function emptyDraftForm(datasetSlug = ""): DraftForm {
@@ -1990,6 +2019,7 @@ function renderSelectedTab(
 export default function DatasetAdminPage() {
   const [state, setState] = useState<DatasetState>({ status: "loading" });
   const [selectedSlug, setSelectedSlug] = useState("");
+  const [datasetQuery, setDatasetQuery] = useState("");
   const [selectedTab, setSelectedTab] = useState(adminTabs[0].id);
   const [adminToken, setAdminToken] = useState("");
   const [draftState, setDraftState] = useState<DraftState>({
@@ -2027,6 +2057,7 @@ export default function DatasetAdminPage() {
 
         setState({ status: "ready", datasets: data.datasets });
         setSelectedSlug((current) => current || data.datasets[0]?.dataset_slug || "");
+        setDatasetQuery(getDatasetSelectorValue(data.datasets[0]));
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
@@ -2095,9 +2126,36 @@ export default function DatasetAdminPage() {
 
   const datasets = state.status === "ready" ? state.datasets : [];
   const selectedDataset = useMemo(
-    () => datasets.find((dataset) => dataset.dataset_slug === selectedSlug) ?? datasets[0],
+    () => datasets.find((dataset) => dataset.dataset_slug === selectedSlug),
     [datasets, selectedSlug],
   );
+  const currentProfile = selectedSlug ? profileFromForm(draftForm, selectedSlug) : null;
+  const lastBackendDraft = backendDraftProfile(draftState);
+  const hasUnsavedDraftChanges = Boolean(currentProfile && lastBackendDraft && !sameProfile(currentProfile, lastBackendDraft));
+  const publishedProfile = publicationState.publishedProfile;
+  const hasPublishedSnapshot = Boolean(publishedProfile);
+  const hasUnpublishedChanges = Boolean(currentProfile && publishedProfile && !sameProfile(currentProfile, publishedProfile));
+  const headerPublicationStatus = publishingStatusLabel({
+    draftState,
+    hasPublishedSnapshot,
+    hasUnpublishedChanges,
+    hasUnsavedDraftChanges,
+    visible: publicationState.visible,
+  });
+
+  function selectDatasetFromQuery(value: string) {
+    setDatasetQuery(value);
+    const match = datasets.find(
+      (dataset) => dataset.dataset_slug === value || getDatasetSelectorValue(dataset).toLowerCase() === value.trim().toLowerCase(),
+    );
+    if (match && match.dataset_slug !== selectedSlug) {
+      setSelectedSlug(match.dataset_slug);
+    }
+  }
+
+  function normalizeDatasetQuery() {
+    setDatasetQuery(getDatasetSelectorValue(selectedDataset));
+  }
 
   function setField<K extends keyof DraftForm>(key: K, value: DraftForm[K]) {
     setDraftForm((current) => ({ ...current, [key]: value }));
@@ -2510,33 +2568,51 @@ export default function DatasetAdminPage() {
       <header style={headerStyle}>
         <div>
           <p className="eyebrow">Dataset Admin</p>
-          <h1 id="dataset-admin-title">Dataset administration</h1>
+          <h1 id="dataset-admin-title">Dataset -- {getDatasetLabel(selectedDataset)}</h1>
           <p className="summary">
-            Private workspace for editing validated public profile drafts while keeping Atlas technical values read-only.
+            Curate the selected dataset's public presentation profile while Atlas technical values stay read-only.
           </p>
+          <div style={headerMetaStyle}>
+            <span aria-label="Publication status" className="atlas-status-pill atlas-status-pill--info">
+              {headerPublicationStatus}
+            </span>
+            <span className="atlas-status-pill atlas-status-pill--info">Private admin workspace</span>
+          </div>
         </div>
 
         <div style={headerControlsStyle}>
-          <label style={fieldStyle}>
+          <label style={datasetSelectorStyle}>
             <span style={labelStyle}>Dataset</span>
-            <select
+            <input
+              aria-describedby="dataset-selector-help"
+              autoComplete="off"
+              list="dataset-admin-selector-options"
               disabled={state.status !== "ready" || datasets.length === 0}
-              onChange={(event) => setSelectedSlug(event.target.value)}
+              onBlur={normalizeDatasetQuery}
+              onChange={(event) => selectDatasetFromQuery(event.target.value)}
+              placeholder={
+                state.status === "loading"
+                  ? "Loading datasets..."
+                  : state.status === "error"
+                  ? "Datasets unavailable"
+                  : datasets.length === 0
+                  ? "No datasets available"
+                  : "Filter by dataset name or slug"
+              }
               style={inputStyle}
-              value={selectedDataset?.dataset_slug ?? ""}
-            >
-              {state.status === "loading" && <option value="">Loading datasets...</option>}
-              {state.status === "error" && <option value="">Datasets unavailable</option>}
-              {state.status === "ready" && datasets.length === 0 && <option value="">No datasets available</option>}
+              value={datasetQuery}
+            />
+            <datalist id="dataset-admin-selector-options">
               {datasets.map((dataset) => (
-                <option key={dataset.dataset_slug} value={dataset.dataset_slug}>
-                  {dataset.title || dataset.dataset_slug}
-                </option>
+                <option key={dataset.dataset_slug} label={dataset.dataset_slug} value={getDatasetSelectorValue(dataset)} />
               ))}
-            </select>
+            </datalist>
+            <span id="dataset-selector-help" style={mutedTextStyle}>
+              Type to filter; selecting a known dataset loads that private admin workspace.
+            </span>
           </label>
 
-          <form onSubmit={loadDraft} style={fieldStyle}>
+          <form onSubmit={loadDraft} style={tokenControlStyle}>
             <span style={labelStyle}>Operator token</span>
             <div style={buttonRowStyle}>
               <input
@@ -2551,8 +2627,6 @@ export default function DatasetAdminPage() {
               </button>
             </div>
           </form>
-
-          <span className="atlas-status-pill atlas-status-pill--info">Private draft editing</span>
         </div>
       </header>
 

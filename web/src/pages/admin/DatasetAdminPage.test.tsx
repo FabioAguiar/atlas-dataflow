@@ -233,13 +233,24 @@ describe("DatasetAdminPage", () => {
     render(<DatasetAdminPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Dataset")).toHaveValue(datasetSlug);
+      expect(screen.getByLabelText("Dataset")).toHaveValue(`Telco Customer Churn -- ${datasetSlug}`);
     });
+    expect(screen.getByRole("heading", { name: "Dataset -- Telco Customer Churn" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Not Published");
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Public Content",
+      "Metadata & Card",
+      "Theme Preset",
+      "Inference Form",
+      "Result Card",
+      "Publishing",
+      "Live Preview",
+    ]);
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(screen.getByText("Not Published")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Not Published");
 
     await loadDraftOnly();
-    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
 
     const callsBeforePreview = fetchMock.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Preview Draft" }));
@@ -251,10 +262,10 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
     expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
-    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
 
     fireEvent.click(screen.getByRole("button", { name: "Publish Changes" }));
-    expect(await screen.findByText("Published")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
     expect(screen.getByText("Published at 2026-07-03T17:30:00Z.")).toBeInTheDocument();
 
     const publishCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`));
@@ -264,7 +275,7 @@ describe("DatasetAdminPage", () => {
     });
 
     fireEvent.click(screen.getByLabelText("Visible Publicly"));
-    expect(await screen.findByText("Hidden")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Hidden"));
     expect(screen.getByText("Latest published snapshot is hidden publicly.")).toBeInTheDocument();
 
     const visibilityCalls = fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`));
@@ -277,12 +288,12 @@ describe("DatasetAdminPage", () => {
     expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(1);
 
     fireEvent.click(screen.getByLabelText("Visible Publicly"));
-    expect(await screen.findByText("Published")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
 
     fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
     fireEvent.change(screen.getByLabelText("Display title"), { target: { value: "Edited churn profile" } });
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(screen.getByText("Unpublished Changes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
     expect(screen.getByRole("button", { name: "Publish Changes" })).toBeDisabled();
     expect(screen.getByText(/Save Draft before publishing/)).toBeInTheDocument();
   });
@@ -310,7 +321,7 @@ describe("DatasetAdminPage", () => {
 
     expect(await screen.findByText("Publishing action rejected by backend validation.")).toBeInTheDocument();
     expect(screen.getByText(/profile - PROFILE_PUBLISH_FAILED - Snapshot validation failed./)).toBeInTheDocument();
-    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
   });
 
   it("renders all Live Preview modes from the loaded draft and customization", async () => {
@@ -373,15 +384,15 @@ describe("DatasetAdminPage", () => {
 
     render(<DatasetAdminPage />);
 
-    const select = await screen.findByLabelText("Dataset");
-    await waitFor(() => expect(select).toBeDisabled());
-    expect(within(select).getByText("No datasets available")).toBeInTheDocument();
+    const selector = await screen.findByLabelText("Dataset");
+    await waitFor(() => expect(selector).toBeDisabled());
+    expect(selector).toHaveAttribute("placeholder", "No datasets available");
 
     const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
     expect(within(panel).getAllByText("Not provided")).toHaveLength(6);
   });
 
-  it("populates the selector for a multi-dataset listing including a synthetic non-Telco/Bank dataset and updates the read-only panel on selection change", async () => {
+  it("populates the filterable selector for a multi-dataset listing including a synthetic non-Telco/Bank dataset and updates the read-only panel on selection change", async () => {
     const datasetOne = {
       dataset_slug: "synthetic-retail-forecast",
       title: "Synthetic Retail Forecast",
@@ -427,11 +438,15 @@ describe("DatasetAdminPage", () => {
 
     render(<DatasetAdminPage />);
 
-    const select = await screen.findByLabelText("Dataset");
-    await waitFor(() => expect(select).toHaveValue(datasetOne.dataset_slug));
+    const selector = await screen.findByLabelText("Dataset");
+    await waitFor(() => expect(selector).toHaveValue(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
 
-    const optionValues = Array.from(select.querySelectorAll("option")).map((option) => (option as HTMLOptionElement).value);
-    expect(optionValues).toEqual([datasetOne.dataset_slug, datasetTwo.dataset_slug, datasetThree.dataset_slug]);
+    const optionValues = Array.from(document.querySelectorAll("#dataset-admin-selector-options option")).map((option) => (option as HTMLOptionElement).value);
+    expect(optionValues).toEqual([
+      `${datasetOne.title} -- ${datasetOne.dataset_slug}`,
+      `${datasetTwo.title} -- ${datasetTwo.dataset_slug}`,
+      `${datasetThree.title} -- ${datasetThree.dataset_slug}`,
+    ]);
 
     const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
     await waitFor(() => {
@@ -440,11 +455,12 @@ describe("DatasetAdminPage", () => {
     expect(within(panel).getByText(datasetOne.title)).toBeInTheDocument();
     expect(within(panel).getByText(datasetOne.domain)).toBeInTheDocument();
 
-    fireEvent.change(select, { target: { value: datasetTwo.dataset_slug } });
+    fireEvent.change(selector, { target: { value: datasetTwo.dataset_slug } });
 
     await waitFor(() => {
       expect(within(panel).getByText(datasetTwo.dataset_slug)).toBeInTheDocument();
     });
+    expect(screen.getByRole("heading", { name: `Dataset -- ${datasetTwo.title}` })).toBeInTheDocument();
     expect(within(panel).getByText(datasetTwo.title)).toBeInTheDocument();
     expect(within(panel).getByText(datasetTwo.domain)).toBeInTheDocument();
   });

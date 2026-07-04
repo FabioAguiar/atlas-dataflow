@@ -5376,6 +5376,18 @@ The support-root design screens are deterministic UX references, not runtime con
   `docs/design-asset-token-consolidation.md`, defining support-root asset
   inventory, duplicate logo canonicalization guidance, token-owner mapping,
   compact desktop constraints, and deferred schema/API-dependent visual options.
+- The M41-04 screen-by-screen design parity checklist is recorded in
+  `docs/design-parity-checklist.md`, covering Public Home, Dataset Detail,
+  Admin Dashboard, Dataset Admin, PublicShell, AdminShell, shared public
+  components, Live Preview, assets/tokens, and behavior classifications, with
+  required/deferred status and downstream M42 through M45 owner mapping for
+  every item.
+- The M41-05 M42 through M45 derivation boundary map and Live Preview
+  shared-component dependency map are recorded in
+  `docs/design-parity-derivation-boundaries.md`, stating the explicit
+  M44/M45-depends-on-M42 sequencing rule and disclosing the Live Preview
+  adapter-workaround and design-doc-staleness findings surfaced during
+  analysis.
 - Inventory of support-root assets required by React.
 - Inventory of JavaScript-defined behaviors to be implemented, disabled, or deferred.
 - Screen-by-screen checklist for visual and behavioral parity.
@@ -5390,6 +5402,13 @@ The support-root design screens are deterministic UX references, not runtime con
   `docs/design-prototype-behavior-inventory.md` authorized as the narrow
   behavior inventory artifact for M41-02. `docs/design-asset-token-consolidation.md`
   is authorized as the narrow asset and token planning artifact for M41-03.
+  `docs/design-parity-checklist.md` is authorized as the narrow screen-by-screen
+  parity checklist artifact for M41-04, consolidating the M41-01 matrix, the
+  M41-02 behavior inventory, and the M41-03 asset/token plan into the finite
+  validation checklist that M42 through M45 must satisfy.
+  `docs/design-parity-derivation-boundaries.md` is authorized as the narrow
+  M42 through M45 derivation-boundary and Live Preview dependency artifact for
+  M41-05.
 - Candidate documentation: narrow design-parity matrix or checklist artifacts
   only when a derived issue explicitly needs reusable planning detail.
 - Criterion not to update: do not create a broad implementation map or architecture rewrite.

@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M40",
-    "title": "Private Admin Design Parity Closure",
+    "id": "M41",
+    "title": "Design Runtime Parity Contract and Visual Asset Consolidation",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M39",
-    "title": "Public Surface Design Parity Closure",
+    "id": "M40",
+    "title": "Private Admin Design Parity Closure",
     "status": "completed"
   },
   "completed_milestones": [
@@ -222,6 +222,11 @@
       "id": "M39",
       "title": "Public Surface Design Parity Closure",
       "status": "completed"
+    },
+    {
+      "id": "M40",
+      "title": "Private Admin Design Parity Closure",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -418,6 +423,11 @@
     {
       "id": "M39",
       "title": "Public Surface Design Parity Closure",
+      "status": "locked"
+    },
+    {
+      "id": "M40",
+      "title": "Private Admin Design Parity Closure",
       "status": "locked"
     }
   ],
@@ -644,12 +654,18 @@
     {
       "id": "M40",
       "title": "Private Admin Design Parity Closure",
+      "status": "completed"
+    },
+    {
+      "id": "M41",
+      "title": "Design Runtime Parity Contract and Visual Asset Consolidation",
       "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M40 is the current active milestone for Private Admin Design Parity Closure in Atlas DataFlow.",
+    "M41 is the current active milestone for Design Runtime Parity Contract and Visual Asset Consolidation in Atlas DataFlow.",
+    "M40 is marked as completed because Private Admin Design Parity Closure has been completed.",
     "M39 is marked as completed because Public Surface Design Parity Closure has been completed.",
     "M38 is marked as completed because Settings, Help, and Admin Completion Pass has been completed.",
     "M37 is marked as completed because Dataset Catalog Generalization and Hardcoded Dataset Exit has been completed.",
@@ -695,9 +711,9 @@
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M40 should be validated against docs/milestones.md before workflow continuation.",
-    "The current milestone points to M40 because the next implementation focus is Private Admin Design Parity Closure."
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M41 should be validated against docs/milestones.md before workflow continuation.",
+    "The current milestone points to M41 because the next implementation focus is Design Runtime Parity Contract and Visual Asset Consolidation."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

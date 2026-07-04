@@ -203,6 +203,11 @@ Conditions that may motivate a future review of the strategy:
 | M38 | Settings, Help, and admin completion pass | Admin navigation gaps are closed with minimal Settings and Help screens | With reservations |
 | M39 | Public surface design parity closure | Public Home, Dataset Detail, PublicShell, and shared public components match the support-root designs | With reservations |
 | M40 | Private admin design parity closure | AdminShell, Dashboard, Dataset Admin, Publishing, and Live Preview match the support-root designs | With reservations |
+| M41 | Design runtime parity contract and visual asset consolidation | Support-root HTML/CSS/JS prototypes become an explicit React parity contract with assets and behavior inventory | With reservations |
+| M42 | Public screens exact design and behavior parity | Public Home, Dataset Detail, PublicShell, and shared public interactions match the executable designs | With reservations |
+| M43 | Admin shell and Dashboard exact design and behavior parity | AdminShell and Dashboard `/admin` match `dataset-admin-home` visual and interaction specs | With reservations |
+| M44 | Dataset Admin exact visual structure parity | Dataset Admin `/admin/dataset-admin` visually matches the support-root prototype across tabs and compact desktop | With reservations |
+| M45 | Dataset Admin behavioral parity and final regression closure | Dataset Admin interactions from the prototype JavaScript become functional React behavior with final validation evidence | With reservations |
 
 ## M1 — Documented Foundation and Initial Technical Scope
 
@@ -5315,3 +5320,682 @@ The milestone will be ready to derive issues when:
 ### Continuity Notes
 
 M40 is the private/admin half of final design parity. It should preserve the useful M33 through M38 backend and workflow foundations, but bring the operator-facing UI into alignment with the refined support-root designs. It should be treated as a closure milestone, not as a rewrite or expansion into broader administration.
+
+## M41 — Design Runtime Parity Contract and Visual Asset Consolidation
+
+### Objective
+
+Create the explicit parity contract between the executable support-root designs and the React implementation before further screen work proceeds.
+
+### Problem or Gap
+
+M39 and M40 narrowed the public and private design-parity gaps, but the support-root prototypes remain richer than the React implementation. The design directory contains HTML, CSS, JavaScript, visual specifications, content documentation, responsive rules, and assets. Several of those JavaScript files act as executable behavioral specifications rather than passive mockups.
+
+Without a formal parity contract, future issues can keep implementing isolated visual fixes while missing interactions, state transitions, responsive details, or asset requirements defined in the prototypes.
+
+### Context
+
+The support-root design screens are deterministic UX references, not runtime contracts. They still need to be translated into React, schema-backed behavior, tests, and safe public/private boundaries. This milestone creates the inventory and consolidation layer needed for exact implementation milestones without changing product architecture.
+
+### Core Scope
+
+- Map each support-root screen to its React runtime surface.
+- Inventory required visual elements, layout rules, responsive rules, assets, CSS tokens, and interaction states.
+- Treat relevant `script.js` files as behavioral specs to be translated, not copied blindly.
+- Classify every prototype interaction as one of: already implemented, implementable in React, schema/API-backed, preview-only, disabled, or deferred.
+- Consolidate required visual assets, especially Atlas sidebar/logo assets, into a safe frontend asset path if a derived issue authorizes implementation.
+- Define the parity checklist that M42 through M45 must satisfy.
+- Identify dependencies between public shared components and Dataset Admin Live Preview.
+
+### Out of Scope
+
+- Implementing React screen parity directly in this milestone.
+- Changing API, publisher, registry, runtime, notebooks, or release artifacts.
+- Expanding profile schemas or presentation enums by inference.
+- Treating support-root JavaScript as production code to be copied directly.
+- Creating public administration, public upload, retraining, marketplace, database migration, or multi-user behavior.
+- Replacing operational State or implementation handoff artifacts.
+
+### Expected Deliverables
+
+- A documented parity matrix for:
+  - Public Home `/`;
+  - Dataset Detail `/dataset/:slug`;
+  - Admin Dashboard `/admin`;
+  - Dataset Admin `/admin/dataset-admin`;
+  - PublicShell;
+  - AdminShell;
+  - shared public components consumed by Live Preview.
+- The M41-01 screen-to-React matrix is recorded in
+  `docs/design-runtime-parity-matrix.md`, with this milestone document kept as
+  the continuity anchor.
+- Inventory of support-root assets required by React.
+- Inventory of JavaScript-defined behaviors to be implemented, disabled, or deferred.
+- Screen-by-screen checklist for visual and behavioral parity.
+- Explicit issue derivation boundaries for M42 through M45.
+
+### Implementation Documentation
+
+- Applicable strategy: design-parity contract before implementation continuation.
+- Expected documentation update: `docs/milestones.md` remains the continuity
+  anchor, with `docs/design-runtime-parity-matrix.md` authorized as the narrow
+  reusable parity matrix artifact for M41-01.
+- Candidate documentation: narrow design-parity matrix or checklist artifacts
+  only when a derived issue explicitly needs reusable planning detail.
+- Criterion not to update: do not create a broad implementation map or architecture rewrite.
+
+### Dependencies
+
+- M29 design-reference boundary accepted.
+- M30 shared frontend foundation exists.
+- M31 through M40 public/admin implementation attempts exist and can be compared against support-root prototypes.
+- Current support-root design ZIP is available.
+- Current official repository ZIP is available.
+
+### Components or Areas Affected
+
+- `docs/milestones.md`.
+- Future issue/handoff planning for `web/src`.
+- Support-root design references under:
+  - `design/screens/home/`;
+  - `design/screens/dataset-detail/`;
+  - `design/screens/dataset-admin-home/`;
+  - `design/screens/dataset-admin/`.
+- Future frontend asset and style strategy.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: every prototype screen must have a React counterpart mapping.
+  - Possible issue type: documentation or bootstrap-preparation.
+  - Candidate issue: M41-01 Screen-to-React parity matrix.
+  - Note: the mapping must distinguish Public Home from Admin Dashboard.
+- Criterion: prototype JavaScript behavior must be classified before implementation.
+  - Possible issue type: documentation or bootstrap-preparation.
+  - Candidate issue: M41-02 Prototype behavior inventory and classification.
+  - Note: do not implement unsupported schema/API behavior by inference.
+- Criterion: shared assets and tokens must be inventoried.
+  - Possible issue type: bootstrap-preparation.
+  - Candidate issue: M41-03 Visual assets and token consolidation plan.
+  - Note: include logo and compact desktop constraints.
+- Criterion: final validation must become checklist-driven.
+  - Possible issue type: documentation.
+  - Candidate issue: M41-04 Design parity checklist definition.
+  - Note: checklist must be usable by M42 through M45.
+
+### Definition of Done
+
+- Each design screen has an explicit runtime target.
+- Each relevant prototype behavior is classified.
+- Required assets are known.
+- Shared public component dependencies for Live Preview are known.
+- M42 through M45 can be derived without guessing the intended visual or behavioral scope.
+- No runtime code, API, schema, publisher, registry, or notebook behavior is changed by this milestone.
+
+### Minimum Evidence
+
+- Screen-to-React mapping evidence.
+- Behavior inventory evidence for each relevant `script.js`.
+- Asset inventory evidence.
+- Explicit list of deferred or disabled prototype-only behaviors.
+- Confirmation that design prototypes remain UX references and not API/runtime contracts.
+
+### Risks and Gaps
+
+- Risk of spending too long documenting instead of enabling implementation.
+- Risk of copying prototype behavior without respecting React state, contracts, and schemas.
+- Risk of treating unsupported design controls as available product behavior.
+- Gap: some prototype behavior may require explicit schema/API reconciliation in later milestones.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- the current official repo and support-root ZIPs are available;
+- the support-root design files can be inspected in full;
+- the React pages and layouts can be inspected in full;
+- a future issue can produce a finite parity matrix without touching runtime implementation.
+
+### Continuity Notes
+
+M41 converts the current uncertainty into an implementation-ready parity contract. It should be brief but precise. It exists to prevent M42 through M45 from becoming generic visual-polish work.
+
+## M42 — Public Screens Exact Design and Behavior Parity
+
+### Objective
+
+Make the public Atlas surfaces match the executable support-root public designs in React, while preserving real public API behavior and contract-first runtime boundaries.
+
+### Problem or Gap
+
+The public Home and Dataset Detail have React implementations, but the support-root designs define a more specific final visual and interaction model. The gap is not simply copy or typography; it includes shell composition, card behavior, dataset detail layout, responsive behavior, tab behavior, inference/result presentation, and reuse by admin Live Preview.
+
+### Context
+
+Public surfaces must remain data-driven and safe. They must not expose private drafts, internal evidence, publisher state, or admin-only actions. Their components also provide the rendering substrate for Dataset Admin Live Preview, so public parity must be stabilized before final admin behavior parity.
+
+### Core Scope
+
+- Align PublicShell with the public design navigation, layout, responsive overlay, and branding.
+- Align Public Home `/` with `design/screens/home/` across desktop, tablet, and mobile references.
+- Align Dataset Detail `/dataset/:slug` with `design/screens/dataset-detail/` across layout, header, metadata, tabs, overview, visualizations, inference, and result presentation.
+- Translate public prototype `script.js` behavior into React state where applicable.
+- Preserve dataset listing as data-driven and count-agnostic.
+- Preserve public contract/runtime authority for inference validation.
+- Keep shared public components reusable by Live Preview.
+- Add tests for public screen rendering, navigation, responsive state where feasible, and public/private data boundaries.
+
+### Out of Scope
+
+- Private Dashboard or Dataset Admin parity.
+- Changing admin draft workflows except where public shared components expose stable props for Live Preview.
+- Backend redesign.
+- Publisher, registry, release, runtime, notebook, or model behavior changes.
+- Public upload, public administration, retraining, marketplace, database migration, or multi-user behavior.
+- Copying support-root HTML/CSS/JS into React without adaptation.
+
+### Expected Deliverables
+
+- Public Home visually and behaviorally aligned with the executable design reference.
+- Dataset Detail visually and behaviorally aligned with the executable design reference.
+- PublicShell aligned with the support-root public shell model.
+- Public components expose stable rendering behavior usable by Dataset Admin Live Preview.
+- Frontend tests and build validation covering public surfaces.
+- Clear evidence of any intentionally deferred prototype behavior.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation-first with checklist evidence from M41.
+- Expected documentation update: only a narrow parity evidence note if a derived issue leaves exceptions.
+- Criterion not to update: do not rewrite architecture, milestones, or operational State during implementation unless a blocker is discovered.
+
+### Dependencies
+
+- M41 parity contract completed or sufficiently available.
+- M39 public design-parity work inspected.
+- M30 through M32 public shell, public pages, and inference presentation foundations exist.
+- M34 through M36 profile/snapshot/visibility foundations are available where public presentation uses published state.
+- M37 dataset-count generalization exists.
+
+### Components or Areas Affected
+
+- `web/src/layouts/PublicShell.tsx`.
+- `web/src/pages/HomePage.tsx`.
+- `web/src/pages/DatasetPage.tsx`.
+- `web/src/components/DatasetCard/`.
+- `web/src/components/DatasetDetail/`.
+- `web/src/components/InferenceForm/`.
+- `web/src/components/InferenceResult/`.
+- `web/src/lib/datasetPresentation.ts`.
+- `web/src/lib/livePreviewProjection.ts`, only where needed to preserve shared rendering contracts.
+- `web/src/App.css`, `web/src/index.css`, `web/src/styles/tokens.css`, and shared UI CSS.
+- Public frontend tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: public shell parity is not closed.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M42-01 PublicShell exact visual and responsive behavior parity.
+  - Note: preserve public/private separation.
+- Criterion: Home design and card behavior differ from the support-root prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M42-02 Public Home exact design and dataset-card behavior parity.
+  - Note: no hardcoded Telco/Bank assumptions.
+- Criterion: Dataset Detail differs from the support-root prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M42-03 Dataset Detail exact visual and interaction parity.
+  - Note: preserve runtime validation authority.
+- Criterion: public prototype interactions are missing in React.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M42-04 Public prototype JavaScript behavior translation.
+  - Note: translate only behavior compatible with public runtime boundaries.
+- Criterion: validation evidence is missing.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M42-05 Public parity validation and regression evidence.
+
+### Definition of Done
+
+- Public Home matches the support-root public Home design within React/runtime constraints.
+- Dataset Detail matches the support-root Dataset Detail design within React/runtime constraints.
+- Public navigation and responsive behavior match the executable references.
+- Public inference/result behavior remains contract-driven.
+- Public components are stable enough for Dataset Admin Live Preview.
+- Existing public routes remain functional.
+- Frontend build and relevant tests pass or blockers are recorded with exact output.
+
+### Minimum Evidence
+
+- Before/after checklist against M41 public parity matrix.
+- Tests for public Home rendering with zero/one/many datasets.
+- Tests for Dataset Detail rendering and tab/inference behavior.
+- Tests or manual evidence for responsive navigation.
+- Evidence that private drafts are not exposed on public surfaces.
+- Build and frontend test command evidence.
+
+### Risks and Gaps
+
+- Risk of overfitting to one dataset while matching the visual design.
+- Risk of weakening contract-first inference by moving validation into UI assumptions.
+- Risk of exposing draft profile state before publication.
+- Gap: if design references include unsupported presentation values, later schema reconciliation may be required.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M41 identifies the exact public parity checklist;
+- current public React files are available;
+- current public design files are available;
+- public API/data fixtures needed by tests are known;
+- issue scope confirms no admin rewrite is included.
+
+### Continuity Notes
+
+M42 closes the public rendering substrate. M43 through M45 should consume these public components rather than recreate mock previews.
+
+## M43 — Admin Shell and Dashboard Exact Design and Behavior Parity
+
+### Objective
+
+Align the private AdminShell and Dashboard `/admin` with the executable `dataset-admin-home` support-root design, including visual structure, compact desktop layout, and safe interaction behavior.
+
+### Problem or Gap
+
+The Dashboard exists in React, and M40 improved admin design parity, but the current runtime still does not fully match the support-root admin-home prototype. The design includes specific sidebar branding, layout density, summary cards, filters, run and dataset tables, safe actions, local feedback, and compact desktop behavior.
+
+### Context
+
+The `dataset-admin-home` design is the Admin Dashboard, not the public Home. Its JavaScript prototype defines expected operator interactions such as filtering, local action feedback, selection/opening semantics, and status messaging. React must implement compatible functional behavior without overclaiming unsupported mutations.
+
+### Core Scope
+
+- Align AdminShell brand, logo, navigation, profile block, density, and compact desktop behavior.
+- Align Dashboard header, filters, summary cards, Runs section, Dataset Details section, status states, and action presentation.
+- Translate safe Dashboard prototype behaviors into React state.
+- Ensure unavailable or not-yet-real mutations are presented as disabled, preview-only, or safe intent actions rather than false operations.
+- Preserve private/public separation.
+- Preserve Settings and Help navigation integration where shell changes affect them.
+- Add tests for Dashboard rendering, filtering, status states, and safe action semantics.
+
+### Out of Scope
+
+- Dataset Admin tab-level visual parity.
+- Dataset Admin drag-and-drop or publishing workflow behavior.
+- Backend publisher redesign.
+- Notebook execution or real pipeline automation.
+- Public admin links or public exposure of private routes.
+- Broad authentication redesign.
+- Database-backed run history.
+
+### Expected Deliverables
+
+- AdminShell visually aligned with the support-root admin shell.
+- Dashboard `/admin` visually aligned with `design/screens/dataset-admin-home/`.
+- Dashboard interactions translated from prototype JavaScript where supported.
+- Explicit disabled/deferred states for unsupported mutations.
+- Compact desktop evidence for approximately `1360x768`.
+- Admin shell and Dashboard frontend tests.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation-first with M41 checklist evidence.
+- Expected documentation update: narrow exception note only if a prototype action cannot be safely represented.
+- Criterion not to update: do not create a broad admin operations manual during visual parity.
+
+### Dependencies
+
+- M41 parity contract completed or sufficiently available.
+- M40 private admin parity work inspected.
+- M33 Dashboard backend foundation exists.
+- M38 Settings and Help routes exist.
+- Current support-root `dataset-admin-home` design is available.
+
+### Components or Areas Affected
+
+- `web/src/layouts/AdminShell.tsx`.
+- `web/src/pages/admin/DashboardPage.tsx`.
+- `web/src/pages/admin/SettingsPage.tsx` and `web/src/pages/admin/HelpPage.tsx`, only if shell integration requires safe polish.
+- `web/src/components/ui/`.
+- Shared CSS tokens/styles.
+- Admin frontend tests.
+- Minimal safe projection code only if Dashboard parity cannot be represented from existing API data.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: AdminShell differs from the prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M43-01 AdminShell exact brand, navigation, profile, and compact parity.
+  - Note: include real Atlas logo if authorized by asset consolidation.
+- Criterion: Dashboard structure differs from `dataset-admin-home`.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M43-02 Dashboard layout, cards, tables, and filters exact parity.
+  - Note: preserve `/admin` route.
+- Criterion: Dashboard prototype behavior is absent or unsafe.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M43-03 Dashboard JavaScript behavior translation and safe action semantics.
+  - Note: do not invent promotion/removal mutations.
+- Criterion: validation evidence is missing.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M43-04 Admin shell and Dashboard parity validation.
+
+### Definition of Done
+
+- `dataset-admin-home` is implemented as Dashboard `/admin`.
+- AdminShell matches the support-root admin design within React/runtime constraints.
+- Dashboard matches the support-root admin-home design within React/runtime constraints.
+- Dashboard filters and local UI feedback behave as specified where supported.
+- Unsupported actions do not claim successful mutation.
+- Settings and Help remain reachable and visually compatible with shell changes.
+- Frontend build and relevant tests pass or blockers are recorded.
+
+### Minimum Evidence
+
+- Before/after checklist against M41 admin-home parity matrix.
+- Tests for Dashboard render states.
+- Tests for filtering/search behavior.
+- Tests or manual evidence for safe action states.
+- Compact desktop evidence around `1360x768`.
+- Standard desktop evidence around `1440x900` or wider.
+- Build and frontend test command evidence.
+
+### Risks and Gaps
+
+- Risk of making prototype-only actions appear as real backend operations.
+- Risk of weakening private route boundaries while polishing navigation.
+- Risk of overloading Dashboard with Dataset Admin responsibilities.
+- Gap: full dataset onboarding automation remains outside this milestone.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M41 identifies exact Dashboard visual and behavior requirements;
+- current Dashboard API/state shape is known;
+- unsupported Dashboard actions are classified;
+- current admin React files are available;
+- issue scope confirms no Dataset Admin behavior parity is included.
+
+### Continuity Notes
+
+M43 closes the admin entry surface. M44 and M45 should then focus exclusively on Dataset Admin rather than continuing shell/Dashboard drift.
+
+## M44 — Dataset Admin Exact Visual Structure Parity
+
+### Objective
+
+Make Dataset Admin `/admin/dataset-admin` visually match the support-root `dataset-admin` prototype across layout, tabs, forms, preview frame, publishing section, and compact desktop density before final behavior parity is attempted.
+
+### Problem or Gap
+
+Dataset Admin is the largest and most complex screen. The support-root prototype contains extensive HTML and CSS plus a large JavaScript behavior specification. Trying to implement all visual and behavioral parity in one step risks regressions in draft, publish, visibility, and Live Preview behavior.
+
+This milestone isolates visual structure parity from full interaction parity.
+
+### Context
+
+The React Dataset Admin already has important functional foundations from M34 through M40: draft state, publishing state, Live Preview projection, dataset selector, tabs, and tests. The support-root prototype defines a more complete final presentation for these capabilities. The correct approach is to preserve the functional foundations while rebuilding the visual shell and tab content to match the prototype.
+
+### Core Scope
+
+- Align Dataset Admin header, title, dataset selector, status pill, and top-level layout.
+- Align tab navigation and panel layout with the support-root design.
+- Align Public Content, Metadata & Home Card, Theme Preset, Inference Form, Result Card, Publishing, and Live Preview visual sections.
+- Align cards, labels, required markers, controls, badges, spacing, columns, responsive desktop behavior, and compact vertical density.
+- Align preview container structure without replacing real public components with static mockups.
+- Preserve current functional behavior while refactoring markup/styles.
+- Keep unsupported controls visibly disabled or preview-only when schema/API support is absent.
+
+### Out of Scope
+
+- Full drag-and-drop behavioral parity.
+- Full prototype JavaScript translation.
+- Backend/API redesign.
+- Schema enum expansion unless a derived issue explicitly authorizes it.
+- New publisher behavior.
+- Notebook, model, registry, or release pipeline changes.
+- Public screen redesign beyond shared components already stabilized in M42.
+
+### Expected Deliverables
+
+- Dataset Admin visually aligned with `design/screens/dataset-admin/desktop/`.
+- Compact desktop visual evidence around `1360x768`.
+- Standard desktop visual evidence around `1440x900` or wider.
+- Existing save/publish/visibility behavior preserved.
+- Live Preview frame visually aligned while still using real public components.
+- Frontend tests updated for structure, labels, visible state, and regression protection.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation-first with M41 checklist evidence.
+- Expected documentation update: only exception notes for unsupported visual controls.
+- Criterion not to update: do not rewrite architecture or turn the milestone into a behavior backlog.
+
+### Dependencies
+
+- M41 parity contract completed or sufficiently available.
+- M42 public component parity completed or known exceptions documented.
+- M43 admin shell parity completed or sufficiently stable.
+- M34 through M36 draft/profile/publishing foundations exist.
+- M40 Dataset Admin parity work inspected.
+- Current support-root `dataset-admin` design is available.
+
+### Components or Areas Affected
+
+- `web/src/pages/admin/DatasetAdminPage.tsx`.
+- `web/src/lib/livePreviewProjection.ts` only where visual projection props need safe structure.
+- `web/src/components/DatasetCard/`.
+- `web/src/components/DatasetDetail/`.
+- `web/src/components/InferenceForm/`.
+- `web/src/components/InferenceResult/`.
+- `web/src/components/ui/`.
+- `web/src/App.css`, `web/src/index.css`, `web/src/styles/tokens.css`, and shared UI CSS.
+- Dataset Admin frontend tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: Dataset Admin frame differs from the prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M44-01 Dataset Admin header, selector, status, and tab frame visual parity.
+- Criterion: form/card tabs differ from the prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M44-02 Dataset Admin content tabs visual parity.
+  - Note: include Public Content, Metadata & Home Card, Theme Preset, Inference Form, and Result Card.
+- Criterion: Publishing and Live Preview visual layout differs from the prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M44-03 Publishing and Live Preview visual structure parity.
+  - Note: preserve real lifecycle semantics.
+- Criterion: compact desktop layout is not validated.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M44-04 Dataset Admin compact desktop validation.
+- Criterion: regression evidence is missing.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M44-05 Dataset Admin visual parity regression tests.
+
+### Definition of Done
+
+- Dataset Admin visually matches the support-root `dataset-admin` prototype within React/runtime constraints.
+- Main tabs and visible sections are structurally aligned.
+- Existing functional save, publish, visibility, dataset switching, and preview behavior still works.
+- Unsupported controls remain safe and clearly classified.
+- Live Preview remains based on real public components.
+- Frontend build and relevant tests pass or blockers are recorded.
+
+### Minimum Evidence
+
+- Before/after checklist against M41 Dataset Admin visual matrix.
+- File-level summary of markup/style changes.
+- Tests for visible section labels and tab state.
+- Tests proving functional lifecycle did not regress.
+- Compact desktop and standard desktop evidence.
+- Build and frontend test command evidence.
+
+### Risks and Gaps
+
+- Risk of breaking functional draft/publish behavior while changing markup.
+- Risk of making visual parity depend on static mockup data.
+- Risk of enabling unsupported controls accidentally.
+- Gap: full JavaScript behavior parity remains intentionally deferred to M45.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M41 identifies exact Dataset Admin visual requirements;
+- M42 public components are available or exceptions are known;
+- M43 shell constraints are stable;
+- current Dataset Admin tests can protect existing workflows;
+- issue scope confirms complex behavior parity is deferred to M45.
+
+### Continuity Notes
+
+M44 should make the screen look right without trying to solve every interactive subsystem. It prepares a stable visual surface for M45 behavioral completion.
+
+## M45 — Dataset Admin Behavioral Parity and Final Regression Closure
+
+### Objective
+
+Translate the support-root Dataset Admin prototype JavaScript behavior into functional, schema-safe React behavior and close the final design-parity regression cycle.
+
+### Problem or Gap
+
+The Dataset Admin support-root JavaScript is effectively a behavioral specification. It defines tab switching, preview switching, theme/icon selection, field synchronization, primary-score highlighting, result-card presets, inference-form builder behavior, drag-and-drop, group creation/editing/reordering/collapsing, publishing lifecycle states, visible-publicly state, preview behavior, and dataset combobox filtering.
+
+The React implementation must support the same intended behavior where it is compatible with existing contracts and must explicitly disable or defer behavior that is not yet schema/API-backed.
+
+### Context
+
+By this milestone, public components should be stable and Dataset Admin should visually match the prototype. The final challenge is behavior: interactions must not merely animate locally, but must integrate with draft state, live preview projection, publish snapshot semantics, public visibility, validation, and tests.
+
+### Core Scope
+
+- Implement or verify Dataset Admin dataset combobox filtering.
+- Implement or verify main tab and preview tab behavior.
+- Implement or verify real-time Live Preview updates for supported draft changes.
+- Implement or verify theme and icon selection within schema-backed limits.
+- Implement or verify Home Card description synchronization.
+- Implement or verify Primary Score Highlight effects in preview.
+- Implement or verify Result Card configuration behavior within schema-backed limits.
+- Implement or verify Inference Form builder behavior.
+- Implement or verify drag-and-drop field ordering where authorized.
+- Implement or verify group creation, editing, reordering, and collapse behavior where supported.
+- Implement or verify Save Draft, Preview, Publish Changes, Visible Publicly, Last Published, and related state transitions.
+- Add validation and regression tests for supported behaviors.
+- Record disabled/deferred behavior explicitly when schema/API support is absent.
+
+### Out of Scope
+
+- Rewriting backend publisher architecture.
+- Replacing file-based registry or release model.
+- Running notebooks or training models from the admin UI.
+- Public upload.
+- Marketplace, multi-user, complex authorization, or database migration.
+- Enabling unsupported theme/result presets without schema/API reconciliation.
+- Treating local-only prototype interactions as successful persisted mutations.
+
+### Expected Deliverables
+
+- Dataset Admin interaction behavior aligned with the support-root prototype within authorized product boundaries.
+- Functional Live Preview updates for supported controls.
+- Functional draft/publish/visibility lifecycle preserved and validated.
+- Drag-and-drop and grouping behavior implemented or explicitly deferred with evidence.
+- Unsupported prototype behavior disabled or documented as future scope.
+- Final regression evidence for public and admin surfaces after rebuild.
+
+### Implementation Documentation
+
+- Applicable strategy: implementation-first with final parity evidence.
+- Expected documentation update: a narrow final exception/evidence note only if unsupported behaviors remain.
+- Criterion to update `docs/milestones.md`: only if new milestones are required after M45.
+- Criterion not to update: do not create broad cumulative docs unless the final regression shows recurring navigation failure.
+
+### Dependencies
+
+- M41 parity contract completed.
+- M42 public screens parity completed.
+- M43 admin shell and Dashboard parity completed.
+- M44 Dataset Admin visual parity completed.
+- M34 through M36 draft, preview, publish, snapshot, and visibility semantics remain functional.
+- Current profile schema and admin API behavior are inspected before enabling persisted controls.
+
+### Components or Areas Affected
+
+- `web/src/pages/admin/DatasetAdminPage.tsx`.
+- `web/src/lib/livePreviewProjection.ts`.
+- `web/src/components/DatasetCard/`.
+- `web/src/components/DatasetDetail/`.
+- `web/src/components/InferenceForm/`.
+- `web/src/components/InferenceResult/`.
+- `web/src/components/ui/`.
+- Admin and public frontend tests.
+- Minimal contract/schema or API projection files only if a derived issue explicitly authorizes reconciliation for a previously unsupported behavior.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: dataset selector behavior differs from the prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M45-01 Dataset Admin filterable dataset selector behavior parity.
+- Criterion: preview state does not update like the prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M45-02 Live Preview reactive behavior parity.
+- Criterion: theme/icon/primary highlight behavior differs or is unsupported.
+  - Possible issue type: bootstrap or decision.
+  - Candidate issue: M45-03 Theme, icon, and primary score behavior parity within schema limits.
+- Criterion: inference-form builder behavior differs from the prototype.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M45-04 Inference form builder and ordering behavior parity.
+- Criterion: field grouping behavior differs from the prototype.
+  - Possible issue type: bootstrap or decision.
+  - Candidate issue: M45-05 Field group creation, edit, reorder, and collapse behavior parity.
+- Criterion: publishing lifecycle behavior differs from the prototype or real semantics.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M45-06 Publishing lifecycle behavior parity and deterministic state tests.
+- Criterion: final regression evidence is missing.
+  - Possible issue type: bootstrap.
+  - Candidate issue: M45-07 Final public/admin design parity regression evidence.
+
+### Definition of Done
+
+- Supported Dataset Admin interactions behave like the support-root prototype.
+- Unsupported interactions are visibly disabled, preview-only, or explicitly deferred.
+- Live Preview responds to supported draft changes and continues to use real public components.
+- Save Draft, Preview, Publish Changes, Visible Publicly, and Last Published state transitions remain deterministic.
+- Public screens, Admin Dashboard, and Dataset Admin still render after full rebuild.
+- Frontend tests, build, and Docker rebuild validation pass or exact blockers are recorded.
+
+### Minimum Evidence
+
+- Behavior checklist against M41 Dataset Admin JavaScript inventory.
+- Tests for dataset selector filtering.
+- Tests for tab and preview tab behavior.
+- Tests for Live Preview projection changes.
+- Tests for save, publish, visibility, and published-state presentation.
+- Tests or manual evidence for drag-and-drop and grouping behavior, or documented deferral.
+- Evidence for unsupported schema/API controls remaining disabled or safe.
+- `npm run build` evidence.
+- Frontend test evidence.
+- Docker rebuild evidence using `docker compose build --no-cache` and smoke checks for:
+  - `/`;
+  - `/dataset/:slug`;
+  - `/admin`;
+  - `/admin/dataset-admin`.
+
+### Risks and Gaps
+
+- Risk of implementing complex prototype behavior as local-only UI without persistence or validation.
+- Risk of expanding schemas without explicit product decision.
+- Risk of breaking public components while wiring Live Preview behavior.
+- Risk of drag-and-drop regressions in compact desktop layout.
+- Gap: future enhancements beyond final parity should be planned after the parity closure rather than smuggled into M45.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M44 visual structure is stable;
+- M41 behavior inventory exists;
+- current profile schema and admin API support are known;
+- tests can protect draft/publish/visibility behavior;
+- public and Dashboard parity are already closed or have explicit exceptions.
+
+### Continuity Notes
+
+M45 is the final regression and behavior-closure milestone for the current design parity cycle. After M45, additional product work should be planned as new capabilities, not as unresolved design parity cleanup.

@@ -93,4 +93,30 @@ describe("App admin routing", () => {
     expect(screen.getByRole("button", { name: "Publishing unavailable" })).toBeDisabled();
     expect(screen.getByRole("heading", { name: /Dataset Admin/i })).toBeInTheDocument();
   });
+
+  it("renders Settings only inside the private admin shell", async () => {
+    render(
+      <MemoryRouter initialEntries={["/admin/settings"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Private administration")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/admin/settings");
+    expect(screen.getByRole("heading", { name: /Admin settings/i })).toBeInTheDocument();
+  });
+
+  it("renders Help only inside the private admin shell", async () => {
+    render(
+      <MemoryRouter initialEntries={["/admin/help"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Private administration")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/admin/help");
+    expect(screen.getByRole("heading", { name: /Admin help/i })).toBeInTheDocument();
+  });
 });

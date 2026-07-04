@@ -26,6 +26,14 @@ type AdminRunsResponse = {
   runs: AdminRunSummary[];
 };
 
+type DatasetDetailRow = {
+  displayName: string;
+  problemType: string;
+  visibilityStatus: "unavailable";
+  lastUpdated: string | null;
+  sourceRunCount: number;
+};
+
 const validationOutcomes: ValidationOutcome[] = ["accepted", "rejected", "failed", "unknown"];
 const unavailableReasons: Array<NonNullable<AdminRunSummary["unavailable_reason"]>> = [
   "source_run_evidence_missing",
@@ -92,6 +100,13 @@ const inputStyle: CSSProperties = {
   background: "var(--atlas-color-surface)",
 };
 
+const dashboardSearchStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(16rem, 1fr) minmax(10rem, 14rem)",
+  gap: "var(--atlas-space-3)",
+  alignItems: "end",
+};
+
 const filterBarStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
@@ -100,8 +115,8 @@ const filterBarStyle: CSSProperties = {
 
 const statusGridStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr))",
-  gap: "var(--atlas-space-4)",
+  gridTemplateColumns: "repeat(4, minmax(9.5rem, 1fr))",
+  gap: "var(--atlas-space-3)",
 };
 
 const counterValueStyle: CSSProperties = {
@@ -115,11 +130,11 @@ const tableStyle: CSSProperties = {
   gap: 0,
 };
 
-const tableHeaderStyle: CSSProperties = {
+const runsTableHeaderStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns:
     "minmax(0, 1.1fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(11rem, 0.85fr)",
-  gap: "var(--atlas-space-4)",
+  gap: "var(--atlas-space-3)",
   borderBottom: "1px solid var(--atlas-color-border-strong)",
   paddingBottom: "var(--atlas-space-3)",
   color: "var(--atlas-color-text-subtle)",
@@ -128,12 +143,38 @@ const tableHeaderStyle: CSSProperties = {
   textTransform: "uppercase",
 };
 
-const rowContentStyle: CSSProperties = {
+const runRowContentStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns:
     "minmax(0, 1.1fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(11rem, 0.85fr)",
-  gap: "var(--atlas-space-4)",
+  gap: "var(--atlas-space-3)",
   alignItems: "center",
+};
+
+const datasetTableHeaderStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "minmax(0, 1.15fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(14rem, 1fr)",
+  gap: "var(--atlas-space-3)",
+  borderBottom: "1px solid var(--atlas-color-border-strong)",
+  paddingBottom: "var(--atlas-space-3)",
+  color: "var(--atlas-color-text-subtle)",
+  fontSize: "var(--atlas-text-xs)",
+  fontWeight: 800,
+  textTransform: "uppercase",
+};
+
+const datasetRowContentStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns:
+    "minmax(0, 1.15fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(14rem, 1fr)",
+  gap: "var(--atlas-space-3)",
+  alignItems: "center",
+};
+
+const sectionGridStyle: CSSProperties = {
+  display: "grid",
+  gap: "var(--atlas-space-4)",
 };
 
 const mutedTextStyle: CSSProperties = {
@@ -158,6 +199,12 @@ const disabledIntentButtonStyle: CSSProperties = {
   cursor: "not-allowed",
   opacity: 0.75,
   width: "fit-content",
+};
+
+const actionGroupStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "var(--atlas-space-2)",
 };
 
 function isSafeTraceReference(value: string | null): boolean {
@@ -288,6 +335,54 @@ function promotionIntentMessage(run: AdminRunSummary): string {
   return "Resolve run evidence before future promotion review.";
 }
 
+function datasetDisplayName(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function buildDatasetDetailRows(runs: AdminRunSummary[]): DatasetDetailRow[] {
+  const rows = new Map<string, DatasetDetailRow>();
+
+  for (const run of runs) {
+    if (!run.dataset_candidate) {
+      continue;
+    }
+
+    const existing = rows.get(run.dataset_candidate);
+    const nextLastUpdated =
+      existing?.lastUpdated && run.created_at
+        ? new Date(existing.lastUpdated).getTime() >= new Date(run.created_at).getTime()
+          ? existing.lastUpdated
+          : run.created_at
+        : existing?.lastUpdated ?? run.created_at;
+
+    rows.set(run.dataset_candidate, {
+      displayName: datasetDisplayName(run.dataset_candidate),
+      problemType: "Pending safe profile source",
+      visibilityStatus: "unavailable",
+      lastUpdated: nextLastUpdated ?? null,
+      sourceRunCount: (existing?.sourceRunCount ?? 0) + 1,
+    });
+  }
+
+  return Array.from(rows.values()).sort((first, second) => first.displayName.localeCompare(second.displayName));
+}
+
+function datasetMatchesQuery(row: DatasetDetailRow, query: string): boolean {
+  if (query.length === 0) {
+    return true;
+  }
+
+  return (
+    row.displayName.toLowerCase().includes(query) ||
+    row.problemType.toLowerCase().includes(query) ||
+    row.visibilityStatus.toLowerCase().includes(query)
+  );
+}
+
 export default function DashboardPage() {
   const [adminToken, setAdminToken] = useState("");
   const [query, setQuery] = useState("");
@@ -295,20 +390,21 @@ export default function DashboardPage() {
   const [state, setState] = useState<DashboardState>({ status: "idle" });
 
   const runs = state.status === "ready" ? state.data.runs : [];
+  const datasetRows = useMemo(() => buildDatasetDetailRows(runs), [runs]);
 
   const counters = useMemo(
     () => ({
-      total: runs.length,
-      available: runs.filter((run) => run.status === "available").length,
-      invalid: runs.filter((run) => run.status === "invalid").length,
-      unavailable: runs.filter((run) => run.status === "unavailable").length,
+      runsAvailable: runs.filter((run) => run.status === "available").length,
+      promotedRuns: 0,
+      publishedDatasets: 0,
+      draftDatasets: 0,
     }),
     [runs],
   );
 
-  const filteredRuns = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = query.trim().toLowerCase();
 
+  const filteredRuns = useMemo(() => {
     return runs.filter((run) => {
       const matchesStatus = statusFilter === "all" || run.status === statusFilter;
       const matchesQuery =
@@ -319,7 +415,12 @@ export default function DashboardPage() {
 
       return matchesStatus && matchesQuery;
     });
-  }, [query, runs, statusFilter]);
+  }, [normalizedQuery, runs, statusFilter]);
+
+  const filteredDatasetRows = useMemo(
+    () => datasetRows.filter((row) => datasetMatchesQuery(row, normalizedQuery)),
+    [datasetRows, normalizedQuery],
+  );
 
   function loadRuns(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -377,10 +478,10 @@ export default function DashboardPage() {
       <div style={headerStyle}>
         <div>
           <p className="eyebrow">Dashboard</p>
-          <h1 id="admin-dashboard-title">Run discovery</h1>
+          <h1 id="admin-dashboard-title">Dashboard</h1>
           <p className="summary">
-            Private run summaries from the admin projection. Statuses come from the backend; no filesystem inspection is
-            performed in the browser.
+            Private run and dataset readiness from safe admin projections. Statuses come from the backend; no raw
+            filesystem, draft, runtime, or log inspection is performed in the browser.
           </p>
         </div>
 
@@ -425,26 +526,54 @@ export default function DashboardPage() {
 
       {state.status === "ready" && (
         <>
+          <Card aria-label="Dashboard search" muted>
+            <div style={dashboardSearchStyle}>
+              <label style={fieldStyle}>
+                <span style={labelStyle}>Search runs and datasets</span>
+                <input
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Run ID, dataset, outcome, visibility"
+                  style={{ ...inputStyle, width: "100%" }}
+                  type="search"
+                  value={query}
+                />
+              </label>
+              <label style={fieldStyle}>
+                <span style={labelStyle}>Run status</span>
+                <select
+                  onChange={(event) => setStatusFilter(event.target.value as FilterStatus)}
+                  style={{ ...inputStyle, width: "100%" }}
+                  value={statusFilter}
+                >
+                  <option value="all">All statuses</option>
+                  <option value="available">Available</option>
+                  <option value="invalid">Invalid</option>
+                  <option value="unavailable">Unavailable</option>
+                </select>
+              </label>
+            </div>
+          </Card>
+
           <div data-runs-root-status={state.data.runs_root_status} style={statusGridStyle}>
-            <Card aria-label="Total runs" data-run-count={counters.total}>
+            <Card aria-label="Runs available" data-summary-count={counters.runsAvailable}>
               <Badge>{rootStatusMessage(state.data.runs_root_status)}</Badge>
-              <strong style={counterValueStyle}>{counters.total}</strong>
-              <span style={mutedTextStyle}>Runs returned</span>
+              <strong style={counterValueStyle}>{counters.runsAvailable}</strong>
+              <span style={mutedTextStyle}>Runs available</span>
             </Card>
-            <Card aria-label="Available runs" data-run-count={counters.available}>
-              <StatusPill tone="success">Available</StatusPill>
-              <strong style={counterValueStyle}>{counters.available}</strong>
-              <span style={mutedTextStyle}>Ready for review</span>
-            </Card>
-            <Card aria-label="Invalid runs" data-run-count={counters.invalid}>
-              <StatusPill tone="danger">Invalid</StatusPill>
-              <strong style={counterValueStyle}>{counters.invalid}</strong>
-              <span style={mutedTextStyle}>Incomplete source evidence</span>
-            </Card>
-            <Card aria-label="Unavailable runs" data-run-count={counters.unavailable}>
+            <Card aria-label="Promoted runs" data-summary-count={counters.promotedRuns}>
               <StatusPill tone="warning">Unavailable</StatusPill>
-              <strong style={counterValueStyle}>{counters.unavailable}</strong>
-              <span style={mutedTextStyle}>Missing or unreadable evidence</span>
+              <strong style={counterValueStyle}>{counters.promotedRuns}</strong>
+              <span style={mutedTextStyle}>Promotion source not owned</span>
+            </Card>
+            <Card aria-label="Published datasets" data-summary-count={counters.publishedDatasets}>
+              <StatusPill tone="warning">Unavailable</StatusPill>
+              <strong style={counterValueStyle}>{counters.publishedDatasets}</strong>
+              <span style={mutedTextStyle}>Publication source not owned</span>
+            </Card>
+            <Card aria-label="Draft datasets" data-summary-count={counters.draftDatasets}>
+              <StatusPill tone="warning">Unavailable</StatusPill>
+              <strong style={counterValueStyle}>{counters.draftDatasets}</strong>
+              <span style={mutedTextStyle}>Draft source not owned</span>
             </Card>
           </div>
 
@@ -459,7 +588,7 @@ export default function DashboardPage() {
             <EmptyState title="No runs found" message="The runs root is available, but no run summaries were returned." />
           )}
 
-          {runs.length > 0 && (
+          <div style={sectionGridStyle}>
             <Card aria-labelledby="admin-runs-table-title">
               <div>
                 <p className="eyebrow">Runs</p>
@@ -477,37 +606,16 @@ export default function DashboardPage() {
                 </p>
               </div>
 
-              <div aria-label="Run filters" style={filterBarStyle}>
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Search</span>
-                  <input
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Run ID, dataset, outcome"
-                    style={inputStyle}
-                    type="search"
-                    value={query}
-                  />
-                </label>
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Status</span>
-                  <select
-                    onChange={(event) => setStatusFilter(event.target.value as FilterStatus)}
-                    style={inputStyle}
-                    value={statusFilter}
-                  >
-                    <option value="all">All statuses</option>
-                    <option value="available">Available</option>
-                    <option value="invalid">Invalid</option>
-                    <option value="unavailable">Unavailable</option>
-                  </select>
-                </label>
+              <div aria-label="Run filter summary" style={filterBarStyle}>
+                <Badge>{statusFilter === "all" ? "All run statuses" : `${statusLabel(statusFilter)} runs`}</Badge>
+                <span style={mutedTextStyle}>{filteredRuns.length} matching run summaries</span>
               </div>
 
               {filteredRuns.length === 0 ? (
                 <EmptyState title="No matching runs" message="Adjust the Dashboard filters to view returned summaries." />
               ) : (
                 <div role="table" aria-label="Run summaries" data-filtered-run-count={filteredRuns.length} style={tableStyle}>
-                  <div role="row" style={tableHeaderStyle}>
+                  <div role="row" style={runsTableHeaderStyle}>
                     <span role="columnheader">Run ID</span>
                     <span role="columnheader">Dataset</span>
                     <span role="columnheader">Created at</span>
@@ -525,7 +633,7 @@ export default function DashboardPage() {
                         </>
                       }
                     >
-                      <div data-run-status={run.status} style={rowContentStyle}>
+                      <div data-run-status={run.status} style={runRowContentStyle}>
                         <strong>{run.run_id}</strong>
                         <span>{run.dataset_candidate ?? "Not resolved"}</span>
                         <span>{formatCreatedAt(run.created_at)}</span>
@@ -548,7 +656,90 @@ export default function DashboardPage() {
                 </div>
               )}
             </Card>
-          )}
+
+            <Card aria-labelledby="dataset-details-table-title">
+              <div>
+                <p className="eyebrow">Dataset Details</p>
+                <h2 id="dataset-details-table-title" style={{ margin: 0 }}>
+                  Safe dataset readiness
+                </h2>
+                <p style={{ ...mutedTextStyle, margin: 0 }}>
+                  Dataset rows are derived only from validated run summaries until a safe profile, publication, or
+                  visibility projection is owned.
+                </p>
+              </div>
+
+              {datasetRows.length === 0 ? (
+                <EmptyState
+                  title="Dataset Details unavailable"
+                  message="No safe dataset-detail rows are available from the current admin run summaries."
+                />
+              ) : filteredDatasetRows.length === 0 ? (
+                <EmptyState title="No matching datasets" message="Adjust the Dashboard search to view dataset rows." />
+              ) : (
+                <div
+                  role="table"
+                  aria-label="Dataset details"
+                  data-filtered-dataset-count={filteredDatasetRows.length}
+                  style={tableStyle}
+                >
+                  <div role="row" style={datasetTableHeaderStyle}>
+                    <span role="columnheader">Display name</span>
+                    <span role="columnheader">Problem type</span>
+                    <span role="columnheader">Visibility status</span>
+                    <span role="columnheader">Last updated</span>
+                    <span role="columnheader">Actions</span>
+                  </div>
+
+                  {filteredDatasetRows.map((row) => (
+                    <TableRow
+                      key={row.displayName}
+                      meta={<span style={mutedTextStyle}>{row.sourceRunCount} source run summaries</span>}
+                    >
+                      <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
+                        <strong>{row.displayName}</strong>
+                        <span>{row.problemType}</span>
+                        <StatusPill tone="warning">Unavailable</StatusPill>
+                        <span>{formatCreatedAt(row.lastUpdated)}</span>
+                        <span style={promotionIntentStyle}>
+                          <span style={actionGroupStyle}>
+                            <Button
+                              data-dataset-action="promote-disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Promote remains disabled until a safe owned API exists."
+                              variant="secondary"
+                            >
+                              Promote
+                            </Button>
+                            <Button
+                              data-dataset-action="remove-disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Remove remains disabled until a safe owned API exists."
+                              variant="secondary"
+                            >
+                              Remove
+                            </Button>
+                            <Button
+                              data-dataset-action="open-admin-disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Open admin requires a safe route and identifier."
+                              variant="secondary"
+                            >
+                              Open admin
+                            </Button>
+                          </span>
+                          <span style={mutedTextStyle}>Safe action owner unavailable</span>
+                        </span>
+                      </div>
+                    </TableRow>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
         </>
       )}
     </section>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import DatasetCard from "../components/DatasetCard";
 import { Card, EmptyState, ErrorState } from "../components/ui";
+import { resolveDatasetIcon } from "../lib/datasetPresentation";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -16,6 +17,10 @@ type DatasetListing = {
   domain: string;
   visibility: string;
   tags: string[];
+  display_title?: string | null;
+  display_subtitle?: string | null;
+  home_card_icon?: string | null;
+  short_description?: string | null;
 };
 
 type DatasetListingResponse = {
@@ -121,10 +126,11 @@ export default function HomePage() {
                 <DatasetCard
                   key={ds.dataset_slug}
                   slug={ds.dataset_slug}
-                  title={ds.title || ds.dataset_slug}
-                  summary={ds.summary}
+                  title={ds.display_title || ds.title || ds.dataset_slug}
+                  summary={ds.short_description || ds.display_subtitle || ds.summary}
                   domain={ds.domain}
                   tags={ds.tags}
+                  iconOverride={resolveDatasetIcon(ds.home_card_icon, ds.domain, ds.tags)}
                 />
               ))}
             </div>

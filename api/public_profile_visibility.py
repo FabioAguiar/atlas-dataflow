@@ -53,3 +53,43 @@ def resolve_dataset_visibility(dataset_slug: str, repo_root: Path | None = None)
         return True
 
     return get_visibility(dataset_slug, repo_root=repo_root)
+
+
+def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | None = None) -> dict:
+    """
+    Return the published snapshot's curated presentation fields for
+    dataset_slug (display_title, display_subtitle, home_card_icon,
+    short_description, theme_preset), each None when no snapshot has been
+    published yet. Used to overlay curated fields on top of a public
+    route's existing default field source (e.g. the release-context
+    projection); never raises for a missing snapshot or invalid slug, since
+    both are normal "nothing curated yet" states for this read-only overlay.
+    """
+    defaults = {
+        "display_title": None,
+        "display_subtitle": None,
+        "home_card_icon": None,
+        "short_description": None,
+        "theme_preset": None,
+    }
+
+    try:
+        snapshot = get_snapshot(dataset_slug, repo_root=repo_root)
+    except (SnapshotNotFoundError, ValueError):
+        return defaults
+
+    profile = snapshot.get("profile") if isinstance(snapshot, dict) else None
+    if not isinstance(profile, dict):
+        return defaults
+
+    display = profile.get("display")
+    home_card = profile.get("home_card")
+    theme = profile.get("theme")
+
+    return {
+        "display_title": display.get("title") if isinstance(display, dict) else None,
+        "display_subtitle": display.get("subtitle") if isinstance(display, dict) else None,
+        "home_card_icon": home_card.get("icon") if isinstance(home_card, dict) else None,
+        "short_description": home_card.get("short_description") if isinstance(home_card, dict) else None,
+        "theme_preset": theme.get("preset") if isinstance(theme, dict) else None,
+    }

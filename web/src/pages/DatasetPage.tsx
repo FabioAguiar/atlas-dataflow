@@ -22,6 +22,9 @@ type DatasetMetadata = {
   domain: string;
   visibility: string;
   tags: string[];
+  display_title?: string | null;
+  display_subtitle?: string | null;
+  short_description?: string | null;
 };
 
 type PublicContextPayload = {
@@ -33,6 +36,9 @@ type PublicContextPayload = {
   use_case?: string;
   problem_type?: string;
   prediction_target_description?: string;
+  display_title?: string | null;
+  display_subtitle?: string | null;
+  short_description?: string | null;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -337,8 +343,14 @@ export default function DatasetPage() {
 
   const context = contextState.status === "ready" ? contextState.data : null;
 
-  const datasetTitle = context?.title || state.data.title;
-  const datasetSubtitle = context?.summary || context?.description || state.data.summary;
+  const curatedTitle = context?.display_title || state.data.display_title;
+  const datasetTitle = curatedTitle || context?.title || state.data.title;
+  const curatedSubtitle =
+    context?.short_description ||
+    context?.display_subtitle ||
+    state.data.short_description ||
+    state.data.display_subtitle;
+  const datasetSubtitle = curatedSubtitle || context?.summary || context?.description || state.data.summary;
   const analysisType = context?.problem_type;
 
   const metadataItems: DatasetDetailMetadataItem[] = [

@@ -66,7 +66,10 @@ from public_predict_view_customization_loader import (  # noqa: E402
     CustomizationNotFoundError,
     load_public_predict_view_customization,
 )
-from public_profile_visibility import resolve_dataset_visibility  # noqa: E402
+from public_profile_visibility import (  # noqa: E402
+    resolve_dataset_visibility,
+    resolve_public_presentation_overlay,
+)
 from admin_runs import list_admin_run_summaries  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
 from admin_profile_publish import publish_profile  # noqa: E402
@@ -331,6 +334,11 @@ def get_dataset(dataset_slug: str):
                 "domain": listed.domain,
                 "visibility": listed.visibility,
                 "tags": listed.tags,
+                "display_title": listed.display_title,
+                "display_subtitle": listed.display_subtitle,
+                "home_card_icon": listed.home_card_icon,
+                "short_description": listed.short_description,
+                "theme_preset": listed.theme_preset,
             }
     return public_error_response(DATASET_NOT_FOUND)
 
@@ -463,10 +471,16 @@ def get_public_context(dataset_slug: str):
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
 
+    if not resolve_dataset_visibility(dataset_slug):
+        return public_error_response(DATASET_NOT_FOUND)
+
     try:
         context = load_public_context(resolved.active_release)
     except PublicContextUnavailableError:
         return public_error_response(CONTEXT_UNAVAILABLE)
+
+    overlay = resolve_public_presentation_overlay(dataset_slug)
+    context = {**context, **overlay}
 
     return {
         "dataset_slug": resolved.dataset_slug,

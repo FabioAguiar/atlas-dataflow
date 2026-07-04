@@ -84,3 +84,27 @@ export function getDatasetIcon(domain?: string | null, tags: string[] = []): Dat
 
   return "generic";
 }
+
+// contracts/dataset-public-profile-snapshot.schema.json's home_card.icon
+// enum is restricted to exactly these three values today (a narrower set
+// than DatasetIconName's full curated bank above), so a curated
+// home_card_icon value from GET /datasets is only ever one of these.
+const CURATABLE_HOME_CARD_ICONS: readonly DatasetIconName[] = ["telecom", "bank", "generic"];
+
+/**
+ * Prefers a curated icon explicitly published on the dataset's profile
+ * snapshot (surfaced by GET /datasets/GET /datasets/{slug} as
+ * home_card_icon) over the domain/tags-derived fallback; the derived
+ * fallback exists specifically for datasets with no curated icon set, so a
+ * curated value always wins when present.
+ */
+export function resolveDatasetIcon(
+  curatedIcon?: string | null,
+  domain?: string | null,
+  tags: string[] = [],
+): DatasetIconName {
+  if (curatedIcon && (CURATABLE_HOME_CARD_ICONS as readonly string[]).includes(curatedIcon)) {
+    return curatedIcon as DatasetIconName;
+  }
+  return getDatasetIcon(domain, tags);
+}

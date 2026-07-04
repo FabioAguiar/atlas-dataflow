@@ -23,6 +23,20 @@ from registry.resolve import resolve_dataset  # noqa: E402
 _REAL_REGISTRY_PATH = REPO_ROOT / "registry" / "datasets.json"
 _REAL_RELEASES_ROOT = REPO_ROOT / "releases"
 
+_PUBLIC_HOME_LISTING_KEYS = {
+    "dataset_slug",
+    "title",
+    "summary",
+    "domain",
+    "visibility",
+    "tags",
+    "display_title",
+    "display_subtitle",
+    "home_card_icon",
+    "short_description",
+    "theme_preset",
+}
+
 
 def _response_json(response):
     return json.loads(response.body.decode("utf-8"))
@@ -68,14 +82,7 @@ def test_public_listing_shape_matches_frontend_home_route_contract():
     assert isinstance(response["datasets"], list)
     assert response["datasets"]
     for item in response["datasets"]:
-        assert set(item.keys()) == {
-            "dataset_slug",
-            "title",
-            "summary",
-            "domain",
-            "visibility",
-            "tags",
-        }
+        assert set(item.keys()) == _PUBLIC_HOME_LISTING_KEYS
         assert isinstance(item["dataset_slug"], str)
         assert isinstance(item["tags"], list)
     _assert_no_public_exposure(response)

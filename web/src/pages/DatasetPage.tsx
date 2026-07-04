@@ -39,6 +39,9 @@ type PublicContextPayload = {
   display_title?: string | null;
   display_subtitle?: string | null;
   short_description?: string | null;
+  source_name?: string | null;
+  release_date_label?: string | null;
+  primary_metric_key?: string | null;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -354,7 +357,7 @@ export default function DatasetPage() {
   const analysisType = context?.problem_type;
 
   const metadataItems: DatasetDetailMetadataItem[] = [
-    { label: "Source", value: null },
+    { label: "Source", value: context?.source_name || null },
     {
       label: "Instances",
       value: metricsState.status === "ready" ? extractInstanceCount(metricsState.data) : null,
@@ -367,7 +370,7 @@ export default function DatasetPage() {
       label: "Target",
       value: context?.prediction_target_description || context?.problem_type || null,
     },
-    { label: "Release", value: null, hint: "Format: dd/mm/yyyy" },
+    { label: "Release", value: context?.release_date_label || null, hint: "Format: dd/mm/yyyy" },
   ];
 
   const inferenceContent = (
@@ -396,7 +399,7 @@ export default function DatasetPage() {
 
       {metricsState.status === "loading" && <LoadingState />}
       {metricsState.status === "ready" && (
-        <PerformanceSummary metrics={metricsState.data} />
+        <PerformanceSummary metrics={metricsState.data} emphasizedMetricKey={context?.primary_metric_key} />
       )}
       {metricsState.status === "unavailable" && (
         <ErrorState message="Metrics are temporarily unavailable." />

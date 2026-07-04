@@ -54,6 +54,33 @@ _BASE_REGISTRY = {
     "datasets": [_VALID_ENTRY],
 }
 
+_PUBLIC_LISTING_KEYS = {
+    "dataset_slug",
+    "title",
+    "summary",
+    "domain",
+    "visibility",
+    "tags",
+    "display_title",
+    "display_subtitle",
+    "home_card_icon",
+    "short_description",
+    "theme_preset",
+}
+
+_EMPTY_PUBLIC_CONTEXT_OVERLAY = {
+    "display_title": None,
+    "display_subtitle": None,
+    "home_card_icon": None,
+    "short_description": None,
+    "theme_preset": None,
+    "source_name": None,
+    "source_url": None,
+    "release_date_label": None,
+    "date_format": None,
+    "primary_metric_key": None,
+}
+
 
 def _write_registry(tmp_dir: Path, content: dict) -> Path:
     path = tmp_dir / "datasets.json"
@@ -116,9 +143,7 @@ def test_list_datasets_asdict_safe_fields_only():
         path = _write_registry(Path(tmp), _BASE_REGISTRY)
         result = list_datasets(registry_path=path)
         as_dict = result[0]._asdict()
-        assert set(as_dict.keys()) == {
-            "dataset_slug", "title", "summary", "domain", "visibility", "tags"
-        }
+        assert set(as_dict.keys()) == _PUBLIC_LISTING_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -198,9 +223,7 @@ def test_single_dataset_response_safe_fields_only():
         matched = next((d for d in all_listed if d.dataset_slug == "example-dataset"), None)
         assert matched is not None
         response = matched._asdict()
-        assert set(response.keys()) == {
-            "dataset_slug", "title", "summary", "domain", "visibility", "tags"
-        }
+        assert set(response.keys()) == _PUBLIC_LISTING_KEYS
         assert "active_release" not in response
         assert "conventions" not in response
         assert "$schema" not in response
@@ -221,9 +244,7 @@ def test_listing_each_item_safe_fields_only():
         path = _write_registry(Path(tmp), _BASE_REGISTRY)
         datasets = list_datasets(registry_path=path)
         for item in [d._asdict() for d in datasets]:
-            assert set(item.keys()) == {
-                "dataset_slug", "title", "summary", "domain", "visibility", "tags"
-            }
+            assert set(item.keys()) == _PUBLIC_LISTING_KEYS
             assert "active_release" not in item
             assert "conventions" not in item
             assert "$schema" not in item
@@ -240,6 +261,7 @@ def _response_json(response):
 def test_context_endpoint_returns_public_context_response():
     original_resolve_dataset = api_main.resolve_dataset
     original_load_public_context = api_main.load_public_context
+    original_overlay = api_main.resolve_public_presentation_overlay
     context = {
         "schema_version": "public-context.v1",
         "dataset_slug": "example-dataset",
@@ -259,10 +281,11 @@ def test_context_endpoint_returns_public_context_response():
             active_release="release-20260616-001",
         )
         api_main.load_public_context = lambda active_release: context
+        api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_CONTEXT_OVERLAY)
         response = api_main.get_public_context("example-dataset")
         assert response == {
             "dataset_slug": "example-dataset",
-            "context": context,
+            "context": {**context, **_EMPTY_PUBLIC_CONTEXT_OVERLAY},
         }
         assert "run_id" not in response["context"]
         assert "raw_metrics" not in response["context"]
@@ -270,6 +293,7 @@ def test_context_endpoint_returns_public_context_response():
     finally:
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_public_context = original_load_public_context
+        api_main.resolve_public_presentation_overlay = original_overlay
 
 
 def test_context_endpoint_unknown_dataset_returns_dataset_not_found():
@@ -512,7 +536,7 @@ def test_real_registry_listing_safe_fields_only_on_all_items():
     result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
     for item in result:
         keys = set(item._asdict().keys())
-        assert keys == {"dataset_slug", "title", "summary", "domain", "visibility", "tags"}
+        assert keys == _PUBLIC_LISTING_KEYS
 
 
 def test_real_registry_resolve_telco_customer_churn_succeeds():

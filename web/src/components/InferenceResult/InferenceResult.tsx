@@ -30,8 +30,8 @@ export default function InferenceResult({ result, previewLabels }: Props) {
   const toneLabel = previewLabels?.toneLabels?.[tone];
 
   return (
-    <section aria-label="Prediction Result">
-      <h3>Prediction Result</h3>
+    <section aria-label="Result">
+      <h3>Result</h3>
       <p>
         <strong>Prediction:</strong> {formatResultLabel(result.label)}
       </p>

@@ -59,11 +59,13 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
     """
     Return the published snapshot's curated presentation fields for
     dataset_slug (display_title, display_subtitle, home_card_icon,
-    short_description, theme_preset), each None when no snapshot has been
-    published yet. Used to overlay curated fields on top of a public
-    route's existing default field source (e.g. the release-context
-    projection); never raises for a missing snapshot or invalid slug, since
-    both are normal "nothing curated yet" states for this read-only overlay.
+    short_description, theme_preset, source_name, source_url,
+    release_date_label, date_format, primary_metric_key), each None when no
+    snapshot has been published yet. Used to overlay curated fields on top
+    of a public route's existing default field source (e.g. the
+    release-context projection); never raises for a missing snapshot or
+    invalid slug, since both are normal "nothing curated yet" states for
+    this read-only overlay.
     """
     defaults = {
         "display_title": None,
@@ -71,6 +73,11 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "home_card_icon": None,
         "short_description": None,
         "theme_preset": None,
+        "source_name": None,
+        "source_url": None,
+        "release_date_label": None,
+        "date_format": None,
+        "primary_metric_key": None,
     }
 
     try:
@@ -92,4 +99,9 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "home_card_icon": home_card.get("icon") if isinstance(home_card, dict) else None,
         "short_description": home_card.get("short_description") if isinstance(home_card, dict) else None,
         "theme_preset": theme.get("preset") if isinstance(theme, dict) else None,
+        "source_name": display.get("source_name") if isinstance(display, dict) else None,
+        "source_url": display.get("source_url") if isinstance(display, dict) else None,
+        "release_date_label": display.get("release_date_label") if isinstance(display, dict) else None,
+        "date_format": display.get("date_format") if isinstance(display, dict) else None,
+        "primary_metric_key": home_card.get("primary_metric_key") if isinstance(home_card, dict) else None,
     }

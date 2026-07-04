@@ -76,6 +76,7 @@ export type HomeCardPreviewProps = {
   domain?: string;
   tags?: string[];
   iconOverride?: DatasetIconName;
+  problemType?: string;
 };
 
 export type ResultCardPreview = {
@@ -111,15 +112,16 @@ function extractInstanceCount(metrics: PreviewMetrics | null): string | null {
 }
 
 /**
- * The public Home page (HomePage.tsx) never passes a problemType prop to
- * DatasetCard because GET /datasets does not return problem_type, so the
- * preview intentionally omits it too, even though /context (already fetched
- * for admin read-only display) does carry it -- passing it here would make
- * the preview diverge from how the public Home page actually renders today.
+ * Projects the draft Home card onto DatasetCard's public props. Draft display
+ * fields win over dataset fallbacks, the curated icon is forwarded when set,
+ * and problemType follows the read-only public context so Live Preview stays
+ * aligned with HomePage's current DatasetCard contract while remaining
+ * undefined when context is unavailable.
  */
 export function projectHomeCardPreview(
   dataset: PreviewDataset | undefined,
   form: Pick<PreviewDraftForm, "display_title" | "display_subtitle" | "short_description" | "home_card_icon">,
+  context: PreviewContext | null,
 ): HomeCardPreviewProps {
   const title = form.display_title.trim() || dataset?.title || dataset?.dataset_slug || "";
   const summary = form.short_description.trim() || form.display_subtitle.trim() || dataset?.summary || "";
@@ -131,14 +133,16 @@ export function projectHomeCardPreview(
     domain: dataset?.domain,
     tags: dataset?.tags ?? [],
     iconOverride: form.home_card_icon || undefined,
+    problemType: context?.problem_type,
   };
 }
 
 /**
- * Source and Release stay null on the public Dataset Detail page today
- * (DatasetPage.tsx has no draft awareness); Live Preview is the one surface
- * that can show operators these two metadata items populated from the same
- * schema-backed display fields Public Content already edits.
+ * Projects the draft detail header onto DatasetDetailHeader's public props.
+ * Draft title/subtitle fields win over context and dataset fallbacks, Source
+ * and Release come from the editable draft display fields, and all other
+ * metadata is derived from the read-only context, contract, and metrics
+ * already loaded for the public Dataset Detail surface.
  */
 export function projectDatasetDetailPreview(
   dataset: PreviewDataset | undefined,
@@ -202,10 +206,11 @@ const RESULT_CARD_PLACEHOLDER_RESULT: PredictionResult = {
 };
 
 /**
- * badge_preset "risk" is the only enumerated preset today; its badge_labels
- * (high/medium/low) are interpreted as risk-level labels for the danger
- * (high risk) / warning (medium risk) / success (low risk) confidence tones
- * confidenceTone() already buckets into.
+ * Projects result-card draft labels onto InferenceResult's preview override
+ * contract. The result is always a fixed placeholder, probability/model labels
+ * fall back to InferenceResult defaults when blank, and the risk preset maps
+ * high/medium/low draft labels onto the component's danger/warning/success
+ * tone labels.
  */
 export function projectResultCardPreview(form: PreviewResultCardForm): ResultCardPreview {
   const toneLabels: ResultPreviewLabels["toneLabels"] = {};

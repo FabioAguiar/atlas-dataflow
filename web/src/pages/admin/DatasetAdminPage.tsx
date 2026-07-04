@@ -1866,19 +1866,23 @@ function LivePreviewTab({
         {previewMode === "card" && (
           <div style={{ maxWidth: "22rem" }}>
             <DatasetCard
-              {...projectHomeCardPreview(dataset, {
-                ...form,
-                // projectHomeCardPreview's own parameter type still declares
-                // home_card_icon as the legacy closed union (out of this
-                // issue's edit scope), but its body only ever forwards the
-                // value unchanged as HomeCardPreviewProps.iconOverride, whose
-                // type is already the full widened DatasetIconName -- and
-                // DatasetCard now renders any curated value safely (see
-                // DATASET_ICONS's Partial fallback). Casting here preserves
-                // an accurate Home card preview for every curated icon
-                // instead of only the original three.
-                home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
-              })}
+              {...projectHomeCardPreview(
+                dataset,
+                {
+                  ...form,
+                  // projectHomeCardPreview's own parameter type still declares
+                  // home_card_icon as the legacy closed union (out of this
+                  // issue's edit scope), but its body only ever forwards the
+                  // value unchanged as HomeCardPreviewProps.iconOverride, whose
+                  // type is already the full widened DatasetIconName -- and
+                  // DatasetCard now renders any curated value safely (see
+                  // DATASET_ICONS's Partial fallback). Casting here preserves
+                  // an accurate Home card preview for every curated icon
+                  // instead of only the original three.
+                  home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
+                },
+                stateValue(readOnlyData.context),
+              )}
             />
           </div>
         )}

@@ -342,6 +342,27 @@ _CURATED_OVERLAY = {
     "short_description": "Curated short description.",
     "theme_preset": "atlas-green",
 }
+# M39-03: resolve_public_presentation_overlay's return shape is a superset of
+# registry/list.py's own, separate _snapshot_overlay_fields (unchanged by this
+# issue) -- these two constants must not be reused for that function's
+# assertions above, since equality would otherwise fail once the extra keys
+# are added.
+_EMPTY_PUBLIC_PROFILE_OVERLAY = {
+    **_EMPTY_OVERLAY,
+    "source_name": None,
+    "source_url": None,
+    "release_date_label": None,
+    "date_format": None,
+    "primary_metric_key": None,
+}
+_CURATED_PUBLIC_PROFILE_OVERLAY = {
+    **_CURATED_OVERLAY,
+    "source_name": "Original Source Org",
+    "source_url": "https://example.org/dataset",
+    "release_date_label": "01/07/2026",
+    "date_format": "dd/mm/yyyy",
+    "primary_metric_key": "precision",
+}
 
 
 def test_get_public_context_returns_dataset_not_found_shape_when_hidden():
@@ -368,7 +389,7 @@ def test_get_public_context_returns_context_when_visible():
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
-    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_OVERLAY)
+    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
@@ -388,7 +409,7 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published():
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
-    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_OVERLAY)
+    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
@@ -402,6 +423,11 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published():
     assert context["home_card_icon"] is None
     assert context["short_description"] is None
     assert context["theme_preset"] is None
+    assert context["source_name"] is None
+    assert context["source_url"] is None
+    assert context["release_date_label"] is None
+    assert context["date_format"] is None
+    assert context["primary_metric_key"] is None
     # Base release-context fields are preserved unchanged alongside the overlay.
     assert context["title"] == "Fake Title"
     assert context["summary"] == "Fake summary."
@@ -414,7 +440,7 @@ def test_get_public_context_includes_curated_overlay_fields_when_published():
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
-    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_CURATED_OVERLAY)
+    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_CURATED_PUBLIC_PROFILE_OVERLAY)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
@@ -428,6 +454,11 @@ def test_get_public_context_includes_curated_overlay_fields_when_published():
     assert context["home_card_icon"] == "bank"
     assert context["short_description"] == "Curated short description."
     assert context["theme_preset"] == "atlas-green"
+    assert context["source_name"] == "Original Source Org"
+    assert context["source_url"] == "https://example.org/dataset"
+    assert context["release_date_label"] == "01/07/2026"
+    assert context["date_format"] == "dd/mm/yyyy"
+    assert context["primary_metric_key"] == "precision"
     # Base release-context fields survive the overlay merge unchanged.
     assert context["title"] == "Fake Title"
     assert context["summary"] == "Fake summary."
@@ -445,7 +476,7 @@ def test_snapshot_overlay_fields_all_none_when_no_snapshot_exists():
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = Path(tmp)
         assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == _EMPTY_OVERLAY
-        assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == _EMPTY_OVERLAY
+        assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == _EMPTY_PUBLIC_PROFILE_OVERLAY
 
 
 def test_snapshot_overlay_fields_all_none_when_only_an_unpublished_draft_exists():
@@ -470,7 +501,7 @@ def test_snapshot_overlay_fields_all_none_when_only_an_unpublished_draft_exists(
         # content, because it is never read at all (registry/list.py and
         # public_profile_visibility.py only ever call get_snapshot).
         assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == _EMPTY_OVERLAY
-        assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == _EMPTY_OVERLAY
+        assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == _EMPTY_PUBLIC_PROFILE_OVERLAY
 
 
 def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published():
@@ -486,8 +517,19 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
                     "published_at": "2026-07-01T00:00:00Z",
                     "active_release_at_publish_time": "release-20260101-001",
                     "profile": {
-                        "display": {"title": "Curated Title", "subtitle": "Curated subtitle."},
-                        "home_card": {"icon": "bank", "short_description": "Curated short description."},
+                        "display": {
+                            "title": "Curated Title",
+                            "subtitle": "Curated subtitle.",
+                            "source_name": "Original Source Org",
+                            "source_url": "https://example.org/dataset",
+                            "release_date_label": "01/07/2026",
+                            "date_format": "dd/mm/yyyy",
+                        },
+                        "home_card": {
+                            "icon": "bank",
+                            "short_description": "Curated short description.",
+                            "primary_metric_key": "precision",
+                        },
                         "theme": {"preset": "atlas-green"},
                     },
                 }
@@ -495,9 +537,14 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
             encoding="utf-8",
         )
 
-        expected = dict(_CURATED_OVERLAY)
-        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == expected
-        assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == expected
+        # registry/list.py's _snapshot_overlay_fields is unchanged by this
+        # issue and only ever reads its own five known keys, so it must still
+        # return exactly _CURATED_OVERLAY even though the snapshot on disk
+        # now also carries the five new public-profile fields.
+        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == dict(_CURATED_OVERLAY)
+        assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == dict(
+            _CURATED_PUBLIC_PROFILE_OVERLAY
+        )
 
 
 # ---------------------------------------------------------------------------

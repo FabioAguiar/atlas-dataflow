@@ -144,4 +144,73 @@ describe("DatasetPage synthetic-slug rendering", () => {
     expect(screen.queryByText(/telco/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/bank/i)).not.toBeInTheDocument();
   });
+
+  it("shows 'Pending' for Source and Release when context has no curated values (M39-03)", async () => {
+    installDatasetPageFetchMock();
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    const pendingValues = screen.getAllByText("Pending");
+    expect(pendingValues.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () => {
+  it("renders real Source/Release metadata and the curated metric highlight when context provides them", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: {
+            ...contextPayload,
+            source_name: "Original Source Org",
+            release_date_label: "01/07/2026",
+            primary_metric_key: "precision",
+          },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/model-card`)) {
+        return jsonResponse({ dataset_slug: slug, model_card: modelCardPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/views`)) {
+        return jsonResponse(viewsPayload);
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("Original Source Org")).toBeInTheDocument();
+    expect(screen.getByText("01/07/2026")).toBeInTheDocument();
+
+    // PerformanceSummary emphasizes "Precision" (primary_metric_key)
+    // instead of its own default (AUC ROC) when context provides it.
+    const precisionRow = screen.getByText("Precision").closest("div");
+    expect(precisionRow).not.toBeNull();
+    expect(precisionRow?.textContent).toContain("Highlighted");
+
+    const aucRocRow = screen.getByText("AUC ROC").closest("div");
+    expect(aucRocRow?.textContent).not.toContain("Highlighted");
+  });
 });

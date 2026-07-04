@@ -5369,6 +5369,9 @@ The support-root design screens are deterministic UX references, not runtime con
 - The M41-01 screen-to-React matrix is recorded in
   `docs/design-runtime-parity-matrix.md`, with this milestone document kept as
   the continuity anchor.
+- The M41-02 prototype behavior inventory is recorded in
+  `docs/design-prototype-behavior-inventory.md`, classifying each relevant
+  prototype JavaScript behavior before React translation.
 - Inventory of support-root assets required by React.
 - Inventory of JavaScript-defined behaviors to be implemented, disabled, or deferred.
 - Screen-by-screen checklist for visual and behavioral parity.
@@ -5379,7 +5382,9 @@ The support-root design screens are deterministic UX references, not runtime con
 - Applicable strategy: design-parity contract before implementation continuation.
 - Expected documentation update: `docs/milestones.md` remains the continuity
   anchor, with `docs/design-runtime-parity-matrix.md` authorized as the narrow
-  reusable parity matrix artifact for M41-01.
+  reusable parity matrix artifact for M41-01 and
+  `docs/design-prototype-behavior-inventory.md` authorized as the narrow
+  behavior inventory artifact for M41-02.
 - Candidate documentation: narrow design-parity matrix or checklist artifacts
   only when a derived issue explicitly needs reusable planning detail.
 - Criterion not to update: do not create a broad implementation map or architecture rewrite.

@@ -5372,6 +5372,10 @@ The support-root design screens are deterministic UX references, not runtime con
 - The M41-02 prototype behavior inventory is recorded in
   `docs/design-prototype-behavior-inventory.md`, classifying each relevant
   prototype JavaScript behavior before React translation.
+- The M41-03 visual asset and token consolidation plan is recorded in
+  `docs/design-asset-token-consolidation.md`, defining support-root asset
+  inventory, duplicate logo canonicalization guidance, token-owner mapping,
+  compact desktop constraints, and deferred schema/API-dependent visual options.
 - Inventory of support-root assets required by React.
 - Inventory of JavaScript-defined behaviors to be implemented, disabled, or deferred.
 - Screen-by-screen checklist for visual and behavioral parity.
@@ -5384,7 +5388,8 @@ The support-root design screens are deterministic UX references, not runtime con
   anchor, with `docs/design-runtime-parity-matrix.md` authorized as the narrow
   reusable parity matrix artifact for M41-01 and
   `docs/design-prototype-behavior-inventory.md` authorized as the narrow
-  behavior inventory artifact for M41-02.
+  behavior inventory artifact for M41-02. `docs/design-asset-token-consolidation.md`
+  is authorized as the narrow asset and token planning artifact for M41-03.
 - Candidate documentation: narrow design-parity matrix or checklist artifacts
   only when a derived issue explicitly needs reusable planning detail.
 - Criterion not to update: do not create a broad implementation map or architecture rewrite.

@@ -49,6 +49,16 @@ This absence is recorded here as an open gap, not resolved by inventing a design
 
 ---
 
+## Recorded Gap: Dataset Admin Theme and Result-Card Preset Parity
+
+`design/screens/dataset-admin/content.md`'s `Tab: Theme Preset` section lists 14 reference presets (`Atlas Green`, `Ocean Blue`, `Sunset Orange`, `Purple Dawn`, `Slate`, `Forest`, `Teal Lagoon`, `Cyan Ice`, `Indigo Night`, `Rose Analytics`, `Amber Signal`, `Lime Growth`, `Copper Lab`, `Mono Graphite`), and its `Tab: Result Card` section lists five result-badge presets (`Risk`, `Value band`, `Target status`, `Severity`, `Custom`). `contracts/dataset-public-profile.schema.json` currently authorizes only one value in each set: `theme.preset` accepts only `"atlas-green"`, and `result_card.badge_preset` accepts only `"risk"`.
+
+This is a real, intentional gap between the design reference and the schema it must be adapted to, not an oversight. `web/src/pages/admin/DatasetAdminPage.tsx`'s `ThemePresetTab` and `ResultCardTab` already reflect this boundary: their `<select>` controls expose only the schema-supported preset (plus a blank "no curated preset" option), and `DraftForm`'s `theme_preset`/`badge_preset` fields are typed as closed unions (`"" | "atlas-green"` and `"" | "risk"`) so no other value can be constructed or saved through this form. The remaining 13 theme presets and 4 result-card badge presets are not rendered as visible-but-disabled controls; they are omitted entirely until a future schema decision authorizes them.
+
+This gap is recorded here, not resolved by inventing additional presets or by relaxing `contracts/dataset-public-profile.schema.json`, per this document's own interpretation above that design documents do not override contracts. Whether and when the schema should be extended with additional theme or badge presets is a separate future schema decision, out of scope for the Dataset Admin content-tab parity work that produced this note.
+
+---
+
 ## Non-Authorization Statement
 
 This interpretation does not authorize:

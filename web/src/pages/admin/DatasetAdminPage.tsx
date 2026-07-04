@@ -1096,6 +1096,7 @@ function MetadataCardTab({
 }) {
   const metrics = stateValue(readOnlyData.metrics);
   const keys = metricKeys(metrics);
+  const context = stateValue(readOnlyData.context);
   return (
     <>
       <div>
@@ -1133,6 +1134,8 @@ function MetadataCardTab({
             ))}
           </select>
         </label>
+        {/* Read-only: problem_type is an Atlas technical artifact, not an admin-editable field (schema-out-of-scope). */}
+        <ReadOnlyField label="Problem type" value={context?.problem_type ?? ""} />
       </div>
       <div style={twoColumnGridStyle}>
         <TextField label="Background image reference" onChange={(value) => setField("background_image_ref", value)} value={form.background_image_ref} />

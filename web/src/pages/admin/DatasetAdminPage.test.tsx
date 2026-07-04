@@ -324,6 +324,108 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
   });
 
+  it("saves a schema-valid profile-draft payload for supported icon, primary metric, theme preset, and result-card values", async () => {
+    // contracts/dataset-public-profile.schema.json's closed enums: home_card.icon, theme.preset,
+    // and result_card.badge_preset. Asserting membership here proves the saved payload stays
+    // inside the schema's supported values (acceptance-01).
+    const SCHEMA_SUPPORTED_ICONS = [
+      "telecom",
+      "bank",
+      "generic",
+      "telecom-users",
+      "bank-building",
+      "chart-line",
+      "heart",
+      "shopping-cart",
+      "airplane",
+      "shield",
+      "education-cap",
+      "energy-bolt",
+      "home-house",
+      "agro-leaf",
+      "logistics-truck",
+      "factory",
+      "weather-cloud",
+      "database",
+    ];
+    const SCHEMA_SUPPORTED_THEME_PRESETS = ["atlas-green"];
+    const SCHEMA_SUPPORTED_BADGE_PRESETS = ["risk"];
+
+    const fetchMock = installFetchMock();
+    render(<DatasetAdminPage />);
+
+    fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+    fireEvent.change(screen.getByLabelText("Home card icon"), { target: { value: "chart-line" } });
+    fireEvent.change(screen.getByLabelText("Primary metric key"), { target: { value: "accuracy" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+    fireEvent.change(screen.getByLabelText("Badge preset"), { target: { value: "risk" } });
+    fireEvent.change(screen.getByLabelText("High badge label"), { target: { value: "Severe risk" } });
+
+    const callsBeforeSave = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved through the profile draft model.");
+
+    const saveCall = fetchMock.mock.calls
+      .slice(callsBeforeSave)
+      .find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+    expect(saveCall).toBeDefined();
+    const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+      home_card?: { icon?: string; primary_metric_key?: string | null };
+      theme?: { preset?: string };
+      result_card?: { badge_preset?: string; badge_labels?: { high?: string } };
+    };
+
+    expect(body.home_card?.icon).toBe("chart-line");
+    expect(SCHEMA_SUPPORTED_ICONS).toContain(body.home_card?.icon);
+    expect(body.home_card?.primary_metric_key).toBe("accuracy");
+    expect(body.theme?.preset).toBe("atlas-green");
+    expect(SCHEMA_SUPPORTED_THEME_PRESETS).toContain(body.theme?.preset);
+    expect(body.result_card?.badge_preset).toBe("risk");
+    expect(SCHEMA_SUPPORTED_BADGE_PRESETS).toContain(body.result_card?.badge_preset);
+    expect(body.result_card?.badge_labels?.high).toBe("Severe risk");
+  });
+
+  it("cannot select or persist theme/result-card preset values outside the schema-supported set", async () => {
+    installFetchMock();
+    render(<DatasetAdminPage />);
+
+    fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
+    fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    const themeSelect = screen.getByLabelText("Theme preset") as HTMLSelectElement;
+    const themeOptionValues = Array.from(themeSelect.options).map((option) => option.value);
+    expect(themeOptionValues).toEqual(["", "atlas-green"]);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+    const badgeSelect = screen.getByLabelText("Badge preset") as HTMLSelectElement;
+    const badgeOptionValues = Array.from(badgeSelect.options).map((option) => option.value);
+    expect(badgeOptionValues).toEqual(["", "risk"]);
+
+    // The 13 additional design-proposed theme presets and 4 additional design-proposed
+    // result-card badge presets (see docs/design-interpretation.md's "Recorded Gap: Dataset
+    // Admin Theme and Result-Card Preset Parity") are not rendered as options at all -- there
+    // is no DOM control path through which a user could select them, and DraftForm's
+    // theme_preset/badge_preset fields are typed as closed unions ("" | "atlas-green" and
+    // "" | "risk"), so setField can never be called with an out-of-schema value from these
+    // controls. profileFromForm only ever writes profile.theme/result_card.badge_preset from
+    // these same two closed-union fields, so an unsupported preset can never reach a save
+    // payload through this form.
+  });
+
   it("renders all Live Preview modes from the loaded draft and customization", async () => {
     installFetchMock();
     render(<DatasetAdminPage />);

@@ -207,7 +207,11 @@ Conditions that may motivate a future review of the strategy:
 | M42 | Public screens exact design and behavior parity | Public Home, Dataset Detail, PublicShell, and shared public interactions match the executable designs | With reservations |
 | M43 | Admin shell and Dashboard exact design and behavior parity | AdminShell and Dashboard `/admin` match `dataset-admin-home` visual and interaction specs | With reservations |
 | M44 | Dataset Admin exact visual structure parity | Dataset Admin `/admin/dataset-admin` visually matches the support-root prototype across tabs and compact desktop | With reservations |
-| M45 | Dataset Admin behavioral parity and final regression closure | Dataset Admin interactions from the prototype JavaScript become functional React behavior with final validation evidence | With reservations |
+| M45 | Dataset Admin behavioral parity and regression evidence closure | Dataset Admin interactions from the prototype JavaScript become functional React behavior with regression validation evidence | With reservations |
+| M46 | Public/private runtime boundary and compose separation | Private full-access operation is separated from public runtime exposure by compose, build flags, and route/API blocking | With reservations |
+| M47 | Private admin access and tokenless operator UX | Admin screens no longer show operator token fields because access is enforced by private runtime boundaries | With reservations |
+| M48 | Design acceptance gap reduction pass | Remaining support-root design and behavior gaps are reduced, resolved, or explicitly classified before first-version release readiness | With reservations |
+| M49 | First-version release readiness and evidence gate | Public/private builds, smoke checks, docs, and operational state are validated before declaring the first version ready | With reservations |
 
 ## M1 — Documented Foundation and Initial Technical Scope
 
@@ -5878,7 +5882,7 @@ The milestone will be ready to derive issues when:
 
 M44 should make the screen look right without trying to solve every interactive subsystem. It prepares a stable visual surface for M45 behavioral completion.
 
-## M45 — Dataset Admin Behavioral Parity and Final Regression Closure
+## M45 — Dataset Admin Behavioral Parity and Regression Evidence Closure
 
 ### Objective
 
@@ -6013,7 +6017,7 @@ By this milestone, public components should be stable and Dataset Admin should v
 - Risk of expanding schemas without explicit product decision.
 - Risk of breaking public components while wiring Live Preview behavior.
 - Risk of drag-and-drop regressions in compact desktop layout.
-- Gap: future enhancements beyond final parity should be planned after the parity closure rather than smuggled into M45.
+- Gap: future enhancements beyond verified parity should be planned after the parity closure rather than smuggled into M45.
 
 ### Derivability Criteria
 
@@ -6027,4 +6031,615 @@ The milestone will be ready to derive issues when:
 
 ### Continuity Notes
 
-M45 is the final regression and behavior-closure milestone for the current design parity cycle. After M45, additional product work should be planned as new capabilities, not as unresolved design parity cleanup.
+M45 was intended as the behavior and regression-evidence closure milestone for the current design parity cycle. If implementation evidence still exposes gaps after M45, additional work must be planned explicitly as follow-up milestones instead of being described as already closed.
+
+## M46 — Public/Private Runtime Boundary and Compose Separation
+
+### Objective
+
+Separate Atlas into a private full-access runtime and a public runtime so that administrative screens and administrative API capabilities are not exposed by the production/public compose path.
+
+### Problem or Gap
+
+The current product surface includes public routes and private administration routes in the same frontend application path. The admin interface can be reached by URL when the same build is served publicly, and generic API proxying can accidentally expose private endpoints if the deployment surface is not explicitly constrained.
+
+Before removing visible operator-token fields from the admin UI, Atlas needs a stronger runtime boundary that makes public exposure and private operation different execution modes rather than different user habits.
+
+### Context
+
+The intended operational model is:
+
+- `docker-compose.yml` is the local/private full-access stack, typically accessed through `127.0.0.1` and SSH tunnel when running on a VPS;
+- `docker-compose.prod.yml` is the public stack, exposing only the public Home, public Dataset Detail, public inference, health, and safe public dataset APIs;
+- the private admin remains available for the operator in the private stack and is absent or blocked in the public stack;
+- public visitors must not reach `/admin`, `/admin/*`, or private/admin API endpoints.
+
+This milestone establishes that boundary before changing the admin user experience.
+
+### Core Scope
+
+- Define an explicit frontend admin build flag such as `VITE_ENABLE_ADMIN`.
+- Register `/admin`, `/admin/*`, Settings, Help, Dashboard, and Dataset Admin routes only when admin is enabled.
+- Ensure the public build does not contain usable admin navigation or admin routes.
+- Define an explicit backend/admin runtime flag such as `ATLAS_ADMIN_ENABLED`.
+- Ensure private/admin API routes fail closed when admin runtime is disabled.
+- Review and adjust `docker-compose.yml` as the private/full-access stack.
+- Review and adjust `docker-compose.prod.yml` as the public runtime stack.
+- Block `/admin`, `/admin/*`, and private/admin API paths in the public reverse-proxy/server path.
+- Preserve shared persistent storage semantics for registry, releases, published snapshots, and visibility state.
+- Document the intended SSH-tunnel/private access model at the minimum level needed for safe operation.
+
+### Out of Scope
+
+- Removing the operator-token UI field before the runtime boundary exists.
+- Implementing a full login system.
+- Implementing multi-user authentication.
+- Public administration.
+- Public write access to drafts, snapshots, settings, runs, or publication controls.
+- Changing the publisher, registry, or release artifact semantics.
+- Migrating from file-based storage.
+- Introducing a database only to solve access separation.
+
+### Expected Deliverables
+
+- Public/private runtime mode documented through compose and environment variables.
+- Private stack with admin enabled and local/private binding preserved.
+- Public stack with admin disabled or blocked.
+- Frontend route gating for admin routes.
+- Backend route gating for private/admin endpoints.
+- Public proxy/server rules that prevent accidental admin exposure.
+- Tests or smoke checks proving public routes still work and admin routes fail in public mode.
+- Evidence that private mode still allows operator administration.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only` with minimum operational notes if needed.
+- Expected evaluation: record only the operational boundary needed to prevent unsafe deployment.
+- Candidate documents: a short deployment or runtime-mode note only if authorized by the derived issue.
+- Criterion to create: create operational documentation only if commands or environment variables are not self-evident.
+- Criterion to update: update architecture if the public/private deployment boundary changes the system responsibilities.
+- Criterion not to update: do not create a broad deployment manual before the first version is release-ready.
+
+### Dependencies
+
+- M41 through M45 implemented or sufficiently stable.
+- Existing admin routes and admin API endpoints known.
+- Existing compose files and frontend build process available for modification.
+- Decision accepted that private admin access is provided by runtime/network separation for the first version.
+
+### Components or Areas Affected
+
+- Deployment and Operations.
+- Public Web Experience.
+- Private Administration.
+- Public Runtime API.
+- Private/Admin API boundaries.
+- Docker Compose configuration.
+- Reverse proxy or static-server configuration.
+- Environment configuration.
+- Tests and smoke validation.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: frontend admin routes need build-time gating.
+  - Possible issue type: frontend runtime boundary.
+  - Note: must ensure public builds do not expose usable admin routes.
+- Criterion: admin API endpoints need runtime-mode gating.
+  - Possible issue type: backend access boundary.
+  - Note: must fail closed when public mode is active.
+- Criterion: compose files need public/private separation.
+  - Possible issue type: deployment configuration.
+  - Note: public compose must expose only safe public surfaces.
+- Criterion: public proxy rules need review.
+  - Possible issue type: public exposure hardening.
+  - Note: `/admin` and private API paths should not be reachable publicly.
+
+### Definition of Done
+
+- `docker-compose.yml` represents the private/full-access local stack.
+- `docker-compose.prod.yml` represents the public stack.
+- Admin routes are unavailable or blocked in the public build.
+- Private/admin API endpoints are unavailable or blocked in the public runtime.
+- Public Home and Dataset Detail continue to work in public mode.
+- Private Dashboard and Dataset Admin continue to work in private mode.
+- The design decision to use SSH tunnel/private network access is recorded without implying public admin availability.
+- No visible token-field removal is performed before the runtime boundary is validated.
+
+### Minimum Evidence
+
+- Frontend build evidence for admin-enabled and admin-disabled modes.
+- Backend route-gating test or smoke evidence.
+- Public compose smoke check:
+  - `/` works;
+  - `/dataset/:slug` works;
+  - public inference/API endpoints work;
+  - `/admin` fails closed;
+  - private/admin API paths fail closed.
+- Private compose smoke check:
+  - `/admin` works;
+  - `/admin/dataset-admin` works;
+  - admin API calls work as intended.
+- Review that registry/releases/snapshots remain available to public read paths without exposing drafts.
+
+### Risks and Gaps
+
+- Risk of hiding admin navigation while leaving admin API reachable.
+- Risk of blocking public API paths accidentally while hardening private endpoints.
+- Risk of creating divergent behavior between private and public builds that is not tested.
+- Risk of treating SSH tunneling as an application feature instead of an operational access method.
+- Gap: full authentication remains out of scope for the first version unless a future milestone authorizes it.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- current public and admin routes are enumerated;
+- current private/admin API paths are enumerated;
+- desired environment flags are named;
+- compose files and proxy behavior are known;
+- public/private smoke expectations are explicit.
+
+### Continuity Notes
+
+M46 must happen before removing token fields from the admin UI. It establishes the safety boundary that makes a tokenless private admin experience acceptable for the first version.
+
+## M47 — Private Admin Access and Tokenless Operator UX
+
+### Objective
+
+Remove visible operator-token fields from the private admin screens and make admin operation rely on the private runtime boundary established in M46.
+
+### Problem or Gap
+
+The current admin screens expose an operator-token field that makes the UI feel like a technical workaround rather than a product surface. It also conflicts with the intended operating model where the admin is not publicly exposed and is accessed only through a local/private channel such as SSH tunnel.
+
+Once public/private runtime separation exists, the token field should not remain part of the design experience.
+
+### Context
+
+The first-version admin access model is intentionally proportional:
+
+- private/full-access stack for the operator;
+- public stack without admin routes or private/admin API exposure;
+- no public login system in the first version;
+- no visible shared-token input inside the admin screens;
+- optional backend defense-in-depth may remain only if it is invisible to the operator and does not pollute the design.
+
+### Core Scope
+
+- Remove operator-token inputs from Dashboard, Dataset Admin, Settings, and any related admin screens.
+- Remove token-dependent copy from the admin UI.
+- Remove frontend storage/state for operator token.
+- Remove frontend `X-Admin-Token` header plumbing when not needed by the accepted private-access model.
+- Adjust admin API client behavior to operate within the private runtime mode.
+- Ensure admin screens show useful private-mode unavailable messages only when admin is disabled by runtime mode, not because a token is missing.
+- Update frontend tests that currently expect token input or token submission.
+- Update backend tests if admin authorization semantics change from token header to runtime-mode gating.
+- Preserve fail-closed public behavior from M46.
+
+### Out of Scope
+
+- Implementing username/password login.
+- Implementing sessions, cookies, OAuth, or multi-user authorization.
+- Exposing admin publicly.
+- Removing backend safety checks in a way that makes public mode unsafe.
+- Changing design parity behavior unrelated to token UX.
+- Changing draft, publish, visibility, or registry semantics.
+- Creating a complex access-control system for the first version.
+
+### Expected Deliverables
+
+- Token fields removed from all admin screens.
+- Admin UI copy aligned with private/local operator access.
+- Frontend admin API calls no longer require manual token entry.
+- Tests updated to reflect tokenless private admin UX.
+- Public mode still blocks admin routes and private/admin endpoints.
+- Private mode allows admin operations without visible token entry.
+- Any remaining defense-in-depth mechanism is documented as infrastructure/runtime behavior, not as a user-facing field.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only`.
+- Expected evaluation: document only the access model change and any required environment variable.
+- Candidate documents: minimal runtime-mode or admin-access note, if authorized.
+- Criterion to create: create documentation only if a future operator needs a repeatable command or environment configuration.
+- Criterion to update: update architecture if the access-control responsibility changes.
+- Criterion not to update: do not create user-management documentation because user management is out of scope.
+
+### Dependencies
+
+- M46 completed.
+- Public mode confirmed to block admin routes and private/admin APIs.
+- Private mode confirmed to allow admin operation.
+- Accepted decision that visible operator-token UX is not part of the first-version admin design.
+
+### Components or Areas Affected
+
+- Private Administration.
+- Admin Dashboard.
+- Dataset Admin.
+- Settings.
+- Help, if it references token access.
+- Admin API client.
+- Backend admin access checks.
+- Tests.
+- Environment configuration.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: token field remains visible in admin screen.
+  - Possible issue type: admin UX cleanup.
+  - Note: remove UI token dependency only after M46 boundary is validated.
+- Criterion: API client still requires manual token state.
+  - Possible issue type: frontend access refactor.
+  - Note: admin calls should use private runtime access, not user-entered token.
+- Criterion: backend tests still assume token-only access.
+  - Possible issue type: access-boundary validation.
+  - Note: tests must prove public fail-closed and private allowed behavior.
+
+### Definition of Done
+
+- No visible operator-token field remains in admin UI.
+- No admin action requires manually typing a token.
+- Private admin mode works through the private runtime boundary.
+- Public mode still cannot reach admin routes or private/admin endpoints.
+- Tests no longer encode the token field as required product behavior.
+- The first-version access model remains proportional and does not imply public admin.
+
+### Minimum Evidence
+
+- UI grep or test evidence showing no visible token field/copy.
+- Private admin smoke evidence for:
+  - `/admin`;
+  - `/admin/dataset-admin`;
+  - draft load/save;
+  - publish/visibility actions where supported.
+- Public mode smoke evidence showing admin routes and admin APIs fail closed.
+- Frontend tests updated and passing or exact blockers recorded.
+- Backend access-boundary tests updated and passing or exact blockers recorded.
+
+### Risks and Gaps
+
+- Risk of removing the token UI before public runtime blocking is complete.
+- Risk of accidentally allowing admin API access in public mode.
+- Risk of replacing token UX with hidden assumptions that are not documented.
+- Risk of expanding into full authentication prematurely.
+- Gap: future multi-user or public-admin authentication remains out of scope.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M46 evidence proves public/private separation;
+- all token UI locations are enumerated;
+- current admin API client token usage is known;
+- backend access behavior after token removal is decided;
+- test updates can verify both private access and public denial.
+
+### Continuity Notes
+
+M47 makes the admin design feel like a private product surface rather than a provisional technical console. It must not weaken the public/private boundary created in M46.
+
+## M48 — Design Acceptance Gap Reduction Pass
+
+### Objective
+
+Reduce or explicitly classify the remaining design and behavior gaps between the React implementation and the support-root prototypes before first-version release readiness.
+
+### Problem or Gap
+
+M41 through M45 brought the React implementation much closer to the support-root designs, but follow-up review still identified visible and behavioral differences. Some are small polish issues; others represent intentional product-boundary differences where prototype behavior should not become real application behavior without an authorized backend or persistence model.
+
+This milestone avoids calling the work "final" before evidence exists. Its purpose is to reduce the known gap set and explicitly classify anything that remains.
+
+### Context
+
+The support-root `design/screens/...` files remain deterministic UX references. Their HTML, CSS, and JavaScript prototypes describe layout, visible content, interaction states, responsive behavior, and intended local behavior. The React application must reconcile those references with Atlas contracts, APIs, publisher rules, runtime validation, public/private boundaries, and tests.
+
+Known examples to evaluate include, but are not limited to:
+
+- admin brand text and logo treatment;
+- admin profile card behavior;
+- `Dataset — ...` title formatting;
+- Dashboard density and action semantics;
+- Dataset Admin tabs, cards, spacing, and compact layout;
+- Live Preview structure and sub-interactions;
+- disabled/deferred behaviors from the prototype JavaScript;
+- actions that require real backend ownership versus local prototype simulation.
+
+### Core Scope
+
+- Compare current React screens against support-root designs after M46 and M47.
+- Fix remaining visual gaps that are safe, deterministic, and within current product scope.
+- Fix remaining behavior gaps that are supported by existing schemas/APIs and persistence.
+- Keep unsupported prototype behavior disabled or explicitly classify it as out of first-version scope.
+- Update tests where parity expectations are concrete and stable.
+- Produce a design-gap register or checklist update if unresolved differences remain.
+- Preserve public/private runtime separation and tokenless admin UX.
+
+### Out of Scope
+
+- Reopening the entire design cycle.
+- Adding new backend workflows only to imitate prototype-local actions.
+- Implementing public admin.
+- Implementing upload, multi-user auth, marketplace, retraining, or public dataset editing.
+- Expanding schemas without an explicit product decision.
+- Treating every prototype animation or local-only JavaScript effect as mandatory runtime behavior.
+- Calling the first version ready without M49 evidence.
+
+### Expected Deliverables
+
+- Remaining design gaps fixed where they are safe and in scope.
+- Remaining behavior gaps fixed where they are supported by current APIs and persistence.
+- Explicit classification of unresolved prototype behaviors as:
+  - implemented;
+  - intentionally deferred;
+  - unsupported by current schema/API;
+  - design-only/local prototype behavior;
+  - blocked by missing backend owner.
+- Updated tests for accepted parity behaviors.
+- Updated checklist or evidence showing what is still different and why.
+- No regression in public/private access separation.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only` plus checklist evidence if authorized by issue.
+- Expected evaluation: if unresolved exceptions remain, record them as a gap register rather than silently accepting them.
+- Candidate documents: existing parity matrix/checklist documents created in M41, if present and authorized.
+- Criterion to create: create a small exception register only if the implementation cannot safely match the prototype.
+- Criterion to update: update design parity documents when a behavior is accepted, deferred, or rejected.
+- Criterion not to update: do not create broad design documentation outside the specific acceptance gaps.
+
+### Dependencies
+
+- M46 completed.
+- M47 completed.
+- M41 parity matrix and behavior inventory available.
+- Support-root design references available.
+- React screens stable enough for comparison.
+
+### Components or Areas Affected
+
+- Public Home.
+- Dataset Detail.
+- PublicShell.
+- AdminShell.
+- Admin Dashboard.
+- Dataset Admin.
+- Settings.
+- Help.
+- Live Preview.
+- Shared UI components and styles.
+- Frontend tests.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: visible divergence remains and is safe to fix.
+  - Possible issue type: design parity correction.
+  - Note: fix only if it does not expand product behavior.
+- Criterion: prototype behavior remains unimplemented but has current API/schema support.
+  - Possible issue type: behavioral parity correction.
+  - Note: implement with tests and persistence where required.
+- Criterion: prototype behavior lacks backend or schema owner.
+  - Possible issue type: exception classification.
+  - Note: classify instead of faking runtime behavior.
+- Criterion: regression risk exists in public/private boundary.
+  - Possible issue type: access-boundary regression test.
+  - Note: design fixes must not expose admin publicly.
+
+### Definition of Done
+
+- All known visual gaps are either fixed or explicitly classified.
+- All known behavior gaps are either implemented, deferred, or rejected with a clear reason.
+- Public and private screens remain operational after fixes.
+- Tokenless admin UX remains intact.
+- Public mode still blocks admin access.
+- Tests or manual evidence cover the accepted parity behaviors.
+- No milestone or issue claims irreversible completion before M49 release-readiness evidence.
+
+### Minimum Evidence
+
+- Updated design parity checklist or gap register.
+- Before/after notes for corrected visual gaps.
+- Test evidence for implemented behavior gaps.
+- Manual smoke evidence for:
+  - `/`;
+  - `/dataset/:slug`;
+  - `/admin`;
+  - `/admin/dataset-admin`;
+  - `/admin/settings`;
+  - `/admin/help`.
+- Public-mode denial evidence for admin routes after visual changes.
+- Explicit list of any remaining differences from support-root prototypes.
+
+### Risks and Gaps
+
+- Risk of treating design parity as unlimited scope.
+- Risk of adding fake local-only behavior to match prototype JavaScript.
+- Risk of breaking access separation while changing routes or shell layout.
+- Risk of leaving subjective visual differences unrecorded.
+- Gap: behaviors requiring new backend ownership may need a future product milestone rather than first-version closure.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M46 and M47 are complete;
+- current support-root designs are identified;
+- current React screens are available for comparison;
+- M41 parity matrix or equivalent behavior inventory exists;
+- accepted versus deferred behaviors can be classified.
+
+### Continuity Notes
+
+M48 is an acceptance-gap reduction pass, not a promise that no gaps will remain. Anything still different after this milestone must be explicitly recorded so M49 can evaluate whether the first version is ready or blocked.
+
+## M49 — First-Version Release Readiness and Evidence Gate
+
+### Objective
+
+Validate whether the Atlas first version is ready to be considered complete by checking public/private builds, smoke behavior, design acceptance evidence, documentation state, and operational milestone state.
+
+### Problem or Gap
+
+Previous milestones produced substantial implementation, but some evidence was partial, not executed, or not reflected in operational State. A first-version declaration requires a separate readiness gate that validates what is actually running instead of assuming that implementation intent equals completion.
+
+### Context
+
+The first version should include:
+
+- public Home and Dataset Detail;
+- public prediction experience based on published artifacts;
+- private Dashboard and Dataset Admin available only through the private runtime;
+- tokenless admin UX;
+- public/private compose separation;
+- support-root design gaps reduced or explicitly classified;
+- documented evidence for build, tests, Docker, and smoke checks.
+
+This milestone does not add major new product capability. It verifies readiness and records blockers if readiness is not achieved.
+
+### Core Scope
+
+- Run and record frontend build validation.
+- Run and record frontend test validation.
+- Run and record backend/API test validation as appropriate.
+- Run and record private compose rebuild and smoke validation.
+- Run and record public compose/prod rebuild and smoke validation.
+- Confirm public/admin route separation.
+- Confirm tokenless private admin operation.
+- Confirm public mode cannot reach admin routes or private/admin API endpoints.
+- Confirm public dataset and prediction flows work.
+- Confirm design gap register or parity checklist is updated.
+- Update operational State only if the implementation is actually validated.
+- Record blockers instead of declaring readiness by inference.
+
+### Out of Scope
+
+- Implementing new design behavior beyond M48 scope.
+- Adding authentication beyond the accepted private-access model.
+- Adding new datasets.
+- Changing publisher architecture.
+- Changing storage model.
+- Creating a public admin.
+- Declaring production readiness without evidence.
+- Treating failed checks as completed work.
+
+### Expected Deliverables
+
+- Build/test/Docker evidence.
+- Private-mode smoke evidence.
+- Public-mode smoke evidence.
+- Public/private access-boundary evidence.
+- Tokenless admin smoke evidence.
+- Updated milestone operational State when warranted.
+- First-version readiness result:
+  - ready;
+  - ready with documented reservations;
+  - blocked with exact blockers.
+- Any necessary documentation updates for first-version operation.
+
+### Implementation Documentation
+
+- Applicable strategy: `milestones-only` with minimum release-readiness evidence.
+- Expected evaluation: determine whether first-version operation requires a short operator note.
+- Candidate documents: operational State, milestone evidence, and optional short runtime-mode note.
+- Criterion to create: create only the minimum evidence/documentation needed to repeat the first-version validation.
+- Criterion to update: update `docs/project-status/milestone-state.json` only when checks support the state transition.
+- Criterion not to update: do not mark milestones complete when checks were skipped or failed without documented acceptance.
+
+### Dependencies
+
+- M46 completed or explicitly blocked.
+- M47 completed or explicitly blocked.
+- M48 completed or explicitly blocked.
+- Existing real published release artifacts available for smoke validation.
+- Current compose files available for private and public validation.
+
+### Components or Areas Affected
+
+- Public Web Experience.
+- Private Administration.
+- Public Runtime API.
+- Private/Admin API boundaries.
+- Docker Compose configuration.
+- Tests.
+- Operational State.
+- Milestone evidence.
+- Minimal operations documentation.
+
+### Expected Issues or Derivation Criteria
+
+- Criterion: private build fails.
+  - Possible issue type: release-readiness blocker.
+  - Note: record blocker rather than marking ready.
+- Criterion: public build exposes admin.
+  - Possible issue type: access-boundary blocker.
+  - Note: public exposure must be fixed before readiness.
+- Criterion: tokenless admin fails in private mode.
+  - Possible issue type: private-admin readiness blocker.
+  - Note: do not reintroduce visible token fields as the default fix.
+- Criterion: design gap register still contains first-version blockers.
+  - Possible issue type: design acceptance blocker.
+  - Note: resolve or explicitly defer before readiness.
+- Criterion: operational State is stale.
+  - Possible issue type: state update.
+  - Note: update only after evidence supports it.
+
+### Definition of Done
+
+- Private compose build and smoke checks pass or exact blockers are recorded.
+- Public compose build and smoke checks pass or exact blockers are recorded.
+- Public routes work in public mode.
+- Admin routes and private/admin API endpoints fail closed in public mode.
+- Admin routes and supported admin actions work in private mode without visible token fields.
+- Design acceptance gaps are resolved or classified.
+- Build/test evidence is recorded.
+- Operational State is updated only if the checks justify it.
+- First-version readiness is stated honestly as ready, ready with reservations, or blocked.
+
+### Minimum Evidence
+
+- `npm run build` evidence.
+- Frontend test evidence.
+- Backend test evidence, where applicable.
+- `docker compose build --no-cache` evidence for private stack.
+- `docker compose up -d` private smoke evidence.
+- `docker compose -f docker-compose.prod.yml build --no-cache` evidence for public stack.
+- Public smoke checks:
+  - `/`;
+  - `/dataset/:slug`;
+  - public health/API endpoints;
+  - prediction flow.
+- Public denial checks:
+  - `/admin`;
+  - `/admin/dataset-admin`;
+  - private/admin API paths.
+- Private smoke checks:
+  - `/admin`;
+  - `/admin/dataset-admin`;
+  - `/admin/settings`;
+  - `/admin/help`;
+  - draft/publish/visibility actions where supported.
+- Updated `docs/project-status/milestone-state.json`, if and only if readiness is supported by evidence.
+
+### Risks and Gaps
+
+- Risk of declaring the first version ready based on intent instead of evidence.
+- Risk of ignoring public/private exposure gaps because the UI looks correct locally.
+- Risk of leaving stale operational State after implementation work.
+- Risk of over-expanding the first version while trying to resolve every future enhancement.
+- Gap: if readiness is blocked, a subsequent targeted blocker milestone may be needed.
+
+### Derivability Criteria
+
+The milestone will be ready to derive issues when:
+
+- M46 through M48 have implementation results or explicit blockers;
+- validation commands are known;
+- public and private smoke URLs are known;
+- admin/private API denial checks are enumerated;
+- criteria for ready, ready with reservations, and blocked are agreed.
+
+### Continuity Notes
+
+M49 is a readiness gate. It should not guarantee completion before validation. Its value is to prevent another premature "done" state by requiring evidence before the first version is treated as complete.

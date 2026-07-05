@@ -3,8 +3,6 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import App from "./App";
-
 type MockResponse = {
   ok: boolean;
   status: number;
@@ -35,7 +33,10 @@ function installFetchMock() {
     const url = String(input);
 
     if (url.endsWith("/datasets")) {
-      return jsonResponse(datasets);
+      return jsonResponse({ datasets });
+    }
+    if (url.endsWith("/admin/runs")) {
+      return jsonResponse({ runs_root_status: "available", runs: [] });
     }
     if (url.includes("/context")) {
       return jsonResponse({ problem_summary: "Public-safe context" });
@@ -68,6 +69,19 @@ function installFetchMock() {
   return fetchMock;
 }
 
+async function renderApp(route: string, enableAdmin: boolean) {
+  vi.resetModules();
+  vi.stubEnv("VITE_ENABLE_ADMIN", enableAdmin ? "true" : "false");
+
+  const { default: App } = await import("./App");
+
+  return render(
+    <MemoryRouter initialEntries={[route]}>
+      <App />
+    </MemoryRouter>,
+  );
+}
+
 describe("App admin routing", () => {
   beforeEach(() => {
     installFetchMock();
@@ -75,14 +89,12 @@ describe("App admin routing", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
   it("renders Dataset Admin only inside the private admin shell", async () => {
-    render(
-      <MemoryRouter initialEntries={["/admin/dataset-admin"]}>
-        <App />
-      </MemoryRouter>,
-    );
+    await renderApp("/admin/dataset-admin", true);
 
     expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
@@ -97,11 +109,7 @@ describe("App admin routing", () => {
   });
 
   it("renders Settings only inside the private admin shell", async () => {
-    render(
-      <MemoryRouter initialEntries={["/admin/settings"]}>
-        <App />
-      </MemoryRouter>,
-    );
+    await renderApp("/admin/settings", true);
 
     expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
@@ -110,15 +118,29 @@ describe("App admin routing", () => {
   });
 
   it("renders Help only inside the private admin shell", async () => {
-    render(
-      <MemoryRouter initialEntries={["/admin/help"]}>
-        <App />
-      </MemoryRouter>,
-    );
+    await renderApp("/admin/help", true);
 
     expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/admin/help");
     expect(screen.getByRole("heading", { name: /Admin help/i })).toBeInTheDocument();
+  });
+
+  it("does not render admin shell or admin navigation for direct admin URLs when admin is disabled", async () => {
+    const { container } = await renderApp("/admin/dataset-admin", false);
+
+    expect(screen.queryByText("Private administration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Admin utilities" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Dataset -- Telco Customer Churn" })).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps public routes available when admin is disabled", async () => {
+    await renderApp("/", false);
+
+    expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
+    expect(screen.queryByText("Private administration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
   });
 });

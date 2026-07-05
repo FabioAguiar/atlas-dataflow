@@ -1600,6 +1600,23 @@ function CustomizationEditor({
   onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
 }) {
   const [dragState, setDragState] = useState<CustomizationDragState | null>(null);
+  // Local-only, non-schema-persisted expand/collapse affordance for group
+  // cards (mirrors the executable prototype's collapse-button pattern).
+  // Never read by customizationDraftToRecord and never added to
+  // CustomizationEditorDraft/GroupDraft, so it cannot leak into saved state.
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
+
+  function toggleGroupCollapsed(groupId: string) {
+    setCollapsedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }
 
   function updateFieldHint(index: number, patch: Partial<FieldHintDraft>) {
     onUpdateDraft((current) => ({
@@ -1770,16 +1787,28 @@ function CustomizationEditor({
                     Remove
                   </button>
                   <Badge>{draft.fieldHints.filter((field) => field.group === group.group_id).length} fields</Badge>
+                  <button
+                    aria-expanded={!collapsedGroupIds.has(group.group_id)}
+                    onClick={() => toggleGroupCollapsed(group.group_id)}
+                    style={secondaryButtonStyle}
+                    type="button"
+                  >
+                    {collapsedGroupIds.has(group.group_id) ? "Expand" : "Collapse"}
+                  </button>
                 </div>
-                <div style={twoColumnGridStyle}>
-                  <TextField label="Group ID" onChange={(value) => updateGroup(index, { group_id: value })} value={group.group_id} />
-                  <TextField label="Label" onChange={(value) => updateGroup(index, { label: value })} value={group.label} />
-                </div>
-                <TextField
-                  label="Description"
-                  onChange={(value) => updateGroup(index, { description: value })}
-                  value={group.description}
-                />
+                {!collapsedGroupIds.has(group.group_id) && (
+                  <>
+                    <div style={twoColumnGridStyle}>
+                      <TextField label="Group ID" onChange={(value) => updateGroup(index, { group_id: value })} value={group.group_id} />
+                      <TextField label="Label" onChange={(value) => updateGroup(index, { label: value })} value={group.label} />
+                    </div>
+                    <TextField
+                      label="Description"
+                      onChange={(value) => updateGroup(index, { description: value })}
+                      value={group.description}
+                    />
+                  </>
+                )}
               </div>
             ))}
           </div>

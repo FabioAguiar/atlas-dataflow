@@ -101,8 +101,15 @@ function installFetchMock(
     // default fixture keeps both features optional: true so no other test's
     // rendered output changes.
     requiredFieldOverride?: string;
+    // Opt-in only (default false). When true, the customization PUT handler
+    // stores the received body and both the PUT response and any subsequent
+    // customization GET response echo that stored value instead of the
+    // static default fixture -- used only by the group persistence-through-
+    // reload test below. Every other test keeps the stateless default.
+    trackCustomizationSaves?: boolean;
   } = {},
 ) {
+  let savedCustomization: typeof customization | null = null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
@@ -226,9 +233,17 @@ function installFetchMock(
       return jsonResponse({ draft_exists: true, profile });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) && init?.method === "PUT") {
+      if (options.trackCustomizationSaves) {
+        const body = typeof init.body === "string" ? (JSON.parse(init.body) as typeof customization) : customization;
+        savedCustomization = body;
+        return jsonResponse({ saved: true, customization: body });
+      }
       return jsonResponse({ saved: true, customization });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`)) {
+      if (options.trackCustomizationSaves && savedCustomization) {
+        return jsonResponse({ customization_exists: true, customization: savedCustomization });
+      }
       return jsonResponse({ customization_exists: true, customization });
     }
 
@@ -242,14 +257,21 @@ function installFetchMock(
 async function loadDraftOnly() {
   fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
   fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
-  expect(await screen.findByText("Draft loaded.")).toBeInTheDocument();
+  // DraftStatusPanel's "ready" branch renders the bare string "Draft loaded"
+  // (no trailing period) -- see DatasetAdminPage.tsx line ~1239. Matching the
+  // actual rendered text here (not the previously mismatched "Draft loaded.")
+  // is required for this helper's wait to ever resolve.
+  expect(await screen.findByText("Draft loaded")).toBeInTheDocument();
 }
 
 async function loadDraftAndCustomization() {
   await loadDraftOnly();
   fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
   fireEvent.click(screen.getByRole("button", { name: "Load customization" }));
-  expect(await screen.findByText("Customization loaded.")).toBeInTheDocument();
+  // Same fix as loadDraftOnly above: CustomizationStatusPanel's "ready"
+  // branch renders "Customization loaded" with no trailing period (see
+  // DatasetAdminPage.tsx line ~1551).
+  expect(await screen.findByText("Customization loaded")).toBeInTheDocument();
 }
 
 describe("DatasetAdminPage", () => {
@@ -663,6 +685,123 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => {
       expect(Element.prototype.setPointerCapture).toHaveBeenCalledWith(2);
     });
+  });
+
+  it("persists group create/edit/remove/reorder through customization save and reload", async () => {
+    installFetchMock({ trackCustomizationSaves: true });
+    render(<DatasetAdminPage />);
+
+    await loadDraftAndCustomization();
+
+    const groupsPanel = screen.getByLabelText("Groups");
+    const fieldsPanel = screen.getByLabelText("Field presentation");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add group" }));
+    const removeButtonsAfterAdd = within(groupsPanel).getAllByRole("button", { name: "Remove" });
+    const newGroupCard = removeButtonsAfterAdd[removeButtonsAfterAdd.length - 1].closest(
+      ".dataset-admin-builder-card",
+    ) as HTMLElement;
+
+    fireEvent.change(within(newGroupCard).getByLabelText("Label"), { target: { value: "Support tier" } });
+    fireEvent.change(within(newGroupCard).getByLabelText("Description"), {
+      target: { value: "Support-related attributes" },
+    });
+
+    // The new group's group_id is deterministically "group-3"
+    // (addGroup: `group-${current.groups.length + 1}` with 2 pre-existing groups).
+    const tenureCard = within(fieldsPanel).getByText("tenure").closest(".dataset-admin-builder-card") as HTMLElement;
+    fireEvent.change(within(tenureCard).getByLabelText("Group"), { target: { value: "group-3" } });
+
+    // Move down on the first group ("Account profile") swaps it with its
+    // neighbor ("Charges").
+    fireEvent.click(within(groupsPanel).getAllByRole("button", { name: "Move down" })[0]);
+
+    // Remove a different pre-existing group ("Account profile") than the one
+    // just created/edited/assigned ("Support tier").
+    const accountCard = within(groupsPanel)
+      .getByDisplayValue("Account profile")
+      .closest(".dataset-admin-builder-card") as HTMLElement;
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Remove" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    await screen.findByText("Customization saved.");
+
+    // A real reload, not just a payload assertion: click "Load customization"
+    // again and verify the re-rendered editor reflects all five edits.
+    fireEvent.click(screen.getByRole("button", { name: "Load customization" }));
+    await screen.findByText("Customization loaded");
+
+    const reloadedGroupsPanel = screen.getByLabelText("Groups");
+    const reloadedLabels = within(reloadedGroupsPanel).getAllByLabelText("Label") as HTMLInputElement[];
+    expect(reloadedLabels.map((input) => input.value)).toEqual(["Charges", "Support tier"]);
+    const reloadedDescriptions = within(reloadedGroupsPanel).getAllByLabelText("Description") as HTMLInputElement[];
+    expect(reloadedDescriptions.map((input) => input.value)).toEqual([
+      "Billing attributes",
+      "Support-related attributes",
+    ]);
+
+    const reloadedFieldsPanel = screen.getByLabelText("Field presentation");
+    const reloadedTenureCard = within(reloadedFieldsPanel)
+      .getByText("tenure")
+      .closest(".dataset-admin-builder-card") as HTMLElement;
+    expect(within(reloadedTenureCard).getByLabelText("Group")).toHaveValue("group-3");
+    const reloadedChargesCard = within(reloadedFieldsPanel)
+      .getByText("MonthlyCharges")
+      .closest(".dataset-admin-builder-card") as HTMLElement;
+    expect(within(reloadedChargesCard).getByLabelText("Group")).toHaveValue("charges");
+  });
+
+  it("isolates the group collapse affordance from the saved customization", async () => {
+    const fetchMock = installFetchMock();
+    render(<DatasetAdminPage />);
+
+    await loadDraftAndCustomization();
+
+    const groupsPanel = screen.getByLabelText("Groups");
+    const accountCard = within(groupsPanel)
+      .getByDisplayValue("Account profile")
+      .closest(".dataset-admin-builder-card") as HTMLElement;
+
+    const collapseButton = within(accountCard).getByRole("button", { name: "Collapse" });
+    expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+    expect(within(accountCard).getByLabelText("Group ID")).toBeInTheDocument();
+    expect(within(accountCard).getByLabelText("Label")).toBeInTheDocument();
+    expect(within(accountCard).getByLabelText("Description")).toBeInTheDocument();
+
+    fireEvent.click(collapseButton);
+
+    const expandButton = within(accountCard).getByRole("button", { name: "Expand" });
+    expect(expandButton).toHaveAttribute("aria-expanded", "false");
+    expect(within(accountCard).queryByLabelText("Group ID")).not.toBeInTheDocument();
+    expect(within(accountCard).queryByLabelText("Label")).not.toBeInTheDocument();
+    expect(within(accountCard).queryByLabelText("Description")).not.toBeInTheDocument();
+
+    // The header row (drag, move, remove, field count, collapse/expand)
+    // must remain visible and functional regardless of collapsed state.
+    expect(within(accountCard).getByRole("button", { name: /^Drag group/ })).toBeInTheDocument();
+    expect(within(accountCard).getByRole("button", { name: "Move down" })).toBeInTheDocument();
+    expect(within(accountCard).getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    expect(within(accountCard).getByText(/fields$/)).toBeInTheDocument();
+
+    const callsBeforeSave = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    await screen.findByText("Customization saved.");
+
+    const saveCall = fetchMock.mock.calls
+      .slice(callsBeforeSave)
+      .find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+    expect(saveCall).toBeDefined();
+    const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+      groups: Array<{ group_id: string; label: string }>;
+    };
+    expect(body.groups.map((group) => ({ group_id: group.group_id, label: group.label }))).toEqual([
+      { group_id: "account", label: "Account profile" },
+      { group_id: "charges", label: "Charges" },
+    ]);
   });
 
   it("disables the hide checkbox for a required field and never saves it as hidden", async () => {

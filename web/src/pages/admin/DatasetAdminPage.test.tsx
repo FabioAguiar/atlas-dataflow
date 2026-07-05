@@ -96,6 +96,11 @@ function installFetchMock(
     // see the "updates each Live Preview mode's rendered output..." test.
     themePresetOverride?: string;
     metricsOverride?: Record<string, number>;
+    // Marks one named contract feature as optional: false (required), used
+    // only by the required-field-hiding-prevention test below. The shared
+    // default fixture keeps both features optional: true so no other test's
+    // rendered output changes.
+    requiredFieldOverride?: string;
   } = {},
 ) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -133,8 +138,20 @@ function installFetchMock(
         contract: {
           schema_version: "1.0.0",
           features: [
-            { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
-            { name: "MonthlyCharges", label: "Monthly charges", input_type: "number", optional: true, display_order: 2 },
+            {
+              name: "tenure",
+              label: "Tenure",
+              input_type: "number",
+              optional: options.requiredFieldOverride === "tenure" ? false : true,
+              display_order: 1,
+            },
+            {
+              name: "MonthlyCharges",
+              label: "Monthly charges",
+              input_type: "number",
+              optional: options.requiredFieldOverride === "MonthlyCharges" ? false : true,
+              display_order: 2,
+            },
           ],
         },
       });
@@ -646,6 +663,96 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => {
       expect(Element.prototype.setPointerCapture).toHaveBeenCalledWith(2);
     });
+  });
+
+  it("disables the hide checkbox for a required field and never saves it as hidden", async () => {
+    const fetchMock = installFetchMock({ requiredFieldOverride: "tenure" });
+    render(<DatasetAdminPage />);
+
+    await loadDraftAndCustomization();
+
+    const fieldsPanel = screen.getByLabelText("Field presentation");
+    const tenureCard = within(fieldsPanel).getByText("tenure").closest(".dataset-admin-builder-card") as HTMLElement;
+    expect(within(tenureCard).getByText("required")).toBeInTheDocument();
+
+    const hideCheckbox = within(tenureCard).getByRole("checkbox");
+    expect(hideCheckbox).toBeDisabled();
+    expect(hideCheckbox).not.toBeChecked();
+
+    // Disabled inputs should not respond to interaction; attempting the click
+    // anyway (rather than only asserting the disabled attribute) guards
+    // against a regression that removes `disabled` without preserving the
+    // required-cannot-be-hidden guarantee itself.
+    fireEvent.click(hideCheckbox);
+    expect(hideCheckbox).not.toBeChecked();
+
+    const callsBeforeSave = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    await screen.findByText("Customization saved.");
+
+    const saveCall = fetchMock.mock.calls
+      .slice(callsBeforeSave)
+      .find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+    expect(saveCall).toBeDefined();
+    const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+      field_hints: Array<{ field_name: string; hidden?: boolean }>;
+    };
+    const tenureHint = body.field_hints.find((hint) => hint.field_name === "tenure");
+    expect(tenureHint?.hidden).toBeUndefined();
+  });
+
+  it("saves identical field order and display_order_hint via a button reorder and an equivalent drag reorder", async () => {
+    vi.spyOn(document, "elementFromPoint").mockImplementation((_x: number, y: number) =>
+      document.querySelector<HTMLElement>(`[data-customization-drag-kind="field"][data-customization-drag-index="${y}"]`),
+    );
+
+    function extractSavedFieldOrder(fetchMock: ReturnType<typeof installFetchMock>, callsBeforeSave: number) {
+      const saveCall = fetchMock.mock.calls
+        .slice(callsBeforeSave)
+        .find(
+          (call: unknown[]) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        );
+      const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+        field_hints: Array<{ field_name: string; display_order_hint: number }>;
+      };
+      return body.field_hints.map((hint) => ({ field_name: hint.field_name, display_order_hint: hint.display_order_hint }));
+    }
+
+    const buttonFetchMock = installFetchMock();
+    const { unmount } = render(<DatasetAdminPage />);
+    await loadDraftAndCustomization();
+
+    const buttonFieldsPanel = screen.getByLabelText("Field presentation");
+    const moveDownButtons = within(buttonFieldsPanel).getAllByRole("button", { name: "Move down" });
+    const callsBeforeButtonSave = buttonFetchMock.mock.calls.length;
+    fireEvent.click(moveDownButtons[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    await screen.findByText("Customization saved.");
+    const buttonOrder = extractSavedFieldOrder(buttonFetchMock, callsBeforeButtonSave);
+
+    unmount();
+
+    const dragFetchMock = installFetchMock();
+    render(<DatasetAdminPage />);
+    await loadDraftAndCustomization();
+
+    const dragFieldsPanel = screen.getByLabelText("Field presentation");
+    const tenureDragHandle = within(dragFieldsPanel).getByRole("button", { name: "Drag field Tenure" });
+    const callsBeforeDragSave = dragFetchMock.mock.calls.length;
+    fireEvent.pointerDown(tenureDragHandle, { pointerId: 3, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(tenureDragHandle, { pointerId: 3, clientX: 0, clientY: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    await screen.findByText("Customization saved.");
+    const dragOrder = extractSavedFieldOrder(dragFetchMock, callsBeforeDragSave);
+
+    expect(dragOrder).toEqual(buttonOrder);
+    expect(dragOrder.map((entry) => entry.field_name)).toEqual(["MonthlyCharges", "tenure"]);
   });
 
   it("shows a disabled selector and a blank read-only panel when no datasets are registered", async () => {

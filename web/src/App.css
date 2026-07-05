@@ -275,7 +275,7 @@ h1 {
 
 .hero {
   display: grid;
-  gap: var(--atlas-space-4);
+  gap: var(--atlas-space-5);
 }
 
 .hero__subtitle {
@@ -292,7 +292,7 @@ h1 {
   color: var(--atlas-color-text);
   font-size: var(--atlas-text-display);
   line-height: var(--atlas-line-tight);
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .hero__title-mark {
@@ -358,7 +358,7 @@ h1 {
 
 .featured-datasets {
   display: grid;
-  gap: var(--atlas-space-6);
+  gap: var(--atlas-space-8);
 }
 
 .featured-datasets__heading {
@@ -381,7 +381,8 @@ h1 {
 
 .featured-datasets__grid {
   display: grid;
-  gap: var(--atlas-space-5);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--atlas-space-6);
 }
 
 /*
@@ -400,13 +401,17 @@ h1 {
   position: relative;
   display: grid;
   gap: var(--atlas-space-4);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  min-height: 100%;
+  padding: var(--atlas-space-6);
+  border-color: var(--atlas-color-border);
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .dataset-card:hover,
 .dataset-card:focus-within {
-  box-shadow: var(--atlas-shadow-md);
-  transform: translateY(-2px);
+  border-color: var(--public-shell-color-accent, var(--atlas-color-accent));
+  box-shadow: 0 16px 36px rgb(22 32 26 / 14%);
+  transform: translateY(-3px);
 }
 
 .dataset-card__link-overlay {
@@ -418,7 +423,7 @@ h1 {
 
 .dataset-card__link-overlay:focus-visible {
   outline: none;
-  box-shadow: var(--atlas-focus-ring);
+  box-shadow: var(--atlas-focus-ring), inset 0 0 0 1px var(--public-shell-color-accent, var(--atlas-color-accent));
 }
 
 .dataset-card__icon {
@@ -560,6 +565,20 @@ h1 {
   gap: var(--atlas-space-4);
 }
 
+.dataset-detail-overview {
+  display: grid;
+  gap: var(--atlas-space-4);
+}
+
+.dataset-detail-overview__analytics {
+  display: grid;
+  gap: var(--atlas-space-4);
+}
+
+.dataset-detail-overview__analytics > * {
+  min-width: 0;
+}
+
 .dataset-detail-overview__problem-summary h3 {
   margin: 0 0 var(--atlas-space-2);
 }
@@ -627,6 +646,31 @@ h1 {
 .dataset-detail-visualization__chart {
   width: 100%;
   min-height: 300px;
+}
+
+.dataset-detail-inference__layout {
+  display: grid;
+  gap: var(--atlas-space-4);
+  align-items: start;
+}
+
+.dataset-detail-inference__layout > * {
+  min-width: 0;
+}
+
+.dataset-detail-inference__flow {
+  display: contents;
+}
+
+.dataset-detail-inference__layout form,
+.dataset-detail-inference__layout [class*="form" i] {
+  min-width: 0;
+}
+
+.dataset-detail-inference__layout .inference-result,
+.dataset-detail-inference__layout .result-panel,
+.dataset-detail-inference__layout [class*="result" i] {
+  min-width: 0;
 }
 
 @media (max-width: 767px) {
@@ -700,21 +744,65 @@ h1 {
   }
 
   .app-shell {
-    width: min(100% - 4rem, 960px);
-    padding: var(--atlas-space-10) 0 var(--atlas-space-16);
+    gap: var(--atlas-space-10);
+    width: min(100% - 4rem, 1040px);
+    padding: var(--atlas-space-12) 0 var(--atlas-space-16);
+  }
+
+  .hero {
+    gap: var(--atlas-space-6);
   }
 
   .featured-datasets__grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+    gap: var(--atlas-space-8);
+  }
+
+  .dataset-detail-overview__analytics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .dataset-detail-overview__analytics > :last-child:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .dataset-detail-overview__analytics > * {
+    height: 100%;
   }
 }
 
 @media (min-width: 1200px) {
   .app-shell {
-    width: min(100% - 8rem, 1120px);
+    width: min(100% - 8rem, 1180px);
   }
 
   .featured-datasets__grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  }
+
+  .dataset-detail-overview__analytics {
+    grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.8fr) minmax(0, 1fr);
+  }
+
+  .dataset-detail-overview__analytics > :last-child:nth-child(3) {
+    grid-column: auto;
+  }
+
+  .dataset-detail-inference__layout {
+    grid-template-columns: minmax(0, 1.4fr) minmax(18rem, 0.72fr);
+  }
+
+  .dataset-detail-inference__layout .inference-result,
+  .dataset-detail-inference__layout .result-panel,
+  .dataset-detail-inference__layout [class*="result" i] {
+    align-self: start;
+  }
+
+  .dataset-detail-inference__layout--result-sticky .inference-result,
+  .dataset-detail-inference__layout--result-sticky .result-panel,
+  .dataset-detail-inference__layout--result-sticky [class*="result" i] {
+    position: sticky;
+    top: var(--atlas-space-6);
   }
 }

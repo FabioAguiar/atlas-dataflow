@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import DatasetDetailHeader, {
   type DatasetDetailMetadataItem,
@@ -84,6 +84,7 @@ function extractInstanceCount(metrics: MetricsData): string | null {
 
 export default function DatasetPage() {
   const { slug } = useParams<{ slug: string }>();
+  const inferenceLayoutRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<PageState>({ status: "loading" });
   const [metricsState, setMetricsState] = useState<SectionState<MetricsData>>({ status: "loading" });
   const [modelCardState, setModelCardState] = useState<SectionState<ModelCardPayload>>({ status: "loading" });
@@ -320,6 +321,81 @@ export default function DatasetPage() {
     return () => controller.abort();
   }, [slug]);
 
+  useEffect(() => {
+    const layout = inferenceLayoutRef.current;
+    if (!layout || contractState.status !== "ready") {
+      return;
+    }
+
+    const findResultElement = () =>
+      layout.querySelector<HTMLElement>(
+        ".inference-result, .result-panel, [class*='result' i], [data-testid*='result' i]",
+      );
+
+    const updateStickyState = () => {
+      const form = layout.querySelector<HTMLElement>("form");
+      const result = findResultElement();
+      const onlyChild = layout.children.length === 1 ? layout.firstElementChild : null;
+      const bridge =
+        onlyChild instanceof HTMLElement &&
+        form &&
+        result &&
+        onlyChild !== form &&
+        onlyChild !== result &&
+        onlyChild.contains(form) &&
+        onlyChild.contains(result)
+          ? onlyChild
+          : null;
+      const shouldStick = Boolean(form && result && form.offsetHeight > result.offsetHeight);
+
+      layout.querySelectorAll(".dataset-detail-inference__flow").forEach((element) => {
+        if (element !== bridge) {
+          element.classList.remove("dataset-detail-inference__flow");
+        }
+      });
+      bridge?.classList.add("dataset-detail-inference__flow");
+      layout.classList.toggle("dataset-detail-inference__layout--result-sticky", shouldStick);
+    };
+
+    updateStickyState();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateStickyState);
+      return () => {
+        layout.classList.remove("dataset-detail-inference__layout--result-sticky");
+        layout.querySelectorAll(".dataset-detail-inference__flow").forEach((element) => {
+          element.classList.remove("dataset-detail-inference__flow");
+        });
+        window.removeEventListener("resize", updateStickyState);
+      };
+    }
+
+    const observer = new ResizeObserver(updateStickyState);
+    observer.observe(layout);
+
+    const form = layout.querySelector<HTMLElement>("form");
+    const result = findResultElement();
+
+    if (form) {
+      observer.observe(form);
+    }
+
+    if (result) {
+      observer.observe(result);
+    }
+
+    window.addEventListener("resize", updateStickyState);
+
+    return () => {
+      layout.classList.remove("dataset-detail-inference__layout--result-sticky");
+      layout.querySelectorAll(".dataset-detail-inference__flow").forEach((element) => {
+        element.classList.remove("dataset-detail-inference__flow");
+      });
+      observer.disconnect();
+      window.removeEventListener("resize", updateStickyState);
+    };
+  }, [contractState.status]);
+
   if (state.status === "loading") {
     return (
       <>
@@ -374,7 +450,7 @@ export default function DatasetPage() {
   ];
 
   const inferenceContent = (
-    <>
+    <div className="dataset-detail-inference__layout" ref={inferenceLayoutRef}>
       {contractState.status === "loading" && <LoadingState />}
       {contractState.status === "ready" && (
         <InferenceForm contract={contractState.data} slug={slug!} />
@@ -382,13 +458,13 @@ export default function DatasetPage() {
       {contractState.status === "unavailable" && (
         <ErrorState message="The prediction form is temporarily unavailable." />
       )}
-    </>
+    </div>
   );
 
   const problemSummaryText = getProblemSummaryText(context);
 
   const overviewContent = (
-    <>
+    <div className="dataset-detail-overview">
       {contextState.status === "loading" && <LoadingState />}
       {contextState.status === "ready" && problemSummaryText && (
         <section className="dataset-detail-overview__problem-summary">
@@ -397,26 +473,28 @@ export default function DatasetPage() {
         </section>
       )}
 
-      {metricsState.status === "loading" && <LoadingState />}
-      {metricsState.status === "ready" && (
-        <PerformanceSummary metrics={metricsState.data} emphasizedMetricKey={context?.primary_metric_key} />
-      )}
-      {metricsState.status === "unavailable" && (
-        <ErrorState message="Metrics are temporarily unavailable." />
-      )}
+      <div className="dataset-detail-overview__analytics">
+        {metricsState.status === "loading" && <LoadingState />}
+        {metricsState.status === "ready" && (
+          <PerformanceSummary metrics={metricsState.data} emphasizedMetricKey={context?.primary_metric_key} />
+        )}
+        {metricsState.status === "unavailable" && (
+          <ErrorState message="Metrics are temporarily unavailable." />
+        )}
 
-      {visualizationsState.status === "loading" && <LoadingState />}
-      {visualizationsState.status !== "loading" && (
-        <>
-          <TargetDistribution
-            visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
-          />
-          <FeatureImportance
-            visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
-          />
-        </>
-      )}
-    </>
+        {visualizationsState.status === "loading" && <LoadingState />}
+        {visualizationsState.status !== "loading" && (
+          <>
+            <TargetDistribution
+              visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
+            />
+            <FeatureImportance
+              visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
+            />
+          </>
+        )}
+      </div>
+    </div>
   );
 
   return (

@@ -85,7 +85,19 @@ const customization = {
   },
 };
 
-function installFetchMock(options: { rejectProfileSave?: boolean; rejectPublish?: boolean; rejectVisibility?: boolean } = {}) {
+function installFetchMock(
+  options: {
+    rejectProfileSave?: boolean;
+    rejectPublish?: boolean;
+    rejectVisibility?: boolean;
+    // Both overrides below exist only to make Live Preview reactivity
+    // genuinely observable for fields whose shared-fixture defaults would
+    // otherwise round-trip to an identical rendered value after an edit --
+    // see the "updates each Live Preview mode's rendered output..." test.
+    themePresetOverride?: string;
+    metricsOverride?: Record<string, number>;
+  } = {},
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
@@ -128,7 +140,9 @@ function installFetchMock(options: { rejectProfileSave?: boolean; rejectPublish?
       });
     }
     if (url.includes("/metrics")) {
-      return jsonResponse({ metrics: { evaluation: { metrics: { auc_roc: 0.93, accuracy: 0.86 } } } });
+      return jsonResponse({
+        metrics: { evaluation: { metrics: options.metricsOverride ?? { auc_roc: 0.93, accuracy: 0.86 } } },
+      });
     }
     if (url.includes("/model-card")) {
       return jsonResponse({ model_card: { content: JSON.stringify({ model_summary: "Validation model" }) } });
@@ -189,7 +203,10 @@ function installFetchMock(options: { rejectProfileSave?: boolean; rejectPublish?
       return jsonResponse({ saved: true, profile: publicProfile });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
-      return jsonResponse({ draft_exists: true, profile: publicProfile });
+      const profile = options.themePresetOverride
+        ? { ...publicProfile, theme: { preset: options.themePresetOverride } }
+        : publicProfile;
+      return jsonResponse({ draft_exists: true, profile });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) && init?.method === "PUT") {
       return jsonResponse({ saved: true, customization });
@@ -501,8 +518,21 @@ describe("DatasetAdminPage", () => {
   });
 
   it("updates each Live Preview mode's rendered output when a fed draft or customization field is edited", async () => {
-    installFetchMock();
-    render(<DatasetAdminPage />);
+    // theme.preset is seeded as "ocean-blue" (a real named preset -- see
+    // THEME_PRESET_CARDS -- but not currently selectable through the Theme
+    // Preset tab's own controls) and metrics.evaluation.metrics is seeded
+    // with a "precision" key (absent from the shared default fixture)
+    // specifically so this test can prove genuine reactivity for theme and
+    // primary-metric highlighting. DraftForm.theme_preset is typed as a
+    // closed "" | "atlas-green" union whose only two values both render the
+    // Live Preview stage's data-theme-preset attribute identically (via the
+    // `form.theme_preset || "atlas-green"` fallback), and the shared metrics
+    // fixture's only alternate key ("accuracy") is not recognized by
+    // PerformanceSummary's SCORE_ORDER -- editing to either of those "real"
+    // default-fixture alternatives would collapse back to the pre-edit
+    // rendered value and prove nothing about reactivity.
+    installFetchMock({ themePresetOverride: "ocean-blue", metricsOverride: { auc_roc: 0.93, precision: 0.81 } });
+    const { container } = render(<DatasetAdminPage />);
 
     await loadDraftAndCustomization();
 
@@ -510,6 +540,16 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Display title"), { target: { value: "Edited home title" } });
     fireEvent.change(screen.getByLabelText("Release date label"), { target: { value: "2026-08-01" } });
     fireEvent.change(screen.getByLabelText("Date format"), { target: { value: "yyyy-mm-dd" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+    fireEvent.change(screen.getByLabelText("Home card icon"), { target: { value: "bank" } });
+    fireEvent.change(screen.getByLabelText("Short Home card description"), {
+      target: { value: "Edited home card description" },
+    });
+    fireEvent.change(screen.getByLabelText("Primary metric key"), { target: { value: "precision" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
     fireEvent.change(screen.getByLabelText("Medium badge label"), { target: { value: "Elevated risk (edited)" } });
@@ -519,8 +559,30 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
 
+    // data-theme-preset now reflects the just-edited "atlas-green" selection,
+    // not the "ocean-blue" value the draft was originally seeded with --
+    // proving the attribute is live-bound to form.theme_preset rather than a
+    // static initial prop.
+    expect(container.querySelector(".dataset-admin-preview-stage")).toHaveAttribute(
+      "data-theme-preset",
+      "atlas-green",
+    );
+
+    // Detail preview sub-tabs (e.g. separating this Theme/token view from the
+    // Result Card and Inference Form sub-panels rendered below it) remain a
+    // documented deferral per docs/design-prototype-behavior-inventory.md's
+    // "deferred" classification; not implemented by this issue.
+
     fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
     expect(screen.getByRole("heading", { level: 3, name: "Edited home title" })).toBeInTheDocument();
+    expect(screen.getByText("Edited home card description")).toBeInTheDocument();
+    // Icon reactivity is asserted via the rendered SVG's own path geometry
+    // (not a role/label query) because DatasetCard wraps every curated icon
+    // in an aria-hidden span with no distinguishing accessible name.
+    expect(screen.getByRole("article", { name: "Home Card preview" }).querySelector("svg path")).toHaveAttribute(
+      "d",
+      "M4 10h16L12 5 4 10Zm2 0v8m4-8v8m4-8v8m4-8v8M4 19h16",
+    );
 
     fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
     expect(screen.getByRole("heading", { level: 1, name: "Edited home title" })).toBeInTheDocument();
@@ -534,6 +596,12 @@ describe("DatasetAdminPage", () => {
     // which maps to the medium badge label.
     expect(screen.getByText("Elevated risk (edited)")).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure (edited)")).toBeInTheDocument();
+
+    // primary_metric_key now resolves to "precision" (present in this test's
+    // overridden metrics fixture and recognized by PerformanceSummary's
+    // SCORE_ORDER) -- the "Highlighted" badge moves off its default AUC ROC
+    // row onto Precision.
+    expect(screen.getByText("Highlighted").closest("dt")).toHaveTextContent("Precision");
   });
 
   it("shows pointer-following drag overlay activity for fields and groups", async () => {

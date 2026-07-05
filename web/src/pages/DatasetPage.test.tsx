@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -116,7 +116,7 @@ function installDatasetPageFetchMock() {
 }
 
 function renderDatasetPage() {
-  render(
+  return render(
     <MemoryRouter initialEntries={[`/dataset/${slug}`]}>
       <Routes>
         <Route path="/dataset/:slug" element={<DatasetPage />} />
@@ -154,6 +154,30 @@ describe("DatasetPage synthetic-slug rendering", () => {
 
     const pendingValues = screen.getAllByText("Pending");
     expect(pendingValues.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("switches from Overview to Inference and renders the split inference layout", async () => {
+    installDatasetPageFetchMock();
+
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    const overviewTab = screen.getByRole("tab", { name: "Overview" });
+    const inferenceTab = screen.getByRole("tab", { name: "Inference" });
+
+    expect(overviewTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Synthetic public-safe context summary.")).toBeInTheDocument();
+
+    fireEvent.click(inferenceTab);
+
+    expect(inferenceTab).toHaveAttribute("aria-selected", "true");
+    expect(overviewTab).toHaveAttribute("aria-selected", "false");
+    expect(await screen.findByText("Synthetic Feature")).toBeInTheDocument();
+
+    const inferenceLayout = container.querySelector(".dataset-detail-inference__layout");
+    expect(inferenceLayout).toBeInTheDocument();
+    expect(inferenceLayout?.querySelector("form")).toBeInTheDocument();
   });
 });
 

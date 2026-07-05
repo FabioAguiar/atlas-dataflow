@@ -101,6 +101,11 @@ function installFetchMock(
     // default fixture keeps both features optional: true so no other test's
     // rendered output changes.
     requiredFieldOverride?: string;
+    // Opt-in only (default false). When true, profile-draft saves and
+    // publishes echo the active profile so tests can observe saved-draft-
+    // dependent publishing state without changing the shared stateless
+    // default.
+    trackProfileDraftSaves?: boolean;
     // Opt-in only (default false). When true, the customization PUT handler
     // stores the received body and both the PUT response and any subsequent
     // customization GET response echo that stored value instead of the
@@ -109,6 +114,7 @@ function installFetchMock(
     trackCustomizationSaves?: boolean;
   } = {},
 ) {
+  let savedProfileDraft: typeof publicProfile | null = null;
   let savedCustomization: typeof customization | null = null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -187,12 +193,13 @@ function installFetchMock(
           422,
         );
       }
+      const profile = options.trackProfileDraftSaves ? savedProfileDraft ?? publicProfile : publicProfile;
       return jsonResponse({
         published: true,
         snapshot: {
-          source_draft_schema_version: publicProfile.schema_version,
+          source_draft_schema_version: profile.schema_version,
           published_at: "2026-07-03T17:30:00Z",
-          profile: publicProfile,
+          profile,
         },
         errors: [],
       });
@@ -224,12 +231,20 @@ function installFetchMock(
           422,
         );
       }
+      if (options.trackProfileDraftSaves) {
+        const body = typeof init.body === "string" ? JSON.parse(init.body) : publicProfile;
+        savedProfileDraft = body;
+        return jsonResponse({ saved: true, profile: body });
+      }
       return jsonResponse({ saved: true, profile: publicProfile });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
       const profile = options.themePresetOverride
         ? { ...publicProfile, theme: { preset: options.themePresetOverride } }
         : publicProfile;
+      if (options.trackProfileDraftSaves) {
+        savedProfileDraft = profile;
+      }
       return jsonResponse({ draft_exists: true, profile });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) && init?.method === "PUT") {
@@ -419,6 +434,30 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByText(/PROFILE_VISIBILITY_PAYLOAD_INVALID - Visibility payload is invalid./)).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published");
     expect(screen.getByLabelText("Visible Publicly")).toBeChecked();
+  });
+
+  it("observes a saved Theme Preset edit in Publishing's derived status", async () => {
+    installFetchMock({ themePresetOverride: "ocean-blue", trackProfileDraftSaves: true });
+    render(<DatasetAdminPage />);
+
+    await loadDraftOnly();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
+    expect(screen.getByRole("button", { name: "Publish changes" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
+    expect(screen.getByRole("button", { name: "Publish changes" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Draft saved through the profile draft model.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
+    expect(screen.getByRole("button", { name: "Publish changes" })).toBeEnabled();
   });
 
   it("saves a schema-valid profile-draft payload for supported icon, primary metric, theme preset, and result-card values", async () => {

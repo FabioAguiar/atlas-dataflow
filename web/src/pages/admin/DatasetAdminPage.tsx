@@ -6,8 +6,9 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
-import { StatusPill, Tabs, type TabItem } from "../../components/ui";
+import { Badge, Card, FormRow, StatusPill, Tabs, type TabItem } from "../../components/ui";
 import DatasetCard from "../../components/DatasetCard";
 import DatasetDetailHeader from "../../components/DatasetDetail/DatasetDetailHeader";
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
@@ -68,6 +69,31 @@ const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> =
   { value: "weather-cloud", label: "Weather Cloud" },
   { value: "database", label: "Database" },
 ];
+
+const THEME_PRESET_CARDS = [
+  { label: "Atlas Green", value: "atlas-green", swatches: ["#2f6f4e", "#e8f2ec", "#ffffff"], available: true },
+  { label: "Ocean Blue", value: "ocean-blue", swatches: ["#2563eb", "#dbeafe", "#ffffff"], available: false },
+  { label: "Violet Insight", value: "violet-insight", swatches: ["#6d28d9", "#ede9fe", "#ffffff"], available: false },
+  { label: "Amber Signal", value: "amber-signal", swatches: ["#b45309", "#fef3c7", "#ffffff"], available: false },
+  { label: "Slate Ops", value: "slate-ops", swatches: ["#334155", "#e2e8f0", "#ffffff"], available: false },
+  { label: "Rose Review", value: "rose-review", swatches: ["#be123c", "#ffe4e6", "#ffffff"], available: false },
+  { label: "Teal Flow", value: "teal-flow", swatches: ["#0f766e", "#ccfbf1", "#ffffff"], available: false },
+  { label: "Indigo Lab", value: "indigo-lab", swatches: ["#4338ca", "#e0e7ff", "#ffffff"], available: false },
+  { label: "Graphite", value: "graphite", swatches: ["#27272a", "#e4e4e7", "#ffffff"], available: false },
+  { label: "Citrus", value: "citrus", swatches: ["#65a30d", "#ecfccb", "#ffffff"], available: false },
+  { label: "Coral", value: "coral", swatches: ["#c2410c", "#ffedd5", "#ffffff"], available: false },
+  { label: "Skyline", value: "skyline", swatches: ["#0284c7", "#e0f2fe", "#ffffff"], available: false },
+  { label: "Plum", value: "plum", swatches: ["#86198f", "#fae8ff", "#ffffff"], available: false },
+  { label: "Neutral Light", value: "neutral-light", swatches: ["#525252", "#f5f5f5", "#ffffff"], available: false },
+] as const;
+
+const RESULT_PRESET_CARDS = [
+  { label: "Risk", value: "risk", samples: ["High risk", "Medium risk", "Low risk"], available: true },
+  { label: "Value band", value: "value-band", samples: ["High value", "Medium value", "Low value"], available: false },
+  { label: "Target status", value: "target-status", samples: ["Above target", "On target", "Below target"], available: false },
+  { label: "Severity", value: "severity", samples: ["Critical", "Moderate", "Low"], available: false },
+  { label: "Custom", value: "custom", samples: ["Dataset high", "Dataset medium", "Dataset low"], available: false },
+] as const;
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -696,6 +722,18 @@ const alertStyle: CSSProperties = {
   background: "var(--atlas-color-warning-muted)",
 };
 
+function TabWorkspace({ children, eyebrow, helper }: { children: ReactNode; eyebrow: string; helper?: string }) {
+  return (
+    <div className="dataset-admin-tab-workspace">
+      <div className="dataset-admin-tab-workspace__intro">
+        <p className="dataset-admin-tab-workspace__eyebrow">{eyebrow}</p>
+        {helper ? <p className="dataset-admin-tab-workspace__helper">{helper}</p> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function getDatasetLabel(dataset?: DatasetListing) {
   return dataset?.title || dataset?.dataset_slug || "No dataset selected";
 }
@@ -1236,52 +1274,68 @@ function PublicContentTab({
   dataset?: DatasetListing;
 }) {
   return (
-    <>
-      <div>
-        <h2 style={{ marginTop: 0 }}>Public Content</h2>
-        <p style={mutedTextStyle}>Edit only schema-backed presentation copy. Canonical dataset values remain read-only.</p>
+    <TabWorkspace
+      eyebrow="Public Content"
+      helper="Edit only schema-backed presentation copy. Canonical dataset values remain read-only."
+    >
+      <div className="dataset-admin-card-grid dataset-admin-card-grid--two">
+        <Card className="dataset-admin-config-card">
+          <div className="dataset-admin-card-heading">
+            <h2>Public copy</h2>
+            <p>Title, summary, and public explanation shown on Home and Dataset Detail.</p>
+          </div>
+          <div className="dataset-admin-form-grid">
+            <TextField label="Display title" onChange={(value) => setField("display_title", value)} value={form.display_title} />
+            <TextField label="Subtitle" onChange={(value) => setField("display_subtitle", value)} value={form.display_subtitle} />
+            <TextField label="Problem summary title" onChange={(value) => setField("problem_summary_title", value)} value={form.problem_summary_title} />
+          </div>
+          <TextField
+            label="Problem summary body"
+            multiline
+            onChange={(value) => setField("problem_summary_body", value)}
+            value={form.problem_summary_body}
+          />
+        </Card>
+
+        <Card className="dataset-admin-config-card">
+          <div className="dataset-admin-card-heading">
+            <h2>Source and release</h2>
+            <p>Public provenance labels without changing Atlas technical metadata.</p>
+          </div>
+          <div className="dataset-admin-form-grid">
+            <TextField label="Source name" onChange={(value) => setField("source_name", value)} value={form.source_name} />
+            <TextField label="Source URL" onChange={(value) => setField("source_url", value)} value={form.source_url} />
+            <TextField label="Release date label" onChange={(value) => setField("release_date_label", value)} value={form.release_date_label} />
+          </div>
+          <FormRow helpText="Controls public date label rendering only." htmlFor="date-format" label="Date format">
+            <select
+              id="date-format"
+              onChange={(event) => setField("date_format", event.target.value as DraftForm["date_format"])}
+              style={inputStyle}
+              value={form.date_format}
+            >
+              <option value="">No curated format</option>
+              <option value="dd/mm/yyyy">dd/mm/yyyy</option>
+              <option value="mm/dd/yyyy">mm/dd/yyyy</option>
+              <option value="yyyy-mm-dd">yyyy-mm-dd</option>
+            </select>
+          </FormRow>
+          <label className="dataset-admin-toggle-row">
+            <span className="dataset-admin-toggle-row__copy">
+              <span>Canonical fallback</span>
+              <small>Use {getDatasetLabel(dataset)} when no curated title is set.</small>
+            </span>
+            <span style={buttonRowStyle}>
+              <input
+                checked={form.canonical_name_fallback}
+                onChange={(event) => setField("canonical_name_fallback", event.target.checked)}
+                type="checkbox"
+              />
+            </span>
+          </label>
+        </Card>
       </div>
-      <div style={twoColumnGridStyle}>
-        <TextField label="Display title" onChange={(value) => setField("display_title", value)} value={form.display_title} />
-        <TextField label="Subtitle" onChange={(value) => setField("display_subtitle", value)} value={form.display_subtitle} />
-        <TextField label="Problem summary title" onChange={(value) => setField("problem_summary_title", value)} value={form.problem_summary_title} />
-        <TextField label="Source name" onChange={(value) => setField("source_name", value)} value={form.source_name} />
-        <TextField label="Source URL" onChange={(value) => setField("source_url", value)} value={form.source_url} />
-        <TextField label="Release date label" onChange={(value) => setField("release_date_label", value)} value={form.release_date_label} />
-      </div>
-      <TextField
-        label="Problem summary body"
-        multiline
-        onChange={(value) => setField("problem_summary_body", value)}
-        value={form.problem_summary_body}
-      />
-      <div style={sectionGridStyle}>
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Date format</span>
-          <select
-            onChange={(event) => setField("date_format", event.target.value as DraftForm["date_format"])}
-            style={inputStyle}
-            value={form.date_format}
-          >
-            <option value="">No curated format</option>
-            <option value="dd/mm/yyyy">dd/mm/yyyy</option>
-            <option value="mm/dd/yyyy">mm/dd/yyyy</option>
-            <option value="yyyy-mm-dd">yyyy-mm-dd</option>
-          </select>
-        </label>
-        <label style={{ ...readOnlyFieldStyle, alignContent: "center" }}>
-          <span style={labelStyle}>Canonical fallback</span>
-          <span style={buttonRowStyle}>
-            <input
-              checked={form.canonical_name_fallback}
-              onChange={(event) => setField("canonical_name_fallback", event.target.checked)}
-              type="checkbox"
-            />
-            Use {getDatasetLabel(dataset)} when no curated title is set
-          </span>
-        </label>
-      </div>
-    </>
+    </TabWorkspace>
   );
 }
 
@@ -1298,15 +1352,18 @@ function MetadataCardTab({
   const keys = metricKeys(metrics);
   const context = stateValue(readOnlyData.context);
   return (
-    <>
-      <div>
-        <h2 style={{ marginTop: 0 }}>Metadata & Card</h2>
-        <p style={mutedTextStyle}>Editable Home card fields store references and presentation copy only.</p>
-      </div>
-      <div style={sectionGridStyle}>
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Home card icon</span>
+    <TabWorkspace eyebrow="Metadata & Card" helper="Editable Home card fields store references and presentation copy only.">
+      <div className="dataset-admin-card-grid dataset-admin-card-grid--split">
+        <Card className="dataset-admin-config-card">
+          <div className="dataset-admin-card-heading">
+            <h2>Icon bank</h2>
+            <p>Select a controlled icon for the public Home card.</p>
+          </div>
+          <label className="sr-only" htmlFor="home-card-icon">
+            Home card icon
+          </label>
           <select
+            id="home-card-icon"
             onChange={(event) => setField("home_card_icon", event.target.value as DraftForm["home_card_icon"])}
             style={inputStyle}
             value={form.home_card_icon}
@@ -1318,30 +1375,75 @@ function MetadataCardTab({
               </option>
             ))}
           </select>
-        </label>
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Primary metric key</span>
-          <select
-            onChange={(event) => setField("primary_metric_key", event.target.value)}
-            style={inputStyle}
-            value={form.primary_metric_key}
-          >
-            <option value="">No highlighted metric</option>
-            {keys.map((key) => (
-              <option key={key} value={key}>
-                {key}
-              </option>
-            ))}
-          </select>
-        </label>
-        {/* Read-only: problem_type is an Atlas technical artifact, not an admin-editable field (schema-out-of-scope). */}
-        <ReadOnlyField label="Problem type" value={context?.problem_type ?? ""} />
+          <div className="dataset-admin-icon-grid" role="list">
+            {HOME_CARD_ICON_OPTIONS.map(({ value, label }) => {
+              const selected = form.home_card_icon === value;
+              return (
+                <button
+                  aria-pressed={selected}
+                  className={["dataset-admin-icon-card", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
+                  key={value}
+                  onClick={() => setField("home_card_icon", value)}
+                  type="button"
+                >
+                  <span className="dataset-admin-icon-card__glyph">{label.slice(0, 1)}</span>
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+
+        <Card className="dataset-admin-config-card">
+          <div className="dataset-admin-card-heading">
+            <h2>Home card controls</h2>
+            <p>Curate preview copy and the score highlight while technical metadata stays locked.</p>
+          </div>
+          <FormRow helpText="Available keys come from Atlas metrics." htmlFor="primary-metric-key" label="Primary metric key">
+            <select
+              id="primary-metric-key"
+              onChange={(event) => setField("primary_metric_key", event.target.value)}
+              style={inputStyle}
+              value={form.primary_metric_key}
+            >
+              <option value="">No highlighted metric</option>
+              {keys.map((key) => (
+                <option key={key} value={key}>
+                  {key}
+                </option>
+              ))}
+            </select>
+          </FormRow>
+          <TextField label="Background image reference" onChange={(value) => setField("background_image_ref", value)} value={form.background_image_ref} />
+          <TextField label="Short Home card description" onChange={(value) => setField("short_description", value)} value={form.short_description} />
+          <div className="dataset-admin-locked-grid">
+            <ReadOnlyField label="Problem type" value={context?.problem_type ?? ""} />
+            <div className="dataset-admin-locked-card" aria-disabled="true">
+              <Badge>Locked</Badge>
+              <strong>Technical metadata</strong>
+              <span>Problem type options are visible as read-only Atlas state.</span>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="dataset-admin-preview-card">
+          <div className="dataset-admin-card-heading">
+            <h2>Home card preview</h2>
+            <p>Uses the same shared card projection as Live Preview.</p>
+          </div>
+          <DatasetCard
+            {...projectHomeCardPreview(
+              stateValue(readOnlyData.dataset) ?? undefined,
+              {
+                ...form,
+                home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
+              },
+              context,
+            )}
+          />
+        </Card>
       </div>
-      <div style={twoColumnGridStyle}>
-        <TextField label="Background image reference" onChange={(value) => setField("background_image_ref", value)} value={form.background_image_ref} />
-        <TextField label="Short Home card description" onChange={(value) => setField("short_description", value)} value={form.short_description} />
-      </div>
-    </>
+    </TabWorkspace>
   );
 }
 
@@ -1353,13 +1455,10 @@ function ThemePresetTab({
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
 }) {
   return (
-    <>
-      <div>
-        <h2 style={{ marginTop: 0 }}>Theme Preset</h2>
-        <p style={mutedTextStyle}>The current schema supports only the bounded Atlas Green preset.</p>
-      </div>
-      <label style={fieldStyle}>
-        <span style={labelStyle}>Theme preset</span>
+    <TabWorkspace eyebrow="Theme Preset" helper="The current schema supports only Atlas Green; other prototype presets are locked.">
+      <Card className="dataset-admin-config-card">
+        <label className="dataset-admin-native-select">
+          <span style={labelStyle}>Theme preset</span>
         <select
           onChange={(event) => setField("theme_preset", event.target.value as DraftForm["theme_preset"])}
           style={inputStyle}
@@ -1369,7 +1468,43 @@ function ThemePresetTab({
           <option value="atlas-green">Atlas Green</option>
         </select>
       </label>
-    </>
+        <div className="dataset-admin-theme-grid">
+          {THEME_PRESET_CARDS.map((preset) => {
+            const selected = String(form.theme_preset) === preset.value;
+            return (
+              <button
+                aria-disabled={!preset.available}
+                aria-pressed={preset.available ? selected : undefined}
+                className={[
+                  "dataset-admin-theme-card",
+                  selected ? "is-selected" : "",
+                  !preset.available ? "is-locked" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                disabled={!preset.available}
+                key={preset.value}
+                onClick={() => {
+                  if (preset.available) {
+                    setField("theme_preset", preset.value as DraftForm["theme_preset"]);
+                  }
+                }}
+                type="button"
+              >
+                <span className="dataset-admin-theme-card__swatches" aria-hidden="true">
+                  {preset.swatches.map((color) => (
+                    <span key={color} style={{ background: color }} />
+                  ))}
+                </span>
+                <strong>{preset.label}</strong>
+                <span>{preset.available ? "Selectable schema preset" : "Locked until schema support exists"}</span>
+                {!preset.available ? <Badge>Locked</Badge> : null}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+    </TabWorkspace>
   );
 }
 
@@ -1548,26 +1683,34 @@ function CustomizationEditor({
   }
 
   return (
-    <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
-      <section aria-label="Groups" style={readOnlyFieldStyle}>
-        <div style={buttonRowStyle}>
-          <span style={labelStyle}>Groups</span>
+    <div className="dataset-admin-builder">
+      <section aria-label="Groups" className="dataset-admin-builder__canvas">
+        <div className="dataset-admin-builder__toolbar">
+          <div>
+            <span style={labelStyle}>Public form layout canvas</span>
+            <p style={mutedTextStyle}>Group cards and the explicit No subgroup drop area define presentation order.</p>
+          </div>
           <button onClick={addGroup} style={secondaryButtonStyle} type="button">
             Add group
           </button>
         </div>
+        <div className="dataset-admin-no-group-zone">
+          <strong>No subgroup</strong>
+          <span>Fields with no selected group render in the ungrouped area.</span>
+        </div>
         {draft.groups.length === 0 ? (
           <p style={mutedTextStyle}>No groups defined. Fields without a group render ungrouped.</p>
         ) : (
-          <div style={{ display: "grid", gap: "var(--atlas-space-3)" }}>
+          <div className="dataset-admin-builder__stack">
             {draft.groups.map((group, index) => (
               <div
+                className="dataset-admin-builder-card"
                 data-customization-drag-index={index}
                 data-customization-drag-kind="group"
                 key={group.group_id}
                 style={getDragItemStyle("group", index)}
               >
-                <div style={buttonRowStyle}>
+                <div className="dataset-admin-builder-card__head">
                   <button
                     aria-label={`Drag group ${group.label || group.group_id || index + 1}`}
                     onPointerCancel={cancelDrag}
@@ -1598,6 +1741,7 @@ function CustomizationEditor({
                   <button onClick={() => removeGroup(group.group_id)} style={secondaryButtonStyle} type="button">
                     Remove
                   </button>
+                  <Badge>{draft.fieldHints.filter((field) => field.group === group.group_id).length} fields</Badge>
                 </div>
                 <div style={twoColumnGridStyle}>
                   <TextField label="Group ID" onChange={(value) => updateGroup(index, { group_id: value })} value={group.group_id} />
@@ -1614,20 +1758,24 @@ function CustomizationEditor({
         )}
       </section>
 
-      <section aria-label="Field presentation" style={readOnlyFieldStyle}>
-        <span style={labelStyle}>Fields</span>
+      <section aria-label="Field presentation" className="dataset-admin-builder__bank">
+        <div>
+          <span style={labelStyle}>Field bank</span>
+          <p style={mutedTextStyle}>Each chip preserves its contract field and can only change public presentation metadata.</p>
+        </div>
         {draft.fieldHints.length === 0 ? (
           <p style={mutedTextStyle}>Contract field list unavailable.</p>
         ) : (
-          <div style={{ display: "grid", gap: "var(--atlas-space-3)" }}>
+          <div className="dataset-admin-builder__stack">
             {draft.fieldHints.map((field, index) => (
               <div
+                className={["dataset-admin-builder-card", field.required ? "is-required" : ""].filter(Boolean).join(" ")}
                 data-customization-drag-index={index}
                 data-customization-drag-kind="field"
                 key={field.field_name}
                 style={getDragItemStyle("field", index)}
               >
-                <div style={buttonRowStyle}>
+                <div className="dataset-admin-builder-card__head">
                   <strong>{field.field_name}</strong>
                   {field.required && <span style={tagStyle}>required</span>}
                   <button
@@ -1746,48 +1894,47 @@ function InferenceFormTab({
       : null;
 
   return (
-    <>
-      <div>
-        <h2 style={{ marginTop: 0 }}>Inference Form</h2>
-        <p style={mutedTextStyle}>
-          Edit the grouping, ordering, and visibility of the bound predict view's fields. Contracts remain the
-          source of truth for field existence and validation; this editor can only organize presentation.
-        </p>
-      </div>
-      <label style={fieldStyle}>
-        <span style={labelStyle}>Bound predict view</span>
-        <select
-          onChange={(event) => setField("bound_predict_view_id", event.target.value)}
-          style={inputStyle}
-          value={form.bound_predict_view_id}
-        >
-          <option value="">No bound view</option>
-          {views.map((view) => (
-            <option key={view.view_id} value={view.view_id}>
-              {view.display?.title || view.view_id}
-            </option>
-          ))}
-        </select>
-      </label>
+    <TabWorkspace
+      eyebrow="Inference Form"
+      helper="Organize presentation for the bound predict view while contract fields and validation stay authoritative."
+    >
+      <Card className="dataset-admin-config-card dataset-admin-builder-shell">
+        <div className="dataset-admin-builder-actions">
+          <FormRow helpText="Load a predict view before editing its public form layout." htmlFor="bound-predict-view" label="Bound predict view">
+            <select
+              id="bound-predict-view"
+              onChange={(event) => setField("bound_predict_view_id", event.target.value)}
+              style={inputStyle}
+              value={form.bound_predict_view_id}
+            >
+              <option value="">No bound view</option>
+              {views.map((view) => (
+                <option key={view.view_id} value={view.view_id}>
+                  {view.display?.title || view.view_id}
+                </option>
+              ))}
+            </select>
+          </FormRow>
+          <div style={buttonRowStyle}>
+            <button
+              disabled={!form.bound_predict_view_id}
+              onClick={onLoadCustomization}
+              style={!form.bound_predict_view_id ? disabledButtonStyle : secondaryButtonStyle}
+              type="button"
+            >
+              Load customization
+            </button>
+            <button disabled={!draft} onClick={onSaveCustomization} style={!draft ? disabledButtonStyle : actionButtonStyle} type="button">
+              Save customization
+            </button>
+          </div>
+        </div>
 
-      <CustomizationStatusPanel state={customizationEditorState} />
+        <CustomizationStatusPanel state={customizationEditorState} />
 
-      <div style={buttonRowStyle}>
-        <button
-          disabled={!form.bound_predict_view_id}
-          onClick={onLoadCustomization}
-          style={!form.bound_predict_view_id ? disabledButtonStyle : secondaryButtonStyle}
-          type="button"
-        >
-          Load customization
-        </button>
-        <button disabled={!draft} onClick={onSaveCustomization} style={!draft ? disabledButtonStyle : actionButtonStyle} type="button">
-          Save customization
-        </button>
-      </div>
-
-      {draft && <CustomizationEditor draft={draft} onUpdateDraft={onUpdateDraft} />}
-    </>
+        {draft && <CustomizationEditor draft={draft} onUpdateDraft={onUpdateDraft} />}
+      </Card>
+    </TabWorkspace>
   );
 }
 
@@ -1799,31 +1946,75 @@ function ResultCardTab({
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
 }) {
   return (
-    <>
-      <div>
-        <h2 style={{ marginTop: 0 }}>Result Card</h2>
-        <p style={mutedTextStyle}>Edit public presentation labels only; model behavior remains read-only Atlas state.</p>
+    <TabWorkspace eyebrow="Result Card" helper="Edit public presentation labels only; model behavior remains read-only Atlas state.">
+      <div className="dataset-admin-card-grid dataset-admin-card-grid--split">
+        <Card className="dataset-admin-config-card">
+          <div className="dataset-admin-card-heading">
+            <h2>Configuration</h2>
+            <p>Risk is the only schema-supported badge preset; the other documented interpretations remain locked.</p>
+          </div>
+          <div className="dataset-admin-form-grid">
+            <TextField label="Probability label" onChange={(value) => setField("probability_label", value)} value={form.probability_label} />
+            <TextField label="Submit button label" onChange={(value) => setField("submit_button_label", value)} value={form.submit_button_label} />
+            <TextField label="Model label" onChange={(value) => setField("model_label", value)} value={form.model_label} />
+          </div>
+          <label className="dataset-admin-native-select">
+            <span style={labelStyle}>Badge preset</span>
+            <select
+              onChange={(event) => setField("badge_preset", event.target.value as DraftForm["badge_preset"])}
+              style={inputStyle}
+              value={form.badge_preset}
+            >
+              <option value="">No badge preset</option>
+              <option value="risk">Risk</option>
+            </select>
+          </label>
+          <div className="dataset-admin-result-preset-grid">
+            {RESULT_PRESET_CARDS.map((preset) => {
+              const selected = String(form.badge_preset) === preset.value;
+              return (
+                <button
+                  aria-disabled={!preset.available}
+                  aria-pressed={preset.available ? selected : undefined}
+                  className={[
+                    "dataset-admin-result-preset-card",
+                    selected ? "is-selected" : "",
+                    !preset.available ? "is-locked" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  disabled={!preset.available}
+                  key={preset.value}
+                  onClick={() => {
+                    if (preset.available) {
+                      setField("badge_preset", preset.value as DraftForm["badge_preset"]);
+                    }
+                  }}
+                  type="button"
+                >
+                  <strong>{preset.label}</strong>
+                  <span>{preset.samples.join(" / ")}</span>
+                  {!preset.available ? <Badge>Locked</Badge> : null}
+                </button>
+              );
+            })}
+          </div>
+          <div className="dataset-admin-form-grid">
+            <TextField label="High badge label" onChange={(value) => setField("badge_high", value)} value={form.badge_high} />
+            <TextField label="Medium badge label" onChange={(value) => setField("badge_medium", value)} value={form.badge_medium} />
+            <TextField label="Low badge label" onChange={(value) => setField("badge_low", value)} value={form.badge_low} />
+          </div>
+        </Card>
+
+        <Card className="dataset-admin-preview-card">
+          <div className="dataset-admin-card-heading">
+            <h2>Example result</h2>
+            <p>Compact preview fed by the current label fields.</p>
+          </div>
+          <ResultCardLivePreview form={form} />
+        </Card>
       </div>
-      <div style={twoColumnGridStyle}>
-        <TextField label="Probability label" onChange={(value) => setField("probability_label", value)} value={form.probability_label} />
-        <TextField label="Submit button label" onChange={(value) => setField("submit_button_label", value)} value={form.submit_button_label} />
-        <TextField label="Model label" onChange={(value) => setField("model_label", value)} value={form.model_label} />
-        <label style={fieldStyle}>
-          <span style={labelStyle}>Badge preset</span>
-          <select
-            onChange={(event) => setField("badge_preset", event.target.value as DraftForm["badge_preset"])}
-            style={inputStyle}
-            value={form.badge_preset}
-          >
-            <option value="">No badge preset</option>
-            <option value="risk">Risk</option>
-          </select>
-        </label>
-        <TextField label="High badge label" onChange={(value) => setField("badge_high", value)} value={form.badge_high} />
-        <TextField label="Medium badge label" onChange={(value) => setField("badge_medium", value)} value={form.badge_medium} />
-        <TextField label="Low badge label" onChange={(value) => setField("badge_low", value)} value={form.badge_low} />
-      </div>
-    </>
+    </TabWorkspace>
   );
 }
 

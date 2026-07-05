@@ -433,16 +433,22 @@ describe("DatasetAdminPage", () => {
     const themeSelect = screen.getByLabelText("Theme preset") as HTMLSelectElement;
     const themeOptionValues = Array.from(themeSelect.options).map((option) => option.value);
     expect(themeOptionValues).toEqual(["", "atlas-green"]);
+    expect(screen.getByRole("button", { name: /Atlas Green/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Ocean Blue/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Neutral Light/ })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
     const badgeSelect = screen.getByLabelText("Badge preset") as HTMLSelectElement;
     const badgeOptionValues = Array.from(badgeSelect.options).map((option) => option.value);
     expect(badgeOptionValues).toEqual(["", "risk"]);
+    expect(screen.getByRole("button", { name: /Risk/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Value band/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Severity/ })).toBeDisabled();
 
     // The 13 additional design-proposed theme presets and 4 additional design-proposed
-    // result-card badge presets (see docs/design-interpretation.md's "Recorded Gap: Dataset
-    // Admin Theme and Result-Card Preset Parity") are not rendered as options at all -- there
-    // is no DOM control path through which a user could select them, and DraftForm's
+    // result-card badge presets are visible only as disabled cards; they are not rendered
+    // as select options at all. There is no DOM control path through which a user could
+    // select them, and DraftForm's
     // theme_preset/badge_preset fields are typed as closed unions ("" | "atlas-green" and
     // "" | "risk"), so setField can never be called with an out-of-schema value from these
     // controls. profileFromForm only ever writes profile.theme/result_card.badge_preset from

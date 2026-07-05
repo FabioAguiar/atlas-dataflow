@@ -4,9 +4,10 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Tabs, type TabItem } from "../../components/ui";
+import { StatusPill, Tabs, type TabItem } from "../../components/ui";
 import DatasetCard from "../../components/DatasetCard";
 import DatasetDetailHeader from "../../components/DatasetDetail/DatasetDetailHeader";
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
@@ -417,13 +418,82 @@ const emptyPublicationState: PublicationState = {
 };
 
 const adminTabs: TabItem[] = [
-  { id: "public-content", label: "Public Content" },
-  { id: "metadata-card", label: "Metadata & Card" },
-  { id: "theme-preset", label: "Theme Preset" },
-  { id: "inference-form", label: "Inference Form" },
-  { id: "result-card", label: "Result Card" },
-  { id: "publishing", label: "Publishing" },
-  { id: "live-preview", label: "Live Preview" },
+  {
+    id: "public-content",
+    label: "Public Content",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M7 3.5h7l3 3V20H7z" />
+        <path d="M14 3.5V7h3" />
+        <path d="M10 11h4M10 14h5M10 17h3" />
+      </svg>
+    ),
+  },
+  {
+    id: "metadata-card",
+    label: "Metadata & Card",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M12 4.5 20 8v8l-8 3.5L4 16V8l8-3.5Z" />
+        <path d="M12 12v7.5M20 8l-8 4-8-4" />
+      </svg>
+    ),
+  },
+  {
+    id: "theme-preset",
+    label: "Theme Preset",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M12 4a8 8 0 0 0 0 16h1.5a1.7 1.7 0 0 0 1.3-2.8 1.7 1.7 0 0 1 1.3-2.8H18A6 6 0 0 0 12 4Z" />
+      </svg>
+    ),
+  },
+  {
+    id: "inference-form",
+    label: "Inference Form",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M6 5h12v14H6z" />
+        <path d="M9 9h6M9 13h6M9 17h3" />
+      </svg>
+    ),
+  },
+  {
+    id: "result-card",
+    label: "Result Card",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M5 5h14v14H5z" />
+        <path d="M8 15h8M8 11h8M8 8h4" />
+      </svg>
+    ),
+  },
+  {
+    id: "publishing",
+    label: "Publishing",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M20 4 4 11l6 2 2 6 8-15Z" />
+      </svg>
+    ),
+  },
+  {
+    id: "live-preview",
+    label: "Live Preview",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+        <circle cx="12" cy="12" r="2.7" />
+      </svg>
+    ),
+  },
 ];
 
 const pageStyle: CSSProperties = {
@@ -432,33 +502,16 @@ const pageStyle: CSSProperties = {
 };
 
 const headerStyle: CSSProperties = {
-  display: "grid",
-  gap: "var(--atlas-space-3)",
-};
-
-const headerControlsStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
-  gap: "var(--atlas-space-3)",
-  alignItems: "end",
-};
-
-const headerMetaStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "var(--atlas-space-2)",
-  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "var(--atlas-space-5)",
+  alignItems: "flex-start",
 };
 
 const fieldStyle: CSSProperties = {
   display: "grid",
   gap: "var(--atlas-space-2)",
-};
-
-const datasetSelectorStyle: CSSProperties = {
-  ...fieldStyle,
-  flex: "1 1 18rem",
-  minWidth: "18rem",
 };
 
 const tokenControlStyle: CSSProperties = {
@@ -655,6 +708,153 @@ function getDatasetSelectorValue(dataset?: DatasetListing) {
     return `${dataset.title} -- ${dataset.dataset_slug}`;
   }
   return dataset.dataset_slug;
+}
+
+function publicationStatusVariant(status: string): "published" | "pending" | "hidden" | "draft" | "not-published" {
+  switch (status) {
+    case "Published":
+      return "published";
+    case "Unpublished Changes":
+      return "pending";
+    case "Hidden":
+      return "hidden";
+    case "Draft":
+      return "draft";
+    case "Not Published":
+    default:
+      return "not-published";
+  }
+}
+
+function publicationStatusTone(status: string): "success" | "warning" | "neutral" {
+  switch (publicationStatusVariant(status)) {
+    case "published":
+      return "success";
+    case "pending":
+      return "warning";
+    case "hidden":
+    case "draft":
+    case "not-published":
+    default:
+      return "neutral";
+  }
+}
+
+type DatasetComboBoxProps = {
+  datasets: DatasetListing[];
+  disabled: boolean;
+  query: string;
+  selectedDataset?: DatasetListing;
+  stateStatus: DatasetState["status"];
+  onNormalize: () => void;
+  onQueryChange: (value: string) => void;
+};
+
+function DatasetComboBox({
+  datasets,
+  disabled,
+  onNormalize,
+  onQueryChange,
+  query,
+  selectedDataset,
+  stateStatus,
+}: DatasetComboBoxProps) {
+  const [open, setOpen] = useState(false);
+  const selectedValue = getDatasetSelectorValue(selectedDataset);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredDatasets = normalizedQuery
+    ? datasets.filter((dataset) => {
+        const selectorValue = getDatasetSelectorValue(dataset).toLowerCase();
+        return selectorValue.includes(normalizedQuery) || dataset.dataset_slug.toLowerCase().includes(normalizedQuery);
+      })
+    : datasets;
+  const triggerText =
+    stateStatus === "loading"
+      ? "Loading datasets..."
+      : stateStatus === "error"
+      ? "Datasets unavailable"
+      : selectedValue || "No datasets available";
+
+  function closeAndNormalize() {
+    setOpen(false);
+    onNormalize();
+  }
+
+  function selectDataset(dataset: DatasetListing) {
+    onQueryChange(getDatasetSelectorValue(dataset));
+    setOpen(false);
+  }
+
+  function handleFilterKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      closeAndNormalize();
+    }
+  }
+
+  return (
+    <div className={["dataset-combobox", open ? "is-open" : ""].filter(Boolean).join(" ")}>
+      <button
+        aria-controls="dataset-admin-selector-options"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label="Dataset"
+        className="dataset-combobox__trigger"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span className="dataset-combobox__value">{triggerText}</span>
+        <svg aria-hidden="true" className="dataset-combobox__chevron" viewBox="0 0 24 24">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {open ? (
+        <div className="dataset-combobox__menu">
+          <label className="sr-only" htmlFor="dataset-admin-filter">
+            Filter datasets
+          </label>
+          <input
+            aria-controls="dataset-admin-selector-options"
+            autoComplete="off"
+            className="dataset-combobox__filter"
+            id="dataset-admin-filter"
+            onBlur={onNormalize}
+            onChange={(event) => onQueryChange(event.target.value)}
+            onKeyDown={handleFilterKeyDown}
+            placeholder="Filter datasets..."
+            type="search"
+            value={query}
+          />
+          <div
+            aria-label="Available datasets"
+            className="dataset-combobox__options"
+            id="dataset-admin-selector-options"
+            role="listbox"
+          >
+            {filteredDatasets.map((dataset) => {
+              const optionValue = getDatasetSelectorValue(dataset);
+              const selected = dataset.dataset_slug === selectedDataset?.dataset_slug;
+              return (
+                <button
+                  aria-selected={selected}
+                  className={["dataset-combobox__option", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
+                  key={dataset.dataset_slug}
+                  onClick={() => selectDataset(dataset)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  role="option"
+                  type="button"
+                >
+                  {optionValue}
+                </button>
+              );
+            })}
+          </div>
+          {filteredDatasets.length === 0 ? <p className="dataset-combobox__empty">No datasets found.</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function emptyDraftForm(datasetSlug = ""): DraftForm {
@@ -2593,53 +2793,33 @@ export default function DatasetAdminPage() {
   }
 
   return (
-    <section aria-labelledby="dataset-admin-title" style={pageStyle}>
+    <section aria-labelledby="dataset-admin-title" className="dataset-admin-page" style={pageStyle}>
       <header style={headerStyle}>
         <div>
-          <p className="eyebrow">Dataset Admin</p>
           <h1 id="dataset-admin-title">Dataset -- {getDatasetLabel(selectedDataset)}</h1>
           <p className="summary">
             Curate the selected dataset's public presentation profile while Atlas technical values stay read-only.
           </p>
-          <div style={headerMetaStyle}>
-            <span aria-label="Publication status" className="atlas-status-pill atlas-status-pill--info">
-              {headerPublicationStatus}
-            </span>
-            <span className="atlas-status-pill atlas-status-pill--info">Private admin workspace</span>
-          </div>
         </div>
 
-        <div style={headerControlsStyle}>
-          <label style={datasetSelectorStyle}>
-            <span style={labelStyle}>Dataset</span>
-            <input
-              aria-describedby="dataset-selector-help"
-              autoComplete="off"
-              list="dataset-admin-selector-options"
-              disabled={state.status !== "ready" || datasets.length === 0}
-              onBlur={normalizeDatasetQuery}
-              onChange={(event) => selectDatasetFromQuery(event.target.value)}
-              placeholder={
-                state.status === "loading"
-                  ? "Loading datasets..."
-                  : state.status === "error"
-                  ? "Datasets unavailable"
-                  : datasets.length === 0
-                  ? "No datasets available"
-                  : "Filter by dataset name or slug"
-              }
-              style={inputStyle}
-              value={datasetQuery}
-            />
-            <datalist id="dataset-admin-selector-options">
-              {datasets.map((dataset) => (
-                <option key={dataset.dataset_slug} label={dataset.dataset_slug} value={getDatasetSelectorValue(dataset)} />
-              ))}
-            </datalist>
-            <span id="dataset-selector-help" style={mutedTextStyle}>
-              Type to filter; selecting a known dataset loads that private admin workspace.
-            </span>
-          </label>
+        <div className="dataset-admin-header-actions">
+          <DatasetComboBox
+            datasets={datasets}
+            disabled={state.status !== "ready" || datasets.length === 0}
+            onNormalize={normalizeDatasetQuery}
+            onQueryChange={selectDatasetFromQuery}
+            query={datasetQuery}
+            selectedDataset={selectedDataset}
+            stateStatus={state.status}
+          />
+          <StatusPill
+            aria-label="Publication status"
+            className="dataset-admin-status-pill"
+            tone={publicationStatusTone(headerPublicationStatus)}
+            variant={publicationStatusVariant(headerPublicationStatus)}
+          >
+            {headerPublicationStatus}
+          </StatusPill>
 
           <form onSubmit={loadDraft} style={tokenControlStyle}>
             <span style={labelStyle}>Operator token</span>

@@ -233,7 +233,7 @@ describe("DatasetAdminPage", () => {
     render(<DatasetAdminPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Dataset")).toHaveValue(`Telco Customer Churn -- ${datasetSlug}`);
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
     });
     expect(screen.getByRole("heading", { name: "Dataset -- Telco Customer Churn" })).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Not Published");
@@ -558,9 +558,9 @@ describe("DatasetAdminPage", () => {
 
     render(<DatasetAdminPage />);
 
-    const selector = await screen.findByLabelText("Dataset");
+    const selector = await screen.findByRole("button", { name: "Dataset" });
     await waitFor(() => expect(selector).toBeDisabled());
-    expect(selector).toHaveAttribute("placeholder", "No datasets available");
+    expect(selector).toHaveTextContent("No datasets available");
 
     const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
     expect(within(panel).getAllByText("Not provided")).toHaveLength(6);
@@ -612,11 +612,12 @@ describe("DatasetAdminPage", () => {
 
     render(<DatasetAdminPage />);
 
-    const selector = await screen.findByLabelText("Dataset");
-    await waitFor(() => expect(selector).toHaveValue(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
+    const selector = await screen.findByRole("button", { name: "Dataset" });
+    await waitFor(() => expect(selector).toHaveTextContent(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
 
-    const optionValues = Array.from(document.querySelectorAll("#dataset-admin-selector-options option")).map((option) => (option as HTMLOptionElement).value);
-    expect(optionValues).toEqual([
+    fireEvent.click(selector);
+    const listbox = screen.getByRole("listbox", { name: "Available datasets" });
+    expect(within(listbox).getAllByRole("option").map((option) => option.textContent)).toEqual([
       `${datasetOne.title} -- ${datasetOne.dataset_slug}`,
       `${datasetTwo.title} -- ${datasetTwo.dataset_slug}`,
       `${datasetThree.title} -- ${datasetThree.dataset_slug}`,
@@ -629,7 +630,9 @@ describe("DatasetAdminPage", () => {
     expect(within(panel).getByText(datasetOne.title)).toBeInTheDocument();
     expect(within(panel).getByText(datasetOne.domain)).toBeInTheDocument();
 
-    fireEvent.change(selector, { target: { value: datasetTwo.dataset_slug } });
+    const filter = screen.getByLabelText("Filter datasets");
+    fireEvent.change(filter, { target: { value: datasetTwo.dataset_slug } });
+    fireEvent.click(within(listbox).getByRole("option", { name: `${datasetTwo.title} -- ${datasetTwo.dataset_slug}` }));
 
     await waitFor(() => {
       expect(within(panel).getByText(datasetTwo.dataset_slug)).toBeInTheDocument();

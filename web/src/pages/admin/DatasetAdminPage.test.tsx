@@ -490,6 +490,23 @@ describe("DatasetAdminPage", () => {
     // payload through this form.
   });
 
+  it("renders the Home card background-image field as a plain text input with no file-upload affordance anywhere on the page", async () => {
+    // docs/design-prototype-behavior-inventory.md classifies the prototype's uploaded
+    // Home card background image as `deferred`: no upload/storage/reference schema owner
+    // exists yet. background_image_ref is only an operator-entered reference string, not
+    // a file upload -- this test proves that boundary stays true rather than silently
+    // regressing into an unreviewed upload affordance.
+    installFetchMock();
+    const { container } = render(<DatasetAdminPage />);
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const backgroundImageField = screen.getByLabelText("Background image reference") as HTMLInputElement;
+    expect(backgroundImageField).toHaveAttribute("type", "text");
+    expect(container.querySelectorAll('input[type="file"]')).toHaveLength(0);
+  });
+
   it("renders Live Preview subviews from real public components and the loaded customization", async () => {
     installFetchMock();
     render(<DatasetAdminPage />);

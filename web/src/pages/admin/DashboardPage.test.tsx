@@ -49,6 +49,15 @@ describe("DashboardPage", () => {
     expect(screen.getByText(/no raw filesystem, draft, runtime, or log inspection/i)).toBeInTheDocument();
   });
 
+  it("renders the header search control and the operator token control together in the header, before data loads", () => {
+    render(<DashboardPage />);
+
+    const controls = screen.getByLabelText("Dashboard controls");
+    expect(within(controls).getByLabelText("Search runs and datasets")).toBeInTheDocument();
+    expect(within(controls).getByLabelText("Operator token")).toBeInTheDocument();
+    expect(within(controls).getByRole("button", { name: "Load runs" })).toBeInTheDocument();
+  });
+
   it("renders the runs-root-unavailable state distinctly from an empty runs list", async () => {
     installRunsFetchMock(jsonResponse({ runs_root_status: "unavailable", runs: [] }));
     render(<DashboardPage />);

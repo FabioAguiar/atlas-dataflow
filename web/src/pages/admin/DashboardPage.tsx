@@ -66,11 +66,6 @@ const headerStyle: CSSProperties = {
   gap: "var(--atlas-space-5)",
 };
 
-const controlPanelStyle: CSSProperties = {
-  display: "grid",
-  gap: "var(--atlas-space-3)",
-};
-
 const formStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
@@ -98,13 +93,6 @@ const inputStyle: CSSProperties = {
   color: "var(--atlas-color-text)",
   font: "inherit",
   background: "var(--atlas-color-surface)",
-};
-
-const dashboardSearchStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "minmax(16rem, 1fr) minmax(10rem, 14rem)",
-  gap: "var(--atlas-space-3)",
-  alignItems: "end",
 };
 
 const filterBarStyle: CSSProperties = {
@@ -206,6 +194,74 @@ const actionGroupStyle: CSSProperties = {
   flexWrap: "wrap",
   gap: "var(--atlas-space-2)",
 };
+
+const actionIconStyle: CSSProperties = {
+  display: "inline-flex",
+  width: "1rem",
+  height: "1rem",
+};
+
+function RunsAvailableIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path d="M7.5 5.5 18 12 7.5 18.5z" />
+    </svg>
+  );
+}
+
+function PromotedRunsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path d="M12 3.8 14 6l3-.2 1.1 2.8 2.3 1.8-1.4 2.6.5 3-2.8 1.1-1.8 2.3-2.9-1.4-2.9 1.4-1.8-2.3-2.8-1.1.5-3-1.4-2.6 2.3-1.8L7 5.8l3 .2 2-2.2Z" />
+      <path d="m8.8 12 2.2 2.2 4.4-4.6" />
+    </svg>
+  );
+}
+
+function PublishedDatasetsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M4 12h16M12 4c2 2.2 3 4.8 3 8s-1 5.8-3 8M12 4c-2 2.2-3 4.8-3 8s1 5.8 3 8" />
+    </svg>
+  );
+}
+
+function DraftDatasetsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path d="M7 3.5h7l3 3V20H7z" />
+      <path d="M14 3.5V7h3" />
+      <path d="M10 12h4M10 15h5" />
+    </svg>
+  );
+}
+
+function PromoteActionIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path d="M7.5 5.5 18 12 7.5 18.5z" />
+    </svg>
+  );
+}
+
+function RemoveActionIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7l1-3h4l1 3" />
+    </svg>
+  );
+}
+
+function OpenAdminActionIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
+      <path d="M14 4h6v6" />
+      <path d="m20 4-9 9" />
+      <path d="M10 6H6v12h12v-4" />
+    </svg>
+  );
+}
 
 function isSafeTraceReference(value: string | null): boolean {
   if (value === null) {
@@ -474,8 +530,13 @@ export default function DashboardPage() {
   }
 
   return (
-    <section aria-labelledby="admin-dashboard-title" data-dashboard-state={state.status} style={pageStyle}>
-      <div style={headerStyle}>
+    <section
+      aria-labelledby="admin-dashboard-title"
+      className="admin-dashboard"
+      data-dashboard-state={state.status}
+      style={pageStyle}
+    >
+      <div className="admin-dashboard__header" style={headerStyle}>
         <div>
           <p className="eyebrow">Dashboard</p>
           <h1 id="admin-dashboard-title">Dashboard</h1>
@@ -485,8 +546,19 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <Card aria-label="Admin token entry" muted style={controlPanelStyle}>
-          <form onSubmit={loadRuns} style={formStyle}>
+        <div aria-label="Dashboard controls" className="admin-dashboard__header-controls">
+          <label className="admin-dashboard__search-control" style={fieldStyle}>
+            <span style={labelStyle}>Search runs and datasets</span>
+            <input
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search runs or datasets..."
+              style={inputStyle}
+              type="search"
+              value={query}
+            />
+          </label>
+
+          <form className="admin-dashboard__token-form" onSubmit={loadRuns} style={formStyle}>
             <label style={fieldStyle}>
               <span style={labelStyle}>Operator token</span>
               <input
@@ -502,11 +574,12 @@ export default function DashboardPage() {
               {state.status === "loading" ? "Loading..." : "Load runs"}
             </Button>
           </form>
-          <p style={{ ...mutedTextStyle, margin: 0 }}>
-            The token is held only in page state and sent as an X-Admin-Token header.
-          </p>
-        </Card>
+        </div>
       </div>
+
+      <p className="admin-dashboard__token-note">
+        The operator token is held only in page state and sent as an X-Admin-Token header.
+      </p>
 
       {state.status === "idle" && (
         <EmptyState title="Run summaries not loaded" message="Enter the operator token to request the private summary projection." />
@@ -526,51 +599,51 @@ export default function DashboardPage() {
 
       {state.status === "ready" && (
         <>
-          <Card aria-label="Dashboard search" muted>
-            <div style={dashboardSearchStyle}>
-              <label style={fieldStyle}>
-                <span style={labelStyle}>Search runs and datasets</span>
-                <input
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Run ID, dataset, outcome, visibility"
-                  style={{ ...inputStyle, width: "100%" }}
-                  type="search"
-                  value={query}
-                />
-              </label>
-              <label style={fieldStyle}>
-                <span style={labelStyle}>Run status</span>
-                <select
-                  onChange={(event) => setStatusFilter(event.target.value as FilterStatus)}
-                  style={{ ...inputStyle, width: "100%" }}
-                  value={statusFilter}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="available">Available</option>
-                  <option value="invalid">Invalid</option>
-                  <option value="unavailable">Unavailable</option>
-                </select>
-              </label>
-            </div>
+          <Card aria-label="Run status filter" muted>
+            <label style={fieldStyle}>
+              <span style={labelStyle}>Run status</span>
+              <select
+                onChange={(event) => setStatusFilter(event.target.value as FilterStatus)}
+                style={{ ...inputStyle, width: "min(18rem, 100%)" }}
+                value={statusFilter}
+              >
+                <option value="all">All statuses</option>
+                <option value="available">Available</option>
+                <option value="invalid">Invalid</option>
+                <option value="unavailable">Unavailable</option>
+              </select>
+            </label>
           </Card>
 
           <div data-runs-root-status={state.data.runs_root_status} style={statusGridStyle}>
             <Card aria-label="Runs available" data-summary-count={counters.runsAvailable}>
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
+                <RunsAvailableIcon />
+              </span>
               <Badge>{rootStatusMessage(state.data.runs_root_status)}</Badge>
               <strong style={counterValueStyle}>{counters.runsAvailable}</strong>
               <span style={mutedTextStyle}>Runs available</span>
             </Card>
             <Card aria-label="Promoted runs" data-summary-count={counters.promotedRuns}>
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
+                <PromotedRunsIcon />
+              </span>
               <StatusPill tone="warning">Unavailable</StatusPill>
               <strong style={counterValueStyle}>{counters.promotedRuns}</strong>
               <span style={mutedTextStyle}>Promotion source not owned</span>
             </Card>
             <Card aria-label="Published datasets" data-summary-count={counters.publishedDatasets}>
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
+                <PublishedDatasetsIcon />
+              </span>
               <StatusPill tone="warning">Unavailable</StatusPill>
               <strong style={counterValueStyle}>{counters.publishedDatasets}</strong>
               <span style={mutedTextStyle}>Publication source not owned</span>
             </Card>
             <Card aria-label="Draft datasets" data-summary-count={counters.draftDatasets}>
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--amber">
+                <DraftDatasetsIcon />
+              </span>
               <StatusPill tone="warning">Unavailable</StatusPill>
               <strong style={counterValueStyle}>{counters.draftDatasets}</strong>
               <span style={mutedTextStyle}>Draft source not owned</span>
@@ -614,45 +687,50 @@ export default function DashboardPage() {
               {filteredRuns.length === 0 ? (
                 <EmptyState title="No matching runs" message="Adjust the Dashboard filters to view returned summaries." />
               ) : (
-                <div role="table" aria-label="Run summaries" data-filtered-run-count={filteredRuns.length} style={tableStyle}>
-                  <div role="row" style={runsTableHeaderStyle}>
-                    <span role="columnheader">Run ID</span>
-                    <span role="columnheader">Dataset</span>
-                    <span role="columnheader">Created at</span>
-                    <span role="columnheader">Status</span>
-                    <span role="columnheader">Promotion intent</span>
-                  </div>
+                <div className="admin-dashboard__table-wrap">
+                  <div role="table" aria-label="Run summaries" data-filtered-run-count={filteredRuns.length} style={tableStyle}>
+                    <div role="row" style={runsTableHeaderStyle}>
+                      <span role="columnheader">Run ID</span>
+                      <span role="columnheader">Dataset</span>
+                      <span role="columnheader">Created at</span>
+                      <span role="columnheader">Status</span>
+                      <span role="columnheader">Promotion intent</span>
+                    </div>
 
-                  {filteredRuns.map((run) => (
-                    <TableRow
-                      key={run.run_id}
-                      meta={
-                        <>
-                          {run.validation_summary && <Badge>{run.validation_summary.outcome}</Badge>}
-                          {reasonLabel(run) && <span style={mutedTextStyle}>{reasonLabel(run)}</span>}
-                        </>
-                      }
-                    >
-                      <div data-run-status={run.status} style={runRowContentStyle}>
-                        <strong>{run.run_id}</strong>
-                        <span>{run.dataset_candidate ?? "Not resolved"}</span>
-                        <span>{formatCreatedAt(run.created_at)}</span>
-                        <StatusPill tone={statusTone(run.status)}>{statusLabel(run.status)}</StatusPill>
-                        <span style={promotionIntentStyle}>
-                          <Button
-                            data-promotion-intent="disabled"
-                            disabled
-                            style={disabledIntentButtonStyle}
-                            title="Promotion remains disabled until a later publisher/profile workflow owns validation."
-                            variant="secondary"
-                          >
-                            Future workflow
-                          </Button>
-                          <span style={mutedTextStyle}>{promotionIntentMessage(run)}</span>
-                        </span>
-                      </div>
-                    </TableRow>
-                  ))}
+                    {filteredRuns.map((run) => (
+                      <TableRow
+                        key={run.run_id}
+                        meta={
+                          <>
+                            {run.validation_summary && <Badge>{run.validation_summary.outcome}</Badge>}
+                            {reasonLabel(run) && <span style={mutedTextStyle}>{reasonLabel(run)}</span>}
+                          </>
+                        }
+                      >
+                        <div data-run-status={run.status} style={runRowContentStyle}>
+                          <strong>{run.run_id}</strong>
+                          <span>{run.dataset_candidate ?? "Not resolved"}</span>
+                          <span>{formatCreatedAt(run.created_at)}</span>
+                          <StatusPill tone={statusTone(run.status)}>{statusLabel(run.status)}</StatusPill>
+                          <span style={promotionIntentStyle}>
+                            <Button
+                              data-promotion-intent="disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Promotion remains disabled until a later publisher/profile workflow owns validation."
+                              variant="secondary"
+                            >
+                              <span aria-hidden="true" style={actionIconStyle}>
+                                <PromoteActionIcon />
+                              </span>
+                              Future workflow
+                            </Button>
+                            <span style={mutedTextStyle}>{promotionIntentMessage(run)}</span>
+                          </span>
+                        </div>
+                      </TableRow>
+                    ))}
+                  </div>
                 </div>
               )}
             </Card>
@@ -677,65 +755,76 @@ export default function DashboardPage() {
               ) : filteredDatasetRows.length === 0 ? (
                 <EmptyState title="No matching datasets" message="Adjust the Dashboard search to view dataset rows." />
               ) : (
-                <div
-                  role="table"
-                  aria-label="Dataset details"
-                  data-filtered-dataset-count={filteredDatasetRows.length}
-                  style={tableStyle}
-                >
-                  <div role="row" style={datasetTableHeaderStyle}>
-                    <span role="columnheader">Display name</span>
-                    <span role="columnheader">Problem type</span>
-                    <span role="columnheader">Visibility status</span>
-                    <span role="columnheader">Last updated</span>
-                    <span role="columnheader">Actions</span>
-                  </div>
+                <div className="admin-dashboard__table-wrap">
+                  <div
+                    role="table"
+                    aria-label="Dataset details"
+                    data-filtered-dataset-count={filteredDatasetRows.length}
+                    style={tableStyle}
+                  >
+                    <div role="row" style={datasetTableHeaderStyle}>
+                      <span role="columnheader">Display name</span>
+                      <span role="columnheader">Problem type</span>
+                      <span role="columnheader">Visibility status</span>
+                      <span role="columnheader">Last updated</span>
+                      <span role="columnheader">Actions</span>
+                    </div>
 
-                  {filteredDatasetRows.map((row) => (
-                    <TableRow
-                      key={row.displayName}
-                      meta={<span style={mutedTextStyle}>{row.sourceRunCount} source run summaries</span>}
-                    >
-                      <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
-                        <strong>{row.displayName}</strong>
-                        <span>{row.problemType}</span>
-                        <StatusPill tone="warning">Unavailable</StatusPill>
-                        <span>{formatCreatedAt(row.lastUpdated)}</span>
-                        <span style={promotionIntentStyle}>
-                          <span style={actionGroupStyle}>
-                            <Button
-                              data-dataset-action="promote-disabled"
-                              disabled
-                              style={disabledIntentButtonStyle}
-                              title="Promote remains disabled until a safe owned API exists."
-                              variant="secondary"
-                            >
-                              Promote
-                            </Button>
-                            <Button
-                              data-dataset-action="remove-disabled"
-                              disabled
-                              style={disabledIntentButtonStyle}
-                              title="Remove remains disabled until a safe owned API exists."
-                              variant="secondary"
-                            >
-                              Remove
-                            </Button>
-                            <Button
-                              data-dataset-action="open-admin-disabled"
-                              disabled
-                              style={disabledIntentButtonStyle}
-                              title="Open admin requires a safe route and identifier."
-                              variant="secondary"
-                            >
-                              Open admin
-                            </Button>
+                    {filteredDatasetRows.map((row) => (
+                      <TableRow
+                        key={row.displayName}
+                        meta={<span style={mutedTextStyle}>{row.sourceRunCount} source run summaries</span>}
+                      >
+                        <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
+                          <strong>{row.displayName}</strong>
+                          <span>{row.problemType}</span>
+                          <StatusPill tone="warning">Unavailable</StatusPill>
+                          <span>{formatCreatedAt(row.lastUpdated)}</span>
+                          <span style={promotionIntentStyle}>
+                            <span style={actionGroupStyle}>
+                              <Button
+                                data-dataset-action="promote-disabled"
+                                disabled
+                                style={disabledIntentButtonStyle}
+                                title="Promote remains disabled until a safe owned API exists."
+                                variant="secondary"
+                              >
+                                <span aria-hidden="true" style={actionIconStyle}>
+                                  <PromoteActionIcon />
+                                </span>
+                                Promote
+                              </Button>
+                              <Button
+                                data-dataset-action="remove-disabled"
+                                disabled
+                                style={disabledIntentButtonStyle}
+                                title="Remove remains disabled until a safe owned API exists."
+                                variant="secondary"
+                              >
+                                <span aria-hidden="true" style={actionIconStyle}>
+                                  <RemoveActionIcon />
+                                </span>
+                                Remove
+                              </Button>
+                              <Button
+                                data-dataset-action="open-admin-disabled"
+                                disabled
+                                style={disabledIntentButtonStyle}
+                                title="Open admin requires a safe route and identifier."
+                                variant="secondary"
+                              >
+                                <span aria-hidden="true" style={actionIconStyle}>
+                                  <OpenAdminActionIcon />
+                                </span>
+                                Open admin
+                              </Button>
+                            </span>
+                            <span style={mutedTextStyle}>Safe action owner unavailable</span>
                           </span>
-                          <span style={mutedTextStyle}>Safe action owner unavailable</span>
-                        </span>
-                      </div>
-                    </TableRow>
-                  ))}
+                        </div>
+                      </TableRow>
+                    ))}
+                  </div>
                 </div>
               )}
             </Card>

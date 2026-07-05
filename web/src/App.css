@@ -1058,3 +1058,59 @@ h1 {
     padding: var(--atlas-space-4) var(--atlas-space-3) var(--atlas-space-3);
   }
 }
+
+.admin-dashboard__header-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--atlas-space-4);
+  align-items: end;
+}
+
+.admin-dashboard__search-control input {
+  min-width: min(20rem, 100%);
+}
+
+.admin-dashboard__token-note {
+  margin: calc(var(--atlas-space-3) * -1) 0 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+}
+
+.admin-dashboard__summary-icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--atlas-radius-md);
+}
+
+.admin-dashboard__summary-icon--green {
+  color: var(--atlas-color-success);
+  background: var(--atlas-color-success-muted);
+}
+
+.admin-dashboard__summary-icon--amber {
+  color: var(--atlas-color-warning);
+  background: var(--atlas-color-warning-muted);
+}
+
+.admin-dashboard__table-wrap {
+  overflow-x: auto;
+}
+
+@media (max-width: 1400px) {
+  .admin-dashboard__header-controls {
+    gap: var(--atlas-space-3);
+  }
+
+  .admin-dashboard__search-control input {
+    min-width: min(16rem, 100%);
+  }
+}
+
+@media (max-height: 820px) {
+  .admin-dashboard__summary-icon {
+    width: 1.9rem;
+    height: 1.9rem;
+  }
+}

@@ -1,126 +1,74 @@
-import type { CSSProperties } from "react";
+import type { ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
+import atlasLogoSidebar from "../assets/admin/atlas-logo-sidebar.png";
 import { AdminSettingsProvider, useAdminSettings } from "./AdminSettingsContext";
 
-const navItems = [
-  { end: true, label: "Dashboard", to: "/admin" },
-  { end: true, label: "Public Home", to: "/" },
-  { label: "Dataset Detail", to: "/admin/dataset-admin" },
-  { label: "Settings", to: "/admin/settings" },
-  { label: "Help", to: "/admin/help" },
+type NavItem = {
+  end?: boolean;
+  icon: ReactNode;
+  label: string;
+  to: string;
+};
+
+const primaryNavItems: NavItem[] = [
+  {
+    end: true,
+    icon: (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />
+      </svg>
+    ),
+    label: "Dashboard",
+    to: "/admin",
+  },
+  {
+    end: true,
+    icon: (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M4.5 11 12 5l7.5 6" />
+        <path d="M7 10.5V20h10v-9.5" />
+      </svg>
+    ),
+    label: "Public Home",
+    to: "/",
+  },
+  {
+    icon: (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M7 3.5h7l3 3V20H7z" />
+        <path d="M14 3.5V7h3" />
+        <path d="M9.5 11h5M9.5 14h5M9.5 17h3" />
+      </svg>
+    ),
+    label: "Dataset Detail",
+    to: "/admin/dataset-admin",
+  },
 ];
 
-const shellStyle: CSSProperties = {
-  minHeight: "100vh",
-  display: "flex",
-  flexWrap: "wrap",
-  background: "var(--atlas-color-canvas)",
-};
-
-const sidebarStyle: CSSProperties = {
-  flex: "0 1 clamp(13.5rem, 18vw, 16rem)",
-  minHeight: "100vh",
-  display: "flex",
-  flexDirection: "column",
-  gap: "clamp(var(--atlas-space-4), 3vh, var(--atlas-space-6))",
-  borderRight: "1px solid var(--atlas-color-border)",
-  padding: "clamp(var(--atlas-space-4), 2.5vw, var(--atlas-space-6))",
-  background: "var(--atlas-color-surface)",
-};
-
-const brandStyle: CSSProperties = {
-  display: "flex",
-  gap: "var(--atlas-space-3)",
-  alignItems: "center",
-};
-
-const brandMarkStyle: CSSProperties = {
-  display: "grid",
-  placeItems: "center",
-  width: "2.25rem",
-  height: "2.25rem",
-  borderRadius: "var(--atlas-radius-md)",
-  color: "var(--atlas-color-accent-strong)",
-  fontSize: "var(--atlas-text-sm)",
-  fontWeight: 900,
-  background: "var(--atlas-color-accent-muted)",
-};
-
-const brandCopyStyle: CSSProperties = {
-  display: "grid",
-  gap: "0.125rem",
-};
-
-const navStyle: CSSProperties = {
-  display: "grid",
-  gap: "var(--atlas-space-2)",
-};
-
-const baseNavLinkStyle: CSSProperties = {
-  borderRadius: "var(--atlas-radius-md)",
-  padding: "clamp(var(--atlas-space-2), 1.5vh, var(--atlas-space-3)) var(--atlas-space-4)",
-  color: "var(--atlas-color-text-muted)",
-  fontSize: "var(--atlas-text-sm)",
-  fontWeight: 800,
-  textDecoration: "none",
-};
-
-const profileBlockStyle: CSSProperties = {
-  display: "flex",
-  gap: "var(--atlas-space-3)",
-  alignItems: "center",
-  marginTop: "auto",
-  border: "1px solid var(--atlas-color-border)",
-  borderRadius: "var(--atlas-radius-md)",
-  padding: "var(--atlas-space-3)",
-  background: "var(--atlas-color-surface-muted)",
-};
-
-const profileAvatarStyle: CSSProperties = {
-  display: "grid",
-  placeItems: "center",
-  width: "2rem",
-  height: "2rem",
-  flex: "0 0 auto",
-  borderRadius: "50%",
-  color: "var(--atlas-color-accent-strong)",
-  fontSize: "var(--atlas-text-xs)",
-  fontWeight: 900,
-  background: "var(--atlas-color-accent-muted)",
-};
-
-const profileCopyStyle: CSSProperties = {
-  display: "grid",
-  minWidth: 0,
-};
-
-const workspaceStyle: CSSProperties = {
-  flex: "1 1 32rem",
-  minWidth: 0,
-  display: "grid",
-  gridTemplateRows: "auto 1fr",
-};
-
-const headerStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: "var(--atlas-space-4)",
-  minHeight: "4rem",
-  borderBottom: "1px solid var(--atlas-color-border)",
-  padding: "var(--atlas-space-4) clamp(var(--atlas-space-5), 4vw, var(--atlas-space-8))",
-  background: "var(--atlas-color-surface)",
-};
-
-const mainStyle: CSSProperties = {
-  display: "grid",
-  alignContent: "start",
-  gap: "clamp(var(--atlas-space-4), 3vh, var(--atlas-space-6))",
-  width: "min(100%, 1040px)",
-  padding: "clamp(var(--atlas-space-5), 4vw, var(--atlas-space-8))",
-};
+const utilityNavItems: NavItem[] = [
+  {
+    icon: (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M12 8.3a3.7 3.7 0 1 0 0 7.4 3.7 3.7 0 0 0 0-7.4Z" />
+        <path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.3 1a7.2 7.2 0 0 0-1.8-1L14.5 3h-5l-.3 3a7.2 7.2 0 0 0-1.8 1l-2.3-1-2 3.5 2 1.5a7 7 0 0 0 0 2L3 14.5l2 3.5 2.3-1a7.2 7.2 0 0 0 1.8 1l.4 3h5l.3-3a7.2 7.2 0 0 0 1.8-1l2.3 1 2-3.5-2-1.5c.1-.3.1-.7.1-1Z" />
+      </svg>
+    ),
+    label: "Settings",
+    to: "/admin/settings",
+  },
+  {
+    icon: (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.7 9a2.4 2.4 0 0 1 4.6 1c0 1.8-2.3 2.1-2.3 4" />
+        <path d="M12 17.2h.01" />
+      </svg>
+    ),
+    label: "Help",
+    to: "/admin/help",
+  },
+];
 
 function getInitials(name: string): string {
   const initials = name
@@ -134,19 +82,37 @@ function getInitials(name: string): string {
   return initials || "AD";
 }
 
+function AdminNavGroup({ ariaLabel, className, items }: { ariaLabel: string; className?: string; items: NavItem[] }) {
+  return (
+    <nav aria-label={ariaLabel} className={["admin-shell__nav", className].filter(Boolean).join(" ")}>
+      {items.map((item) => (
+        <NavLink
+          className={({ isActive }) => ["admin-shell__nav-link", isActive ? "is-active" : ""].filter(Boolean).join(" ")}
+          end={item.end}
+          key={item.to}
+          to={item.to}
+        >
+          <span aria-hidden="true" className="admin-shell__nav-icon">
+            {item.icon}
+          </span>
+          <span>{item.label}</span>
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 function AdminProfileBlock() {
   const { displayName } = useAdminSettings();
 
   return (
-    <section aria-label="Current admin profile" style={profileBlockStyle}>
-      <span aria-hidden="true" style={profileAvatarStyle}>
+    <section aria-label="Current admin profile" className="admin-shell__profile">
+      <span aria-hidden="true" className="admin-shell__profile-avatar">
         {getInitials(displayName)}
       </span>
-      <span style={profileCopyStyle}>
-        <strong style={{ color: "var(--atlas-color-text)", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {displayName}
-        </strong>
-        <span style={{ color: "var(--atlas-color-text-muted)", fontSize: "var(--atlas-text-sm)" }}>Admin</span>
+      <span className="admin-shell__profile-copy">
+        <strong className="admin-shell__profile-name">{displayName}</strong>
+        <span className="admin-shell__profile-role">Admin</span>
       </span>
     </section>
   );
@@ -155,63 +121,33 @@ function AdminProfileBlock() {
 export default function AdminShell() {
   return (
     <AdminSettingsProvider>
-      <div style={shellStyle}>
-        <aside aria-label="Private admin navigation" style={sidebarStyle}>
-          <div style={brandStyle}>
-            <span aria-hidden="true" style={brandMarkStyle}>
-              AD
+      <div className="admin-shell">
+        <aside aria-label="Private admin navigation" className="admin-shell__sidebar">
+          <div className="admin-shell__brand">
+            <span className="admin-shell__brand-mark">
+              <img alt="" src={atlasLogoSidebar} />
             </span>
-            <span style={brandCopyStyle}>
-              <strong style={{ color: "var(--atlas-color-text)", fontSize: "var(--atlas-text-lg)" }}>
-                Atlas DataFlow
-              </strong>
-              <span style={{ color: "var(--atlas-color-text-subtle)", fontSize: "var(--atlas-text-sm)" }}>
-                Admin
-              </span>
+            <span className="admin-shell__brand-copy">
+              <strong className="admin-shell__brand-name">Atlas DataFlow</strong>
+              <span className="admin-shell__brand-role">Admin</span>
             </span>
           </div>
 
-          <nav aria-label="Admin sections" style={navStyle}>
-            {navItems.map((item) => (
-              <NavLink
-                end={item.end}
-                key={item.to}
-                style={({ isActive }) => ({
-                  ...baseNavLinkStyle,
-                  background: isActive ? "var(--atlas-color-accent-muted)" : "transparent",
-                  color: isActive ? "var(--atlas-color-accent-strong)" : "var(--atlas-color-text-muted)",
-                })}
-                to={item.to}
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
+          <AdminNavGroup ariaLabel="Admin sections" items={primaryNavItems} />
+          <AdminNavGroup ariaLabel="Admin utilities" className="admin-shell__nav--utility" items={utilityNavItems} />
 
           <AdminProfileBlock />
         </aside>
 
-        <div style={workspaceStyle}>
-          <header style={headerStyle}>
+        <div className="admin-shell__workspace">
+          <header className="admin-shell__header">
             <div>
-              <p
-                style={{
-                  margin: 0,
-                  color: "var(--atlas-color-accent)",
-                  fontSize: "var(--atlas-text-sm)",
-                  fontWeight: 800,
-                  textTransform: "uppercase",
-                }}
-              >
-                Private administration
-              </p>
-              <p style={{ margin: 0, color: "var(--atlas-color-text-muted)" }}>
-                Private workspace for governed dataset publication workflows.
-              </p>
+              <p className="admin-shell__header-eyebrow">Private administration</p>
+              <p className="admin-shell__header-subtitle">Private workspace for governed dataset publication workflows.</p>
             </div>
           </header>
 
-          <main style={mainStyle}>
+          <main className="admin-shell__main">
             <Outlet />
           </main>
         </div>

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
@@ -38,6 +38,38 @@ describe("AdminShell profile block", () => {
     expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute("href", "/admin/dataset-admin");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/admin/settings");
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/admin/help");
+  });
+
+  it("renders the Atlas logo brand mark as a decorative image", () => {
+    const { container } = renderAdminShell();
+
+    const brandImage = container.querySelector(".admin-shell__brand-mark img");
+    expect(brandImage).not.toBeNull();
+    expect(brandImage).toHaveAttribute("alt", "");
+  });
+
+  it("renders a decorative icon inside every navigation link", () => {
+    renderAdminShell();
+
+    const labels = ["Dashboard", "Public Home", "Dataset Detail", "Settings", "Help"];
+    for (const label of labels) {
+      const link = screen.getByRole("link", { name: label });
+      expect(link.querySelector("svg")).not.toBeNull();
+    }
+  });
+
+  it("groups navigation into a primary section and a utility section", () => {
+    renderAdminShell();
+
+    const primaryNav = screen.getByRole("navigation", { name: "Admin sections" });
+    const utilityNav = screen.getByRole("navigation", { name: "Admin utilities" });
+
+    for (const label of ["Dashboard", "Public Home", "Dataset Detail"]) {
+      expect(within(primaryNav).getByRole("link", { name: label })).toBeInTheDocument();
+    }
+    for (const label of ["Settings", "Help"]) {
+      expect(within(utilityNav).getByRole("link", { name: label })).toBeInTheDocument();
+    }
   });
 
   it("shows the default fallback display name before any settings are loaded", () => {

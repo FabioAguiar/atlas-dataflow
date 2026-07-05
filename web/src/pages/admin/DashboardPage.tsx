@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Badge, Button, Card, EmptyState, ErrorState, StatusPill, TableRow } from "../../components/ui";
 
@@ -427,23 +427,48 @@ function buildDatasetDetailRows(runs: AdminRunSummary[]): DatasetDetailRow[] {
   return Array.from(rows.values()).sort((first, second) => first.displayName.localeCompare(second.displayName));
 }
 
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function datasetMatchesQuery(row: DatasetDetailRow, query: string): boolean {
   if (query.length === 0) {
     return true;
   }
 
   return (
-    row.displayName.toLowerCase().includes(query) ||
-    row.problemType.toLowerCase().includes(query) ||
-    row.visibilityStatus.toLowerCase().includes(query)
+    normalizeSearchText(row.displayName).includes(query) ||
+    normalizeSearchText(row.problemType).includes(query) ||
+    normalizeSearchText(row.visibilityStatus).includes(query)
   );
 }
 
 export default function DashboardPage() {
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [adminToken, setAdminToken] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [state, setState] = useState<DashboardState>({ status: "idle" });
+
+  useEffect(() => {
+    function handleSearchShortcut(event: KeyboardEvent) {
+      const isMacShortcut = event.metaKey && event.key.toLowerCase() === "k";
+      const isWinShortcut = event.ctrlKey && event.key.toLowerCase() === "k";
+      if (!isMacShortcut && !isWinShortcut) {
+        return;
+      }
+
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    }
+
+    document.addEventListener("keydown", handleSearchShortcut);
+    return () => document.removeEventListener("keydown", handleSearchShortcut);
+  }, []);
 
   const runs = state.status === "ready" ? state.data.runs : [];
   const datasetRows = useMemo(() => buildDatasetDetailRows(runs), [runs]);
@@ -458,16 +483,16 @@ export default function DashboardPage() {
     [runs],
   );
 
-  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedQuery = normalizeSearchText(query.trim());
 
   const filteredRuns = useMemo(() => {
     return runs.filter((run) => {
       const matchesStatus = statusFilter === "all" || run.status === statusFilter;
       const matchesQuery =
         normalizedQuery.length === 0 ||
-        run.run_id.toLowerCase().includes(normalizedQuery) ||
-        (run.dataset_candidate ?? "").toLowerCase().includes(normalizedQuery) ||
-        (run.validation_summary?.outcome ?? "").toLowerCase().includes(normalizedQuery);
+        normalizeSearchText(run.run_id).includes(normalizedQuery) ||
+        normalizeSearchText(run.dataset_candidate ?? "").includes(normalizedQuery) ||
+        normalizeSearchText(run.validation_summary?.outcome ?? "").includes(normalizedQuery);
 
       return matchesStatus && matchesQuery;
     });
@@ -552,6 +577,7 @@ export default function DashboardPage() {
             <input
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search runs or datasets..."
+              ref={searchInputRef}
               style={inputStyle}
               type="search"
               value={query}
@@ -670,7 +696,7 @@ export default function DashboardPage() {
                 </h2>
               </div>
 
-              <div aria-label="Promotion boundary" style={intentBoundaryStyle}>
+              <div aria-label="Promotion boundary" role="status" style={intentBoundaryStyle}>
                 <StatusPill tone="warning">Promotion intent disabled</StatusPill>
                 <p style={{ ...mutedTextStyle, margin: 0 }}>
                   Dashboard promotion is a future workflow entry point only. It does not create drafts, release
@@ -744,6 +770,14 @@ export default function DashboardPage() {
                 <p style={{ ...mutedTextStyle, margin: 0 }}>
                   Dataset rows are derived only from validated run summaries until a safe profile, publication, or
                   visibility projection is owned.
+                </p>
+              </div>
+
+              <div aria-label="Safe action boundary" role="status" style={intentBoundaryStyle}>
+                <StatusPill tone="warning">Dataset actions disabled</StatusPill>
+                <p style={{ ...mutedTextStyle, margin: 0 }}>
+                  Promote, Remove, and Open admin remain disabled until a safe, owned backend API exists for dataset
+                  promotion, removal, or admin navigation.
                 </p>
               </div>
 

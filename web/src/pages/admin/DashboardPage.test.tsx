@@ -179,6 +179,116 @@ describe("DashboardPage", () => {
     expect(within(datasetsTable).getByText("Synthetic Energy Usage")).toBeInTheDocument();
   });
 
+  it("focuses and selects the search input when Ctrl+K or Cmd+K is pressed", () => {
+    render(<DashboardPage />);
+
+    const searchInput = screen.getByLabelText("Search runs and datasets") as HTMLInputElement;
+    searchInput.value = "existing text";
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+
+    expect(searchInput).toHaveFocus();
+
+    searchInput.blur();
+    expect(searchInput).not.toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+
+    expect(searchInput).toHaveFocus();
+  });
+
+  it("matches accented run and dataset text against a diacritic-insensitive query", async () => {
+    installRunsFetchMock(
+      jsonResponse({
+        runs_root_status: "available",
+        runs: [
+          {
+            schema_version: "admin-run-summary.v1",
+            run_id: "run-café-010",
+            status: "available",
+            dataset_candidate: "café-forecast",
+            created_at: "2026-06-03T12:00:00Z",
+            trace_reference: "trace/run-cafe-010",
+            validation_summary: { outcome: "accepted" },
+          },
+        ],
+      }),
+    );
+    render(<DashboardPage />);
+
+    await enterTokenAndLoadRuns();
+    fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "cafe" } });
+
+    const runsTable = screen.getByRole("table", { name: "Run summaries" });
+    const datasetsTable = screen.getByRole("table", { name: "Dataset details" });
+    expect(runsTable).toHaveAttribute("data-filtered-run-count", "1");
+    expect(datasetsTable).toHaveAttribute("data-filtered-dataset-count", "1");
+    expect(within(runsTable).getByText("run-café-010")).toBeInTheDocument();
+    expect(within(datasetsTable).getByText("Café Forecast")).toBeInTheDocument();
+  });
+
+  it("exposes the Runs and Dataset Details safe-action boundaries as accessible status regions", async () => {
+    installRunsFetchMock(
+      jsonResponse({
+        runs_root_status: "available",
+        runs: [
+          {
+            schema_version: "admin-run-summary.v1",
+            run_id: "run-agnostic-solo",
+            status: "available",
+            dataset_candidate: "synthetic-retail-forecast",
+            created_at: "2026-06-01T12:00:00Z",
+            trace_reference: "trace/run-agnostic-solo",
+            validation_summary: { outcome: "accepted" },
+          },
+        ],
+      }),
+    );
+    render(<DashboardPage />);
+
+    await enterTokenAndLoadRuns();
+
+    const statusRegions = await screen.findAllByRole("status");
+    expect(statusRegions).toHaveLength(2);
+    expect(screen.getByLabelText("Promotion boundary")).toHaveAttribute("role", "status");
+    expect(screen.getByLabelText("Safe action boundary")).toHaveAttribute("role", "status");
+  });
+
+  it("does not trigger any network request or state change when a disabled Promote, Remove, or Open admin button is clicked", async () => {
+    const fetchMock = installRunsFetchMock(
+      jsonResponse({
+        runs_root_status: "available",
+        runs: [
+          {
+            schema_version: "admin-run-summary.v1",
+            run_id: "run-agnostic-solo",
+            status: "available",
+            dataset_candidate: "synthetic-retail-forecast",
+            created_at: "2026-06-01T12:00:00Z",
+            trace_reference: "trace/run-agnostic-solo",
+            validation_summary: { outcome: "accepted" },
+          },
+        ],
+      }),
+    );
+    render(<DashboardPage />);
+
+    await enterTokenAndLoadRuns();
+
+    const table = await screen.findByRole("table", { name: "Dataset details" });
+    const callCountAfterLoad = fetchMock.mock.calls.length;
+
+    fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+    fireEvent.click(within(table).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(table).getByRole("button", { name: "Open admin" }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(callCountAfterLoad);
+    expect(within(table).getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(within(table).getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(within(table).getByRole("button", { name: "Open admin" })).toBeDisabled();
+    expect(table).toHaveAttribute("data-filtered-dataset-count", "1");
+  });
+
   it("renders multiple runs with mixed statuses and no hardcoded upper bound on the counters", async () => {
     installRunsFetchMock(
       jsonResponse({

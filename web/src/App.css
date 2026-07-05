@@ -1,6 +1,14 @@
 .public-shell {
+  --public-shell-color-bg: #f5f8f4;
+  --public-shell-color-surface: #ffffff;
+  --public-shell-color-border: #dce5dc;
+  --public-shell-color-accent: #176b2c;
+  --public-shell-color-accent-strong: #0e5c23;
+  --public-shell-color-accent-soft: #e9f3ea;
+  --public-shell-color-shadow: rgb(17 24 39 / 8%);
+
   min-height: 100vh;
-  background: var(--atlas-color-canvas);
+  background: var(--public-shell-color-bg);
 }
 
 .public-shell__nav-toggle {
@@ -13,11 +21,12 @@
   width: 2.75rem;
   height: 2.75rem;
   place-items: center;
-  border: 1px solid var(--atlas-color-border-strong);
+  border: 1px solid var(--public-shell-color-border);
   border-radius: var(--atlas-radius-md);
-  background: var(--atlas-color-surface);
-  box-shadow: var(--atlas-shadow-sm);
+  background: var(--public-shell-color-surface);
+  box-shadow: 0 1px 2px var(--public-shell-color-shadow);
   cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .public-shell__nav-toggle span {
@@ -26,6 +35,17 @@
   height: 2px;
   background: var(--atlas-color-text);
   border-radius: var(--atlas-radius-pill);
+}
+
+.public-shell__nav-toggle:hover,
+.public-shell__nav-toggle:focus-visible {
+  border-color: var(--public-shell-color-accent);
+  box-shadow: 0 10px 24px var(--public-shell-color-shadow);
+  transform: translateY(-1px);
+}
+
+.public-shell__nav-toggle:focus-visible {
+  outline: none;
 }
 
 .public-shell__nav-overlay {
@@ -46,8 +66,8 @@
   width: min(80vw, 18rem);
   height: 100vh;
   padding: var(--atlas-space-6) var(--atlas-space-5);
-  background: var(--atlas-color-surface);
-  border-right: 1px solid var(--atlas-color-border);
+  background: var(--public-shell-color-surface);
+  border-right: 1px solid var(--public-shell-color-border);
   transform: translateX(-100%);
   transition: transform 0.2s ease;
   overflow-y: auto;
@@ -69,7 +89,13 @@
 }
 
 .public-shell__brand:hover {
-  color: var(--atlas-color-accent-strong);
+  color: var(--public-shell-color-accent-strong);
+}
+
+.public-shell__brand:focus-visible {
+  outline: none;
+  color: var(--public-shell-color-accent-strong);
+  box-shadow: var(--atlas-focus-ring);
 }
 
 .public-shell__nav-list {
@@ -84,17 +110,38 @@
   display: flex;
   align-items: center;
   gap: var(--atlas-space-3);
+  border: 1px solid transparent;
   border-radius: var(--atlas-radius-md);
   padding: var(--atlas-space-3);
   color: var(--atlas-color-text-muted);
   font-weight: 700;
   text-decoration: none;
+  transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease,
+    color 0.15s ease;
+}
+
+.public-shell__nav-link.is-active {
+  color: var(--public-shell-color-accent-strong);
+  background: var(--public-shell-color-accent-soft);
 }
 
 .public-shell__nav-link:hover,
-.public-shell__nav-link.is-active {
-  color: var(--atlas-color-accent-strong);
-  background: var(--atlas-color-accent-muted);
+.public-shell__nav-link:focus-visible {
+  color: var(--public-shell-color-accent-strong);
+  border-color: var(--public-shell-color-border);
+  background: var(--public-shell-color-surface);
+  box-shadow: 0 10px 24px var(--public-shell-color-shadow);
+  transform: translateY(-1px);
+}
+
+.public-shell__nav-link.is-active:hover,
+.public-shell__nav-link.is-active:focus-visible {
+  background: var(--public-shell-color-accent-soft);
+  border-color: #c7dcc9;
+}
+
+.public-shell__nav-link:focus-visible {
+  outline: none;
 }
 
 .public-shell__nav-icon {
@@ -636,6 +683,11 @@ h1 {
     top: 0;
     transform: translateX(0);
     transition: width 0.2s ease, padding 0.2s ease;
+  }
+
+  .public-shell__nav-icon {
+    width: 1.5rem;
+    height: 1.5rem;
   }
 
   .public-shell:not(.public-shell--nav-open) .public-shell__nav {

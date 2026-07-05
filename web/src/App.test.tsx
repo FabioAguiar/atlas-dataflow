@@ -86,12 +86,14 @@ describe("App admin routing", () => {
 
     expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dataset Admin" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute(
       "href",
       "/admin/dataset-admin",
     );
     expect(screen.getByRole("button", { name: "Publishing unavailable" })).toBeDisabled();
-    expect(screen.getByRole("heading", { name: /Dataset Admin/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Dataset -- Telco Customer Churn" }),
+    ).toBeInTheDocument();
   });
 
   it("renders Settings only inside the private admin shell", async () => {

@@ -1,9 +1,9 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
-import { DatasetDetailHeader, PerformanceSummary, type DatasetDetailMetadataItem } from ".";
+import { DatasetDetailHeader, DatasetDetailTabs, PerformanceSummary, type DatasetDetailMetadataItem } from ".";
 
 function renderHeader(metadata: DatasetDetailMetadataItem[]) {
   return render(
@@ -72,5 +72,33 @@ describe("PerformanceSummary curated metric highlight (M39-03)", () => {
     expect(aucScore).not.toBeNull();
     expect(within(precisionScore as HTMLElement).getByText("Highlighted")).toBeInTheDocument();
     expect(aucScore).not.toHaveTextContent("Highlighted");
+  });
+});
+
+describe("DatasetDetailTabs tab switching (M42-04)", () => {
+  it("updates selected tab state and visible panel content", () => {
+    render(
+      <DatasetDetailTabs
+        overviewContent={<div>Overview panel content</div>}
+        inferenceContent={<div>Inference panel content</div>}
+      />,
+    );
+
+    const overviewTab = screen.getByRole("tab", { name: "Overview" });
+    const inferenceTab = screen.getByRole("tab", { name: "Inference" });
+    const overviewPanel = screen.getByText("Overview panel content").closest('[role="tabpanel"]');
+    const inferencePanel = screen.getByText("Inference panel content").closest('[role="tabpanel"]');
+
+    expect(overviewTab).toHaveAttribute("aria-selected", "true");
+    expect(inferenceTab).toHaveAttribute("aria-selected", "false");
+    expect(overviewPanel).not.toHaveAttribute("hidden");
+    expect(inferencePanel).toHaveAttribute("hidden");
+
+    fireEvent.click(inferenceTab);
+
+    expect(overviewTab).toHaveAttribute("aria-selected", "false");
+    expect(inferenceTab).toHaveAttribute("aria-selected", "true");
+    expect(overviewPanel).toHaveAttribute("hidden");
+    expect(inferencePanel).not.toHaveAttribute("hidden");
   });
 });

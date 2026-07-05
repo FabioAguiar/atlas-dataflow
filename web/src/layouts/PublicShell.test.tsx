@@ -48,7 +48,10 @@ describe("PublicShell nav overlay responsive behavior", () => {
     mockMatchMedia(false);
     renderPublicShell();
 
-    expect(screen.getByLabelText("Mostrar navegação")).toBeInTheDocument();
+    const toggle = screen.getByLabelText("Mostrar navegação");
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
   });
 
   it("does not render the nav overlay on desktop even though the nav is open by default", () => {
@@ -65,6 +68,7 @@ describe("PublicShell nav overlay responsive behavior", () => {
     fireEvent.click(screen.getByLabelText("Mostrar navegação"));
 
     expect(getOverlay()).toBeInTheDocument();
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
   });
 
   it("closes the nav when the mobile overlay is clicked", () => {
@@ -79,6 +83,34 @@ describe("PublicShell nav overlay responsive behavior", () => {
 
     expect(getOverlay()).not.toBeInTheDocument();
     expect(screen.getByLabelText("Mostrar navegação")).toBeInTheDocument();
+  });
+
+  it("closes the mobile nav when a nav link is clicked", () => {
+    mockMatchMedia(false);
+    renderPublicShell();
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    expect(getOverlay()).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Home" }));
+
+    expect(getOverlay()).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes the mobile nav with Escape and returns focus to the toggle", () => {
+    mockMatchMedia(false);
+    renderPublicShell();
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    const toggle = screen.getByLabelText("Ocultar navegação");
+    expect(getOverlay()).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(getOverlay()).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
   });
 
   it("preserves the existing nav item set and labels", () => {

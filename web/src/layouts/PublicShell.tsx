@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 
 type PublicShellProps = {
@@ -63,6 +63,7 @@ function isDesktopViewport() {
 }
 
 export default function PublicShell({ children }: PublicShellProps) {
+  const navToggleRef = useRef<HTMLButtonElement | null>(null);
   const [navOpen, setNavOpen] = useState<boolean>(isDesktopViewport);
   const [isDesktop, setIsDesktop] = useState<boolean>(isDesktopViewport);
 
@@ -76,9 +77,34 @@ export default function PublicShell({ children }: PublicShellProps) {
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
+  useEffect(() => {
+    if (!navOpen || isDesktop) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setNavOpen(false);
+      navToggleRef.current?.focus();
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isDesktop, navOpen]);
+
+  const closeMobileNav = () => {
+    if (!isDesktop) {
+      setNavOpen(false);
+    }
+  };
+
   return (
     <div className={`public-shell${navOpen ? " public-shell--nav-open" : ""}`}>
       <button
+        ref={navToggleRef}
         type="button"
         className="public-shell__nav-toggle"
         aria-label={navOpen ? "Ocultar navegação" : "Mostrar navegação"}
@@ -108,7 +134,13 @@ export default function PublicShell({ children }: PublicShellProps) {
             {NAV_ITEMS.map((item) => (
               <li key={item.key}>
                 {item.external ? (
-                  <a className="public-shell__nav-link" href={item.href} target="_blank" rel="noreferrer">
+                  <a
+                    className="public-shell__nav-link"
+                    href={item.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={closeMobileNav}
+                  >
                     <span className="public-shell__nav-icon" aria-hidden="true">
                       {item.icon}
                     </span>
@@ -119,6 +151,7 @@ export default function PublicShell({ children }: PublicShellProps) {
                     to={item.to}
                     end
                     className={({ isActive }) => "public-shell__nav-link" + (isActive ? " is-active" : "")}
+                    onClick={closeMobileNav}
                   >
                     <span className="public-shell__nav-icon" aria-hidden="true">
                       {item.icon}

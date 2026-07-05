@@ -303,6 +303,23 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByText(/Save Draft before publishing/)).toBeInTheDocument();
   });
 
+  it("marks the active workspace tab as selected via aria-selected and updates it when switching tabs", async () => {
+    installFetchMock();
+    render(<DatasetAdminPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+    });
+
+    expect(screen.getByRole("tab", { name: "Public Content", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Publishing", selected: false })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+
+    expect(screen.getByRole("tab", { name: "Publishing", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Public Content", selected: false })).toBeInTheDocument();
+  });
+
   it("surfaces backend profile validation feedback without publishing side effects", async () => {
     installFetchMock({ rejectProfileSave: true });
     render(<DatasetAdminPage />);

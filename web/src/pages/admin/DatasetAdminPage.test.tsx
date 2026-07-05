@@ -658,4 +658,86 @@ describe("DatasetAdminPage", () => {
     expect(within(panel).getByText(datasetTwo.title)).toBeInTheDocument();
     expect(within(panel).getByText(datasetTwo.domain)).toBeInTheDocument();
   });
+
+  it("moves an ARIA active-option indicator through the filtered listbox with ArrowDown/ArrowUp and selects it on Enter", async () => {
+    const datasetOne = {
+      dataset_slug: "synthetic-retail-forecast",
+      title: "Synthetic Retail Forecast",
+      summary: "Synthetic retail demand forecasting dataset",
+      domain: "retail",
+      visibility: "public",
+      tags: ["retail"],
+    };
+    const datasetTwo = {
+      dataset_slug: "synthetic-energy-usage",
+      title: "Synthetic Energy Usage",
+      summary: "Synthetic household energy usage dataset",
+      domain: "energy",
+      visibility: "public",
+      tags: ["energy"],
+    };
+    const datasetThree = {
+      dataset_slug: "synthetic-agri-yield",
+      title: "Synthetic Agricultural Yield",
+      summary: "Synthetic crop yield dataset",
+      domain: "agriculture",
+      visibility: "internal",
+      tags: ["agriculture"],
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({ datasets: [datasetOne, datasetTwo, datasetThree] });
+      }
+      if (url.endsWith(`/datasets/${datasetOne.dataset_slug}`)) {
+        return jsonResponse(datasetOne);
+      }
+      if (url.endsWith(`/datasets/${datasetTwo.dataset_slug}`)) {
+        return jsonResponse(datasetTwo);
+      }
+      if (url.endsWith(`/datasets/${datasetThree.dataset_slug}`)) {
+        return jsonResponse(datasetThree);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DatasetAdminPage />);
+
+    const selector = await screen.findByRole("button", { name: "Dataset" });
+    await waitFor(() => expect(selector).toHaveTextContent(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
+
+    fireEvent.click(selector);
+    const filter = screen.getByLabelText("Filter datasets");
+
+    expect(filter).not.toHaveAttribute("aria-activedescendant");
+
+    fireEvent.keyDown(filter, { key: "ArrowDown" });
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetOne.dataset_slug}`);
+
+    fireEvent.keyDown(filter, { key: "ArrowDown" });
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetTwo.dataset_slug}`);
+
+    fireEvent.keyDown(filter, { key: "ArrowUp" });
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetOne.dataset_slug}`);
+
+    fireEvent.keyDown(filter, { key: "ArrowUp" });
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetThree.dataset_slug}`);
+
+    const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
+    await waitFor(() => {
+      expect(within(panel).getByText(datasetOne.dataset_slug)).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(filter, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(within(panel).getByText(datasetThree.dataset_slug)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: `Dataset -- ${datasetThree.title}` })).toBeInTheDocument();
+    expect(within(panel).getByText(datasetThree.title)).toBeInTheDocument();
+    expect(within(panel).getByText(datasetThree.domain)).toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Available datasets" })).not.toBeInTheDocument();
+  });
 });

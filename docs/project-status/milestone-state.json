@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M44",
-    "title": "Dataset Admin Exact Visual Structure Parity",
+    "id": "M45",
+    "title": "Dataset Admin Behavioral Parity and Final Regression Closure",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M43",
-    "title": "Admin Shell and Dashboard Exact Design and Behavior Parity",
+    "id": "M44",
+    "title": "Dataset Admin Exact Visual Structure Parity",
     "status": "completed"
   },
   "completed_milestones": [
@@ -242,6 +242,11 @@
       "id": "M43",
       "title": "Admin Shell and Dashboard Exact Design and Behavior Parity",
       "status": "completed"
+    },
+    {
+      "id": "M44",
+      "title": "Dataset Admin Exact Visual Structure Parity",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -458,6 +463,11 @@
     {
       "id": "M43",
       "title": "Admin Shell and Dashboard Exact Design and Behavior Parity",
+      "status": "locked"
+    },
+    {
+      "id": "M44",
+      "title": "Dataset Admin Exact Visual Structure Parity",
       "status": "locked"
     }
   ],
@@ -704,12 +714,18 @@
     {
       "id": "M44",
       "title": "Dataset Admin Exact Visual Structure Parity",
+      "status": "completed"
+    },
+    {
+      "id": "M45",
+      "title": "Dataset Admin Behavioral Parity and Final Regression Closure",
       "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M44 is the current active milestone for Dataset Admin Exact Visual Structure Parity in Atlas DataFlow.",
+    "M45 is the current active milestone for Dataset Admin Behavioral Parity and Final Regression Closure in Atlas DataFlow.",
+    "M44 is marked as completed because Dataset Admin Exact Visual Structure Parity has been completed.",
     "M43 is marked as completed because Admin Shell and Dashboard Exact Design and Behavior Parity has been completed.",
     "M42 is marked as completed because Public Screens Exact Design and Behavior Parity has been completed.",
     "M41 is marked as completed because Design Runtime Parity Contract and Visual Asset Consolidation has been completed.",
@@ -744,6 +760,7 @@
     "M12 is marked as completed because First Real Dataset Release has been completed.",
     "M11 is marked as completed because Publisher Operational Release Flow has been completed.",
     "M10 is marked as completed because Initial Private Internal Administration has been completed.",
+    "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
     "M9 is marked as completed because First Public Cycle Closure has been completed.",
     "M8 is marked as completed because Containerized Public Deployment and Minimum Security has been completed.",
     "M7 is marked as completed because First Public Dataset Experience has been completed.",
@@ -753,15 +770,14 @@
     "M3 is marked as completed because File-Based Registry and Publication Model has been completed.",
     "M2 is marked as completed because Minimal Public Technical Bootstrap has been completed.",
     "M1 is marked as completed because Documented Foundation and Initial Technical Scope has been completed.",
-    "M10 recorded a defer decision for private internal administration; conditional downstream admin issues were treated as non-executable, not failed implementation work.",
     "Formal issues are resolved from the support workspace using formal_issue_location patterns; GitHub is only a publication target or human reference.",
     "docs/milestones.md remains the planning document and must not be treated as the operational cursor.",
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40, M41, M42, M43 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M44 should be validated against docs/milestones.md before workflow continuation.",
-    "The current milestone points to M44 because the next implementation focus is Dataset Admin Exact Visual Structure Parity."
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40, M41, M42, M43, M44 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M45 should be validated against docs/milestones.md before workflow continuation.",
+    "The current milestone points to M45 because the next implementation focus is Dataset Admin Behavioral Parity and Final Regression Closure."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

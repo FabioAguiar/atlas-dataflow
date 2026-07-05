@@ -789,6 +789,7 @@ function DatasetComboBox({
   stateStatus,
 }: DatasetComboBoxProps) {
   const [open, setOpen] = useState(false);
+  const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const selectedValue = getDatasetSelectorValue(selectedDataset);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredDatasets = normalizedQuery
@@ -797,6 +798,9 @@ function DatasetComboBox({
         return selectorValue.includes(normalizedQuery) || dataset.dataset_slug.toLowerCase().includes(normalizedQuery);
       })
     : datasets;
+  const activeOptionId = filteredDatasets.some((dataset) => dataset.dataset_slug === activeSlug)
+    ? `dataset-admin-option-${activeSlug}`
+    : undefined;
   const triggerText =
     stateStatus === "loading"
       ? "Loading datasets..."
@@ -806,17 +810,45 @@ function DatasetComboBox({
 
   function closeAndNormalize() {
     setOpen(false);
+    setActiveSlug(null);
     onNormalize();
   }
 
   function selectDataset(dataset: DatasetListing) {
     onQueryChange(getDatasetSelectorValue(dataset));
     setOpen(false);
+    setActiveSlug(null);
+  }
+
+  function moveActiveOption(direction: 1 | -1) {
+    if (filteredDatasets.length === 0) {
+      return;
+    }
+    const currentIndex = filteredDatasets.findIndex((dataset) => dataset.dataset_slug === activeSlug);
+    const nextIndex =
+      currentIndex === -1
+        ? direction === 1
+          ? 0
+          : filteredDatasets.length - 1
+        : (currentIndex + direction + filteredDatasets.length) % filteredDatasets.length;
+    setActiveSlug(filteredDatasets[nextIndex].dataset_slug);
   }
 
   function handleFilterKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") {
       closeAndNormalize();
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActiveOption(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActiveOption(-1);
+    } else if (event.key === "Enter") {
+      const activeDataset = filteredDatasets.find((dataset) => dataset.dataset_slug === activeSlug);
+      if (activeDataset) {
+        event.preventDefault();
+        selectDataset(activeDataset);
+      }
     }
   }
 
@@ -829,7 +861,10 @@ function DatasetComboBox({
         aria-label="Dataset"
         className="dataset-combobox__trigger"
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpen((current) => !current);
+          setActiveSlug(null);
+        }}
         type="button"
       >
         <span className="dataset-combobox__value">{triggerText}</span>
@@ -844,6 +879,7 @@ function DatasetComboBox({
             Filter datasets
           </label>
           <input
+            aria-activedescendant={activeOptionId}
             aria-controls="dataset-admin-selector-options"
             autoComplete="off"
             className="dataset-combobox__filter"
@@ -868,6 +904,7 @@ function DatasetComboBox({
                 <button
                   aria-selected={selected}
                   className={["dataset-combobox__option", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
+                  id={`dataset-admin-option-${dataset.dataset_slug}`}
                   key={dataset.dataset_slug}
                   onClick={() => selectDataset(dataset)}
                   onMouseDown={(event) => event.preventDefault()}

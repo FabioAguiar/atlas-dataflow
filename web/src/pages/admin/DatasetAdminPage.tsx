@@ -684,15 +684,6 @@ const dragGhostStyle: CSSProperties = {
   fontWeight: 800,
 };
 
-const previewCardStyle: CSSProperties = {
-  display: "grid",
-  gap: "var(--atlas-space-3)",
-  border: "1px solid var(--atlas-color-border-strong)",
-  borderRadius: "var(--atlas-radius-md)",
-  padding: "var(--atlas-space-4)",
-  background: "var(--atlas-color-canvas)",
-};
-
 const tagListStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
@@ -2066,6 +2057,46 @@ function publicationMessage(publicationState: PublicationState): string {
   }
 }
 
+function visibilityCopy(publicationState: PublicationState, hasPublishedSnapshot: boolean): string {
+  if (!hasPublishedSnapshot) {
+    return "Public access is locked until a first published snapshot exists.";
+  }
+  if (publicationState.visible) {
+    return "The latest published snapshot is accessible from the public Dataset Detail page and Home card.";
+  }
+  return "The latest published snapshot exists, but public access is hidden.";
+}
+
+function draftStateSummary(draftState: DraftState, hasUnsavedDraftChanges: boolean, hasUnpublishedChanges: boolean): string {
+  if (hasUnsavedDraftChanges) {
+    return "Unsaved local changes.";
+  }
+  if (hasUnpublishedChanges) {
+    return "Saved with unpublished changes.";
+  }
+  if (draftState.status === "saved") {
+    return "Saved and matches public snapshot.";
+  }
+  if (draftState.status === "ready") {
+    return "Loaded private draft.";
+  }
+  if (draftState.status === "invalid") {
+    return "Validation needs attention.";
+  }
+  return "Editable draft.";
+}
+
+function publicSnapshotSummary(hasPublishedSnapshot: boolean): string {
+  return hasPublishedSnapshot ? "Available." : "Not published yet.";
+}
+
+function visibilitySummary(publicationState: PublicationState, hasPublishedSnapshot: boolean): string {
+  if (!hasPublishedSnapshot) {
+    return "Locked until first publish.";
+  }
+  return publicationState.visible ? "Public." : "Hidden.";
+}
+
 function PublishingTab({
   draftState,
   hasPublishedSnapshot,
@@ -2106,47 +2137,96 @@ function PublishingTab({
 
   return (
     <>
-      <div>
-        <h2 style={{ marginTop: 0 }}>Publishing</h2>
-        <p style={mutedTextStyle}>
-          Save Draft updates private draft state. Preview opens a private draft preview. Publish Changes creates the
-          latest published snapshot, and Visible Publicly controls exposure of that snapshot only. Publication status
-          and last-published information below reflect only actions taken in this admin session; reselecting the
-          dataset or reloading the page resets them.
-        </p>
-      </div>
-      <div style={sectionGridStyle}>
-        <ReadOnlyField label="Lifecycle status" value={statusLabel} />
-        <ReadOnlyField
-          label="Private draft"
-          value={hasUnsavedDraftChanges ? "Unsaved local changes" : draftState.status === "saved" ? "Saved" : "Editable draft"}
-        />
-        <ReadOnlyField label="Public exposure" value={publicationState.visible ? "Visible Publicly" : "Hidden"} />
-        <ReadOnlyField
-          label="Last published"
-          value={lastPublishedAt ? `${lastPublishedAt} (this session)` : "Not published in this session"}
-        />
-        <ReadOnlyField label="Release artifacts" value="Read-only; not changed by Publishing tab" />
-      </div>
-      <div style={buttonRowStyle}>
-        <button disabled={!selectedSlug || draftState.status === "loading"} onClick={onSaveDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
-          Save Draft
-        </button>
-        <button disabled={!selectedSlug} onClick={onPreviewDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
-          Preview Draft
-        </button>
-        <button disabled={publishDisabled} onClick={onPublish} style={publishDisabled ? disabledButtonStyle : actionButtonStyle} type="button">
-          Publish Changes
-        </button>
-        <label style={{ ...fieldStyle, alignItems: "start", gap: "var(--atlas-space-1)" }}>
-          <span style={labelStyle}>Visible Publicly</span>
-          <input
-            checked={publicationState.visible}
-            disabled={visibilityDisabled}
-            onChange={(event) => onSetVisibility(event.target.checked)}
-            type="checkbox"
-          />
-        </label>
+      <div className="dataset-admin-publishing-layout">
+        <Card className="dataset-admin-config-card dataset-admin-publishing-card">
+          <span className="dataset-admin-tab-workspace__eyebrow">Public visibility</span>
+          <div className="dataset-admin-visibility-row">
+            <div>
+              <strong>Visible publicly</strong>
+              <p>{visibilityCopy(publicationState, hasPublishedSnapshot)}</p>
+            </div>
+            <label className="dataset-admin-switch" aria-label="Visible Publicly">
+              <input
+                checked={publicationState.visible}
+                disabled={visibilityDisabled}
+                onChange={(event) => onSetVisibility(event.target.checked)}
+                type="checkbox"
+              />
+              <span aria-hidden="true" />
+            </label>
+          </div>
+          <p className="dataset-admin-visibility-note">
+            {hasPublishedSnapshot && publicationState.visible
+              ? "Public access is enabled for the latest published snapshot."
+              : hasPublishedSnapshot
+              ? "Public access is disabled; the published snapshot is preserved."
+              : "Publish changes before enabling public access."}
+          </p>
+          <div className="dataset-admin-last-published">
+            <span>Last published</span>
+            <strong>{lastPublishedAt ? `${lastPublishedAt} (this session)` : "Not published in this session"}</strong>
+          </div>
+          <div className="dataset-admin-publish-rule-card" aria-label="Publishing rule summary">
+            <strong>Content and access are separate</strong>
+            <p>
+              <b>Publish changes</b> updates the public snapshot. <b>Visible publicly</b> only controls whether that
+              snapshot can be accessed.
+            </p>
+          </div>
+        </Card>
+
+        <Card className="dataset-admin-config-card dataset-admin-publishing-card">
+          <span className="dataset-admin-tab-workspace__eyebrow">Actions</span>
+          <div className="dataset-admin-publishing-actions">
+            <button disabled={!selectedSlug || draftState.status === "loading"} onClick={onSaveDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
+              Save draft
+            </button>
+            <button disabled={!selectedSlug} onClick={onPreviewDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
+              Preview
+            </button>
+            <button disabled={publishDisabled} onClick={onPublish} style={publishDisabled ? disabledButtonStyle : actionButtonStyle} type="button">
+              Publish changes
+            </button>
+          </div>
+          <p className="dataset-admin-publishing-rule-text">
+            Draft changes are private until published. Preview uses the current draft. Publishing creates the public snapshot.
+          </p>
+          <div className="dataset-admin-current-state-card" aria-label="Current publication state">
+            <span className="dataset-admin-tab-workspace__eyebrow">Current state</span>
+            <ul className="dataset-admin-state-list">
+              <li>
+                <strong>Draft</strong>
+                <span>{draftStateSummary(draftState, hasUnsavedDraftChanges, hasUnpublishedChanges)}</span>
+              </li>
+              <li>
+                <strong>Public snapshot</strong>
+                <span>{publicSnapshotSummary(hasPublishedSnapshot)}</span>
+              </li>
+              <li>
+                <strong>Visibility</strong>
+                <span>{visibilitySummary(publicationState, hasPublishedSnapshot)}</span>
+              </li>
+            </ul>
+          </div>
+          <ul className="dataset-admin-state-list dataset-admin-state-list--rules" aria-label="Documented publication states">
+            <li>
+              <strong>Save draft</strong>
+              <span>Persists admin edits without changing the public version.</span>
+            </li>
+            <li>
+              <strong>Preview</strong>
+              <span>Simulates the current draft without changing public state.</span>
+            </li>
+            <li>
+              <strong>Publish changes</strong>
+              <span>Creates or replaces the public snapshot from the draft.</span>
+            </li>
+            <li>
+              <strong>Visible publicly</strong>
+              <span>Controls access to the latest published snapshot only.</span>
+            </li>
+          </ul>
+        </Card>
       </div>
       {publishDisabledReason && <p style={mutedTextStyle}>{publishDisabledReason}</p>}
       <article
@@ -2274,13 +2354,11 @@ function LivePreviewTab({
   selectedSlug: string;
   customizationEditorState: CustomizationEditorState;
 }) {
-  const [previewMode, setPreviewMode] = useState<"detail" | "card" | "result" | "form">("detail");
+  const [previewMode, setPreviewMode] = useState<"detail" | "card">("detail");
 
-  const previewModeLabels: Record<"detail" | "card" | "result" | "form", string> = {
-    detail: "Dataset detail",
-    card: "Home card",
-    result: "Result card",
-    form: "Inference form layout",
+  const previewModeLabels: Record<"detail" | "card", string> = {
+    detail: "Dataset Detail",
+    card: "Home Card",
   };
 
   return (
@@ -2293,21 +2371,23 @@ function LivePreviewTab({
           reuses the real InferenceForm rendering logic in a non-submitting preview mode.
         </p>
       </div>
-      <div aria-label="Preview mode" style={buttonRowStyle}>
-        {(["detail", "card", "result", "form"] as const).map((mode) => (
+      <div className="dataset-admin-preview-switcher" role="tablist" aria-label="Live preview modes">
+        {(["detail", "card"] as const).map((mode) => (
           <button
+            aria-selected={previewMode === mode}
+            className={`dataset-admin-preview-tab${previewMode === mode ? " is-active" : ""}`}
             key={mode}
             onClick={() => setPreviewMode(mode)}
-            style={previewMode === mode ? secondaryButtonStyle : disabledButtonStyle}
+            role="tab"
             type="button"
           >
             {previewModeLabels[mode]}
           </button>
         ))}
       </div>
-      <div style={previewCardStyle} data-theme-preset={form.theme_preset || "atlas-green"}>
+      <div className="dataset-admin-preview-stage" data-theme-preset={form.theme_preset || "atlas-green"}>
         {previewMode === "card" && (
-          <div style={{ maxWidth: "22rem" }}>
+          <article className="dataset-admin-preview-panel dataset-admin-preview-panel--card" aria-label="Home Card preview">
             <DatasetCard
               {...projectHomeCardPreview(
                 dataset,
@@ -2327,18 +2407,20 @@ function LivePreviewTab({
                 stateValue(readOnlyData.context),
               )}
             />
-          </div>
+          </article>
         )}
         {previewMode === "detail" && (
-          <DatasetDetailLivePreview dataset={dataset} form={form} readOnlyData={readOnlyData} />
-        )}
-        {previewMode === "result" && <ResultCardLivePreview form={form} />}
-        {previewMode === "form" && (
-          <FormLayoutLivePreview
-            customizationEditorState={customizationEditorState}
-            readOnlyData={readOnlyData}
-            selectedSlug={selectedSlug}
-          />
+          <article className="dataset-admin-preview-panel dataset-admin-preview-panel--detail" aria-label="Dataset Detail preview">
+            <DatasetDetailLivePreview dataset={dataset} form={form} readOnlyData={readOnlyData} />
+            <div className="dataset-admin-detail-preview-grid">
+              <ResultCardLivePreview form={form} />
+              <FormLayoutLivePreview
+                customizationEditorState={customizationEditorState}
+                readOnlyData={readOnlyData}
+                selectedSlug={selectedSlug}
+              />
+            </div>
+          </article>
         )}
       </div>
     </>

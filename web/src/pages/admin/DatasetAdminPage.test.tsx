@@ -255,18 +255,18 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
 
     const callsBeforePreview = fetchMock.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Preview Draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(screen.getByRole("heading", { name: "Curated churn profile" })).toBeInTheDocument();
     expect(fetchMock.mock.calls).toHaveLength(callsBeforePreview);
     expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(0);
     expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`))).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
 
-    fireEvent.click(screen.getByRole("button", { name: "Publish Changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish changes" }));
     await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
     expect(screen.getByText("Published at 2026-07-03T17:30:00Z.")).toBeInTheDocument();
     expect(screen.getByLabelText("Visible Publicly")).not.toBeDisabled();
@@ -299,7 +299,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Display title"), { target: { value: "Edited churn profile" } });
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
-    expect(screen.getByRole("button", { name: "Publish Changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Publish changes" })).toBeDisabled();
     expect(screen.getByText(/Save Draft before publishing/)).toBeInTheDocument();
   });
 
@@ -322,7 +322,7 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(screen.getByRole("button", { name: "Publish Changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish changes" }));
 
     expect(await screen.findByText("Publishing action rejected by backend validation.")).toBeInTheDocument();
     expect(screen.getByText(/profile - PROFILE_PUBLISH_FAILED - Snapshot validation failed./)).toBeInTheDocument();
@@ -336,7 +336,7 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(screen.getByRole("button", { name: "Publish Changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish changes" }));
     await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
     expect(screen.getByLabelText("Visible Publicly")).toBeChecked();
 
@@ -456,7 +456,7 @@ describe("DatasetAdminPage", () => {
     // payload through this form.
   });
 
-  it("renders all Live Preview modes from the loaded draft and customization", async () => {
+  it("renders Live Preview subviews from real public components and the loaded customization", async () => {
     installFetchMock();
     render(<DatasetAdminPage />);
 
@@ -467,23 +467,20 @@ describe("DatasetAdminPage", () => {
     // just coincidentally matching text from a divergent mockup.
     expect(screen.getByRole("heading", { level: 1, name: "Curated churn profile" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Home card" }));
+    expect(screen.getByRole("tab", { name: "Dataset Detail", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Result" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Tenure")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
     // Level-scoped heading role proves DatasetCard's real <h3> title element.
     expect(screen.getByRole("heading", { level: 3, name: "Curated churn profile" })).toBeInTheDocument();
     expect(screen.getByText("Curated home card copy")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Result card" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
     expect(screen.getByText(/Placeholder preview only, not a real prediction./)).toBeInTheDocument();
-    // Scoping into InferenceResult's own labelled <section aria-label="Result">
-    // region proves the real component structure renders, not just matching text.
     const resultRegion = screen.getByRole("region", { name: "Result" });
     expect(within(resultRegion).getByText("Churn probability")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Inference form layout" }));
     expect(screen.getByText("Account profile")).toBeInTheDocument();
-    // Label-associated-with-input proves InferenceForm's real <label htmlFor>
-    // wiring, not just a text node with the same string.
-    expect(screen.getByLabelText("Tenure")).toBeInTheDocument();
   });
 
   it("updates each Live Preview mode's rendered output when a fed draft or customization field is edited", async () => {
@@ -505,10 +502,10 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Home card" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
     expect(screen.getByRole("heading", { level: 3, name: "Edited home title" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Dataset detail" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
     expect(screen.getByRole("heading", { level: 1, name: "Edited home title" })).toBeInTheDocument();
     expect(screen.getByText("2026-08-01")).toBeInTheDocument();
     // Release hint stays fixed at "Format: dd/mm/yyyy" regardless of the
@@ -516,12 +513,9 @@ describe("DatasetAdminPage", () => {
     // currently and always renders (decision-02).
     expect(screen.getByText("Format: dd/mm/yyyy")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Result card" }));
     // 0.72 fixed placeholder confidence resolves to the "warning" tone,
     // which maps to the medium badge label.
     expect(screen.getByText("Elevated risk (edited)")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Inference form layout" }));
     expect(screen.getByLabelText("Tenure (edited)")).toBeInTheDocument();
   });
 

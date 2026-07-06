@@ -3,7 +3,6 @@ import {
   useMemo,
   useState,
   type CSSProperties,
-  type FormEvent,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -538,12 +537,6 @@ const headerStyle: CSSProperties = {
 const fieldStyle: CSSProperties = {
   display: "grid",
   gap: "var(--atlas-space-2)",
-};
-
-const tokenControlStyle: CSSProperties = {
-  ...fieldStyle,
-  flex: "1 1 20rem",
-  minWidth: "20rem",
 };
 
 const labelStyle: CSSProperties = {
@@ -2585,10 +2578,9 @@ export default function DatasetAdminPage() {
   const [selectedSlug, setSelectedSlug] = useState("");
   const [datasetQuery, setDatasetQuery] = useState("");
   const [selectedTab, setSelectedTab] = useState(adminTabs[0].id);
-  const [adminToken, setAdminToken] = useState("");
   const [draftState, setDraftState] = useState<DraftState>({
     status: "idle",
-    message: "Enter an operator token and load a draft to edit profile fields.",
+    message: "Load the private/admin draft to edit profile fields.",
   });
   const [draftForm, setDraftForm] = useState<DraftForm>(emptyDraftForm());
   const [readOnlyData, setReadOnlyData] = useState<ReadOnlyData>(emptyReadOnlyData);
@@ -2728,28 +2720,21 @@ export default function DatasetAdminPage() {
     setDraftForm((current) => ({ ...current, [key]: value }));
   }
 
-  function loadDraft(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function loadDraft() {
     if (!selectedSlug) {
-      return;
-    }
-    const token = adminToken.trim();
-    if (!token) {
-      setDraftState({ status: "unavailable", message: "Enter the operator token to request the private profile draft." });
       return;
     }
 
     const controller = new AbortController();
     setDraftState({ status: "loading" });
     fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/profile-draft`, {
-      headers: { "X-Admin-Token": token },
       signal: controller.signal,
     })
       .then((response) => {
         if (response.status === 404) {
           setDraftState({
             status: "unavailable",
-            message: "Draft endpoint unavailable for this session. Confirm the operator token and API configuration.",
+            message: "Draft endpoint unavailable for this private admin session. Confirm API configuration.",
           });
           return null;
         }
@@ -2777,11 +2762,6 @@ export default function DatasetAdminPage() {
     if (!selectedSlug) {
       return;
     }
-    const token = adminToken.trim();
-    if (!token) {
-      setDraftState({ status: "unavailable", message: "Enter the operator token before saving the profile draft." });
-      return;
-    }
 
     const profile = profileFromForm(draftForm, selectedSlug);
     setDraftState({ status: "loading" });
@@ -2789,7 +2769,6 @@ export default function DatasetAdminPage() {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
-        "X-Admin-Token": token,
       },
       body: JSON.stringify(profile),
     })
@@ -2797,7 +2776,7 @@ export default function DatasetAdminPage() {
         if (response.status === 404) {
           setDraftState({
             status: "unavailable",
-            message: "Draft endpoint unavailable for this session. Confirm the operator token and API configuration.",
+            message: "Draft endpoint unavailable for this private admin session. Confirm API configuration.",
           });
           return null;
         }
@@ -2829,16 +2808,6 @@ export default function DatasetAdminPage() {
     if (!selectedSlug) {
       return;
     }
-    const token = adminToken.trim();
-    if (!token) {
-      setPublicationState((current) => ({
-        status: "unavailable",
-        visible: current.visible,
-        publishedProfile: current.publishedProfile,
-        message: "Enter the operator token before publishing changes.",
-      }));
-      return;
-    }
 
     const lastBackendDraft = backendDraftProfile(draftState);
     const currentProfile = profileFromForm(draftForm, selectedSlug);
@@ -2859,7 +2828,6 @@ export default function DatasetAdminPage() {
     }));
     fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/publish`, {
       method: "PUT",
-      headers: { "X-Admin-Token": token },
     })
       .then((response) => {
         if (response.status === 404) {
@@ -2867,7 +2835,7 @@ export default function DatasetAdminPage() {
             status: "unavailable",
             visible: current.visible,
             publishedProfile: current.publishedProfile,
-            message: "Publish endpoint unavailable for this session. Confirm the operator token and API configuration.",
+            message: "Publish endpoint unavailable for this private admin session. Confirm API configuration.",
           }));
           return null;
         }
@@ -2912,16 +2880,6 @@ export default function DatasetAdminPage() {
     if (!selectedSlug) {
       return;
     }
-    const token = adminToken.trim();
-    if (!token) {
-      setPublicationState((current) => ({
-        status: "unavailable",
-        visible: current.visible,
-        publishedProfile: current.publishedProfile,
-        message: "Enter the operator token before changing public exposure.",
-      }));
-      return;
-    }
 
     setPublicationState((current) => ({
       status: "saving_visibility",
@@ -2930,7 +2888,7 @@ export default function DatasetAdminPage() {
     }));
     fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/visibility`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ visible }),
     })
       .then((response) => {
@@ -2939,7 +2897,7 @@ export default function DatasetAdminPage() {
             status: "unavailable",
             visible: current.visible,
             publishedProfile: current.publishedProfile,
-            message: "Visibility endpoint unavailable for this session. Confirm the operator token and API configuration.",
+            message: "Visibility endpoint unavailable for this private admin session. Confirm API configuration.",
           }));
           return null;
         }
@@ -2987,20 +2945,12 @@ export default function DatasetAdminPage() {
     }
     setCustomizationEditorState({
       status: "idle",
-      message: "Enter an operator token and load the customization for the bound predict view.",
+      message: "Load the customization for the bound predict view from the private admin API.",
     });
   }, [boundPredictViewId]);
 
   function loadCustomization() {
     if (!selectedSlug || !boundPredictViewId) {
-      return;
-    }
-    const token = adminToken.trim();
-    if (!token) {
-      setCustomizationEditorState({
-        status: "unavailable",
-        message: "Enter the operator token to request the predict view customization.",
-      });
       return;
     }
 
@@ -3010,13 +2960,12 @@ export default function DatasetAdminPage() {
     setCustomizationEditorState({ status: "loading" });
     fetch(
       `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
-      { headers: { "X-Admin-Token": token } },
     )
       .then((response) => {
         if (response.status === 404) {
           setCustomizationEditorState({
             status: "unavailable",
-            message: "Customization endpoint unavailable for this session. Confirm the operator token and API configuration.",
+            message: "Customization endpoint unavailable for this private admin session. Confirm API configuration.",
           });
           return null;
         }
@@ -3050,14 +2999,6 @@ export default function DatasetAdminPage() {
     if (customizationEditorState.status !== "ready" && customizationEditorState.status !== "saved" && customizationEditorState.status !== "invalid") {
       return;
     }
-    const token = adminToken.trim();
-    if (!token) {
-      setCustomizationEditorState({
-        status: "unavailable",
-        message: "Enter the operator token before saving the customization.",
-      });
-      return;
-    }
 
     const draft = customizationEditorState.draft;
     const { field_hints, groups } = customizationDraftToRecord(draft);
@@ -3078,7 +3019,7 @@ export default function DatasetAdminPage() {
       `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
       {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       },
     )
@@ -3086,7 +3027,7 @@ export default function DatasetAdminPage() {
         if (response.status === 404) {
           setCustomizationEditorState({
             status: "unavailable",
-            message: "Customization endpoint unavailable for this session. Confirm the operator token and API configuration.",
+            message: "Customization endpoint unavailable for this private admin session. Confirm API configuration.",
           });
           return null;
         }
@@ -3160,21 +3101,14 @@ export default function DatasetAdminPage() {
             {headerPublicationStatus}
           </StatusPill>
 
-          <form onSubmit={loadDraft} style={tokenControlStyle}>
-            <span style={labelStyle}>Operator token</span>
-            <div style={buttonRowStyle}>
-              <input
-                aria-label="Operator token"
-                onChange={(event) => setAdminToken(event.target.value)}
-                style={{ ...inputStyle, minWidth: "min(16rem, 100%)" }}
-                type="password"
-                value={adminToken}
-              />
-              <button style={secondaryButtonStyle} type="submit">
-                Load draft
-              </button>
-            </div>
-          </form>
+          <button
+            disabled={!selectedSlug || draftState.status === "loading"}
+            onClick={loadDraft}
+            style={secondaryButtonStyle}
+            type="button"
+          >
+            Load draft
+          </button>
         </div>
       </header>
 

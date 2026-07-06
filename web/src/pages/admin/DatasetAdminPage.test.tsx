@@ -270,7 +270,7 @@ function installFetchMock(
 }
 
 async function loadDraftOnly() {
-  fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
+  expect(screen.queryByLabelText(["Operator", "token"].join(" "))).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
   // DraftStatusPanel's "ready" branch renders the bare string "Draft loaded"
   // (no trailing period) -- see DatasetAdminPage.tsx line ~1239. Matching the
@@ -346,8 +346,8 @@ describe("DatasetAdminPage", () => {
     const publishCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`));
     expect(publishCall?.[1]).toMatchObject({
       method: "PUT",
-      headers: { "X-Admin-Token": "operator-token" },
     });
+    expect((publishCall?.[1] as RequestInit | undefined)?.headers).toBeUndefined();
 
     fireEvent.click(screen.getByLabelText("Visible Publicly"));
     await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Hidden"));
@@ -358,7 +358,7 @@ describe("DatasetAdminPage", () => {
     expect(visibilityCalls).toHaveLength(1);
     expect(visibilityCalls[0]?.[1]).toMatchObject({
       method: "PUT",
-      headers: { "Content-Type": "application/json", "X-Admin-Token": "operator-token" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ visible: false }),
     });
     expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(1);
@@ -490,7 +490,6 @@ describe("DatasetAdminPage", () => {
     const fetchMock = installFetchMock();
     render(<DatasetAdminPage />);
 
-    fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
 
@@ -517,6 +516,9 @@ describe("DatasetAdminPage", () => {
           (call[1] as RequestInit | undefined)?.method === "PUT",
       );
     expect(saveCall).toBeDefined();
+    expect(saveCall?.[1]).toMatchObject({
+      headers: { "Content-Type": "application/json" },
+    });
     const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
       home_card?: { icon?: string; primary_metric_key?: string | null };
       theme?: { preset?: string };
@@ -537,7 +539,6 @@ describe("DatasetAdminPage", () => {
     installFetchMock();
     render(<DatasetAdminPage />);
 
-    fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
     fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
 
@@ -834,6 +835,9 @@ describe("DatasetAdminPage", () => {
           (call[1] as RequestInit | undefined)?.method === "PUT",
       );
     expect(saveCall).toBeDefined();
+    expect(saveCall?.[1]).toMatchObject({
+      headers: { "Content-Type": "application/json" },
+    });
     const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
       groups: Array<{ group_id: string; label: string }>;
     };

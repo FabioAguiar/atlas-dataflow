@@ -228,6 +228,7 @@ def test_get_dataset_returns_data_when_visible():
 
 
 def test_visibility_route_returns_generic_not_found_when_token_env_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
     request = _make_request({"X-Admin-Token": "irrelevant"})
     response = api_main.put_admin_profile_visibility(
@@ -238,6 +239,7 @@ def test_visibility_route_returns_generic_not_found_when_token_env_unset():
 
 
 def test_visibility_route_returns_generic_not_found_when_token_incorrect():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"})
@@ -247,10 +249,12 @@ def test_visibility_route_returns_generic_not_found_when_token_incorrect():
         assert response.status_code == 404
         assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 def test_visibility_route_returns_422_for_non_boolean_payload():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "correct-token"})
@@ -262,10 +266,12 @@ def test_visibility_route_returns_422_for_non_boolean_payload():
             "PROFILE_VISIBILITY_PAYLOAD_INVALID"
         )
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 def test_visibility_route_returns_422_for_invalid_dataset_slug():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request(
@@ -280,10 +286,12 @@ def test_visibility_route_returns_422_for_invalid_dataset_slug():
             "PROFILE_VISIBILITY_DATASET_SLUG_INVALID"
         )
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 def test_visibility_route_succeeds_with_valid_token_and_isolated_store():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     original = api_main.set_dataset_visibility
     with tempfile.TemporaryDirectory() as tmp:
@@ -300,6 +308,7 @@ def test_visibility_route_succeeds_with_valid_token_and_isolated_store():
             )
         finally:
             api_main.set_dataset_visibility = original
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
         assert response["dataset_slug"] == _TARGET_SLUG

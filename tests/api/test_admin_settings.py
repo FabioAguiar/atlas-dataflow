@@ -87,6 +87,7 @@ def test_write_service_persists_display_name_only_settings():
 
 
 def test_get_route_returns_generic_not_found_when_token_env_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
     request = _make_request({"X-Admin-Token": "irrelevant"})
     response = api_main.get_admin_settings_route(request)
@@ -95,6 +96,7 @@ def test_get_route_returns_generic_not_found_when_token_env_unset():
 
 
 def test_put_route_returns_generic_not_found_when_token_incorrect():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"}, method="PUT")
@@ -104,10 +106,12 @@ def test_put_route_returns_generic_not_found_when_token_incorrect():
         assert response.status_code == 404
         assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 def test_get_route_returns_settings_with_valid_token():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
@@ -117,12 +121,14 @@ def test_get_route_returns_settings_with_valid_token():
             response = api_main.get_admin_settings_route(request)
         finally:
             _restore_store(originals)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
     assert response == {"settings": {"display_name": "Internal operator"}}
 
 
 def test_put_route_rejects_unsupported_field_with_valid_token():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
@@ -135,6 +141,7 @@ def test_put_route_rejects_unsupported_field_with_valid_token():
             )
         finally:
             _restore_store(originals)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
     assert response.status_code == 422

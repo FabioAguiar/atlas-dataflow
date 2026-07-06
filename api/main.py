@@ -225,11 +225,20 @@ def _inference_releases_root() -> Path:
     return _REPO_ROOT / "releases"
 
 
-# GET /admin/runs must not be reachable without a correct token, and it must
-# fail closed (deny) whenever ADMIN_API_TOKEN is unset, so a missing operator
-# configuration blocks the route instead of silently exposing it. The token
-# is read only from the process environment; it is never read from a file.
+_ADMIN_ENABLED_VALUES = {"1", "true", "yes", "on"}
+
+
+def _admin_runtime_enabled() -> bool:
+    value = os.environ.get("ATLAS_ADMIN_ENABLED")
+    return value is not None and value.strip().lower() in _ADMIN_ENABLED_VALUES
+
+
+# Admin routes must not be reachable unless the backend admin runtime mode is
+# explicitly enabled and the existing token check succeeds. Both values are
+# read only from the process environment; neither is read from a file.
 def _admin_request_authorized(request: Request) -> bool:
+    if not _admin_runtime_enabled():
+        return False
     expected = os.environ.get("ADMIN_API_TOKEN")
     if not expected:
         return False

@@ -175,6 +175,7 @@ def test_publish_profile_succeeds_after_draft_saved():
 
 
 def test_publish_route_returns_generic_not_found_when_token_env_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
     request = _make_request({"X-Admin-Token": "irrelevant"})
     response = api_main.put_admin_profile_publish("example-dataset", request)
@@ -183,6 +184,7 @@ def test_publish_route_returns_generic_not_found_when_token_env_unset():
 
 
 def test_publish_route_returns_generic_not_found_when_token_incorrect():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"})
@@ -190,10 +192,12 @@ def test_publish_route_returns_generic_not_found_when_token_incorrect():
         assert response.status_code == 404
         assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 def test_publish_route_returns_422_when_no_draft_exists_with_valid_token():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
@@ -203,6 +207,7 @@ def test_publish_route_returns_422_when_no_draft_exists_with_valid_token():
             response = api_main.put_admin_profile_publish("example-dataset", request)
         finally:
             _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
     assert response.status_code == 422
@@ -212,6 +217,7 @@ def test_publish_route_returns_422_when_no_draft_exists_with_valid_token():
 
 
 def test_publish_route_succeeds_after_draft_saved_with_valid_token():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
@@ -222,6 +228,7 @@ def test_publish_route_succeeds_after_draft_saved_with_valid_token():
             response = api_main.put_admin_profile_publish("example-dataset", request)
         finally:
             _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
     assert response["published"] is True
@@ -230,6 +237,7 @@ def test_publish_route_succeeds_after_draft_saved_with_valid_token():
 
 
 def test_publish_route_returns_422_for_invalid_dataset_slug():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request(
@@ -242,6 +250,7 @@ def test_publish_route_returns_422_for_invalid_dataset_slug():
             "PROFILE_PUBLISH_DATASET_SLUG_INVALID"
         )
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 

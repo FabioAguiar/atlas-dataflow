@@ -134,6 +134,7 @@ def _profile(title: str, primary_metric_key: str | None = None) -> dict:
 
 
 def _install_isolated_lifecycle(monkeypatch, fake_repo: Path) -> None:
+    monkeypatch.setenv("ATLAS_ADMIN_ENABLED", "true")
     monkeypatch.setenv("ADMIN_API_TOKEN", _ADMIN_TOKEN)
     monkeypatch.setattr(
         admin_profile_drafts,

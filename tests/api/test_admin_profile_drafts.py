@@ -211,6 +211,7 @@ def test_read_and_save_raise_value_error_for_invalid_dataset_slug():
 # ---------------------------------------------------------------------------
 
 def test_get_route_returns_generic_not_found_when_token_env_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
     request = _make_request({"X-Admin-Token": "irrelevant"})
     response = api_main.get_admin_profile_draft("example-dataset", request)
@@ -219,6 +220,7 @@ def test_get_route_returns_generic_not_found_when_token_env_unset():
 
 
 def test_put_route_returns_generic_not_found_when_token_incorrect():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"}, method="PUT")
@@ -228,10 +230,12 @@ def test_put_route_returns_generic_not_found_when_token_incorrect():
         assert response.status_code == 404
         assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 def test_get_route_returns_absence_for_missing_draft_with_valid_token():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
@@ -241,6 +245,7 @@ def test_get_route_returns_absence_for_missing_draft_with_valid_token():
             response = api_main.get_admin_profile_draft("example-dataset", request)
         finally:
             _restore_store(originals)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
     assert response == {
@@ -251,6 +256,7 @@ def test_get_route_returns_absence_for_missing_draft_with_valid_token():
 
 
 def test_put_then_get_route_round_trip_with_valid_token():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
@@ -265,6 +271,7 @@ def test_put_then_get_route_round_trip_with_valid_token():
             get_response = api_main.get_admin_profile_draft("example-dataset", get_request)
         finally:
             _restore_store(originals)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
     assert put_response == {
@@ -281,6 +288,7 @@ def test_put_then_get_route_round_trip_with_valid_token():
 
 
 def test_put_route_returns_422_with_passthrough_errors_on_invalid_profile():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
@@ -293,6 +301,7 @@ def test_put_route_returns_422_with_passthrough_errors_on_invalid_profile():
             )
         finally:
             _restore_store(originals)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
 
     assert response.status_code == 422
@@ -302,6 +311,7 @@ def test_put_route_returns_422_with_passthrough_errors_on_invalid_profile():
 
 
 def test_get_and_put_route_return_422_for_invalid_dataset_slug():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         get_request = _make_request(
@@ -327,6 +337,7 @@ def test_get_and_put_route_return_422_for_invalid_dataset_slug():
             "PROFILE_DRAFT_DATASET_SLUG_INVALID"
         )
     finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 

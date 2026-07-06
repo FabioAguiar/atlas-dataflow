@@ -555,17 +555,22 @@ export default function DashboardPage() {
         </div>
 
         <div aria-label="Dashboard controls" className="admin-dashboard__header-controls">
-          <label className="admin-dashboard__search-control" style={fieldStyle}>
-            <span style={labelStyle}>Search runs and datasets</span>
-            <input
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search runs or datasets..."
-              ref={searchInputRef}
-              style={inputStyle}
-              type="search"
-              value={query}
-            />
-          </label>
+          <span className="admin-dashboard__search-control-row">
+            <label className="admin-dashboard__search-control" style={fieldStyle}>
+              <span style={labelStyle}>Search runs and datasets</span>
+              <input
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search runs or datasets..."
+                ref={searchInputRef}
+                style={inputStyle}
+                type="search"
+                value={query}
+              />
+            </label>
+            <span aria-hidden="true" className="admin-dashboard__search-hint">
+              ⌘K
+            </span>
+          </span>
 
           <Button disabled={state.status === "loading"} onClick={loadRuns} type="button">
             {state.status === "loading" ? "Loading..." : "Load runs"}

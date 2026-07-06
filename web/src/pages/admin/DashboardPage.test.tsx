@@ -197,6 +197,16 @@ describe("DashboardPage", () => {
     expect(searchInput).toHaveFocus();
   });
 
+  it("renders a decorative ⌘K keyboard hint next to the search input without changing its accessible name", () => {
+    render(<DashboardPage />);
+
+    const controls = screen.getByLabelText("Dashboard controls");
+    const hint = within(controls).getByText("⌘K");
+
+    expect(hint).toHaveAttribute("aria-hidden", "true");
+    expect(within(controls).getByLabelText("Search runs and datasets")).toBeInTheDocument();
+  });
+
   it("matches accented run and dataset text against a diacritic-insensitive query", async () => {
     installRunsFetchMock(
       jsonResponse({

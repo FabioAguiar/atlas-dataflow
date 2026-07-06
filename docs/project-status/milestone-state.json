@@ -18,13 +18,13 @@
     "github_role": "publication_target_or_human_reference"
   },
   "current_milestone": {
-    "id": "M47",
-    "title": "Private Admin Access and Tokenless Operator UX",
+    "id": "M48",
+    "title": "Design Acceptance Gap Reduction Pass",
     "status": "active"
   },
   "last_completed_milestone": {
-    "id": "M46",
-    "title": "Public/Private Runtime Boundary and Compose Separation",
+    "id": "M47",
+    "title": "Private Admin Access and Tokenless Operator UX",
     "status": "completed"
   },
   "completed_milestones": [
@@ -257,6 +257,11 @@
       "id": "M46",
       "title": "Public/Private Runtime Boundary and Compose Separation",
       "status": "completed"
+    },
+    {
+      "id": "M47",
+      "title": "Private Admin Access and Tokenless Operator UX",
+      "status": "completed"
     }
   ],
   "locked_completed_milestones": [
@@ -488,6 +493,11 @@
     {
       "id": "M46",
       "title": "Public/Private Runtime Boundary and Compose Separation",
+      "status": "locked"
+    },
+    {
+      "id": "M47",
+      "title": "Private Admin Access and Tokenless Operator UX",
       "status": "locked"
     }
   ],
@@ -749,12 +759,18 @@
     {
       "id": "M47",
       "title": "Private Admin Access and Tokenless Operator UX",
+      "status": "completed"
+    },
+    {
+      "id": "M48",
+      "title": "Design Acceptance Gap Reduction Pass",
       "status": "active"
     }
   ],
   "notes": [
     "This file records operational milestone state only.",
-    "M47 is the current active milestone for Private Admin Access and Tokenless Operator UX in Atlas DataFlow.",
+    "M48 is the current active milestone for Design Acceptance Gap Reduction Pass in Atlas DataFlow.",
+    "M47 is marked as completed because Private Admin Access and Tokenless Operator UX has been completed.",
     "M46 is marked as completed because Public/Private Runtime Boundary and Compose Separation has been completed.",
     "M45 is marked as completed because Dataset Admin Behavioral Parity and Final Regression Closure has been completed.",
     "M44 is marked as completed because Dataset Admin Exact Visual Structure Parity has been completed.",
@@ -807,9 +823,9 @@
     "docs/architecture.md defines the implementation documentation strategy; this file only records milestone state.",
     "Issues, handoffs, workflows, and scripts may use this state as input for validation, but must not infer authorization to implement from this file alone.",
     "This file should remain in the atlas-dataflow repository at docs/project-status/milestone-state.json.",
-    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40, M41, M42, M43, M44, M45, M46 are locked as completed milestones and must not be reopened without an explicit reopen record.",
-    "M47 should be validated against docs/milestones.md before workflow continuation.",
-    "The current milestone points to M47 because the next implementation focus is Private Admin Access and Tokenless Operator UX."
+    "M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29, M30, M31, M32, M33, M34, M35, M36, M37, M38, M39, M40, M41, M42, M43, M44, M45, M46, M47 are locked as completed milestones and must not be reopened without an explicit reopen record.",
+    "M48 should be validated against docs/milestones.md before workflow continuation.",
+    "The current milestone points to M48 because the next implementation focus is Design Acceptance Gap Reduction Pass."
   ],
   "documentation_boundary": {
     "vision_document": "docs/vision.md",

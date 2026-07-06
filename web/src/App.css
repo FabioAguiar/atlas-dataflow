@@ -1898,6 +1898,29 @@ h1 {
   min-width: min(20rem, 100%);
 }
 
+.admin-dashboard__search-control-row {
+  display: flex;
+  align-items: end;
+  gap: var(--atlas-space-2);
+}
+
+.admin-dashboard__search-hint {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.5rem;
+  padding: 0 var(--atlas-space-2);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-sm);
+  background: var(--atlas-color-surface);
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-xs);
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .admin-dashboard__summary-icon {
   display: grid;
   place-items: center;
@@ -1928,11 +1951,19 @@ h1 {
   .admin-dashboard__search-control input {
     min-width: min(16rem, 100%);
   }
+
+  .admin-dashboard__search-hint {
+    display: none;
+  }
 }
 
 @media (max-height: 820px) {
   .admin-dashboard__summary-icon {
     width: 1.9rem;
     height: 1.9rem;
+  }
+
+  .admin-dashboard__search-hint {
+    display: none;
   }
 }

@@ -122,4 +122,16 @@ describe("PublicShell nav overlay responsive behavior", () => {
     expect(screen.getByRole("link", { name: "GitHub" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Contato" })).toBeInTheDocument();
   });
+
+  it("collapses the rail when the desktop nav toggle is clicked", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell();
+
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+
+    fireEvent.click(screen.getByLabelText("Ocultar navegação"));
+
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+  });
 });

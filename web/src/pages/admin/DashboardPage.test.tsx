@@ -351,4 +351,45 @@ describe("DashboardPage", () => {
     expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "0");
     expect(screen.getByLabelText("Draft datasets")).toHaveAttribute("data-summary-count", "0");
   });
+
+  it("filters the runs table by Run status when a specific status is selected", async () => {
+    installRunsFetchMock(
+      jsonResponse({
+        runs_root_status: "available",
+        runs: [
+          {
+            schema_version: "admin-run-summary.v1",
+            run_id: "run-agnostic-001",
+            status: "available",
+            dataset_candidate: "synthetic-retail-forecast",
+            created_at: "2026-06-01T12:00:00Z",
+            trace_reference: "trace/run-agnostic-001",
+            validation_summary: { outcome: "accepted" },
+          },
+          {
+            schema_version: "admin-run-summary.v1",
+            run_id: "run-agnostic-002",
+            status: "invalid",
+            dataset_candidate: "synthetic-energy-usage",
+            created_at: "2026-06-02T12:00:00Z",
+            trace_reference: "trace/run-agnostic-002",
+            validation_summary: null,
+            invalid_reason: "source_run_evidence_malformed",
+          },
+        ],
+      }),
+    );
+    render(<DashboardPage />);
+
+    await loadRuns();
+
+    const table = await screen.findByRole("table", { name: "Run summaries" });
+    expect(table).toHaveAttribute("data-filtered-run-count", "2");
+
+    fireEvent.change(screen.getByLabelText("Run status"), { target: { value: "invalid" } });
+
+    expect(table).toHaveAttribute("data-filtered-run-count", "1");
+    expect(within(table).queryByText("run-agnostic-001")).not.toBeInTheDocument();
+    expect(within(table).getByText("run-agnostic-002")).toBeInTheDocument();
+  });
 });

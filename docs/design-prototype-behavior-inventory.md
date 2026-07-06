@@ -9,6 +9,16 @@ This inventory does not authorize runtime code changes. React paths are owner
 surfaces for downstream planning. Schema and API references are dependency
 checks, not edit authorization.
 
+> **M48 classification cross-reference:** `docs/design-parity-checklist.md`'s
+> "M48 Post-M47 Design Acceptance Gap Register" section is the authoritative,
+> current-milestone classification record for the rows below, using M48's
+> seven-category taxonomy (implemented / safe visual fix / API-schema-backed
+> behavior fix / intentionally deferred / unsupported by current schema-API /
+> design-only-local-prototype-behavior / blocked-by-missing-backend-owner).
+> This inventory keeps its original M41-02 six-value taxonomy and rows
+> unchanged rather than duplicating that register's per-row content here;
+> consult the register for each row's current M48 status (M48-05).
+
 ## Classification Taxonomy
 
 | Classification | Meaning |

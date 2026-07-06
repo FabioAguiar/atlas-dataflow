@@ -35,6 +35,9 @@ function installFetchMock() {
     if (url.endsWith("/datasets")) {
       return jsonResponse({ datasets });
     }
+    if (url.endsWith(`/datasets/${datasets[0].dataset_slug}`)) {
+      return jsonResponse(datasets[0]);
+    }
     if (url.endsWith("/admin/runs")) {
       return jsonResponse({ runs_root_status: "available", runs: [] });
     }
@@ -126,6 +129,23 @@ describe("App admin routing", () => {
     expect(screen.getByRole("heading", { name: /Admin help/i })).toBeInTheDocument();
   });
 
+  it("renders the Dashboard only inside the private admin shell", async () => {
+    await renderApp("/admin", true);
+
+    expect(await screen.findByText("Private administration")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+  });
+
+  it("renders the public Dataset Detail page for /dataset/:slug", async () => {
+    await renderApp("/dataset/telco-customer-churn", false);
+
+    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 }),
+    ).toBeInTheDocument();
+  });
+
   it("does not render admin shell or admin navigation for direct admin URLs when admin is disabled", async () => {
     const { container } = await renderApp("/admin/dataset-admin", false);
 
@@ -133,6 +153,15 @@ describe("App admin routing", () => {
     expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin utilities" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Dataset -- Telco Customer Churn" })).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("does not render admin shell or admin navigation for the bare /admin route when admin is disabled", async () => {
+    const { container } = await renderApp("/admin", false);
+
+    expect(screen.queryByText("Private administration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Dashboard" })).not.toBeInTheDocument();
     expect(container).toBeEmptyDOMElement();
   });
 

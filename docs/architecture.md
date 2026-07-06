@@ -432,6 +432,8 @@ The private administrative surface includes Dashboard, Dataset Admin, Settings, 
 
 The private administrative surface must not be exposed directly to the public internet.
 
+For the first version, operator access to that surface is provided by the private runtime and network boundary, such as the local/private stack or an SSH tunnel. Admin screens must not require a visible shared-token field, and any backend defense-in-depth must remain infrastructure/runtime behavior rather than a public login or multi-user authentication model.
+
 ### Public Runtime API vs Private Admin API
 
 The public API serves public Home, Dataset Detail, public contract, public metrics, public visualizations, and inference.

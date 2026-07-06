@@ -31,8 +31,7 @@ function installRunsFetchMock(response: MockResponse) {
   return fetchMock;
 }
 
-async function enterTokenAndLoadRuns() {
-  fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "run-agnostic-operator-token" } });
+async function loadRuns() {
   fireEvent.click(screen.getByRole("button", { name: "Load runs" }));
 }
 
@@ -49,20 +48,21 @@ describe("DashboardPage", () => {
     expect(screen.getByText(/no raw filesystem, draft, runtime, or log inspection/i)).toBeInTheDocument();
   });
 
-  it("renders the header search control and the operator token control together in the header, before data loads", () => {
+  it("renders tokenless private Dashboard controls before data loads", () => {
     render(<DashboardPage />);
 
     const controls = screen.getByLabelText("Dashboard controls");
     expect(within(controls).getByLabelText("Search runs and datasets")).toBeInTheDocument();
-    expect(within(controls).getByLabelText("Operator token")).toBeInTheDocument();
     expect(within(controls).getByRole("button", { name: "Load runs" })).toBeInTheDocument();
+    expect(within(controls).queryByLabelText("Operator token")).not.toBeInTheDocument();
+    expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
   });
 
   it("renders the runs-root-unavailable state distinctly from an empty runs list", async () => {
     installRunsFetchMock(jsonResponse({ runs_root_status: "unavailable", runs: [] }));
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
 
     expect(await screen.findByRole("heading", { name: "Runs root unavailable" })).toBeInTheDocument();
     expect(screen.getByText(/distinct from an empty runs list/)).toBeInTheDocument();
@@ -73,7 +73,7 @@ describe("DashboardPage", () => {
     installRunsFetchMock(jsonResponse({ runs_root_status: "available", runs: [] }));
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
 
     expect(await screen.findByRole("heading", { name: "No runs found" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Runs root unavailable" })).not.toBeInTheDocument();
@@ -98,7 +98,7 @@ describe("DashboardPage", () => {
     );
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
 
     const table = await screen.findByRole("table", { name: "Run summaries" });
     expect(table).toHaveAttribute("data-filtered-run-count", "1");
@@ -125,7 +125,7 @@ describe("DashboardPage", () => {
     );
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
 
     const table = await screen.findByRole("table", { name: "Dataset details" });
     expect(table).toHaveAttribute("data-filtered-dataset-count", "1");
@@ -166,7 +166,7 @@ describe("DashboardPage", () => {
     );
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
     fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "energy" } });
 
     const runsTable = screen.getByRole("table", { name: "Run summaries" });
@@ -216,7 +216,7 @@ describe("DashboardPage", () => {
     );
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
     fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "cafe" } });
 
     const runsTable = screen.getByRole("table", { name: "Run summaries" });
@@ -246,7 +246,7 @@ describe("DashboardPage", () => {
     );
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
 
     const statusRegions = await screen.findAllByRole("status");
     expect(statusRegions).toHaveLength(2);
@@ -273,7 +273,7 @@ describe("DashboardPage", () => {
     );
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
 
     const table = await screen.findByRole("table", { name: "Dataset details" });
     const callCountAfterLoad = fetchMock.mock.calls.length;
@@ -328,7 +328,7 @@ describe("DashboardPage", () => {
     );
     render(<DashboardPage />);
 
-    await enterTokenAndLoadRuns();
+    await loadRuns();
 
     const table = await screen.findByRole("table", { name: "Run summaries" });
     expect(table).toHaveAttribute("data-filtered-run-count", "3");

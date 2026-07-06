@@ -64,7 +64,6 @@ function installFetchMock(options: { rejectSave?: boolean } = {}) {
 }
 
 async function loadSettings() {
-  fireEvent.change(screen.getByLabelText("Operator token"), { target: { value: "operator-token" } });
   fireEvent.click(screen.getByRole("button", { name: "Load settings" }));
   await screen.findByText("Current display name loaded from the private/admin settings endpoint.");
 }
@@ -80,17 +79,21 @@ describe("SettingsPage", () => {
 
     expect(screen.getByRole("heading", { name: "Admin settings" })).toBeInTheDocument();
     expect(screen.getByLabelText("Display name")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Operator token")).not.toBeInTheDocument();
+    expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/account/i)).not.toBeInTheDocument();
   });
 
-  it("requires an operator token before loading settings", () => {
-    installFetchMock();
+  it("loads settings from the private admin endpoint without a visible token step", async () => {
+    const fetchMock = installFetchMock();
     renderSettingsPage();
 
     fireEvent.click(screen.getByRole("button", { name: "Load settings" }));
 
-    expect(screen.getByText("Enter the operator token to load Admin Settings.")).toBeInTheDocument();
+    expect(await screen.findByText("Current display name loaded from the private/admin settings endpoint.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/admin/settings");
+    expect(screen.queryByText(/operator token/i)).not.toBeInTheDocument();
   });
 
   it("loads the current display name through GET /admin/settings", async () => {

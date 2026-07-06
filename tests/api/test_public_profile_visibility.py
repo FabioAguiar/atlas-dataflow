@@ -227,10 +227,10 @@ def test_get_dataset_returns_data_when_visible():
 # ---------------------------------------------------------------------------
 
 
-def test_visibility_route_returns_generic_not_found_when_token_env_unset():
+def test_visibility_route_returns_generic_not_found_when_admin_runtime_unset():
     os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
-    request = _make_request({"X-Admin-Token": "irrelevant"})
+    request = _make_request({})
     response = api_main.put_admin_profile_visibility(
         _TARGET_SLUG, request, {"visible": False}
     )
@@ -238,8 +238,8 @@ def test_visibility_route_returns_generic_not_found_when_token_env_unset():
     assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
 
 
-def test_visibility_route_returns_generic_not_found_when_token_incorrect():
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+def test_visibility_route_returns_generic_not_found_when_admin_runtime_false_even_with_token_header():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "false"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"})
@@ -255,9 +255,9 @@ def test_visibility_route_returns_generic_not_found_when_token_incorrect():
 
 def test_visibility_route_returns_422_for_non_boolean_payload():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     try:
-        request = _make_request({"X-Admin-Token": "correct-token"})
+        request = _make_request({})
         response = api_main.put_admin_profile_visibility(
             _TARGET_SLUG, request, {"visible": "yes"}
         )
@@ -272,10 +272,10 @@ def test_visibility_route_returns_422_for_non_boolean_payload():
 
 def test_visibility_route_returns_422_for_invalid_dataset_slug():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     try:
         request = _make_request(
-            {"X-Admin-Token": "correct-token"},
+            {},
             path="/admin/datasets/Invalid Slug/visibility",
         )
         response = api_main.put_admin_profile_visibility(
@@ -290,9 +290,9 @@ def test_visibility_route_returns_422_for_invalid_dataset_slug():
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
-def test_visibility_route_succeeds_with_valid_token_and_isolated_store():
+def test_visibility_route_succeeds_in_private_runtime_without_token_header_and_isolated_store():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     original = api_main.set_dataset_visibility
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = Path(tmp)
@@ -302,7 +302,7 @@ def test_visibility_route_succeeds_with_valid_token_and_isolated_store():
             }
         )
         try:
-            request = _make_request({"X-Admin-Token": "correct-token"})
+            request = _make_request({})
             response = api_main.put_admin_profile_visibility(
                 _TARGET_SLUG, request, {"visible": False}
             )

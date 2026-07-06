@@ -4,7 +4,7 @@ Admin run listing tests for M33-02 and M33-05 validation evidence.
 Exercises api/admin_runs.py's safe run-summary derivation and api/main.py's
 GET /admin/runs access-control boundary. Tests use direct function/module
 calls (no httpx/TestClient dependency, matching tests/api/test_public_endpoints.py)
-and configure ADMIN_RUNS_ROOT/ATLAS_ADMIN_ENABLED/ADMIN_API_TOKEN exclusively
+and configure ADMIN_RUNS_ROOT/ATLAS_ADMIN_ENABLED exclusively
 through monkeypatched module attributes or temporary os.environ entries -- never
 through a .env file.
 
@@ -337,30 +337,37 @@ def test_run_id_does_not_allow_path_traversal_to_private_details():
 # GET /admin/runs: access-control boundary
 # ---------------------------------------------------------------------------
 
-def test_route_returns_generic_not_found_when_token_env_unset():
+def test_route_returns_generic_not_found_when_admin_runtime_unset():
     os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
-    request = _make_request({"X-Admin-Token": "irrelevant"})
+    request = _make_request({})
     response = api_main.list_admin_runs(request)
     assert response.status_code == 404
     assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
 
 
-def test_route_returns_generic_not_found_when_header_missing():
+def test_route_returns_listing_when_header_missing_in_private_runtime():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    original_root = admin_runs._admin_runs_root
     try:
-        request = _make_request({})
-        response = api_main.list_admin_runs(request)
-        assert response.status_code == 404
-        assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_run_dir(root, "validate-tokenless", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+            admin_runs._admin_runs_root = lambda: root
+            request = _make_request({})
+            response = api_main.list_admin_runs(request)
+            assert response["runs_root_status"] == "available"
+            assert len(response["runs"]) == 1
+            assert response["runs"][0]["run_id"] == "validate-tokenless"
     finally:
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
 
 
-def test_route_returns_generic_not_found_when_token_incorrect():
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+def test_route_returns_generic_not_found_when_admin_runtime_false_even_with_token_header():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "false"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"})
@@ -372,7 +379,7 @@ def test_route_returns_generic_not_found_when_token_incorrect():
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
-def test_route_returns_generic_not_found_when_admin_runtime_unset_even_with_valid_token():
+def test_route_returns_generic_not_found_when_admin_runtime_unset_even_with_token_header():
     os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
@@ -385,7 +392,7 @@ def test_route_returns_generic_not_found_when_admin_runtime_unset_even_with_vali
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
-def test_route_returns_generic_not_found_when_admin_runtime_false_even_with_valid_token():
+def test_route_returns_generic_not_found_when_admin_runtime_false_even_with_matching_token_header():
     os.environ["ATLAS_ADMIN_ENABLED"] = "false"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
@@ -398,16 +405,16 @@ def test_route_returns_generic_not_found_when_admin_runtime_false_even_with_vali
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
-def test_route_returns_listing_when_token_correct():
+def test_route_returns_listing_in_private_runtime_without_token_header():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     original_root = admin_runs._admin_runs_root
     try:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_run_dir(root, "validate-ok", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
             admin_runs._admin_runs_root = lambda: root
-            request = _make_request({"X-Admin-Token": "correct-token"})
+            request = _make_request({})
             response = api_main.list_admin_runs(request)
 
             assert response["runs_root_status"] == "available"
@@ -433,7 +440,7 @@ def test_route_returns_listing_when_token_correct():
 
 def test_route_listing_is_sanitized_even_when_source_contains_private_fields():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     original_root = admin_runs._admin_runs_root
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -443,7 +450,7 @@ def test_route_listing_is_sanitized_even_when_source_contains_private_fields():
             manifest["secret"] = "secret-token-value"
             _write_run_dir(root, "validate-route", manifest, _REJECTED_VALIDATION_RESULT)
             admin_runs._admin_runs_root = lambda: root
-            request = _make_request({"X-Admin-Token": "correct-token"})
+            request = _make_request({})
             response = api_main.list_admin_runs(request)
 
             assert response["runs_root_status"] == "available"

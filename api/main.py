@@ -1,7 +1,6 @@
 import json
 import os
 import pickle
-import secrets
 import sys
 import tarfile
 from pathlib import Path
@@ -234,18 +233,10 @@ def _admin_runtime_enabled() -> bool:
 
 
 # Admin routes must not be reachable unless the backend admin runtime mode is
-# explicitly enabled and the existing token check succeeds. Both values are
-# read only from the process environment; neither is read from a file.
-def _admin_request_authorized(request: Request) -> bool:
-    if not _admin_runtime_enabled():
-        return False
-    expected = os.environ.get("ADMIN_API_TOKEN")
-    if not expected:
-        return False
-    provided = request.headers.get("x-admin-token")
-    if not provided:
-        return False
-    return secrets.compare_digest(provided, expected)
+# explicitly enabled. M47 private admin operation relies on the private runtime
+# boundary rather than browser-held operator token state.
+def _admin_request_authorized(_request: Request) -> bool:
+    return _admin_runtime_enabled()
 
 
 # On an access-control failure this must be byte-for-byte the same response
@@ -312,7 +303,7 @@ app.add_middleware(
     allow_origins=[os.environ.get("CORS_ALLOWED_ORIGIN", "")],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Admin-Token"],
+    allow_headers=["Content-Type"],
 )
 
 

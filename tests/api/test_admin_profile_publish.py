@@ -5,7 +5,7 @@ Exercises api/admin_profile_publish.py's publish_profile service function
 and api/main.py's PUT /admin/datasets/{dataset_slug}/publish access-control
 and behavior boundary. Tests use direct function/Request-object calls (no
 httpx/TestClient dependency, matching tests/api/test_admin_profile_drafts.py)
-and configure ADMIN_API_TOKEN and the persistence modules' repo_root
+and configure ATLAS_ADMIN_ENABLED and the persistence modules' repo_root
 exclusively through monkeypatched module attributes or temporary
 os.environ entries -- never through a .env file or the real repository's
 registry/profile-drafts/ or registry/profile-snapshots/ directories.
@@ -174,17 +174,17 @@ def test_publish_profile_succeeds_after_draft_saved():
 # ---------------------------------------------------------------------------
 
 
-def test_publish_route_returns_generic_not_found_when_token_env_unset():
+def test_publish_route_returns_generic_not_found_when_admin_runtime_unset():
     os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
-    request = _make_request({"X-Admin-Token": "irrelevant"})
+    request = _make_request({})
     response = api_main.put_admin_profile_publish("example-dataset", request)
     assert response.status_code == 404
     assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
 
 
-def test_publish_route_returns_generic_not_found_when_token_incorrect():
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+def test_publish_route_returns_generic_not_found_when_admin_runtime_false_even_with_token_header():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "false"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"})
@@ -196,14 +196,14 @@ def test_publish_route_returns_generic_not_found_when_token_incorrect():
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
-def test_publish_route_returns_422_when_no_draft_exists_with_valid_token():
+def test_publish_route_returns_422_when_no_draft_exists_in_private_runtime_without_token_header():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
         original = _install_isolated_publish(fake_repo)
         try:
-            request = _make_request({"X-Admin-Token": "correct-token"})
+            request = _make_request({})
             response = api_main.put_admin_profile_publish("example-dataset", request)
         finally:
             _restore_publish(original)
@@ -216,15 +216,15 @@ def test_publish_route_returns_422_when_no_draft_exists_with_valid_token():
     assert body["errors"], "expected passthrough validation errors"
 
 
-def test_publish_route_succeeds_after_draft_saved_with_valid_token():
+def test_publish_route_succeeds_after_draft_saved_in_private_runtime_without_token_header():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
         _real_create_draft("example-dataset", dict(_VALID_PROFILE), repo_root=fake_repo)
         original = _install_isolated_publish(fake_repo)
         try:
-            request = _make_request({"X-Admin-Token": "correct-token"})
+            request = _make_request({})
             response = api_main.put_admin_profile_publish("example-dataset", request)
         finally:
             _restore_publish(original)
@@ -238,10 +238,10 @@ def test_publish_route_succeeds_after_draft_saved_with_valid_token():
 
 def test_publish_route_returns_422_for_invalid_dataset_slug():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     try:
         request = _make_request(
-            {"X-Admin-Token": "correct-token"},
+            {},
             path="/admin/datasets/Invalid Slug/publish",
         )
         response = api_main.put_admin_profile_publish("Invalid Slug", request)

@@ -86,17 +86,17 @@ def test_write_service_persists_display_name_only_settings():
     assert read_back == {"settings": {"display_name": "Operations lead"}}
 
 
-def test_get_route_returns_generic_not_found_when_token_env_unset():
+def test_get_route_returns_generic_not_found_when_admin_runtime_unset():
     os.environ.pop("ATLAS_ADMIN_ENABLED", None)
     os.environ.pop("ADMIN_API_TOKEN", None)
-    request = _make_request({"X-Admin-Token": "irrelevant"})
+    request = _make_request({})
     response = api_main.get_admin_settings_route(request)
     assert response.status_code == 404
     assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
 
 
-def test_put_route_returns_generic_not_found_when_token_incorrect():
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+def test_put_route_returns_generic_not_found_when_admin_runtime_false_even_with_token_header():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "false"
     os.environ["ADMIN_API_TOKEN"] = "correct-token"
     try:
         request = _make_request({"X-Admin-Token": "wrong-token"}, method="PUT")
@@ -110,14 +110,14 @@ def test_put_route_returns_generic_not_found_when_token_incorrect():
         os.environ.pop("ADMIN_API_TOKEN", None)
 
 
-def test_get_route_returns_settings_with_valid_token():
+def test_get_route_returns_settings_in_private_runtime_without_token_header():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
         originals = _install_isolated_store(fake_repo)
         try:
-            request = _make_request({"X-Admin-Token": "correct-token"})
+            request = _make_request({})
             response = api_main.get_admin_settings_route(request)
         finally:
             _restore_store(originals)
@@ -127,14 +127,14 @@ def test_get_route_returns_settings_with_valid_token():
     assert response == {"settings": {"display_name": "Internal operator"}}
 
 
-def test_put_route_rejects_unsupported_field_with_valid_token():
+def test_put_route_rejects_unsupported_field_in_private_runtime_without_token_header():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ["ADMIN_API_TOKEN"] = "correct-token"
+    os.environ.pop("ADMIN_API_TOKEN", None)
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))
         originals = _install_isolated_store(fake_repo)
         try:
-            request = _make_request({"X-Admin-Token": "correct-token"}, method="PUT")
+            request = _make_request({}, method="PUT")
             response = api_main.put_admin_settings_route(
                 request,
                 {"display_name": "Operations lead", "email": "operator@example.com"},

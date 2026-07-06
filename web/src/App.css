@@ -1898,12 +1898,6 @@ h1 {
   min-width: min(20rem, 100%);
 }
 
-.admin-dashboard__token-note {
-  margin: calc(var(--atlas-space-3) * -1) 0 0;
-  color: var(--atlas-color-text-subtle);
-  font-size: var(--atlas-text-xs);
-}
-
 .admin-dashboard__summary-icon {
   display: grid;
   place-items: center;

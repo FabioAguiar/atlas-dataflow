@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useState, type CSSProperties } from "react";
 
 import { useAdminSettings } from "../../layouts/AdminSettingsContext";
 
@@ -150,25 +150,15 @@ function SettingsStatusPanel({ state }: { state: SettingsState }) {
 
 export default function SettingsPage() {
   const { setDisplayName: setSharedDisplayName } = useAdminSettings();
-  const [adminToken, setAdminToken] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [state, setState] = useState<SettingsState>({
     status: "idle",
-    message: "Enter the operator token and load the current display name.",
+    message: "Load the current display name from the private admin settings endpoint.",
   });
 
-  function loadSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const token = adminToken.trim();
-    if (!token) {
-      setState({ status: "unavailable", message: "Enter the operator token to load Admin Settings." });
-      return;
-    }
-
+  function loadSettings() {
     setState({ status: "loading" });
-    fetch(`${apiBaseUrl}/admin/settings`, {
-      headers: { "X-Admin-Token": token },
-    })
+    fetch(`${apiBaseUrl}/admin/settings`)
       .then((response) => {
         if (!response.ok) {
           setState({ status: "unavailable", message: `Admin Settings unavailable (${response.status}).` });
@@ -188,23 +178,19 @@ export default function SettingsPage() {
         setState({ status: "ready" });
       })
       .catch(() => {
-        setState({ status: "unavailable", message: "Admin Settings could not be loaded. Check API reachability." });
+        setState({
+          status: "unavailable",
+          message: "Admin Settings could not be loaded. Check private admin API reachability.",
+        });
       });
   }
 
   function saveSettings() {
-    const token = adminToken.trim();
-    if (!token) {
-      setState({ status: "unavailable", message: "Enter the operator token before saving." });
-      return;
-    }
-
     setState({ status: "loading" });
     fetch(`${apiBaseUrl}/admin/settings`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
-        "X-Admin-Token": token,
       },
       body: JSON.stringify({ display_name: displayName }),
     })
@@ -230,7 +216,10 @@ export default function SettingsPage() {
         setState({ status: "saved" });
       })
       .catch(() => {
-        setState({ status: "unavailable", message: "Admin Settings could not be saved. Check API reachability." });
+        setState({
+          status: "unavailable",
+          message: "Admin Settings could not be saved. Check private admin API reachability.",
+        });
       });
   }
 
@@ -248,21 +237,16 @@ export default function SettingsPage() {
       </div>
 
       <article style={panelStyle}>
-        <form onSubmit={loadSettings} style={fieldStyle}>
-          <span style={labelStyle}>Operator token</span>
-          <div style={buttonRowStyle}>
-            <input
-              aria-label="Operator token"
-              onChange={(event) => setAdminToken(event.target.value)}
-              style={{ ...inputStyle, minWidth: "min(16rem, 100%)" }}
-              type="password"
-              value={adminToken}
-            />
-            <button disabled={isBusy} style={isBusy ? disabledButtonStyle : secondaryButtonStyle} type="submit">
-              Load settings
-            </button>
-          </div>
-        </form>
+        <div style={buttonRowStyle}>
+          <button
+            disabled={isBusy}
+            onClick={loadSettings}
+            style={isBusy ? disabledButtonStyle : secondaryButtonStyle}
+            type="button"
+          >
+            Load settings
+          </button>
+        </div>
 
         <SettingsStatusPanel state={state} />
 

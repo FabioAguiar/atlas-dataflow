@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Badge, Button, Card, EmptyState, ErrorState, StatusPill, TableRow } from "../../components/ui";
 
@@ -64,13 +64,6 @@ const headerStyle: CSSProperties = {
   alignItems: "end",
   justifyContent: "space-between",
   gap: "var(--atlas-space-5)",
-};
-
-const formStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "var(--atlas-space-3)",
-  alignItems: "end",
 };
 
 const fieldStyle: CSSProperties = {
@@ -448,7 +441,6 @@ function datasetMatchesQuery(row: DatasetDetailRow, query: string): boolean {
 
 export default function DashboardPage() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const [adminToken, setAdminToken] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [state, setState] = useState<DashboardState>({ status: "idle" });
@@ -503,27 +495,18 @@ export default function DashboardPage() {
     [datasetRows, normalizedQuery],
   );
 
-  function loadRuns(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const token = adminToken.trim();
-    if (!token) {
-      setState({ status: "unavailable", message: "Enter the operator token to request private run summaries." });
-      return;
-    }
-
+  function loadRuns() {
     const controller = new AbortController();
     setState({ status: "loading" });
 
     fetch(`${apiBaseUrl}/admin/runs`, {
-      headers: { "X-Admin-Token": token },
       signal: controller.signal,
     })
       .then((res) => {
         if (res.status === 404) {
           setState({
             status: "unavailable",
-            message: "Run summaries are unavailable for this session. Confirm the operator token and API configuration.",
+            message: "Run summaries are unavailable in this private admin runtime. Confirm the admin API configuration.",
           });
           return null;
         }
@@ -584,31 +567,14 @@ export default function DashboardPage() {
             />
           </label>
 
-          <form className="admin-dashboard__token-form" onSubmit={loadRuns} style={formStyle}>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>Operator token</span>
-              <input
-                autoComplete="off"
-                onChange={(event) => setAdminToken(event.target.value)}
-                placeholder="Enter token for this session"
-                style={inputStyle}
-                type="password"
-                value={adminToken}
-              />
-            </label>
-            <Button disabled={state.status === "loading"} type="submit">
-              {state.status === "loading" ? "Loading..." : "Load runs"}
-            </Button>
-          </form>
+          <Button disabled={state.status === "loading"} onClick={loadRuns} type="button">
+            {state.status === "loading" ? "Loading..." : "Load runs"}
+          </Button>
         </div>
       </div>
 
-      <p className="admin-dashboard__token-note">
-        The operator token is held only in page state and sent as an X-Admin-Token header.
-      </p>
-
       {state.status === "idle" && (
-        <EmptyState title="Run summaries not loaded" message="Enter the operator token to request the private summary projection." />
+        <EmptyState title="Run summaries not loaded" message="Load the private admin summary projection when the admin API is available." />
       )}
 
       {state.status === "loading" && (

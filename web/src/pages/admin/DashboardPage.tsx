@@ -512,7 +512,7 @@ export default function DashboardPage() {
         }
 
         if (!res.ok) {
-          setState({ status: "error", message: "Run summaries could not be loaded from the admin API." });
+          setState({ status: "error", message: "Run summaries could not be loaded from the private admin API." });
           return null;
         }
 
@@ -532,7 +532,7 @@ export default function DashboardPage() {
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
-          setState({ status: "error", message: "Run summaries could not be loaded. Check that the API is reachable." });
+          setState({ status: "error", message: "Run summaries could not be loaded. Check private admin API reachability." });
         }
       });
   }

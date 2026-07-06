@@ -161,7 +161,10 @@ export default function SettingsPage() {
     fetch(`${apiBaseUrl}/admin/settings`)
       .then((response) => {
         if (!response.ok) {
-          setState({ status: "unavailable", message: `Admin Settings unavailable (${response.status}).` });
+          setState({
+            status: "unavailable",
+            message: `Private admin settings endpoint unavailable (${response.status}). Confirm API configuration.`,
+          });
           return null;
         }
         return response.json() as Promise<{ settings?: { display_name?: string } }>;
@@ -231,7 +234,7 @@ export default function SettingsPage() {
         <p className="eyebrow">Settings</p>
         <h1 id="admin-settings-title">Admin settings</h1>
         <p className="summary">
-          Edit only the displayed admin user name. Account, credential, deployment, model, secret, role, team, and
+          Edit only the displayed admin user name. Account, deployment, model, role, team, and
           organization settings are not available here.
         </p>
       </div>

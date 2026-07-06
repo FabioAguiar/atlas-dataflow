@@ -1169,9 +1169,9 @@ function extractModelCardText(modelCard: ModelCardPayload | null): string {
   }
 }
 
-async function fetchJson<T>(path: string, signal: AbortSignal, headers?: HeadersInit): Promise<SectionState<T>> {
+async function fetchJson<T>(path: string, signal: AbortSignal): Promise<SectionState<T>> {
   try {
-    const response = await fetch(`${apiBaseUrl}${path}`, { headers, signal });
+    const response = await fetch(`${apiBaseUrl}${path}`, { signal });
     if (!response.ok) {
       return { status: "unavailable", message: `Unavailable (${response.status})` };
     }
@@ -1181,7 +1181,7 @@ async function fetchJson<T>(path: string, signal: AbortSignal, headers?: Headers
     if (err instanceof Error && err.name === "AbortError") {
       return { status: "unavailable", message: "Request cancelled." };
     }
-    return { status: "unavailable", message: "Request failed." };
+    return { status: "unavailable", message: "Request failed. Check API reachability." };
   }
 }
 
@@ -2739,7 +2739,7 @@ export default function DatasetAdminPage() {
           return null;
         }
         if (!response.ok) {
-          setDraftState({ status: "unavailable", message: "Profile draft could not be loaded from the admin API." });
+          setDraftState({ status: "unavailable", message: "Profile draft could not be loaded from the private admin API." });
           return null;
         }
         return response.json() as Promise<{ draft_exists: boolean; profile: ProfileDraft | null }>;
@@ -2753,7 +2753,7 @@ export default function DatasetAdminPage() {
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
-          setDraftState({ status: "unavailable", message: "Profile draft could not be loaded. Check API reachability." });
+          setDraftState({ status: "unavailable", message: "Profile draft could not be loaded. Check private admin API reachability." });
         }
       });
   }
@@ -2798,7 +2798,7 @@ export default function DatasetAdminPage() {
         setDraftState({ status: "saved", profile: savedProfile });
       })
       .catch(() => {
-        setDraftState({ status: "unavailable", message: "Profile draft could not be saved. Check API reachability." });
+        setDraftState({ status: "unavailable", message: "Profile draft could not be saved. Check private admin API reachability." });
       });
   }
 
@@ -2871,7 +2871,7 @@ export default function DatasetAdminPage() {
           status: "unavailable",
           visible: current.visible,
           publishedProfile: current.publishedProfile,
-          message: "Profile could not be published. Check API reachability.",
+          message: "Profile could not be published. Check private admin API reachability.",
         }));
       });
   }
@@ -2933,7 +2933,7 @@ export default function DatasetAdminPage() {
           status: "unavailable",
           visible: current.visible,
           publishedProfile: current.publishedProfile,
-          message: "Public exposure could not be saved. Check API reachability.",
+          message: "Public exposure could not be saved. Check private admin API reachability.",
         }));
       });
   }
@@ -2970,7 +2970,7 @@ export default function DatasetAdminPage() {
           return null;
         }
         if (!response.ok) {
-          setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded from the admin API." });
+          setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded from the private admin API." });
           return null;
         }
         return response.json() as Promise<{
@@ -2988,7 +2988,7 @@ export default function DatasetAdminPage() {
         setCustomizationEditorState({ status: "ready", draft, recordExists: data.customization_exists });
       })
       .catch(() => {
-        setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded. Check API reachability." });
+        setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded. Check private admin API reachability." });
       });
   }
 
@@ -3056,7 +3056,7 @@ export default function DatasetAdminPage() {
         setCustomizationEditorState({ status: "saved", draft: savedDraft });
       })
       .catch(() => {
-        setCustomizationEditorState({ status: "unavailable", message: "Customization could not be saved. Check API reachability." });
+        setCustomizationEditorState({ status: "unavailable", message: "Customization could not be saved. Check private admin API reachability." });
       });
   }
 

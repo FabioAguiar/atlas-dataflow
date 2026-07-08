@@ -2400,15 +2400,33 @@ function FormLayoutLivePreview({
   return <InferenceForm contract={contract} customization={customization} previewMode slug={selectedSlug} />;
 }
 
+// Mirrors the comparison already used for Publishing's own status pill
+// (publishingStatusLabel) so Live Preview never invents a second, divergent
+// notion of "matches published" -- it just states which side of that same
+// comparison the fed draft is currently on.
+function livePreviewDraftStateNote(hasPublishedSnapshot: boolean, hasUnpublishedChanges: boolean): string {
+  if (!hasPublishedSnapshot) {
+    return "Previewing the private draft. No public snapshot has been published yet, so nothing below is live on the public site.";
+  }
+  if (hasUnpublishedChanges) {
+    return "Previewing the private draft, which differs from the currently published public snapshot. Publish changes to make the public site match this preview.";
+  }
+  return "Previewing the private draft, which matches the currently published public snapshot.";
+}
+
 function LivePreviewTab({
   dataset,
   form,
+  hasPublishedSnapshot,
+  hasUnpublishedChanges,
   readOnlyData,
   selectedSlug,
   customizationEditorState,
 }: {
   dataset?: DatasetListing;
   form: DraftForm;
+  hasPublishedSnapshot: boolean;
+  hasUnpublishedChanges: boolean;
   readOnlyData: ReadOnlyData;
   selectedSlug: string;
   customizationEditorState: CustomizationEditorState;
@@ -2428,6 +2446,10 @@ function LivePreviewTab({
           Preview renders the same shared public Home card and Dataset Detail components used on the public site,
           fed by the current draft and the read-only Atlas context already loaded above. Inference form layout
           reuses the real InferenceForm rendering logic in a non-submitting preview mode.
+        </p>
+        <p role="status" style={mutedTextStyle}>
+          <strong>{hasPublishedSnapshot && !hasUnpublishedChanges ? "Draft matches public site: " : "Draft preview: "}</strong>
+          {livePreviewDraftStateNote(hasPublishedSnapshot, hasUnpublishedChanges)}
         </p>
       </div>
       <div className="dataset-admin-preview-switcher" role="tablist" aria-label="Live preview modes">
@@ -2505,6 +2527,17 @@ function renderSelectedTab(
   publicationState: PublicationState,
   lastPublishedAt: string | undefined,
 ) {
+  // Shared by the Publishing and Live Preview cases below so Live Preview can
+  // classify its own draft-vs-published state (S0009) using the same
+  // comparison Publishing already derives, instead of a second, divergent
+  // notion of "matches published".
+  const currentProfile = selectedSlug ? profileFromForm(form, selectedSlug) : null;
+  const lastBackendDraft = backendDraftProfile(draftState);
+  const hasUnsavedDraftChanges = Boolean(currentProfile && lastBackendDraft && !sameProfile(currentProfile, lastBackendDraft));
+  const publishedProfile = publicationState.publishedProfile;
+  const hasPublishedSnapshot = Boolean(publishedProfile);
+  const hasUnpublishedChanges = Boolean(currentProfile && publishedProfile && !sameProfile(currentProfile, publishedProfile));
+
   switch (selectedTab) {
     case "metadata-card":
       return <MetadataCardTab form={form} readOnlyData={readOnlyData} setField={setField} />;
@@ -2526,12 +2559,6 @@ function renderSelectedTab(
       return <ResultCardTab form={form} setField={setField} />;
     case "publishing":
       {
-        const currentProfile = selectedSlug ? profileFromForm(form, selectedSlug) : null;
-        const lastBackendDraft = backendDraftProfile(draftState);
-        const hasUnsavedDraftChanges = Boolean(currentProfile && lastBackendDraft && !sameProfile(currentProfile, lastBackendDraft));
-        const publishedProfile = publicationState.publishedProfile;
-        const hasPublishedSnapshot = Boolean(publishedProfile);
-        const hasUnpublishedChanges = Boolean(currentProfile && publishedProfile && !sameProfile(currentProfile, publishedProfile));
         const publishDisabledReason = !selectedSlug
           ? "Select a dataset before publishing."
           : !lastBackendDraft
@@ -2563,6 +2590,8 @@ function renderSelectedTab(
           customizationEditorState={customizationEditorState}
           dataset={dataset}
           form={form}
+          hasPublishedSnapshot={hasPublishedSnapshot}
+          hasUnpublishedChanges={hasUnpublishedChanges}
           readOnlyData={readOnlyData}
           selectedSlug={selectedSlug}
         />

@@ -12,6 +12,8 @@ services:
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
     expose:
       - "8000"
+    volumes:
+      - ./contracts:/app/contracts:ro
     healthcheck:
       test:
         [

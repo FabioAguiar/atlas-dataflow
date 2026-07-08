@@ -114,6 +114,16 @@ function AdminProfileBlock() {
         <strong className="admin-shell__profile-name">{displayName}</strong>
         <span className="admin-shell__profile-role">Admin</span>
       </span>
+      <svg
+        aria-hidden="true"
+        className="admin-shell__profile-caret"
+        fill="none"
+        height="16"
+        viewBox="0 0 24 24"
+        width="16"
+      >
+        <path d="m9 6 6 6-6 6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+      </svg>
     </section>
   );
 }
@@ -128,8 +138,7 @@ export default function AdminShell() {
               <img alt="" src={atlasLogoSidebar} />
             </span>
             <span className="admin-shell__brand-copy">
-              <strong className="admin-shell__brand-name">Atlas DataFlow</strong>
-              <span className="admin-shell__brand-role">Admin</span>
+              <strong className="admin-shell__brand-name">Atlas DataFlow.</strong>
             </span>
           </div>
 

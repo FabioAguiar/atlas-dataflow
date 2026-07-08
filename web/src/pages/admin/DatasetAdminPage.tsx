@@ -3076,7 +3076,7 @@ export default function DatasetAdminPage() {
     <section aria-labelledby="dataset-admin-title" className="dataset-admin-page" style={pageStyle}>
       <header style={headerStyle}>
         <div>
-          <h1 id="dataset-admin-title">Dataset -- {getDatasetLabel(selectedDataset)}</h1>
+          <h1 id="dataset-admin-title">Dataset — {getDatasetLabel(selectedDataset)}</h1>
           <p className="summary">
             Curate the selected dataset's public presentation profile while Atlas technical values stay read-only.
           </p>

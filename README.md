@@ -42,6 +42,6 @@ When the private stack runs on a VPS or another host, reach it through a private
 network path such as SSH tunneling to the loopback-bound preview port. That
 tunnel is only an operational access path to the private runtime; it is not
 application authentication, a public admin feature, or a replacement for the
-current operator-token behavior. Do not expose the private stack publicly, and
-do not treat this note as authorization to remove token fields before the M46
-runtime boundary is validated.
+runtime boundary. Do not expose the private stack publicly; public/prod admin
+denial is enforced by the runtime configuration that disables admin routes and
+the admin UI outside the private stack.

@@ -39,7 +39,7 @@
     "generator_version": "prepare-candidate.v1",
     "preparation_rules_source": "notebook:telco-preparation-review-transformations"
   },
-  "generated_at": "2026-07-09T17:04:12+00:00",
+  "generated_at": "2026-07-09T19:40:12+00:00",
   "preparation_boundary_confirmations": {
     "complex_feature_engineering_performed": false,
     "model_training_performed": false,

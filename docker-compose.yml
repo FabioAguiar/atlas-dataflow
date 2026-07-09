@@ -12,10 +12,12 @@ services:
       # Internal legacy-compatible value only; first-version admin access is
       # governed by the private runtime and loopback/SSH-tunneled access.
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      ADMIN_RUNS_ROOT: ${ADMIN_RUNS_ROOT:-/app/publisher/runs}
     expose:
       - "8000"
     volumes:
       - ./contracts:/app/contracts:ro
+      - ./publisher/runs:/app/publisher/runs:ro
     healthcheck:
       test:
         [

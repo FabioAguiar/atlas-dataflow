@@ -335,8 +335,22 @@ def test_real_telco_execution_contract_projects_to_valid_runtime_and_public_cont
     """Projecting the real, on-disk Telco execution contract (a tmp output dir,
     so this test never mutates the repository) produces a runtime contract and
     a public contract that both validate against their schemas, exclude
-    customerID and TotalCharges from every feature list, and preserve
-    SeniorCitizen's boolean/binary-indicator semantics."""
+    customerID, include/exclude TotalCharges consistently with the execution
+    contract's own current review status, and preserve SeniorCitizen's
+    boolean/binary-indicator semantics."""
+    recipe = json.loads(
+        (
+            REPO_ROOT / "pipeline" / "evidence" / "telco-customer-churn" / "preparation-recipe.json"
+        ).read_text(encoding="utf-8")
+    )
+    total_charges_review_status = next(
+        t["review_status"]
+        for t in recipe["transformations"]
+        if t["transformation_type"] == "missing_value_handling"
+        and "TotalCharges" in t["target_columns"]
+    )
+    total_charges_approved = total_charges_review_status in ("explicit", "inferred_approved")
+
     out_dir = tmp_path / "telco-out"
     derive(TELCO_EXECUTION_CONTRACT_PATH, out_dir, repo_root=REPO_ROOT)
 
@@ -350,11 +364,20 @@ def test_real_telco_execution_contract_projects_to_valid_runtime_and_public_cont
     public_names = {f["name"] for f in public["features"]}
     assert "customerID" not in runtime_names
     assert "customerID" not in public_names
-    assert "TotalCharges" not in runtime_names, (
-        "TotalCharges blank-value handling is still pending upstream review "
-        "and must not appear as a runtime/public feature via projection"
-    )
-    assert "TotalCharges" not in public_names
+    if total_charges_approved:
+        assert "TotalCharges" in runtime_names, (
+            "TotalCharges blank-value handling is approved "
+            f"({total_charges_review_status!r}) but is missing from the "
+            "projected runtime contract"
+        )
+        assert "TotalCharges" in public_names
+    else:
+        assert "TotalCharges" not in runtime_names, (
+            "TotalCharges blank-value handling is still "
+            f"{total_charges_review_status!r} and must not appear as a "
+            "runtime/public feature via projection"
+        )
+        assert "TotalCharges" not in public_names
 
     runtime_by_name = {f["name"]: f for f in runtime["features"]}
     assert runtime_by_name["SeniorCitizen"]["type"] == "boolean"
@@ -371,8 +394,20 @@ def test_real_telco_execution_contract_projects_to_valid_runtime_and_public_cont
 def test_real_telco_runtime_and_public_contracts_materialized_on_disk_are_valid():
     """The actual committed contracts/telco-customer-churn/runtime-contract.json
     and public-contract.json artifacts validate against their schemas and
-    exclude customerID/TotalCharges, matching the in-memory projection proven
-    by test_real_telco_execution_contract_projects_to_valid_runtime_and_public_contracts."""
+    exclude customerID/TotalCharges.
+
+    KNOWN, DISCLOSED DIVERGENCE (as of Project Spec S0028's execution-contract
+    fix): these two committed files were last (re)materialized while
+    TotalCharges was still `inferred_pending_review` and were deliberately
+    NOT regenerated when contracts/telco-customer-churn/execution-contract.json
+    was updated to include TotalCharges as an approved feature -- runtime/
+    public contract regeneration is API/UI-facing and out of scope for that
+    fix. This test therefore intentionally continues to assert the current,
+    still-excluding, on-disk reality, which no longer matches what
+    test_real_telco_execution_contract_projects_to_valid_runtime_and_public_contracts
+    proves the live execution contract would now project. Regenerating these
+    two files to include TotalCharges (and updating this test to match)
+    requires a separate, explicitly authorized implementation request."""
     runtime = json.loads(TELCO_RUNTIME_CONTRACT_PATH.read_text(encoding="utf-8"))
     public = json.loads(TELCO_PUBLIC_CONTRACT_PATH.read_text(encoding="utf-8"))
 

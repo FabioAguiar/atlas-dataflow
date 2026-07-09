@@ -432,18 +432,59 @@ def test_unresolved_review_columns_ignores_resolved_transformations():
     not TELCO_EXECUTION_CONTRACT_PATH.exists(),
     reason="Telco execution contract not yet materialized on disk",
 )
-def test_real_telco_execution_contract_validates_and_excludes_unresolved_columns():
+def test_real_telco_execution_contract_validates_and_excludes_identifier_column():
     schema = _load_json(SCHEMA_PATH)
     contract = _load_json(TELCO_EXECUTION_CONTRACT_PATH)
 
     jsonschema.validate(contract, schema)
     assert contract["dataset_id"] == "telco-customer-churn"
     assert contract["target_column"] == "Churn"
-    assert "customerID" not in contract["feature_columns"]
-    assert "customerID" in contract["ignored_columns"]
-    assert "TotalCharges" not in contract["feature_columns"], (
-        "TotalCharges blank-value handling is still pending review upstream "
-        "and must not be silently approved into the official contract"
+    assert "customerID" not in contract["feature_columns"], (
+        "customerID is a per-row identifier candidate, not a modeling feature, "
+        "and must never be silently approved into feature_columns"
     )
-    assert "TotalCharges" in contract["ignored_columns"]
+    assert "customerID" in contract["ignored_columns"]
     assert contract["feature_definitions"]["SeniorCitizen"]["type"] == "boolean"
+
+
+@pytest.mark.skipif(
+    not TELCO_EXECUTION_CONTRACT_PATH.exists(),
+    reason="Telco execution contract not yet materialized on disk",
+)
+def test_real_telco_execution_contract_includes_total_charges_once_approved():
+    """TotalCharges' blank-value preparation policy was resolved and approved
+    by Project Spec S0028 (recorded as review_status 'inferred_approved' in
+    pipeline/evidence/telco-customer-churn/preparation-recipe.json), so the
+    real, on-disk contract must now include it as a feature rather than
+    excluding it. This is a direct consequence of the reusable, generic rule
+    exercised by test_unresolved_review_columns_ignores_resolved_transformations
+    above -- a column is only ever excluded while its own recipe entry is
+    NOT 'explicit'/'inferred_approved', regardless of dataset."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _load_json(TELCO_EXECUTION_CONTRACT_PATH)
+    recipe = _load_json(
+        REPO_ROOT / "pipeline" / "evidence" / "telco-customer-churn" / "preparation-recipe.json"
+    )
+    total_charges_review_status = next(
+        t["review_status"]
+        for t in recipe["transformations"]
+        if t["transformation_type"] == "missing_value_handling"
+        and "TotalCharges" in t["target_columns"]
+    )
+
+    jsonschema.validate(contract, schema)
+    if total_charges_review_status in ("explicit", "inferred_approved"):
+        assert "TotalCharges" in contract["feature_columns"], (
+            "TotalCharges blank-value handling is approved "
+            f"({total_charges_review_status!r}) but was excluded from the "
+            "official contract's feature_columns"
+        )
+        assert "TotalCharges" not in contract["ignored_columns"]
+        assert contract["feature_definitions"]["TotalCharges"]["type"] == "numeric"
+    else:
+        assert "TotalCharges" not in contract["feature_columns"], (
+            "TotalCharges blank-value handling is still "
+            f"{total_charges_review_status!r} and must not be silently "
+            "approved into the official contract"
+        )
+        assert "TotalCharges" in contract["ignored_columns"]

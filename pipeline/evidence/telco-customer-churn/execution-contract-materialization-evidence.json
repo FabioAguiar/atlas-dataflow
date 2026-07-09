@@ -32,13 +32,7 @@
       "reason": "identifier_candidate_excluded_from_features"
     }
   ],
-  "unresolved_feature_exclusions": [
-    {
-      "name": "TotalCharges",
-      "review_status": "inferred_pending_review",
-      "reason": "blank-value handling review_status is 'inferred_pending_review', not an approved status (['explicit', 'inferred_approved']); excluded from feature_columns rather than silently approved"
-    }
-  ],
+  "unresolved_feature_exclusions": [],
   "feature_type_grounding": {
     "gender": {
       "declared_type": "categorical",
@@ -111,6 +105,10 @@
     "MonthlyCharges": {
       "declared_type": "numeric",
       "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "TotalCharges": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
     }
   },
   "policy_defaults_requiring_future_review": [
@@ -133,5 +131,5 @@
     "model_training_performed": false,
     "model_family_selected": false
   },
-  "generated_at": "2026-07-09T19:40:15+00:00"
+  "generated_at": "2026-07-09T20:51:22+00:00"
 }

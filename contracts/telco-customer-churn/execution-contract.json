@@ -20,11 +20,11 @@
     "Contract",
     "PaperlessBilling",
     "PaymentMethod",
-    "MonthlyCharges"
+    "MonthlyCharges",
+    "TotalCharges"
   ],
   "ignored_columns": [
-    "customerID",
-    "TotalCharges"
+    "customerID"
   ],
   "required_columns": [
     "gender",
@@ -46,7 +46,9 @@
     "PaymentMethod",
     "MonthlyCharges"
   ],
-  "optional_columns": [],
+  "optional_columns": [
+    "TotalCharges"
+  ],
   "feature_definitions": {
     "gender": {
       "type": "categorical"
@@ -108,6 +110,13 @@
       "domain_constraints": {
         "min": 18.25,
         "max": 118.75
+      }
+    },
+    "TotalCharges": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 18.8,
+        "max": 8684.8
       }
     }
   },

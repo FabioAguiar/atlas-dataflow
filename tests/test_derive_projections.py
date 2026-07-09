@@ -2,11 +2,13 @@ import json
 import sys
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.derive_projections import DerivationFailed, derive
 from pipeline.contract_derivation import _derive_public_contract
+from pipeline.assemble_candidate import build_release_candidate_handoff_readiness
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -303,3 +305,112 @@ def test_real_seeded_dataset_runtime_contracts_project_safe_select_options():
                     "fails, the release has been regenerated and M32-05's evidence "
                     "about published-artifact staleness should be revisited"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Telco runtime/public contract projection: Project Spec S0025
+#
+# The Telco execution contract (contracts/telco-customer-churn/execution-contract.json)
+# was materialized by Project Spec S0024. This section proves the existing,
+# dataset-agnostic derive() pipeline correctly projects it into
+# contracts/telco-customer-churn/runtime-contract.json and public-contract.json,
+# and that the release-candidate handoff readiness gate recognizes both roles
+# as ready once those two artifacts exist and validate. Skip-guarded, per the
+# S0024 precedent, so the suite still passes before the Telco execution
+# contract exists on disk.
+# ---------------------------------------------------------------------------
+
+TELCO_EXECUTION_CONTRACT_PATH = REPO_ROOT / "contracts" / "telco-customer-churn" / "execution-contract.json"
+TELCO_RUNTIME_CONTRACT_PATH = REPO_ROOT / "contracts" / "telco-customer-churn" / "runtime-contract.json"
+TELCO_PUBLIC_CONTRACT_PATH = REPO_ROOT / "contracts" / "telco-customer-churn" / "public-contract.json"
+RUNTIME_SCHEMA_PATH = REPO_ROOT / "contracts" / "runtime-contract.schema.json"
+PUBLIC_SCHEMA_PATH = REPO_ROOT / "contracts" / "public-contract.schema.json"
+
+
+@pytest.mark.skipif(
+    not TELCO_EXECUTION_CONTRACT_PATH.exists(),
+    reason="Telco execution contract not yet materialized on disk",
+)
+def test_real_telco_execution_contract_projects_to_valid_runtime_and_public_contracts(tmp_path):
+    """Projecting the real, on-disk Telco execution contract (a tmp output dir,
+    so this test never mutates the repository) produces a runtime contract and
+    a public contract that both validate against their schemas, exclude
+    customerID and TotalCharges from every feature list, and preserve
+    SeniorCitizen's boolean/binary-indicator semantics."""
+    out_dir = tmp_path / "telco-out"
+    derive(TELCO_EXECUTION_CONTRACT_PATH, out_dir, repo_root=REPO_ROOT)
+
+    runtime = json.loads((out_dir / "runtime-contract.json").read_text(encoding="utf-8"))
+    public = json.loads((out_dir / "public-contract.json").read_text(encoding="utf-8"))
+
+    jsonschema.validate(runtime, json.loads(RUNTIME_SCHEMA_PATH.read_text(encoding="utf-8")))
+    jsonschema.validate(public, json.loads(PUBLIC_SCHEMA_PATH.read_text(encoding="utf-8")))
+
+    runtime_names = {f["name"] for f in runtime["features"]}
+    public_names = {f["name"] for f in public["features"]}
+    assert "customerID" not in runtime_names
+    assert "customerID" not in public_names
+    assert "TotalCharges" not in runtime_names, (
+        "TotalCharges blank-value handling is still pending upstream review "
+        "and must not appear as a runtime/public feature via projection"
+    )
+    assert "TotalCharges" not in public_names
+
+    runtime_by_name = {f["name"]: f for f in runtime["features"]}
+    assert runtime_by_name["SeniorCitizen"]["type"] == "boolean"
+    assert "domain_constraints" not in runtime_by_name["SeniorCitizen"]
+
+    public_by_name = {f["name"]: f for f in public["features"]}
+    assert public_by_name["SeniorCitizen"]["input_type"] == "checkbox"
+
+
+@pytest.mark.skipif(
+    not (TELCO_RUNTIME_CONTRACT_PATH.exists() and TELCO_PUBLIC_CONTRACT_PATH.exists()),
+    reason="Telco runtime/public contracts not yet materialized on disk",
+)
+def test_real_telco_runtime_and_public_contracts_materialized_on_disk_are_valid():
+    """The actual committed contracts/telco-customer-churn/runtime-contract.json
+    and public-contract.json artifacts validate against their schemas and
+    exclude customerID/TotalCharges, matching the in-memory projection proven
+    by test_real_telco_execution_contract_projects_to_valid_runtime_and_public_contracts."""
+    runtime = json.loads(TELCO_RUNTIME_CONTRACT_PATH.read_text(encoding="utf-8"))
+    public = json.loads(TELCO_PUBLIC_CONTRACT_PATH.read_text(encoding="utf-8"))
+
+    jsonschema.validate(runtime, json.loads(RUNTIME_SCHEMA_PATH.read_text(encoding="utf-8")))
+    jsonschema.validate(public, json.loads(PUBLIC_SCHEMA_PATH.read_text(encoding="utf-8")))
+
+    runtime_names = {f["name"] for f in runtime["features"]}
+    public_names = {f["name"] for f in public["features"]}
+    assert "customerID" not in runtime_names
+    assert "customerID" not in public_names
+    assert "TotalCharges" not in runtime_names
+    assert "TotalCharges" not in public_names
+
+
+@pytest.mark.skipif(
+    not (TELCO_RUNTIME_CONTRACT_PATH.exists() and TELCO_PUBLIC_CONTRACT_PATH.exists()),
+    reason="Telco runtime/public contracts not yet materialized on disk",
+)
+def test_release_candidate_handoff_readiness_recognizes_telco_runtime_and_public_contract():
+    """Once contracts/telco-customer-churn/runtime-contract.json and
+    public-contract.json exist and validate, the release-candidate handoff
+    readiness check (pipeline/assemble_candidate.py, Project Spec S0016)
+    reports both roles ready:true from explicit repository-relative path
+    references, while every other required role -- correctly left
+    unreferenced here, since generating them is out of this spec's scope --
+    remains not-ready and is_release_candidate_input_ready stays False."""
+    readiness = build_release_candidate_handoff_readiness(
+        {
+            "runtime_contract": "contracts/telco-customer-churn/runtime-contract.json",
+            "public_contract": "contracts/telco-customer-churn/public-contract.json",
+        },
+        repo_root=REPO_ROOT,
+    )
+    results_by_role = {r["role"]: r for r in readiness["role_results"]}
+    assert results_by_role["runtime_contract"]["ready"] is True
+    assert results_by_role["public_contract"]["ready"] is True
+    for role, result in results_by_role.items():
+        if role in ("runtime_contract", "public_contract"):
+            continue
+        assert result["ready"] is False
+    assert readiness["is_release_candidate_input_ready"] is False

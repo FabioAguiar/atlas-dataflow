@@ -16,6 +16,7 @@ from pipeline.training import (
     TrainingInputError,
     _load_json_file,
     _require_valid_controlled_entrypoint_provenance,
+    prepare_training_invocation_readiness,
     train_from_paths,
 )
 
@@ -347,3 +348,166 @@ def test_markerless_model_artifact_is_rejected_by_downstream_acceptance(
 
     assert exc.value.code == "missing_controlled_entrypoint_provenance"
     assert exc.value.field == "controlled_entrypoint_provenance"
+
+
+# ---------------------------------------------------------------------------
+# Governed training bridge (Project Spec S0015):
+# `prepare_training_invocation_readiness`
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_execution_ready_contract() -> dict:
+    return _valid_execution_contract()
+
+
+def _synthetic_prepared_dataset() -> dict:
+    return _valid_prepared_dataset()
+
+
+def _synthetic_execution_contract_draft() -> dict:
+    """A synthetic `execution_contract_draft.v1` shaped like
+    `pipeline.contract_derivation.project_execution_contract_draft`'s output,
+    built as a literal dict rather than imported, keeping this test file
+    self-contained and decoupled from that module's exact call signature."""
+    return {
+        "artifact_type": "execution_contract_draft",
+        "contract_version": "execution_contract_draft.v1",
+        "draft_status": "not_execution_ready",
+        "dataset_identity": {
+            "dataset_slug": "telco-customer-churn",
+            "dataset_source_ref": "data/raw/telco-customer-churn.csv",
+        },
+        "target_intent": {
+            "target_column": "Churn",
+            "observed_labels": ["No", "Yes"],
+            "observed_target_distribution": {"No": 5174, "Yes": 1869},
+            "positive_label_candidate": "Yes",
+        },
+        "ignored_columns": ["customerID"],
+        "feature_columns": ["gender", "SeniorCitizen", "tenure", "TotalCharges"],
+        "feature_definitions": {
+            "SeniorCitizen": {"type_intent": "requires_review"},
+        },
+        "blank_value_policy_candidates": {
+            "TotalCharges": "unresolved_pending_review",
+        },
+        "execution_readiness": {
+            "is_execution_ready": False,
+            "blocking_reasons": [
+                "TotalCharges: blank-value handling is only a candidate policy "
+                "('unresolved_pending_review'), not yet accepted — requires "
+                "explicit resolution before execution-ready use",
+                "SeniorCitizen: feature type/semantic classification requires "
+                "explicit review before execution-ready use",
+                "split_policy: not supplied by this draft projection; required "
+                "by execution_contract.v1 before promotion to an official "
+                "contract",
+            ],
+        },
+        "execution_contract_draft_boundary_confirmations": {
+            "is_execution_contract": False,
+            "model_training_performed": False,
+        },
+        "generated_at": "2026-07-09T00:00:00+00:00",
+    }
+
+
+def test_readiness_reports_missing_execution_contract_path(tmp_path: Path) -> None:
+    _, dataset_path = _write_valid_inputs(tmp_path)
+    missing_contract_path = tmp_path / "missing-execution-contract.json"
+
+    with pytest.raises(TrainingInputError) as exc:
+        prepare_training_invocation_readiness(missing_contract_path, dataset_path)
+
+    assert exc.value.code == "missing_required_input"
+    assert exc.value.field == "execution_contract_path"
+
+
+def test_readiness_reports_missing_dataset_path(tmp_path: Path) -> None:
+    contract_path, _ = _write_valid_inputs(tmp_path)
+    missing_dataset_path = tmp_path / "missing-prepared-dataset.json"
+
+    with pytest.raises(TrainingInputError) as exc:
+        prepare_training_invocation_readiness(contract_path, missing_dataset_path)
+
+    assert exc.value.code == "missing_required_input"
+    assert exc.value.field == "dataset_path"
+
+
+def test_readiness_reports_execution_ready_contract_as_training_ready(
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(
+        tmp_path / "execution-contract.json", _synthetic_execution_ready_contract()
+    )
+    dataset_path = _write_json(
+        tmp_path / "prepared-dataset.json", _synthetic_prepared_dataset()
+    )
+
+    readiness = prepare_training_invocation_readiness(contract_path, dataset_path)
+
+    assert readiness["execution_contract_identity"] == "execution_ready"
+    assert readiness["is_training_ready"] is True
+    assert readiness["blocking_reasons"] == []
+    assert readiness["dataset_id"] == "training-pipeline-test"
+    assert readiness["target_column"] == "converted"
+    assert readiness["governed_entrypoint"] == "pipeline.training.train_from_paths"
+
+
+def test_readiness_rejects_execution_contract_draft_as_not_training_ready(
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(
+        tmp_path / "execution-contract-draft.json", _synthetic_execution_contract_draft()
+    )
+    dataset_path = _write_json(
+        tmp_path / "prepared-dataset.json", _synthetic_prepared_dataset()
+    )
+
+    readiness = prepare_training_invocation_readiness(contract_path, dataset_path)
+
+    assert readiness["execution_contract_identity"] == "execution_contract_draft"
+    assert readiness["is_training_ready"] is False
+    assert readiness["dataset_id"] == "telco-customer-churn"
+    assert readiness["target_column"] == "Churn"
+    assert any(
+        "execution_contract_draft.v1" in reason for reason in readiness["blocking_reasons"]
+    )
+
+
+def test_readiness_surfaces_unresolved_draft_review_items(tmp_path: Path) -> None:
+    contract_path = _write_json(
+        tmp_path / "execution-contract-draft.json", _synthetic_execution_contract_draft()
+    )
+    dataset_path = _write_json(
+        tmp_path / "prepared-dataset.json", _synthetic_prepared_dataset()
+    )
+
+    readiness = prepare_training_invocation_readiness(contract_path, dataset_path)
+
+    assert readiness["is_training_ready"] is False
+    assert (
+        "TotalCharges: blank-value handling is only a candidate policy "
+        "('unresolved_pending_review'), not yet accepted — requires explicit "
+        "resolution before execution-ready use"
+    ) in readiness["blocking_reasons"]
+    assert (
+        "SeniorCitizen: feature type/semantic classification requires explicit "
+        "review before execution-ready use"
+    ) in readiness["blocking_reasons"]
+
+
+def test_readiness_rejects_unrecognized_contract_identity(tmp_path: Path) -> None:
+    contract_path = _write_json(
+        tmp_path / "execution-contract.json",
+        {"contract_version": "bank-marketing-custom.v1", "dataset_id": "bank-marketing"},
+    )
+    dataset_path = _write_json(
+        tmp_path / "prepared-dataset.json", _synthetic_prepared_dataset()
+    )
+
+    readiness = prepare_training_invocation_readiness(contract_path, dataset_path)
+
+    assert readiness["execution_contract_identity"] == "unrecognized_contract_identity"
+    assert readiness["is_training_ready"] is False
+    assert readiness["blocking_reasons"]

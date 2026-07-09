@@ -8,6 +8,15 @@ production, model-card input production, and reduced artifact persistence.
 Out of scope for this module:
 - compatibility report production;
 - publisher, registry, runtime inference, release, or GitHub operations.
+
+This module also exposes `prepare_training_invocation_readiness` (Project
+Spec S0015): a deterministic governed training bridge that validates
+explicit execution-contract and prepared-dataset path references and
+reports whether `train_from_paths` is ready to be invoked, without training
+a model. It distinguishes an execution-ready `execution_contract.v1` from an
+`execution_contract_draft.v1` candidate (Project Spec S0014,
+`pipeline/contract_derivation.py.project_execution_contract_draft`) and
+never treats the latter as training-ready.
 """
 
 from __future__ import annotations
@@ -1669,6 +1678,146 @@ def train_from_paths(
         metrics=metric_values,
         model_selection_evidence_produced=multiple_candidates_evaluated,
     )
+
+
+# ---------------------------------------------------------------------------
+# Governed training bridge (Project Spec S0015)
+#
+# Bridges dataset-authoring artifacts to this governed training entrypoint
+# without letting notebooks, execution-contract drafts, or raw dataset
+# references become training authority. `prepare_training_invocation_readiness`
+# never trains a model and never infers a path — it only reports, from two
+# explicit path references, whether `train_from_paths` is ready to be
+# invoked. An execution-contract draft (Project Spec S0014,
+# `execution_contract_draft.v1`) is always reported as not training-ready,
+# and any unresolved review items it already carries (for example
+# `TotalCharges` blank-value handling) are surfaced rather than silently
+# accepted.
+# ---------------------------------------------------------------------------
+
+TRAINING_INVOCATION_READINESS_CONTRACT_VERSION = "training_invocation_readiness.v1"
+EXECUTION_READY_CONTRACT_VERSION = "execution_contract.v1"
+EXECUTION_CONTRACT_DRAFT_VERSION = "execution_contract_draft.v1"
+
+
+def _execution_contract_identity(contract: dict[str, Any]) -> str:
+    """Distinguish an execution-ready contract from an execution-contract draft.
+
+    An `execution_contract_draft.v1` (Project Spec S0014) reuses some
+    `execution_contract.v1` vocabulary but must never be mistaken for an
+    execution-ready contract.
+    """
+    contract_version = contract.get("contract_version")
+    if contract_version == EXECUTION_READY_CONTRACT_VERSION:
+        return "execution_ready"
+    if (
+        contract_version == EXECUTION_CONTRACT_DRAFT_VERSION
+        or contract.get("artifact_type") == "execution_contract_draft"
+    ):
+        return "execution_contract_draft"
+    return "unrecognized_contract_identity"
+
+
+def _draft_review_blocking_reasons(contract: dict[str, Any]) -> list[str]:
+    readiness = contract.get("execution_readiness")
+    if isinstance(readiness, dict) and isinstance(readiness.get("blocking_reasons"), list):
+        return [str(reason) for reason in readiness["blocking_reasons"]]
+    return []
+
+
+def _draft_dataset_slug(contract: dict[str, Any]) -> str | None:
+    dataset_identity = contract.get("dataset_identity")
+    if isinstance(dataset_identity, dict):
+        return dataset_identity.get("dataset_slug")
+    return None
+
+
+def _draft_target_column(contract: dict[str, Any]) -> str | None:
+    target_intent = contract.get("target_intent")
+    if isinstance(target_intent, dict):
+        return target_intent.get("target_column")
+    return None
+
+
+def prepare_training_invocation_readiness(
+    execution_contract_path: str | Path,
+    dataset_path: str | Path,
+) -> dict[str, Any]:
+    """Governed training bridge: report whether `train_from_paths` is training-ready.
+
+    Both `execution_contract_path` and `dataset_path` are required, explicit
+    path references — never notebook-held DataFrames, notebook variables, or
+    a hidden current working directory. Missing or unreadable inputs raise
+    `TrainingInputError`, matching `train_from_paths`'s own input validation.
+    An `execution_contract_draft.v1` (Project Spec S0014) is always reported
+    as not training-ready, with its own unresolved review items (if any)
+    carried into `blocking_reasons` rather than silently accepted. This
+    function never trains a model and never mutates its inputs.
+    """
+    contract_path = Path(execution_contract_path)
+    prepared_dataset_path = Path(dataset_path)
+
+    full_contract = _load_json_file(contract_path, "execution_contract_path")
+    if not prepared_dataset_path.exists():
+        raise TrainingInputError(
+            "missing_required_input",
+            f"dataset_path does not exist: {prepared_dataset_path}",
+            field="dataset_path",
+        )
+    if prepared_dataset_path.suffix.lower() not in (".csv", ".json"):
+        raise TrainingInputError(
+            "unsupported_dataset_format",
+            "dataset_path must reference a supported prepared dataset format: .csv or .json.",
+            field="dataset_path",
+        )
+
+    contract_identity = _execution_contract_identity(full_contract)
+    blocking_reasons: list[str] = []
+    dataset_id: str | None = None
+    target_column: str | None = None
+
+    if contract_identity == "execution_ready":
+        reduced_contract = _load_execution_contract(contract_path)
+        dataset_id = str(reduced_contract["dataset_id"])
+        target_column = str(reduced_contract["target_column"])
+    elif contract_identity == "execution_contract_draft":
+        blocking_reasons.append(
+            "execution_contract_path references an execution_contract_draft.v1 "
+            "candidate (Project Spec S0014), not an execution-ready "
+            f"{EXECUTION_READY_CONTRACT_VERSION} contract; a draft must never be "
+            "treated as execution-ready training input."
+        )
+        blocking_reasons.extend(_draft_review_blocking_reasons(full_contract))
+        dataset_id = _draft_dataset_slug(full_contract)
+        target_column = _draft_target_column(full_contract)
+    else:
+        blocking_reasons.append(
+            "execution_contract_path does not declare a recognized contract_version "
+            f"({EXECUTION_READY_CONTRACT_VERSION!r} or "
+            f"{EXECUTION_CONTRACT_DRAFT_VERSION!r})."
+        )
+
+    is_training_ready = contract_identity == "execution_ready" and not blocking_reasons
+
+    return {
+        "artifact_type": "training_invocation_readiness",
+        "contract_version": TRAINING_INVOCATION_READINESS_CONTRACT_VERSION,
+        "execution_contract_path": _reduced_path_reference(contract_path),
+        "dataset_path": _reduced_path_reference(prepared_dataset_path),
+        "execution_contract_identity": contract_identity,
+        "dataset_id": dataset_id,
+        "target_column": target_column,
+        "is_training_ready": is_training_ready,
+        "blocking_reasons": blocking_reasons,
+        "governed_entrypoint": "pipeline.training.train_from_paths",
+        "training_invocation_readiness_boundary_confirmations": {
+            "is_execution_contract": False,
+            "is_training_result": False,
+            "model_trained": False,
+            "training_invoked": False,
+            "execution_contract_draft_promoted_to_official_contract": False,
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

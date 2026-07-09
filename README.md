@@ -75,6 +75,61 @@ tree, reusable helper modules, dataset-specific notebooks, or training/
 release/publisher behavior changes — those require their own, later
 implementation requests that explicitly list their concrete edit paths.
 
+### Notebook runtime import contract
+
+Atlas notebook work uses three separate boundaries:
+
+- `atlas` is the main Atlas runtime environment. Do not install exploratory
+  notebook dependencies into it.
+- `atlas-notebooks` is the isolated Conda environment for Jupyter and
+  Data Workbench authoring. Select this kernel for notebook work; using `base`
+  or `atlas` is a setup error for this workflow.
+- `atlas-dataflow` is the source tree. Internal imports such as
+  `pipeline.discovery_evidence` resolve only after Python can see this
+  repository root.
+
+Jupyter for notebook authoring is expected to remain private on the VPS,
+bound to `127.0.0.1:8888`, and reached from an operator machine through an
+SSH tunnel such as:
+
+```sh
+ssh -L 18888:127.0.0.1:8888 <vps-host>
+```
+
+Then open the local tunnel endpoint at `http://127.0.0.1:18888`. This access
+pattern does not change Jupyter configuration and does not authorize exposing
+Jupyter on `0.0.0.0` or any public interface.
+
+Install the repository in editable mode from the dedicated notebook
+environment before starting notebook work:
+
+```sh
+conda activate atlas-notebooks
+cd ~/Projetos/N8N/atlas-dataflow
+pip install -e .
+```
+
+The editable install intentionally exposes only the repository's `pipeline`
+Python boundary for notebook helpers. It does not package API, web,
+notebooks, data, release, publisher, registry, support-root, generated
+evidence, runtime, cache, secret, or credential paths.
+
+After editable installation, notebooks can import Atlas helpers directly:
+
+```python
+from pipeline.discovery_evidence import (
+    load_dataset_csv,
+    resolve_repository_path,
+    summarize_structure,
+)
+```
+
+Do not use notebook `sys.path` cells, global Python startup files, hidden
+`.pth` files, Jupyter server state, or Conda site customization as the primary
+import mechanism. If the import fails after editable installation, verify that
+the notebook kernel is `atlas-notebooks` and not `base` or the main `atlas`
+runtime.
+
 ## Runtime mode operator note
 
 Atlas currently has two Compose entry points with different exposure

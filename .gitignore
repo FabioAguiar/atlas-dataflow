@@ -61,3 +61,5 @@ workbench/**/exploratory/
 
 # Dados
 data/
+
+atlas_dataflow.egg-info/

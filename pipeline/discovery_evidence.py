@@ -53,6 +53,11 @@ AUTHORING_HELPER_EVIDENCE_POLICY: dict[str, bool] = {
     "publisher_artifacts_persisted": False,
 }
 
+_REPOSITORY_ROOT_MARKERS = (
+    "README.md",
+    "pipeline/discovery_evidence.py",
+)
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -270,15 +275,52 @@ def write_discovery_evidence(
 # ---------------------------------------------------------------------------
 
 
+def _looks_like_repository_root(path: Path) -> bool:
+    return all((path / marker).exists() for marker in _REPOSITORY_ROOT_MARKERS)
+
+
+def resolve_repository_root(start_path: str | Path | None = None) -> Path:
+    """Resolve the Atlas repository root from an explicit path or the cwd.
+
+    This helper is intentionally local and deterministic: it walks upward from
+    `start_path`, the current working directory, and finally this module's
+    installed/editable file location, requiring repository-local marker files.
+    It does not inspect Jupyter server state, environment names, kernels, or
+    global Python configuration.
+    """
+    start = Path(start_path).expanduser() if start_path is not None else Path.cwd()
+    cursor = start.resolve()
+    if cursor.is_file():
+        cursor = cursor.parent
+
+    module_cursor = Path(__file__).resolve().parent
+    search_roots = (cursor, module_cursor)
+    seen: set[Path] = set()
+    for root in search_roots:
+        for candidate in (root, *root.parents):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if _looks_like_repository_root(candidate):
+                return candidate
+
+    markers = ", ".join(_REPOSITORY_ROOT_MARKERS)
+    raise FileNotFoundError(
+        "Atlas repository root could not be resolved from "
+        f"{cursor}. Expected to find repository markers: {markers}. "
+        "Pass an explicit repo_root from a notebook first cell after locating "
+        "the atlas-dataflow checkout."
+    )
+
+
 def resolve_repository_path(relative_path: str | Path, repo_root: str | Path | None = None) -> Path:
     """Resolve a repository-relative path against an explicit or default repo root.
 
-    `repo_root` defaults to the current working directory, which is the
-    expected convention for notebooks run from the repository root. Pass an
-    explicit `repo_root` when the caller (for example a nested notebook, or
-    papermill) cannot rely on the current working directory.
+    `repo_root` defaults to the resolved Atlas repository root, including when
+    this module is imported through an editable install from a neutral current
+    working directory. Pass an explicit `repo_root` to override that behavior.
     """
-    base = Path(repo_root) if repo_root else Path.cwd()
+    base = Path(repo_root) if repo_root else resolve_repository_root()
     return (base / relative_path).resolve()
 
 

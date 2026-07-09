@@ -20,7 +20,12 @@
   "prepared_candidate": {
     "produced": true,
     "reason_not_produced": null,
-    "reference": null
+    "reference": {
+      "path": "pipeline/prepared/telco-customer-churn/prepared-data.csv",
+      "row_count": 7043,
+      "column_count": 21,
+      "content_sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88"
+    }
   },
   "row_column_counts": {
     "row_count_before": 7043,
@@ -28,7 +33,29 @@
     "row_count_after": 7043,
     "column_count_after": 21
   },
-  "ordered_prepared_columns": null,
+  "ordered_prepared_columns": [
+    "customerID",
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges",
+    "Churn"
+  ],
   "applied_transformations_summary": [
     {
       "transformation_type": "missing_value_handling",
@@ -46,13 +73,13 @@
   "unresolved_review_items": [],
   "training_readiness": {
     "is_final_training_input": false,
-    "is_training_ready": false,
-    "reason": "Prepared candidate output was marked produced but no readable candidate file reference was supplied."
+    "is_training_ready": true,
+    "reason": null
   },
   "generation_settings": {
     "generator_version": "prepare-candidate.v1"
   },
-  "generated_at": "2026-07-09T20:51:21+00:00",
+  "generated_at": "2026-07-09T21:48:54+00:00",
   "materialization_boundary_confirmations": {
     "model_training_performed": false,
     "release_candidate_assembly_performed": false,

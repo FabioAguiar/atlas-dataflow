@@ -63,3 +63,5 @@ workbench/**/exploratory/
 data/
 
 atlas_dataflow.egg-info/
+
+pipeline/prepared/

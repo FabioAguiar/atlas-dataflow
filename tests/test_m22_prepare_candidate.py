@@ -22,6 +22,8 @@ from pipeline.prepare_candidate import (
     verify_and_apply_conditional_fill,
     build_verified_conditional_fill_preparation_recipe,
     materialize_verified_conditional_fill_preparation_recipe,
+    build_prepared_data_metadata,
+    materialize_verified_conditional_fill_prepared_dataset,
 )
 
 
@@ -879,3 +881,144 @@ def test_materialize_verified_recipe_never_writes_prepared_candidate_csv(
     written_paths = {p.name for p in repo_root.rglob("*") if p.is_file()}
     assert "prepared-data.csv" not in written_paths
     assert written_paths == {dataset_rel, evidence_rel, output_rel}
+
+
+def test_build_prepared_metadata_not_training_ready_without_candidate_reference(tmp_path, fixture_evidence):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    evidence_rel = "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+    recipe_rel = "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+    evidence_path = repo_root / evidence_rel
+    recipe_path = repo_root / recipe_rel
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_bytes(fixture_evidence.read_bytes())
+    recipe_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "candidate-preparation-recipe.v1",
+                "candidate_output": {
+                    "produced": True,
+                    "reason_not_produced": None,
+                    "row_count_after": len(TOTAL_CHARGES_ROWS_VERIFIED),
+                    "column_count_after": len(TOTAL_CHARGES_COLUMNS),
+                },
+                "transformations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metadata = build_prepared_data_metadata(
+        dataset_slug="telco-customer-churn",
+        raw_dataset_relative_path="data/raw/telco-customer-churn.csv",
+        discovery_evidence_path=evidence_path,
+        preparation_recipe_path=recipe_path,
+        prepared_candidate_path=None,
+        repo_root=repo_root,
+    )
+
+    assert metadata["prepared_candidate"]["produced"] is True
+    assert metadata["prepared_candidate"]["reference"] is None
+    assert metadata["training_readiness"]["is_training_ready"] is False
+    assert "no readable candidate file reference" in metadata["training_readiness"]["reason"]
+
+
+def test_build_prepared_metadata_rejects_outside_candidate_reference(
+    tmp_path, total_charges_csv_verified, fixture_evidence
+):
+    repo_root = tmp_path / "repo"
+    outside_root = tmp_path / "outside"
+    repo_root.mkdir()
+    outside_root.mkdir()
+    evidence_rel = "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+    recipe_rel = "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+    evidence_path = repo_root / evidence_rel
+    recipe_path = repo_root / recipe_rel
+    outside_candidate = outside_root / "prepared-data.csv"
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_bytes(fixture_evidence.read_bytes())
+    outside_candidate.write_bytes(total_charges_csv_verified.read_bytes())
+    recipe_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "candidate-preparation-recipe.v1",
+                "candidate_output": {
+                    "produced": True,
+                    "reason_not_produced": None,
+                    "row_count_after": len(TOTAL_CHARGES_ROWS_VERIFIED),
+                    "column_count_after": len(TOTAL_CHARGES_COLUMNS),
+                },
+                "transformations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metadata = build_prepared_data_metadata(
+        dataset_slug="telco-customer-churn",
+        raw_dataset_relative_path="data/raw/telco-customer-churn.csv",
+        discovery_evidence_path=evidence_path,
+        preparation_recipe_path=recipe_path,
+        prepared_candidate_path=outside_candidate,
+        repo_root=repo_root,
+    )
+
+    assert metadata["prepared_candidate"]["reference"] is None
+    assert metadata["training_readiness"]["is_training_ready"] is False
+    assert metadata["training_readiness"]["reason"] == (
+        "Prepared candidate file is outside the repository root."
+    )
+
+
+def test_materialize_verified_prepared_dataset_writes_csv_and_training_ready_metadata(
+    tmp_path, total_charges_csv_verified, fixture_evidence
+):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    dataset_rel = "data/raw/telco-customer-churn.csv"
+    evidence_rel = "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+    recipe_rel = "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+    prepared_rel = "pipeline/prepared/telco-customer-churn/prepared-data.csv"
+    metadata_rel = "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json"
+    dataset_path = repo_root / dataset_rel
+    evidence_path = repo_root / evidence_rel
+    dataset_path.parent.mkdir(parents=True)
+    evidence_path.parent.mkdir(parents=True)
+    dataset_path.write_bytes(total_charges_csv_verified.read_bytes())
+    evidence_path.write_bytes(fixture_evidence.read_bytes())
+
+    result = materialize_verified_conditional_fill_prepared_dataset(
+        discovery_evidence_relative_path=evidence_rel,
+        dataset_relative_path=dataset_rel,
+        preparation_recipe_relative_path=recipe_rel,
+        prepared_candidate_relative_path=prepared_rel,
+        prepared_metadata_relative_path=metadata_rel,
+        dataset_slug="telco-customer-churn",
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+        repo_root=repo_root,
+        generated_at="2026-07-09T20:00:00+00:00",
+    )
+
+    metadata = result["prepared_data_metadata"]
+    assert (repo_root / prepared_rel).exists()
+    assert (repo_root / metadata_rel).exists()
+    assert metadata["prepared_candidate"]["produced"] is True
+    assert metadata["prepared_candidate"]["reference"]["path"] == prepared_rel
+    assert metadata["prepared_candidate"]["reference"]["row_count"] == len(TOTAL_CHARGES_ROWS_VERIFIED)
+    assert metadata["prepared_candidate"]["reference"]["column_count"] == len(TOTAL_CHARGES_COLUMNS)
+    assert metadata["ordered_prepared_columns"] == TOTAL_CHARGES_COLUMNS
+    assert metadata["training_readiness"]["is_training_ready"] is True
+
+    with (repo_root / prepared_rel).open(encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert all(row["TotalCharges"].strip() != "" for row in rows)
+    assert all(float(row["TotalCharges"]) >= 0.0 for row in rows)
+    by_id = {row["customerID"]: row for row in rows}
+    assert by_id["C1"]["TotalCharges"] == "0.0"
+    assert by_id["C3"]["TotalCharges"] == "0.0"

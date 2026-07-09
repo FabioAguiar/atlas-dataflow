@@ -51,6 +51,13 @@ def _repository_relative_path(path: Path, repo_root: Path) -> str:
         return path.name
 
 
+def _repository_relative_path_or_none(path: Path, repo_root: Path) -> str | None:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
@@ -790,6 +797,14 @@ def _content_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _is_under_directory(path: Path, directory: Path) -> bool:
+    try:
+        path.resolve().relative_to(directory.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def build_prepared_data_metadata(
     dataset_slug: str,
     raw_dataset_relative_path: str,
@@ -839,21 +854,51 @@ def build_prepared_data_metadata(
     )
     ordered_prepared_columns: list[str] | None = None
     prepared_candidate_ref: dict[str, Any] | None = None
+    candidate_reference_block_reason: str | None = None
 
     if candidate_produced and resolved_candidate_path is not None and resolved_candidate_path.exists():
         candidate_columns, candidate_rows = _read_csv(resolved_candidate_path)
         ordered_prepared_columns = candidate_columns
-        candidate_ref_path = _reduced_path(resolved_candidate_path)
-        if resolved_repo_root is not None:
-            candidate_ref_path = _repository_relative_path(
-                resolved_candidate_path, resolved_repo_root
+        expected_rows = candidate_output.get("row_count_after")
+        expected_columns = candidate_output.get("column_count_after")
+        if resolved_repo_root is None:
+            candidate_reference_block_reason = (
+                "Prepared candidate file was supplied but no repository root was supplied "
+                "to prove a repository-relative reference."
             )
-        prepared_candidate_ref = {
-            "path": candidate_ref_path,
-            "row_count": len(candidate_rows),
-            "column_count": len(candidate_columns),
-            "content_sha256": _content_sha256(resolved_candidate_path),
-        }
+        else:
+            candidate_ref_path = _repository_relative_path_or_none(
+                resolved_candidate_path,
+                resolved_repo_root,
+            )
+            prepared_dir = resolved_repo_root / "pipeline" / "prepared" / dataset_slug
+            if candidate_ref_path is None:
+                candidate_reference_block_reason = (
+                    "Prepared candidate file is outside the repository root."
+                )
+            elif Path(candidate_ref_path).is_absolute() or ".." in Path(candidate_ref_path).parts:
+                candidate_reference_block_reason = (
+                    "Prepared candidate reference is not a safe repository-relative path."
+                )
+            elif not _is_under_directory(resolved_candidate_path, prepared_dir):
+                candidate_reference_block_reason = (
+                    "Prepared candidate reference is outside the dataset prepared directory."
+                )
+            elif expected_rows is not None and len(candidate_rows) != expected_rows:
+                candidate_reference_block_reason = (
+                    "Prepared candidate row count does not match preparation recipe metadata."
+                )
+            elif expected_columns is not None and len(candidate_columns) != expected_columns:
+                candidate_reference_block_reason = (
+                    "Prepared candidate column count does not match preparation recipe metadata."
+                )
+            else:
+                prepared_candidate_ref = {
+                    "path": candidate_ref_path,
+                    "row_count": len(candidate_rows),
+                    "column_count": len(candidate_columns),
+                    "content_sha256": _content_sha256(resolved_candidate_path),
+                }
 
     is_training_ready = bool(
         candidate_produced and not unresolved_review_items and prepared_candidate_ref is not None
@@ -875,6 +920,8 @@ def build_prepared_data_metadata(
             "Prepared candidate output was marked produced but no readable candidate "
             "file reference was supplied."
         )
+        if candidate_reference_block_reason:
+            training_readiness_reason = candidate_reference_block_reason
 
     discovery_ref_path = _reduced_path(discovery_evidence_path)
     recipe_ref_path = _reduced_path(preparation_recipe_path)
@@ -981,6 +1028,83 @@ def materialize_prepared_data_metadata(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
     return metadata
+
+
+def materialize_verified_conditional_fill_prepared_dataset(
+    discovery_evidence_relative_path: str | Path,
+    dataset_relative_path: str | Path,
+    preparation_recipe_relative_path: str | Path,
+    prepared_candidate_relative_path: str | Path,
+    prepared_metadata_relative_path: str | Path,
+    dataset_slug: str,
+    column: str,
+    verification_column: str,
+    verification_value: str,
+    fill_value: str,
+    description: str,
+    reason: str,
+    preparation_rules_source: str,
+    repo_root: str | Path,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Materialize the approved conditional-fill recipe, prepared CSV, and metadata.
+
+    The prepared CSV is written only when the approved policy verification
+    succeeds. Metadata receives a training-ready prepared-candidate reference
+    only after the CSV can be read back from the repository-relative prepared
+    dataset directory with row/column counts matching the recipe.
+    """
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+    candidate_path = (resolved_repo_root / prepared_candidate_relative_path).resolve()
+    prepared_dir = resolved_repo_root / "pipeline" / "prepared" / dataset_slug
+    if not _is_under_directory(candidate_path, prepared_dir):
+        raise ValueError(
+            "prepared_candidate_relative_path must resolve under "
+            f"pipeline/prepared/{dataset_slug}/"
+        )
+
+    recipe, output_columns, output_rows = materialize_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_relative_path=discovery_evidence_relative_path,
+        dataset_relative_path=dataset_relative_path,
+        output_relative_path=preparation_recipe_relative_path,
+        column=column,
+        verification_column=verification_column,
+        verification_value=verification_value,
+        fill_value=fill_value,
+        description=description,
+        reason=reason,
+        preparation_rules_source=preparation_rules_source,
+        repo_root=resolved_repo_root,
+        generated_at=generated_at,
+    )
+
+    candidate_reference_for_metadata: str | Path | None = None
+    if recipe["candidate_output"]["produced"]:
+        if output_columns is None or output_rows is None:
+            raise ValueError("Prepared candidate was marked produced but no rows were returned.")
+        write_candidate_output(candidate_path, output_columns, output_rows)
+        candidate_reference_for_metadata = prepared_candidate_relative_path
+
+    metadata = materialize_prepared_data_metadata(
+        dataset_slug=dataset_slug,
+        raw_dataset_relative_path=str(dataset_relative_path),
+        discovery_evidence_relative_path=discovery_evidence_relative_path,
+        preparation_recipe_relative_path=preparation_recipe_relative_path,
+        output_relative_path=prepared_metadata_relative_path,
+        repo_root=resolved_repo_root,
+        prepared_candidate_relative_path=candidate_reference_for_metadata,
+        generated_at=generated_at,
+    )
+
+    return {
+        "preparation_recipe": recipe,
+        "prepared_data_metadata": metadata,
+        "prepared_candidate_path": (
+            str(prepared_candidate_relative_path)
+            if metadata["prepared_candidate"]["reference"] is not None
+            else None
+        ),
+    }
 
 
 def write_candidate_output(

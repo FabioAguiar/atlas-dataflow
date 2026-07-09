@@ -1,6 +1,10 @@
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
+
+from pipeline.discovery_evidence import materialize_discovery_evidence
+from pipeline.prepare_candidate import materialize_review_only_preparation_recipe
 
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -218,3 +222,116 @@ def test_candidate_source_run_match_passes_reduced_check():
     result = _validate_candidate_source_run(candidate, {run_ref: _run_evidence()})
 
     assert result == {"valid": True, "reason_code": None}
+
+
+def _copy_schema_to_tmp_repo(tmp_repo: Path, schema_name: str) -> None:
+    pipeline_dir = tmp_repo / "pipeline"
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(
+        REPO_ROOT / "pipeline" / schema_name,
+        pipeline_dir / schema_name,
+    )
+
+
+def test_materialize_discovery_evidence_uses_repo_relative_source_and_counts_blanks(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    (tmp_repo / "pipeline").mkdir(parents=True)
+    (tmp_repo / "README.md").write_text("tmp repo\n", encoding="utf-8")
+    (tmp_repo / "pipeline" / "discovery_evidence.py").write_text("", encoding="utf-8")
+    _copy_schema_to_tmp_repo(tmp_repo, "dataset-discovery-evidence.schema.json")
+    dataset_path = tmp_repo / "data" / "raw" / "telco-customer-churn.csv"
+    dataset_path.parent.mkdir(parents=True)
+    dataset_path.write_text(
+        "customerID,TotalCharges,Churn\n"
+        "a, ,No\n"
+        "b,10.5,Yes\n",
+        encoding="utf-8",
+    )
+
+    evidence = materialize_discovery_evidence(
+        dataset_relative_path="data/raw/telco-customer-churn.csv",
+        output_relative_path="pipeline/evidence/telco-customer-churn/discovery-evidence.json",
+        repo_root=tmp_repo,
+        dataset_slug="telco-customer-churn",
+        generated_at="2026-07-09T00:00:00+00:00",
+    )
+
+    written = json.loads(
+        (
+            tmp_repo
+            / "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+        ).read_text(encoding="utf-8")
+    )
+    total_charges = next(
+        field for field in evidence["field_observations"]
+        if field["name"] == "TotalCharges"
+    )
+
+    assert written == evidence
+    assert evidence["dataset_metadata"]["name"] == "telco-customer-churn"
+    assert evidence["dataset_metadata"]["source_path"] == "data/raw/telco-customer-churn.csv"
+    assert total_charges["null_count"] == 1
+    assert total_charges["inferred_type"] == "float"
+    assert any(
+        candidate["name"] == "Churn" and candidate["is_authoritative"] is False
+        for candidate in evidence["candidate_target_columns"]
+    )
+    assert not Path(evidence["dataset_metadata"]["source_path"]).is_absolute()
+
+
+def test_materialize_review_only_preparation_recipe_records_pending_totalcharges_rule(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_schema_to_tmp_repo(tmp_repo, "candidate-preparation-recipe.schema.json")
+    dataset_path = tmp_repo / "data" / "raw" / "telco-customer-churn.csv"
+    evidence_path = tmp_repo / "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+    dataset_path.parent.mkdir(parents=True)
+    evidence_path.parent.mkdir(parents=True)
+    dataset_path.write_text(
+        "customerID,TotalCharges,Churn\n"
+        "a, ,No\n"
+        "b,10.5,Yes\n",
+        encoding="utf-8",
+    )
+    evidence_path.write_text(
+        json.dumps({"schema_version": "dataset-discovery-evidence.v1"}),
+        encoding="utf-8",
+    )
+
+    recipe = materialize_review_only_preparation_recipe(
+        discovery_evidence_relative_path=(
+            "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+        ),
+        dataset_relative_path="data/raw/telco-customer-churn.csv",
+        output_relative_path="pipeline/evidence/telco-customer-churn/preparation-recipe.json",
+        transformations=[
+            {
+                "transformation_type": "missing_value_handling",
+                "description": (
+                    "Review TotalCharges blank values; no transformation is applied."
+                ),
+                "source_columns": ["TotalCharges"],
+                "target_columns": ["TotalCharges"],
+                "reason": "Observed blank TotalCharges values during authoring.",
+                "review_status": "inferred_pending_review",
+            }
+        ],
+        preparation_rules_source="notebook:telco-preparation-review-transformations",
+        repo_root=tmp_repo,
+        generated_at="2026-07-09T00:00:00+00:00",
+    )
+
+    written = json.loads(
+        (
+            tmp_repo
+            / "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+        ).read_text(encoding="utf-8")
+    )
+    transformation = recipe["transformations"][0]
+
+    assert written == recipe
+    assert transformation["source_columns"] == ["TotalCharges"]
+    assert transformation["review_status"] == "inferred_pending_review"
+    assert recipe["candidate_output"]["produced"] is False
+    assert recipe["candidate_output"]["row_count_after"] is None
+    assert "pending human review" in recipe["candidate_output"]["reason_not_produced"]
+    assert not any(recipe["preparation_boundary_confirmations"].values())

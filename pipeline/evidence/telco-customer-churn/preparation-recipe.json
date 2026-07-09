@@ -1,0 +1,58 @@
+{
+  "schema_version": "candidate-preparation-recipe.v1",
+  "producer": "pipeline/prepare_candidate.py",
+  "dataset_identity": {
+    "name": "data/raw/telco-customer-churn.csv",
+    "row_count_before": 7043,
+    "column_count_before": 21
+  },
+  "discovery_evidence_ref": {
+    "path": "pipeline/evidence/telco-customer-churn/discovery-evidence.json",
+    "schema_version": "dataset-discovery-evidence.v1"
+  },
+  "transformations": [
+    {
+      "transformation_type": "missing_value_handling",
+      "description": "Review TotalCharges blank values; no row dropping, imputation, type normalization, or feature selection is applied.",
+      "source_columns": [
+        "TotalCharges"
+      ],
+      "target_columns": [
+        "TotalCharges"
+      ],
+      "reason": "Observed 11 blank TotalCharges value(s) during Telco authoring; policy requires human review before any transformation.",
+      "review_status": "inferred_pending_review"
+    }
+  ],
+  "candidate_output": {
+    "produced": false,
+    "reason_not_produced": "No transformation rules with review_status 'explicit' or 'inferred_approved' were applied. 1 inferred rule(s) are pending human review and cannot be applied without explicit approval.",
+    "row_count_after": null,
+    "column_count_after": null
+  },
+  "candidate_status": {
+    "is_final_training_input": false,
+    "requires_m23_validation": true,
+    "authorized_for": "candidate_only"
+  },
+  "generation_settings": {
+    "generator_version": "prepare-candidate.v1",
+    "preparation_rules_source": "notebook:telco-preparation-review-transformations"
+  },
+  "generated_at": "2026-07-09T17:04:12+00:00",
+  "preparation_boundary_confirmations": {
+    "complex_feature_engineering_performed": false,
+    "model_training_performed": false,
+    "release_publication_performed": false,
+    "hidden_notebook_transformations": false,
+    "inferred_rules_applied_without_approval": false
+  },
+  "evidence_policy": {
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "secrets_prohibited": true,
+    "private_source_paths_prohibited": true,
+    "reduced_and_sanitized": true
+  }
+}

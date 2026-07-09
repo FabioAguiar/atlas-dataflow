@@ -67,13 +67,24 @@ def _reduced_path(path: Path) -> str:
     return path.name
 
 
+def _repository_relative_path(path: Path, repo_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return path.name
+
+
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
 
 
+def _is_blank_value(value: str) -> bool:
+    return value.strip() == ""
+
+
 def _infer_type(values: list[str]) -> str:
-    non_null = [v for v in values if v != ""]
+    non_null = [v.strip() for v in values if not _is_blank_value(v)]
     if not non_null:
         return "empty"
 
@@ -104,8 +115,8 @@ def _infer_type(values: list[str]) -> str:
 
 
 def _observe_field(name: str, values: list[str], total_rows: int) -> dict[str, Any]:
-    null_count = sum(1 for v in values if v == "")
-    non_null = [v for v in values if v != ""]
+    null_count = sum(1 for v in values if _is_blank_value(v))
+    non_null = [v.strip() for v in values if not _is_blank_value(v)]
     null_rate = null_count / total_rows if total_rows > 0 else 0.0
     cardinality = len(set(non_null))
     inferred_type = _infer_type(values)
@@ -191,7 +202,7 @@ def generate_discovery_evidence(
 
     candidate_categorical = [
         f["name"] for f in field_obs
-        if f["inferred_type"] == "string"
+        if f["inferred_type"] in {"boolean", "string"}
         and 0 < f["cardinality"] <= _CATEGORICAL_MAX_CARDINALITY
     ]
 
@@ -262,6 +273,34 @@ def write_discovery_evidence(
         json.dumps(evidence, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def materialize_discovery_evidence(
+    dataset_relative_path: str | Path,
+    output_relative_path: str | Path,
+    repo_root: str | Path | None = None,
+    dataset_slug: str | None = None,
+    seed: int = 0,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Generate, validate, and write discovery evidence using repo-relative paths."""
+    resolved_repo_root = resolve_repository_root(repo_root)
+    dataset_path = resolve_repository_path(dataset_relative_path, resolved_repo_root)
+    output_path = resolve_repository_path(output_relative_path, resolved_repo_root)
+
+    evidence = generate_discovery_evidence(
+        dataset_path,
+        seed=seed,
+        generated_at=generated_at,
+    )
+    evidence["dataset_metadata"]["name"] = dataset_slug or Path(dataset_relative_path).stem
+    evidence["dataset_metadata"]["source_path"] = _repository_relative_path(
+        dataset_path,
+        resolved_repo_root,
+    )
+
+    write_discovery_evidence(output_path, evidence, resolved_repo_root)
+    return evidence
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ from typing import Any
 _GENERATOR_VERSION = "prepare-candidate.v1"
 _SCHEMA_VERSION = "candidate-preparation-recipe.v1"
 _APPLICABLE_STATUSES = ("explicit", "inferred_approved")
+_REVIEW_STATUSES = ("explicit", "inferred_pending_review", "inferred_approved")
 
 
 def _utc_now_iso() -> str:
@@ -40,6 +41,13 @@ def _utc_now_iso() -> str:
 
 def _reduced_path(path: Path) -> str:
     return path.name
+
+
+def _repository_relative_path(path: Path, repo_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return path.name
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -226,6 +234,36 @@ def _build_transformations_record(rules: dict[str, Any]) -> list[dict[str, Any]]
     return transformations
 
 
+def _normalize_transformation_record(record: dict[str, Any]) -> dict[str, Any]:
+    required = {
+        "transformation_type",
+        "description",
+        "source_columns",
+        "target_columns",
+        "reason",
+        "review_status",
+    }
+    missing = sorted(required - set(record))
+    if missing:
+        raise ValueError(f"Preparation transformation missing required fields: {missing}")
+
+    review_status = record["review_status"]
+    if review_status not in _REVIEW_STATUSES:
+        raise ValueError(
+            "Preparation transformation review_status must be one of "
+            f"{list(_REVIEW_STATUSES)}; got {review_status!r}."
+        )
+
+    return {
+        "transformation_type": record["transformation_type"],
+        "description": record["description"],
+        "source_columns": list(record["source_columns"]),
+        "target_columns": list(record["target_columns"]),
+        "reason": record["reason"],
+        "review_status": review_status,
+    }
+
+
 def _has_applicable_rules(rules: dict[str, Any]) -> bool:
     """Return True if rules contain at least one explicitly declared or approved transformation."""
     if rules.get("column_selection"):
@@ -365,6 +403,145 @@ def prepare_candidate(
         recipe["normalization_notes"] = normalization_notes
 
     return recipe, output_columns, output_rows
+
+
+def build_review_only_preparation_recipe(
+    discovery_evidence_path: str | Path,
+    dataset_input_path: str | Path,
+    transformations: list[dict[str, Any]],
+    preparation_rules_source: str,
+    generated_at: str | None = None,
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build a schema-aligned recipe that records review rules without applying them.
+
+    This helper is intended for authoring/materialization stages where inferred
+    concerns need durable evidence but no transformation has been approved. It
+    never writes a prepared candidate and never mutates the input rows.
+    """
+    discovery_evidence_path = Path(discovery_evidence_path)
+    dataset_input_path = Path(dataset_input_path)
+    resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else None
+
+    if not discovery_evidence_path.exists():
+        raise FileNotFoundError(f"Discovery evidence not found: {discovery_evidence_path}")
+    if not dataset_input_path.exists():
+        raise FileNotFoundError(f"Dataset not found: {dataset_input_path}")
+    if not preparation_rules_source or Path(preparation_rules_source).is_absolute():
+        raise ValueError("preparation_rules_source must be a non-empty reduced path reference.")
+
+    discovery_evidence = json.loads(
+        discovery_evidence_path.read_text(encoding="utf-8")
+    )
+    columns, rows = _read_csv(dataset_input_path)
+    normalized_transformations = [
+        _normalize_transformation_record(record) for record in transformations
+    ]
+    applicable_count = sum(
+        1
+        for transformation in normalized_transformations
+        if transformation["review_status"] in _APPLICABLE_STATUSES
+    )
+
+    if applicable_count:
+        reason_not_produced = (
+            "Review-only recipe materialization does not apply transformations. "
+            f"{applicable_count} approved rule(s) were supplied but no candidate output "
+            "was produced by this authoring boundary."
+        )
+    else:
+        pending_count = sum(
+            1
+            for transformation in normalized_transformations
+            if transformation["review_status"] == "inferred_pending_review"
+        )
+        reason_not_produced = (
+            "No transformation rules with review_status 'explicit' or "
+            f"'inferred_approved' were applied. {pending_count} inferred rule(s) "
+            "are pending human review and cannot be applied without explicit approval."
+        )
+
+    discovery_ref_path = _reduced_path(discovery_evidence_path)
+    dataset_name = _reduced_path(dataset_input_path)
+    if resolved_repo_root is not None:
+        discovery_ref_path = _repository_relative_path(
+            discovery_evidence_path,
+            resolved_repo_root,
+        )
+        dataset_name = _repository_relative_path(dataset_input_path, resolved_repo_root)
+
+    return {
+        "schema_version": _SCHEMA_VERSION,
+        "producer": "pipeline/prepare_candidate.py",
+        "dataset_identity": {
+            "name": dataset_name,
+            "row_count_before": len(rows),
+            "column_count_before": len(columns),
+        },
+        "discovery_evidence_ref": {
+            "path": discovery_ref_path,
+            "schema_version": discovery_evidence.get("schema_version", "unknown"),
+        },
+        "transformations": normalized_transformations,
+        "candidate_output": {
+            "produced": False,
+            "reason_not_produced": reason_not_produced,
+            "row_count_after": None,
+            "column_count_after": None,
+        },
+        "candidate_status": {
+            "is_final_training_input": False,
+            "requires_m23_validation": True,
+            "authorized_for": "candidate_only",
+        },
+        "generation_settings": {
+            "generator_version": _GENERATOR_VERSION,
+            "preparation_rules_source": preparation_rules_source,
+        },
+        "generated_at": generated_at or _utc_now_iso(),
+        "preparation_boundary_confirmations": {
+            "complex_feature_engineering_performed": False,
+            "model_training_performed": False,
+            "release_publication_performed": False,
+            "hidden_notebook_transformations": False,
+            "inferred_rules_applied_without_approval": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def materialize_review_only_preparation_recipe(
+    discovery_evidence_relative_path: str | Path,
+    dataset_relative_path: str | Path,
+    output_relative_path: str | Path,
+    transformations: list[dict[str, Any]],
+    preparation_rules_source: str,
+    repo_root: str | Path,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build, validate, and write a review-only preparation recipe."""
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+    discovery_evidence_path = (resolved_repo_root / discovery_evidence_relative_path).resolve()
+    dataset_input_path = (resolved_repo_root / dataset_relative_path).resolve()
+    output_path = (resolved_repo_root / output_relative_path).resolve()
+
+    recipe = build_review_only_preparation_recipe(
+        discovery_evidence_path=discovery_evidence_path,
+        dataset_input_path=dataset_input_path,
+        transformations=transformations,
+        preparation_rules_source=preparation_rules_source,
+        generated_at=generated_at,
+        repo_root=resolved_repo_root,
+    )
+    write_preparation_recipe(output_path, recipe, resolved_repo_root)
+    return recipe
 
 
 def write_candidate_output(

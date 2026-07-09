@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline.training import _prepared_dataset_metadata_blocking_reasons
+
 
 INFERENCE_BUNDLE_SCHEMA = "contracts/inference-bundle.schema.json"
 INFERENCE_BUNDLE_VERSION = "inference_bundle.v1"
@@ -689,6 +691,181 @@ def _write_bundle(bundle: dict[str, Any], output_path: Path) -> None:
         json.dumps(bundle, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+# Governed inference-bundle materialization boundary (Project Spec S0033).
+#
+# Bridges a governed training run materialization result
+# (`pipeline.training.materialize_training_run_from_prepared_metadata`) and a
+# `prepared-data-metadata.v1` artifact to this module's own `_build_bundle`
+# generation boundary. The governed training run is only ever resolved from
+# the caller-supplied materialization result's own `status`/`training_result`
+# fields -- never a hardcoded `train-pending` placeholder, a glob over
+# `pipeline/training-runs/`, or a notebook-held DataFrame. The prepared
+# dataset reference is only ever resolved via the same
+# `_prepared_dataset_metadata_blocking_reasons` boundary
+# `pipeline.training` itself uses, so it always matches the exact prepared
+# dataset the training run was produced from.
+GOVERNED_INFERENCE_BUNDLE_RELEASE_PACKAGE_REFERENCE = "predictions/bundle.json"
+
+
+def _derive_provisional_release_id(run_id: str) -> str:
+    """Derive a schema-safe, deterministic placeholder ``release_id``.
+
+    ``inference-bundle.schema.json`` requires ``release_context.release_id``
+    to match ``release-YYYYMMDD-NNN``, but this spec must not assemble a real
+    release candidate, so no real release_id has been allocated yet. This
+    derives a value tied only to the governed training run's own date --
+    never a milestone tag, notebook counter, or reused fixture value -- with
+    a fixed ``-001`` sequence; a later, separately authorized
+    release-candidate assembly is free to supersede it with a real allocated
+    release_id.
+    """
+    match = RUN_ID_RE.fullmatch(run_id)
+    if not match:
+        raise BundleGenerationError(
+            "invalid_training_run_identity",
+            f"training run id does not match train-{{timestamp}}Z: {run_id}",
+            field="training_run_identity.run_id",
+        )
+    date_part = run_id[len("train-"):len("train-") + 8]
+    return f"release-{date_part}-001"
+
+
+def materialize_governed_inference_bundle(
+    *,
+    training_run_materialization_result: dict[str, Any],
+    execution_contract_path: str | Path,
+    runtime_contract_path: str | Path,
+    public_contract_path: str | Path,
+    dataset_context_path: str | Path,
+    prepared_data_metadata_path: str | Path,
+    output_path: str | Path,
+    prediction_type: str,
+    repo_root: str | Path | None = None,
+    dataset_slug: str | None = None,
+    class_labels: list[str] | None = None,
+    probability_output: bool | None = None,
+    execution_contract_ref: str | None = None,
+    runtime_contract_ref: str | None = None,
+    public_contract_ref: str | None = None,
+    dataset_context_ref: str | None = None,
+    inference_bundle_schema_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Materialize ``inference_bundle.v1`` from a governed training run.
+
+    Only proceeds when ``training_run_materialization_result["status"] ==
+    "trained"`` (the same governed
+    ``materialize_training_run_from_prepared_metadata`` result the calling
+    notebook already computed) and when the prepared-data-metadata.v1
+    artifact's own ``prepared_candidate`` is produced and training-ready.
+    Any other state returns a ``status: "blocked"`` result with
+    ``blocking_reasons`` instead of generating a bundle. Never accepts
+    hidden notebook memory -- only explicit path references and the
+    already-computed governed result object.
+    """
+    resolved_repo_root = Path(repo_root or _repo_root()).expanduser().resolve()
+
+    if (
+        not isinstance(training_run_materialization_result, dict)
+        or training_run_materialization_result.get("status") != "trained"
+    ):
+        status = (
+            training_run_materialization_result.get("status")
+            if isinstance(training_run_materialization_result, dict)
+            else "malformed_training_run_materialization_result"
+        )
+        return {
+            "status": "blocked",
+            "blocking_reasons": [
+                f"training_run_materialization_result.status is not 'trained': {status}.",
+            ],
+        }
+
+    training_result = training_run_materialization_result.get("training_result")
+    if not isinstance(training_result, dict):
+        return {
+            "status": "blocked",
+            "blocking_reasons": [
+                "training_run_materialization_result.training_result is missing.",
+            ],
+        }
+
+    metadata_path = Path(prepared_data_metadata_path)
+    metadata = _load_json_file(metadata_path, "prepared_data_metadata_path")
+    blocking_reasons, prepared_reference = _prepared_dataset_metadata_blocking_reasons(metadata)
+    if blocking_reasons:
+        return {"status": "blocked", "blocking_reasons": blocking_reasons}
+
+    run_id = Path(training_result["output_directory"]).name
+    try:
+        provisional_release_id = _derive_provisional_release_id(run_id)
+    except BundleGenerationError as exc:
+        return {"status": "blocked", "blocking_reasons": [str(exc)]}
+
+    model_selection_evidence_path = training_result.get("model_selection_evidence_path")
+
+    namespace = argparse.Namespace(
+        execution_contract=str(Path(execution_contract_path)),
+        runtime_contract=str(Path(runtime_contract_path)),
+        public_contract=str(Path(public_contract_path)),
+        prepared_dataset=str(resolved_repo_root / prepared_reference),
+        training_parameter_record=str(
+            resolved_repo_root / training_result["training_parameter_record_path"]
+        ),
+        training_metrics=str(resolved_repo_root / training_result["metrics_path"]),
+        model_artifact=str(resolved_repo_root / training_result["serialized_model_path"]),
+        output=str(Path(output_path)),
+        release_package_reference=GOVERNED_INFERENCE_BUNDLE_RELEASE_PACKAGE_REFERENCE,
+        prediction_type=prediction_type,
+        release_id=provisional_release_id,
+        dataset_slug=dataset_slug,
+        dataset_context=str(Path(dataset_context_path)),
+        model_selection_evidence=(
+            str(resolved_repo_root / model_selection_evidence_path)
+            if model_selection_evidence_path
+            else None
+        ),
+        candidate_id=None,
+        description=None,
+        runtime_adapter_version=None,
+        minimum_runtime_adapter_version=None,
+        class_label=list(class_labels) if class_labels else None,
+        probability_output=probability_output,
+        execution_contract_ref=execution_contract_ref,
+        runtime_contract_ref=runtime_contract_ref,
+        public_contract_ref=public_contract_ref,
+        prepared_dataset_ref=prepared_reference,
+        dataset_context_ref=dataset_context_ref,
+        training_parameter_record_ref=training_result["training_parameter_record_path"],
+        training_metrics_ref=training_result["metrics_path"],
+        model_artifact_ref=training_result["serialized_model_path"],
+        model_selection_evidence_ref=model_selection_evidence_path,
+        inference_bundle_schema=(
+            str(Path(inference_bundle_schema_path))
+            if inference_bundle_schema_path
+            else str(_repo_root() / INFERENCE_BUNDLE_SCHEMA)
+        ),
+    )
+
+    try:
+        bundle = _build_bundle(namespace)
+        _write_bundle(bundle, Path(output_path))
+    except BundleGenerationError as exc:
+        return {
+            "status": "blocked",
+            "blocking_reasons": [str(exc)],
+            "error": exc.to_dict()["error"],
+        }
+
+    return {
+        "status": "generated",
+        "output_path": str(output_path),
+        "bundle_id": bundle["bundle_identity"]["bundle_id"],
+        "training_run_id": run_id,
+        "provisional_release_id": provisional_release_id,
+        "prepared_dataset_reference": prepared_reference,
+    }
 
 
 def _parse_bool(value: str) -> bool:

@@ -8,7 +8,12 @@ from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pipeline.generate_inference_bundle import _build_bundle, _build_parser
+import pipeline.training as training_module
+from pipeline.generate_inference_bundle import (
+    _build_bundle,
+    _build_parser,
+    materialize_governed_inference_bundle,
+)
 from runtime import execute_prediction
 from runtime.inference import load_runtime_bundle_adapter
 
@@ -483,3 +488,131 @@ def test_generated_bundle_is_consumable_by_runtime_adapter(tmp_path: Path) -> No
     assert adapter.metadata.feature_order == tuple(TELCO_FEATURE_COLUMNS)
     assert adapter.metadata.runtime_execution["loader_strategy"] == "joblib_sklearn_predict"
     assert adapter.predict({"SeniorCitizen": False}) is True
+
+
+# Project Spec S0033: the governed inference-bundle materialization boundary
+# that bridges a governed training run materialization result (never a
+# hardcoded train-pending placeholder or notebook-held state) and a
+# prepared-data-metadata.v1 artifact to the generation boundary exercised
+# above. `_repo_root` is monkeypatched on `pipeline.training` (the same
+# established pattern used by tests/test_training_pipeline.py) so the
+# reused `_prepared_dataset_metadata_blocking_reasons` boundary resolves the
+# prepared dataset reference against an isolated tmp_path repository rather
+# than the real repository.
+
+
+def test_materialize_governed_inference_bundle_from_trained_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo-root"
+    repo_root.mkdir()
+    monkeypatch.setattr(training_module, "_repo_root", lambda: repo_root)
+
+    execution_contract_path = _write_json(
+        repo_root / "contracts/telco-customer-churn/execution-contract.json",
+        _synthetic_execution_contract(),
+    )
+    runtime_contract_path = _write_json(
+        repo_root / "contracts/telco-customer-churn/runtime-contract.json",
+        _synthetic_runtime_contract(),
+    )
+    public_contract_path = _write_json(
+        repo_root / "contracts/telco-customer-churn/public-contract.json",
+        _synthetic_public_contract(),
+    )
+    dataset_context_path = _write_json(
+        repo_root / "contracts/telco-customer-churn/dataset-context.json",
+        {"schema_version": "dataset-context.v1"},
+    )
+
+    prepared_dataset_relative = "pipeline/prepared/telco-customer-churn/prepared-data.csv"
+    prepared_dataset_bytes = b"dataset_id,gender\ntelco-customer-churn,Female\n"
+    prepared_dataset_path = _write_bytes(
+        repo_root / prepared_dataset_relative, prepared_dataset_bytes
+    )
+    prepared_metadata_path = _write_json(
+        repo_root / "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        {
+            "schema_version": "prepared-data-metadata.v1",
+            "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+            "prepared_candidate": {
+                "produced": True,
+                "reference": {
+                    "path": prepared_dataset_relative,
+                    "content_sha256": _sha256_bytes(prepared_dataset_bytes),
+                },
+            },
+            "training_readiness": {"is_training_ready": True},
+        },
+    )
+
+    training_run_relative_dir = "pipeline/training-runs/telco-customer-churn/train-20260709T120000Z"
+    model_artifact_path = _write_bytes(
+        repo_root / training_run_relative_dir / "model.pkl", b"synthetic-governed-model-bytes"
+    )
+    metrics = _synthetic_metrics()
+    metrics["training_run_identity"]["run_id"] = "train-20260709T120000Z"
+    metrics_path = _write_json(repo_root / training_run_relative_dir / "metrics.json", metrics)
+    training_record = _synthetic_training_record(
+        execution_contract_sha256=_sha256_bytes(execution_contract_path.read_bytes()),
+        prepared_dataset_sha256=_sha256_bytes(prepared_dataset_bytes),
+        model_artifact_sha256=_sha256_bytes(model_artifact_path.read_bytes()),
+        metrics_sha256=_sha256_bytes(metrics_path.read_bytes()),
+    )
+    training_record["training_run_identity"]["run_id"] = "train-20260709T120000Z"
+    training_record["produced_outputs"] = {
+        "serialized_model_path": f"{training_run_relative_dir}/model.pkl",
+        "training_parameter_record_path": f"{training_run_relative_dir}/training-parameter-record.json",
+    }
+    training_record_path = _write_json(
+        repo_root / training_run_relative_dir / "training-parameter-record.json",
+        training_record,
+    )
+
+    training_run_materialization_result = {
+        "artifact_type": "training_run_materialization_result",
+        "status": "trained",
+        "training_result": {
+            "output_directory": f"{training_run_relative_dir}/",
+            "serialized_model_path": f"{training_run_relative_dir}/model.pkl",
+            "training_parameter_record_path": training_record_path.relative_to(repo_root).as_posix(),
+            "metrics_path": metrics_path.relative_to(repo_root).as_posix(),
+            "model_selection_evidence_path": None,
+        },
+    }
+
+    output_path = repo_root / "contracts/telco-customer-churn/inference-bundle.json"
+
+    result = materialize_governed_inference_bundle(
+        training_run_materialization_result=training_run_materialization_result,
+        execution_contract_path=execution_contract_path,
+        runtime_contract_path=runtime_contract_path,
+        public_contract_path=public_contract_path,
+        dataset_context_path=dataset_context_path,
+        prepared_data_metadata_path=prepared_metadata_path,
+        output_path=output_path,
+        prediction_type="string",
+        repo_root=repo_root,
+        class_labels=["No", "Yes"],
+        probability_output=True,
+        execution_contract_ref="contracts/telco-customer-churn/execution-contract.json",
+        runtime_contract_ref="contracts/telco-customer-churn/runtime-contract.json",
+        public_contract_ref="contracts/telco-customer-churn/public-contract.json",
+        dataset_context_ref="contracts/telco-customer-churn/dataset-context.json",
+    )
+
+    assert result["status"] == "generated"
+    assert result["training_run_id"] == "train-20260709T120000Z"
+    assert result["provisional_release_id"] == "release-20260709-001"
+    assert output_path.exists()
+
+    generated = json.loads(output_path.read_text(encoding="utf-8"))
+    assert generated["contract_version"] == "inference_bundle.v1"
+    assert generated["release_context"]["release_id"] == "release-20260709-001"
+    assert generated["release_context"]["release_package_reference"] == "predictions/bundle.json"
+    assert "customerID" not in generated["feature_order"]
+    assert "TotalCharges" not in generated["feature_order"]
+    assert generated["prepared_dataset"]["prepared_dataset_reference"]["path"] == (
+        prepared_dataset_relative
+    )

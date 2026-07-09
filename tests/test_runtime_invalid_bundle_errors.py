@@ -8,10 +8,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import pipeline.training as training_module  # noqa: E402
 from pipeline.generate_inference_bundle import (  # noqa: E402
     BundleGenerationError,
     _build_bundle,
     _build_parser,
+    materialize_governed_inference_bundle,
 )
 from runtime.inference import (  # noqa: E402
     BundleReferenceError,
@@ -483,3 +485,118 @@ def test_generation_rejects_draft_only_execution_contract(tmp_path: Path) -> Non
     with pytest.raises(BundleGenerationError) as exc_info:
         _build_from_argv(tmp_path, execution_contract_version="execution_contract.draft")
     assert exc_info.value.code == "invalid_contract_version"
+
+
+# Project Spec S0033: rejection paths for the governed inference-bundle
+# materialization boundary (`materialize_governed_inference_bundle`), which
+# never generates a bundle from a hardcoded train-pending placeholder or an
+# ungoverned prepared-dataset reference.
+
+
+def _minimal_governed_bundle_kwargs(tmp_path: Path, repo_root: Path) -> dict[str, Any]:
+    execution_contract_path = repo_root / "contracts/telco-customer-churn/execution-contract.json"
+    _write_json(execution_contract_path, _generation_execution_contract())
+    runtime_contract_path = repo_root / "contracts/telco-customer-churn/runtime-contract.json"
+    _write_json(runtime_contract_path, {"schema_version": "1.0.0"})
+    public_contract_path = repo_root / "contracts/telco-customer-churn/public-contract.json"
+    _write_json(public_contract_path, {"schema_version": "1.0.0"})
+    dataset_context_path = repo_root / "contracts/telco-customer-churn/dataset-context.json"
+    _write_json(dataset_context_path, {"schema_version": "dataset-context.v1"})
+    return {
+        "execution_contract_path": execution_contract_path,
+        "runtime_contract_path": runtime_contract_path,
+        "public_contract_path": public_contract_path,
+        "dataset_context_path": dataset_context_path,
+        "output_path": repo_root / "contracts/telco-customer-churn/inference-bundle.json",
+        "prediction_type": "boolean",
+        "repo_root": repo_root,
+        "execution_contract_ref": "contracts/telco-customer-churn/execution-contract.json",
+        "runtime_contract_ref": "contracts/telco-customer-churn/runtime-contract.json",
+        "public_contract_ref": "contracts/telco-customer-churn/public-contract.json",
+        "dataset_context_ref": "contracts/telco-customer-churn/dataset-context.json",
+    }
+
+
+def test_governed_inference_bundle_blocked_when_training_run_not_trained(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo-root"
+    repo_root.mkdir()
+    monkeypatch.setattr(training_module, "_repo_root", lambda: repo_root)
+
+    prepared_metadata_path = repo_root / "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json"
+    _write_json(
+        prepared_metadata_path,
+        {
+            "schema_version": "prepared-data-metadata.v1",
+            "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+            "prepared_candidate": {"produced": False, "reason_not_produced": "pending review"},
+            "training_readiness": {"is_training_ready": False},
+        },
+    )
+
+    # This is the pre-training blocked-state result the notebook's own
+    # `materialize_training_run_from_prepared_metadata` call reports before a
+    # governed training run exists -- never a `train-pending` path glob.
+    training_run_materialization_result = {
+        "status": "blocked",
+        "blocking_reasons": ["execution_contract_path does not reference an execution-ready contract."],
+    }
+
+    result = materialize_governed_inference_bundle(
+        training_run_materialization_result=training_run_materialization_result,
+        prepared_data_metadata_path=prepared_metadata_path,
+        **_minimal_governed_bundle_kwargs(tmp_path, repo_root),
+    )
+
+    assert result["status"] == "blocked"
+    assert any("status is not 'trained'" in reason for reason in result["blocking_reasons"])
+    assert not (repo_root / "contracts/telco-customer-churn/inference-bundle.json").exists()
+
+
+def test_governed_inference_bundle_blocked_when_prepared_candidate_not_produced(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo-root"
+    repo_root.mkdir()
+    monkeypatch.setattr(training_module, "_repo_root", lambda: repo_root)
+
+    prepared_metadata_path = repo_root / "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json"
+    _write_json(
+        prepared_metadata_path,
+        {
+            "schema_version": "prepared-data-metadata.v1",
+            "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+            "prepared_candidate": {
+                "produced": False,
+                "reason_not_produced": "unresolved TotalCharges review",
+            },
+            "training_readiness": {"is_training_ready": False},
+        },
+    )
+
+    training_run_relative_dir = "pipeline/training-runs/telco-customer-churn/train-20260709T120000Z"
+    training_run_materialization_result = {
+        "status": "trained",
+        "training_result": {
+            "output_directory": f"{training_run_relative_dir}/",
+            "serialized_model_path": f"{training_run_relative_dir}/model.pkl",
+            "training_parameter_record_path": (
+                f"{training_run_relative_dir}/training-parameter-record.json"
+            ),
+            "metrics_path": f"{training_run_relative_dir}/metrics.json",
+            "model_selection_evidence_path": None,
+        },
+    }
+
+    result = materialize_governed_inference_bundle(
+        training_run_materialization_result=training_run_materialization_result,
+        prepared_data_metadata_path=prepared_metadata_path,
+        **_minimal_governed_bundle_kwargs(tmp_path, repo_root),
+    )
+
+    assert result["status"] == "blocked"
+    assert any("prepared_candidate.produced" in reason for reason in result["blocking_reasons"])
+    assert not (repo_root / "contracts/telco-customer-churn/inference-bundle.json").exists()

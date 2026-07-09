@@ -24,6 +24,57 @@ The validation builds and starts the local containers, confirms that
 `GET /health` returns the API health response, and confirms that the web root
 page loads. It does not deploy anything and does not require secrets.
 
+## Data Workbench boundary
+
+Atlas is about to add dataset-specific notebooks and reusable data-authoring
+procedures. Before that work begins, this section defines the minimum
+repository-facing boundary for it, so dataset authoring stays disciplined and
+does not blur into the existing `pipeline/`, `contracts/`, `releases/`,
+`publisher/`, `registry/`, `api/`, and `web/` responsibilities.
+
+- **Notebooks** (`notebooks/`) are the human-facing authoring surface for
+  dataset-specific exploration and decisions (see
+  `notebooks/m22_discovery_entrypoint.ipynb`). A notebook may orchestrate
+  authoring work, but it must not be the only durable record of a dataset
+  decision — decisions that feed training, contracts, releases, or UI
+  data-fill must be externalized into explicit files before those downstream
+  steps consume them.
+- **Reusable authoring helpers** are logic that more than one notebook or
+  authoring run needs. They belong in a dedicated workbench-owned location,
+  separate from notebooks and separate from runtime `api/`/`web/` code — never
+  copied ad hoc between notebook cells. No such helpers exist yet; introducing
+  them is out of scope for this bootstrap and requires its own implementation
+  request.
+- **Dataset-local configuration and modeling-intent files** are the explicit,
+  reviewable files a dataset author writes to record scope, source, and
+  modeling intent for one dataset, distinct from a notebook's exploratory
+  cells and distinct from the generated pipeline/contract/release artifacts
+  those decisions eventually produce.
+- **Local authoring runs vs. publisher runs:** a local authoring/workbench run
+  is exploratory and disposable — it supports a human deciding what a dataset
+  needs. A publisher run (`publisher/validate.py`, `publisher/promote.py`) is
+  the official validation/promotion path and only ever consumes already
+  externalized, committed inputs (schemas under `contracts/`, pipeline
+  artifacts under `pipeline/`), never a notebook's in-memory or local-only
+  state.
+- **Promotion boundary:** exploratory/authoring artifacts stay local (ignored
+  by Git, see below) until a dataset author turns a decision into an explicit,
+  committed file — a discovery-evidence document, a source-contract input, a
+  release-candidate input, or a training-interface input matching the
+  existing `pipeline/*.schema.json` contracts. Only committed files are
+  eligible for `pipeline/`, `contracts/`, `releases/`, or `publisher/`
+  processing; nothing generated during a local run is promoted automatically.
+- **Ignored by default:** local workbench generated outputs, caches,
+  exploratory run artifacts, temporary/intermediate dataset dumps, model
+  binaries, and notebook checkpoints — see the Data Workbench section of
+  `.gitignore`. Promotion of any such output requires a later, explicit
+  implementation request; this bootstrap does not itself promote any file.
+
+This is a bootstrap boundary only. It does not create a workbench folder
+tree, reusable helper modules, dataset-specific notebooks, or training/
+release/publisher behavior changes — those require their own, later
+implementation requests that explicitly list their concrete edit paths.
+
 ## Runtime mode operator note
 
 Atlas currently has two Compose entry points with different exposure

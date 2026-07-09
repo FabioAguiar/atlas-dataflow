@@ -35,3 +35,29 @@ htmlcov/
 
 # Atlas generated runtime evidence
 /evidence/
+
+# Data Workbench — local authoring outputs (see README.md, "Data Workbench
+# boundary"). These stay local/exploratory unless a later implementation
+# request explicitly promotes them into pipeline/contracts/releases/publisher
+# inputs. Helper modules, docs, and dataset-local config/modeling-intent
+# files are intended source and are NOT covered by these patterns.
+workbench/**/runs/
+workbench/**/.cache/
+workbench/**/raw/
+workbench/**/exploratory/
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Model binaries and other heavyweight authoring artifacts
+*.ckpt
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.onnx
+
+# Dados
+data/

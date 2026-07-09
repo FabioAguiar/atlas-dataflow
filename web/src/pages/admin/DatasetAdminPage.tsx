@@ -855,7 +855,18 @@ function DatasetComboBox({
         className="dataset-combobox__trigger"
         disabled={disabled}
         onClick={() => {
-          setOpen((current) => !current);
+          setOpen((current) => {
+            const next = !current;
+            // Opening should let the operator browse the full listing, not a
+            // filter carried over from the currently selected dataset's own
+            // label; closing without picking a new option restores it.
+            if (next) {
+              onQueryChange("");
+            } else {
+              onNormalize();
+            }
+            return next;
+          });
           setActiveSlug(null);
         }}
         type="button"
@@ -1890,7 +1901,10 @@ function CustomizationEditor({
                   <input
                     checked={field.hidden}
                     disabled={field.required}
-                    onChange={(event) => updateFieldHint(index, { hidden: event.target.checked })}
+                    onChange={(event) => {
+                      if (field.required) return;
+                      updateFieldHint(index, { hidden: event.target.checked });
+                    }}
                     type="checkbox"
                   />
                   <span style={mutedTextStyle}>

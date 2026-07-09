@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -58,6 +58,7 @@ function renderHomePage() {
 }
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -205,6 +206,46 @@ describe("HomePage problem_type and curated icon rendering", () => {
     const { container } = renderHomePage();
     await screen.findByText("Synthetic Fallback Icon Dataset");
 
+    const iconPath = container.querySelector(".dataset-card__icon path");
+    expect(iconPath?.getAttribute("d")).toBe(TELECOM_ICON_PATH_D);
+  });
+});
+
+// S0017: a ready, real-shaped telco-customer-churn listing entry (matching
+// registry/datasets.json's actual seeded dataset) must render from the
+// listing payload/presentation helpers alone, not from hardcoded Telco
+// mock copy in HomePage.tsx itself.
+describe("HomePage Telco-like ready dataset listing (S0017)", () => {
+  it("renders the telco-customer-churn dataset card from the listing payload with no curated overrides", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "telco-customer-churn",
+        title: "Telco Customer Churn",
+        summary: "Customer churn prediction dataset for a telecommunications provider.",
+        domain: "telco",
+        visibility: "public",
+        tags: ["telco", "churn", "classification"],
+        problem_type: "binary_classification",
+      },
+    ]);
+
+    const { container } = renderHomePage();
+
+    expect(await screen.findByText("Telco Customer Churn")).toBeInTheDocument();
+    expect(
+      screen.getByText("Customer churn prediction dataset for a telecommunications provider."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Classificação binária")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Explorar dataset/ })).toHaveAttribute(
+      "href",
+      "/dataset/telco-customer-churn",
+    );
+
+    // domain "telco" is not in DOMAIN_ICON_RULES' keyword list ("telecom"/
+    // "telco" both match "telco" today via datasetPresentation.ts's keyword
+    // substring check), and there is no curated home_card_icon in this
+    // payload, so the icon must come from the deterministic domain/tags
+    // fallback, not an invented per-dataset value.
     const iconPath = container.querySelector(".dataset-card__icon path");
     expect(iconPath?.getAttribute("d")).toBe(TELECOM_ICON_PATH_D);
   });

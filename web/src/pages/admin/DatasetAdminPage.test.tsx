@@ -1,8 +1,20 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DatasetAdminPage from "./DatasetAdminPage";
+
+// DatasetAdminPage's Home card preview renders the shared DatasetCard
+// component, which uses react-router-dom's <Link> -- it needs a Router
+// ancestor the same way HomePage/DatasetPage tests already provide one.
+function renderAdminPage() {
+  return render(
+    <MemoryRouter>
+      <DatasetAdminPage />
+    </MemoryRouter>,
+  );
+}
 
 type MockResponse = {
   ok: boolean;
@@ -271,6 +283,10 @@ function installFetchMock(
 
 async function loadDraftOnly() {
   expect(screen.queryByLabelText(["Operator", "token"].join(" "))).not.toBeInTheDocument();
+  // The "Load draft" button stays disabled until the async GET /datasets
+  // listing resolves and auto-selects a dataset slug -- wait for that instead
+  // of assuming the listing is already settled by click time.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Load draft" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
   // DraftStatusPanel's "ready" branch renders the bare string "Draft loaded"
   // (no trailing period) -- see DatasetAdminPage.tsx line ~1239. Matching the
@@ -292,21 +308,26 @@ async function loadDraftAndCustomization() {
 describe("DatasetAdminPage", () => {
   beforeEach(() => {
     Element.prototype.setPointerCapture = vi.fn();
+    // jsdom does not implement elementFromPoint at all -- finishDrag()
+    // calls it unconditionally on pointer up/cancel, so every drag test
+    // needs a stub, not just the ones asserting a specific drop target.
+    document.elementFromPoint = vi.fn(() => null);
   });
 
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it("wires Publishing tab actions and derives lifecycle labels from saved, published, and visibility state", async () => {
     const fetchMock = installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
     });
-    expect(screen.getByRole("heading", { name: "Dataset -- Telco Customer Churn" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dataset — Telco Customer Churn" })).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Not Published");
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Public Content",
@@ -319,7 +340,7 @@ describe("DatasetAdminPage", () => {
     ]);
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Not Published");
-    expect(screen.getByLabelText("Visible Publicly")).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeDisabled();
     expect(screen.getByText("Not published in this session")).toBeInTheDocument();
 
     await loadDraftOnly();
@@ -333,14 +354,17 @@ describe("DatasetAdminPage", () => {
     expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`))).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText("Draft saved.")).toBeInTheDocument();
+    // The Publishing tab's own "Save draft" action duplicates the persistent
+    // workspace-level "Save draft" button's accessible name, so scope to the
+    // tabpanel to disambiguate.
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Draft saved through the profile draft model.")).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
 
     fireEvent.click(screen.getByRole("button", { name: "Publish changes" }));
     await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
     expect(screen.getByText("Published at 2026-07-03T17:30:00Z.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Visible Publicly")).not.toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).not.toBeDisabled();
     expect(screen.getByText("2026-07-03T17:30:00Z (this session)")).toBeInTheDocument();
 
     const publishCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`));
@@ -349,7 +373,7 @@ describe("DatasetAdminPage", () => {
     });
     expect((publishCall?.[1] as RequestInit | undefined)?.headers).toBeUndefined();
 
-    fireEvent.click(screen.getByLabelText("Visible Publicly"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
     await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Hidden"));
     expect(screen.getByText("Latest published snapshot is hidden publicly.")).toBeInTheDocument();
     expect(screen.getByText("2026-07-03T17:30:00Z (this session)")).toBeInTheDocument();
@@ -363,7 +387,7 @@ describe("DatasetAdminPage", () => {
     });
     expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(1);
 
-    fireEvent.click(screen.getByLabelText("Visible Publicly"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
     await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
 
     fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
@@ -376,7 +400,7 @@ describe("DatasetAdminPage", () => {
 
   it("marks the active workspace tab as selected via aria-selected and updates it when switching tabs", async () => {
     installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
@@ -393,19 +417,19 @@ describe("DatasetAdminPage", () => {
 
   it("surfaces backend profile validation feedback without publishing side effects", async () => {
     installFetchMock({ rejectProfileSave: true });
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftAndCustomization();
 
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
-    expect(await screen.findByText("Draft rejected by backend validation")).toBeInTheDocument();
+    expect(await screen.findByText("Profile draft rejected by backend validation")).toBeInTheDocument();
     expect(screen.getByText(/display.title - TITLE_REQUIRED - Title is required./)).toBeInTheDocument();
   });
 
   it("surfaces publish validation feedback without changing visibility state", async () => {
     installFetchMock({ rejectPublish: true });
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftOnly();
 
@@ -419,26 +443,26 @@ describe("DatasetAdminPage", () => {
 
   it("surfaces visibility validation feedback without changing public exposure", async () => {
     installFetchMock({ rejectVisibility: true });
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftOnly();
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     fireEvent.click(screen.getByRole("button", { name: "Publish changes" }));
     await waitFor(() => expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published"));
-    expect(screen.getByLabelText("Visible Publicly")).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeChecked();
 
-    fireEvent.click(screen.getByLabelText("Visible Publicly"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
 
     expect(await screen.findByText("Publishing action rejected by backend validation.")).toBeInTheDocument();
     expect(screen.getByText(/PROFILE_VISIBILITY_PAYLOAD_INVALID - Visibility payload is invalid./)).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Published");
-    expect(screen.getByLabelText("Visible Publicly")).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeChecked();
   });
 
   it("observes a saved Theme Preset edit in Publishing's derived status", async () => {
     installFetchMock({ themePresetOverride: "ocean-blue", trackProfileDraftSaves: true });
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftOnly();
 
@@ -454,7 +478,8 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
     expect(screen.getByRole("button", { name: "Publish changes" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    // Same Publishing-tab-vs-workspace-level "Save draft" disambiguation as above.
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("Draft saved through the profile draft model.")).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
     expect(screen.getByRole("button", { name: "Publish changes" })).toBeEnabled();
@@ -488,8 +513,9 @@ describe("DatasetAdminPage", () => {
     const SCHEMA_SUPPORTED_BADGE_PRESETS = ["risk"];
 
     const fetchMock = installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load draft" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
 
@@ -537,8 +563,9 @@ describe("DatasetAdminPage", () => {
 
   it("cannot select or persist theme/result-card preset values outside the schema-supported set", async () => {
     installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load draft" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Load draft" }));
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
 
@@ -576,7 +603,7 @@ describe("DatasetAdminPage", () => {
     // a file upload -- this test proves that boundary stays true rather than silently
     // regressing into an unreviewed upload affordance.
     installFetchMock();
-    const { container } = render(<DatasetAdminPage />);
+    const { container } = renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
@@ -588,7 +615,7 @@ describe("DatasetAdminPage", () => {
 
   it("renders Live Preview subviews from real public components and the loaded customization", async () => {
     installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftAndCustomization();
 
@@ -628,7 +655,7 @@ describe("DatasetAdminPage", () => {
     // default-fixture alternatives would collapse back to the pre-edit
     // rendered value and prove nothing about reactivity.
     installFetchMock({ themePresetOverride: "ocean-blue", metricsOverride: { auc_roc: 0.93, precision: 0.81 } });
-    const { container } = render(<DatasetAdminPage />);
+    const { container } = renderAdminPage();
 
     await loadDraftAndCustomization();
 
@@ -702,14 +729,18 @@ describe("DatasetAdminPage", () => {
 
   it("shows pointer-following drag overlay activity for fields and groups", async () => {
     installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftAndCustomization();
 
     const groupsPanel = screen.getByLabelText("Groups");
     const groupDragHandle = within(groupsPanel).getByRole("button", { name: "Drag group Account profile" });
     fireEvent.pointerDown(groupDragHandle, { pointerId: 1, clientX: 12, clientY: 16 });
-    expect(screen.getByText("Account profile")).toBeInTheDocument();
+    // "Account profile" also appears as a per-field group <option>, so the
+    // drag ghost (a plain aria-hidden div, not an <option>) needs filtering
+    // out from those to be found unambiguously.
+    const groupGhost = screen.getAllByText("Account profile").find((el) => el.tagName !== "OPTION");
+    expect(groupGhost).toBeInTheDocument();
     fireEvent.pointerUp(groupDragHandle, { pointerId: 1, clientX: 18, clientY: 24 });
 
     await waitFor(() => {
@@ -719,7 +750,8 @@ describe("DatasetAdminPage", () => {
     const fieldsPanel = screen.getByLabelText("Field presentation");
     const fieldDragHandle = within(fieldsPanel).getByRole("button", { name: "Drag field Tenure" });
     fireEvent.pointerDown(fieldDragHandle, { pointerId: 2, clientX: 20, clientY: 28 });
-    expect(screen.getByText("Tenure")).toBeInTheDocument();
+    const fieldGhost = screen.getAllByText("Tenure").find((el) => el.tagName !== "OPTION");
+    expect(fieldGhost).toBeInTheDocument();
     fireEvent.pointerCancel(fieldDragHandle, { pointerId: 2, clientX: 20, clientY: 28 });
 
     await waitFor(() => {
@@ -729,7 +761,7 @@ describe("DatasetAdminPage", () => {
 
   it("persists group create/edit/remove/reorder through customization save and reload", async () => {
     installFetchMock({ trackCustomizationSaves: true });
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftAndCustomization();
 
@@ -793,7 +825,7 @@ describe("DatasetAdminPage", () => {
 
   it("isolates the group collapse affordance from the saved customization", async () => {
     const fetchMock = installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftAndCustomization();
 
@@ -849,7 +881,7 @@ describe("DatasetAdminPage", () => {
 
   it("disables the hide checkbox for a required field and never saves it as hidden", async () => {
     const fetchMock = installFetchMock({ requiredFieldOverride: "tenure" });
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     await loadDraftAndCustomization();
 
@@ -888,7 +920,11 @@ describe("DatasetAdminPage", () => {
   });
 
   it("saves identical field order and display_order_hint via a button reorder and an equivalent drag reorder", async () => {
-    vi.spyOn(document, "elementFromPoint").mockImplementation((_x: number, y: number) =>
+    // jsdom does not implement elementFromPoint at all (the property is
+    // absent, not just unimplemented), so it must be assigned directly
+    // rather than wrapped with vi.spyOn, which requires the property to
+    // already exist.
+    document.elementFromPoint = vi.fn((_x: number, y: number) =>
       document.querySelector<HTMLElement>(`[data-customization-drag-kind="field"][data-customization-drag-index="${y}"]`),
     );
 
@@ -907,7 +943,7 @@ describe("DatasetAdminPage", () => {
     }
 
     const buttonFetchMock = installFetchMock();
-    const { unmount } = render(<DatasetAdminPage />);
+    const { unmount } = renderAdminPage();
     await loadDraftAndCustomization();
 
     const buttonFieldsPanel = screen.getByLabelText("Field presentation");
@@ -921,7 +957,7 @@ describe("DatasetAdminPage", () => {
     unmount();
 
     const dragFetchMock = installFetchMock();
-    render(<DatasetAdminPage />);
+    renderAdminPage();
     await loadDraftAndCustomization();
 
     const dragFieldsPanel = screen.getByLabelText("Field presentation");
@@ -947,7 +983,7 @@ describe("DatasetAdminPage", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     const selector = await screen.findByRole("button", { name: "Dataset" });
     await waitFor(() => expect(selector).toBeDisabled());
@@ -1001,7 +1037,7 @@ describe("DatasetAdminPage", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     const selector = await screen.findByRole("button", { name: "Dataset" });
     await waitFor(() => expect(selector).toHaveTextContent(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
@@ -1019,7 +1055,13 @@ describe("DatasetAdminPage", () => {
       expect(within(panel).getByText(datasetOne.dataset_slug)).toBeInTheDocument();
     });
     expect(within(panel).getByText(datasetOne.title)).toBeInTheDocument();
-    expect(within(panel).getByText(datasetOne.domain)).toBeInTheDocument();
+    // datasetOne's domain and its only tag are both literally "retail", so
+    // the Domain read-only field's <p> value must be disambiguated from the
+    // <li> tag chip rendering the same string.
+    const domainValue = within(panel)
+      .getAllByText(datasetOne.domain)
+      .find((el) => el.tagName === "P");
+    expect(domainValue).toBeInTheDocument();
 
     const filter = screen.getByLabelText("Filter datasets");
     fireEvent.change(filter, { target: { value: datasetTwo.dataset_slug } });
@@ -1028,9 +1070,15 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => {
       expect(within(panel).getByText(datasetTwo.dataset_slug)).toBeInTheDocument();
     });
-    expect(screen.getByRole("heading", { name: `Dataset -- ${datasetTwo.title}` })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: `Dataset — ${datasetTwo.title}` })).toBeInTheDocument();
     expect(within(panel).getByText(datasetTwo.title)).toBeInTheDocument();
-    expect(within(panel).getByText(datasetTwo.domain)).toBeInTheDocument();
+    // datasetTwo's domain and its only tag are both literally "energy"; see
+    // the same disambiguation above for datasetOne's domain/tag collision.
+    expect(
+      within(panel)
+        .getAllByText(datasetTwo.domain)
+        .find((el) => el.tagName === "P"),
+    ).toBeInTheDocument();
   });
 
   it("moves an ARIA active-option indicator through the filtered listbox with ArrowDown/ArrowUp and selects it on Enter", async () => {
@@ -1077,7 +1125,7 @@ describe("DatasetAdminPage", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<DatasetAdminPage />);
+    renderAdminPage();
 
     const selector = await screen.findByRole("button", { name: "Dataset" });
     await waitFor(() => expect(selector).toHaveTextContent(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
@@ -1109,9 +1157,15 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => {
       expect(within(panel).getByText(datasetThree.dataset_slug)).toBeInTheDocument();
     });
-    expect(screen.getByRole("heading", { name: `Dataset -- ${datasetThree.title}` })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: `Dataset — ${datasetThree.title}` })).toBeInTheDocument();
     expect(within(panel).getByText(datasetThree.title)).toBeInTheDocument();
-    expect(within(panel).getByText(datasetThree.domain)).toBeInTheDocument();
+    // datasetThree's domain and its only tag are both literally "agriculture";
+    // same disambiguation as datasetOne/datasetTwo above.
+    expect(
+      within(panel)
+        .getAllByText(datasetThree.domain)
+        .find((el) => el.tagName === "P"),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("listbox", { name: "Available datasets" })).not.toBeInTheDocument();
   });
 });

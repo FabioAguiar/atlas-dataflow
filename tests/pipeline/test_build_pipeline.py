@@ -416,3 +416,151 @@ def test_assembled_candidate_is_publisher_validation_compatible_without_promotio
     assert (tmp_repo / "publisher" / "runs").is_dir()
     assert not (tmp_repo / "releases" / RELEASE_ID).exists()
     assert not (tmp_repo / "registry" / "datasets.json").exists()
+
+
+# --- release-candidate data handoff readiness (Project Spec S0016) ---
+
+
+def _write_handoff_governed_artifacts(repo_root: Path) -> dict[str, str]:
+    paths = {
+        "discovery_evidence": "governed-artifacts/m22/discovery-evidence.json",
+        "execution_contract": "governed-artifacts/m23/execution-contract.json",
+        "runtime_contract": "governed-artifacts/m23/runtime-contract.json",
+        "public_contract": "governed-artifacts/m23/public-contract.json",
+        "preparation_recipe": "governed-artifacts/m22/preparation-recipe.json",
+        "prepared_data_metadata": "governed-artifacts/m23/prepared-data-metadata.json",
+        "training_parameter_record": "governed-artifacts/m24/training-parameter-record.json",
+        "model_artifact": "governed-artifacts/m24/model-artifact-reference.json",
+        "training_metrics": "governed-artifacts/m24/metrics.json",
+        "model_card": "governed-artifacts/m24/model-card.json",
+        "public_context": "governed-artifacts/m23/public-context.json",
+        "inference_bundle": "governed-artifacts/m25/bundle.json",
+    }
+    for role, relative in paths.items():
+        _write_json(repo_root / relative, {"role": role, "governed": True})
+    return paths
+
+
+def test_handoff_readiness_missing_required_role_rejects(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    del paths["training_metrics"]
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    assert "training_metrics" in readiness["not_ready_roles"]
+    metrics_result = next(r for r in readiness["role_results"] if r["role"] == "training_metrics")
+    assert metrics_result["reason"] == "missing_reference"
+
+
+def test_handoff_readiness_rejects_absolute_path(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    paths["model_card"] = "/etc/passwd"
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    model_card_result = next(r for r in readiness["role_results"] if r["role"] == "model_card")
+    assert model_card_result["reason"] == "absolute_path_rejected"
+
+
+def test_handoff_readiness_rejects_parent_traversal(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    paths["public_context"] = "../outside-repo/public-context.json"
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    public_context_result = next(
+        r for r in readiness["role_results"] if r["role"] == "public_context"
+    )
+    assert public_context_result["reason"] == "parent_traversal_rejected"
+
+
+def test_handoff_readiness_rejects_fixture_only_path(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    fixture_relative = "pipeline/examples/release-candidate-input.example.json"
+    _write_json(tmp_repo / fixture_relative, {"role": "inference_bundle"})
+    paths["inference_bundle"] = fixture_relative
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    bundle_result = next(r for r in readiness["role_results"] if r["role"] == "inference_bundle")
+    assert bundle_result["reason"] == "fixture_only_path_rejected"
+
+
+def test_handoff_readiness_rejects_placeholder_only_content(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    placeholder_relative = "governed-artifacts/m24/model-card.json"
+    _write_json(
+        tmp_repo / placeholder_relative,
+        {"role": "model_card", "placeholder_only": True},
+    )
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    model_card_result = next(r for r in readiness["role_results"] if r["role"] == "model_card")
+    assert model_card_result["reason"] == "placeholder_only_content_rejected"
+
+
+def test_handoff_readiness_explicit_real_references_are_ready(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is True
+    assert readiness["not_ready_roles"] == []
+    assert readiness["blocking_reasons"] == []
+    assert set(readiness["required_roles"]) == set(assemble_candidate._HANDOFF_REQUIRED_ROLES)
+
+
+def test_handoff_readiness_never_performs_assembly_or_downstream_actions(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    before_entries = sorted(p.relative_to(tmp_repo) for p in tmp_repo.rglob("*") if p.is_file())
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["handoff_boundary_confirmations"] == {
+        "release_candidate_assembly_performed": False,
+        "publisher_validation_performed": False,
+        "publisher_promotion_performed": False,
+        "registry_activation_performed": False,
+        "api_data_available": False,
+        "ui_data_available": False,
+    }
+    after_entries = sorted(p.relative_to(tmp_repo) for p in tmp_repo.rglob("*") if p.is_file())
+    assert before_entries == after_entries
+    assert not (tmp_repo / "releases" / "candidates").exists()
+
+
+def test_handoff_readiness_defaults_to_empty_references(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _write_handoff_governed_artifacts(tmp_repo)
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness({}, repo_root=tmp_repo)
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    assert len(readiness["not_ready_roles"]) == len(assemble_candidate._HANDOFF_REQUIRED_ROLES)

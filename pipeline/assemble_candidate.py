@@ -46,6 +46,121 @@ _REQUIRED_REAL_INPUTS = [
 
 _CANDIDATE_STAGING_PREFIX = "releases/candidates"
 
+# Release-candidate data handoff boundary (Project Spec S0016). This is a
+# pre-assembly readiness check only: it validates explicit, repository-relative
+# artifact references for every release-candidate-input.v1 required role
+# without executing candidate assembly, publisher validation, publisher
+# promotion, registry activation, or any API/UI data fill.
+_HANDOFF_REQUIRED_ROLES = [
+    "discovery_evidence",
+    "execution_contract",
+    "runtime_contract",
+    "public_contract",
+    "preparation_recipe",
+    "prepared_data_metadata",
+    "training_parameter_record",
+    "model_artifact",
+    "training_metrics",
+    "model_card",
+    "public_context",
+    "inference_bundle",
+]
+
+_HANDOFF_FIXTURE_PATH_MARKERS = ("fixtures/", "pipeline/examples/", "test-fixtures/")
+
+
+def _handoff_role_result(role: str, path_value: Any, *, ready: bool, reason: str | None) -> dict:
+    return {"role": role, "path": path_value, "ready": ready, "reason": reason}
+
+
+def _classify_handoff_reference(role: str, path_value: Any, repo_root: Path) -> dict:
+    """Classify a single explicit artifact reference for handoff readiness.
+
+    Never inspects notebook state — only the repository-relative path
+    string passed in by the caller.
+    """
+    if not isinstance(path_value, str) or not path_value.strip():
+        return _handoff_role_result(role, path_value, ready=False, reason="missing_reference")
+
+    path = Path(path_value)
+    if path.is_absolute():
+        return _handoff_role_result(role, path_value, ready=False, reason="absolute_path_rejected")
+    if ".." in path.parts:
+        return _handoff_role_result(role, path_value, ready=False, reason="parent_traversal_rejected")
+
+    normalized = path_value.replace("\\", "/")
+    if any(marker in normalized for marker in _HANDOFF_FIXTURE_PATH_MARKERS):
+        return _handoff_role_result(role, path_value, ready=False, reason="fixture_only_path_rejected")
+
+    resolved = repo_root / path
+    if not resolved.is_file():
+        return _handoff_role_result(role, path_value, ready=False, reason="missing_reference")
+
+    if resolved.suffix == ".json":
+        try:
+            content = json.loads(resolved.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            content = None
+        if isinstance(content, dict):
+            example_metadata = content.get("example_metadata")
+            if isinstance(example_metadata, dict) and example_metadata.get("example_only") is True:
+                return _handoff_role_result(
+                    role, path_value, ready=False, reason="placeholder_only_content_rejected"
+                )
+            if content.get("placeholder_only") is True:
+                return _handoff_role_result(
+                    role, path_value, ready=False, reason="placeholder_only_content_rejected"
+                )
+
+    return _handoff_role_result(role, path_value, ready=True, reason=None)
+
+
+def build_release_candidate_handoff_readiness(
+    artifact_references: dict[str, Any],
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Build a reduced `release-candidate-handoff-readiness.v1` object.
+
+    `artifact_references` must map each role in `_HANDOFF_REQUIRED_ROLES` to
+    an explicit, repository-relative artifact path string — never a
+    notebook-held DataFrame, notebook variable, or other in-memory object;
+    the function's signature only accepts path strings, so notebook-state
+    can never be passed through. This performs read-only static checks
+    (existence, path safety, fixture/placeholder detection) and never
+    assembles a release candidate, invokes publisher validation, promotes a
+    release, activates a registry entry, or fills API/UI data.
+    """
+    resolved_repo_root = Path(repo_root) if repo_root is not None else _REPO_ROOT
+    if not isinstance(artifact_references, dict):
+        artifact_references = {}
+
+    role_results = [
+        _classify_handoff_reference(role, artifact_references.get(role), resolved_repo_root)
+        for role in _HANDOFF_REQUIRED_ROLES
+    ]
+    not_ready_roles = [result["role"] for result in role_results if not result["ready"]]
+    blocking_reasons = [
+        f"{result['role']}: {result['reason']}" for result in role_results if not result["ready"]
+    ]
+
+    return {
+        "schema_version": "release-candidate-handoff-readiness.v1",
+        "handoff_kind": "release_candidate_data_handoff",
+        "required_roles": list(_HANDOFF_REQUIRED_ROLES),
+        "role_results": role_results,
+        "not_ready_roles": not_ready_roles,
+        "blocking_reasons": blocking_reasons,
+        "is_release_candidate_input_ready": not blocking_reasons,
+        "handoff_boundary_confirmations": {
+            "release_candidate_assembly_performed": False,
+            "publisher_validation_performed": False,
+            "publisher_promotion_performed": False,
+            "registry_activation_performed": False,
+            "api_data_available": False,
+            "ui_data_available": False,
+        },
+    }
+
 
 def _load_candidate_input(path: str) -> tuple[dict[str, Any] | None, str | None]:
     """Load and parse the release-candidate-input JSON."""

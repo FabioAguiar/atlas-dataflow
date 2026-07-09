@@ -14,7 +14,18 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from pipeline.discovery_evidence import generate_discovery_evidence
+from pipeline.discovery_evidence import (
+    authoring_helper_evidence_policy,
+    derive_feature_candidates,
+    generate_discovery_evidence,
+    load_dataset_csv,
+    observe_authoring_field,
+    observe_authoring_fields,
+    resolve_repository_path,
+    summarize_identifier_columns,
+    summarize_structure,
+    summarize_target_column,
+)
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -234,3 +245,148 @@ def test_evidence_validates_against_schema(fixture_csv):
         generated_at="2026-06-23T17:00:00+00:00",
     )
     jsonschema.validate(evidence, schema)
+
+
+# --- reusable dataset-authoring helpers (Project Spec S0012) ---
+# Synthetic fixture data only; no dependency on the real Telco CSV.
+
+AUTHORING_FIXTURE_ROWS = [
+    {"category": "a", "amount": "10", "note": ""},
+    {"category": "b", "amount": "20", "note": "NA"},
+    {"category": "a", "amount": "30", "note": "n/a"},
+    {"category": "c", "amount": "", "note": "ok"},
+    {"category": "a", "amount": "10", "note": "ok"},
+]
+AUTHORING_FIXTURE_COLUMNS = ["category", "amount", "note"]
+
+
+def _write_authoring_fixture_csv(path: Path) -> None:
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=AUTHORING_FIXTURE_COLUMNS)
+        writer.writeheader()
+        writer.writerows(AUTHORING_FIXTURE_ROWS)
+
+
+@pytest.fixture
+def authoring_fixture_csv(tmp_path):
+    csv_path = tmp_path / "authoring_fixture.csv"
+    _write_authoring_fixture_csv(csv_path)
+    return csv_path
+
+
+def test_resolve_repository_path_uses_explicit_repo_root(tmp_path):
+    resolved = resolve_repository_path("data/raw/dataset.csv", repo_root=tmp_path)
+    assert resolved == (tmp_path / "data" / "raw" / "dataset.csv").resolve()
+
+
+def test_resolve_repository_path_defaults_to_cwd():
+    resolved = resolve_repository_path("data/raw/dataset.csv")
+    assert resolved == (Path.cwd() / "data" / "raw" / "dataset.csv").resolve()
+
+
+def test_load_dataset_csv_reads_rows(authoring_fixture_csv):
+    rows = load_dataset_csv(authoring_fixture_csv)
+    assert len(rows) == len(AUTHORING_FIXTURE_ROWS)
+    assert list(rows[0].keys()) == AUTHORING_FIXTURE_COLUMNS
+
+
+def test_load_dataset_csv_raises_for_missing_path():
+    with pytest.raises(FileNotFoundError):
+        load_dataset_csv("/nonexistent/does-not-exist/dataset.csv")
+
+
+def test_summarize_structure_reports_counts_and_ordered_columns(authoring_fixture_csv):
+    rows = load_dataset_csv(authoring_fixture_csv)
+    structure = summarize_structure(rows)
+    assert structure["row_count"] == len(AUTHORING_FIXTURE_ROWS)
+    assert structure["column_count"] == len(AUTHORING_FIXTURE_COLUMNS)
+    assert structure["ordered_columns"] == AUTHORING_FIXTURE_COLUMNS
+
+
+def test_summarize_structure_empty_rows():
+    assert summarize_structure([]) == {
+        "row_count": 0,
+        "column_count": 0,
+        "ordered_columns": [],
+    }
+
+
+def test_observe_authoring_field_distinguishes_blank_from_null_like():
+    obs = observe_authoring_field("note", ["", "NA", "n/a", "ok", "ok"])
+    assert obs["blank_string_count"] == 1
+    assert obs["null_like_count"] == 2
+    assert obs["cardinality"] == 1  # only "ok" is neither blank nor null-like
+    assert obs["reduced_sample_values"] == ["ok"]
+
+
+def test_observe_authoring_field_treats_whitespace_only_as_blank():
+    # Regression: a whitespace-only string (e.g. a single space) must count as
+    # blank, not as a non-blank string value or a numeric-looking value.
+    obs = observe_authoring_field("total_charges", ["29.85", " ", "1889.5", " "])
+    assert obs["blank_string_count"] == 2
+    assert obs["null_like_count"] == 0
+    assert obs["inferred_type"] == "float"
+    assert obs["cardinality"] == 2
+
+
+def test_observe_authoring_field_reduced_sample_is_bounded():
+    values = [str(i) for i in range(10)]
+    obs = observe_authoring_field("n", values, sample_bound=3)
+    assert len(obs["reduced_sample_values"]) == 3
+
+
+def test_observe_authoring_fields_covers_all_columns(authoring_fixture_csv):
+    rows = load_dataset_csv(authoring_fixture_csv)
+    observations = observe_authoring_fields(rows)
+    names = [o["name"] for o in observations]
+    assert names == AUTHORING_FIXTURE_COLUMNS
+    for obs in observations:
+        for key in ["name", "inferred_type", "blank_string_count", "null_like_count", "cardinality", "reduced_sample_values"]:
+            assert key in obs
+
+
+def test_summarize_target_column_is_non_authoritative(authoring_fixture_csv):
+    rows = load_dataset_csv(authoring_fixture_csv)
+    summary = summarize_target_column(rows, "category")
+    assert summary["target_column"] == "category"
+    assert summary["observed_labels"] == ["a", "b", "c"]
+    assert summary["observed_distribution"] == {"a": 3, "b": 1, "c": 1}
+    assert summary["is_authoritative"] is False
+
+
+def test_summarize_identifier_columns_flags_uniqueness(authoring_fixture_csv):
+    rows = load_dataset_csv(authoring_fixture_csv)
+    summaries = summarize_identifier_columns(rows, ["category"])
+    assert summaries[0]["name"] == "category"
+    assert summaries[0]["row_count"] == len(AUTHORING_FIXTURE_ROWS)
+    assert summaries[0]["is_unique_per_row"] is False
+
+
+def test_summarize_identifier_columns_unique_identifier():
+    rows = [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    summaries = summarize_identifier_columns(rows, ["id"])
+    assert summaries[0]["is_unique_per_row"] is True
+    assert summaries[0]["unique_count"] == 3
+
+
+def test_derive_feature_candidates_excludes_target_and_identifiers():
+    columns = ["id", "category", "amount", "note", "target"]
+    candidates = derive_feature_candidates(
+        columns, target_column="target", identifier_columns=["id"]
+    )
+    assert candidates == ["category", "amount", "note"]
+
+
+def test_derive_feature_candidates_without_target_or_identifiers():
+    columns = ["a", "b", "c"]
+    assert derive_feature_candidates(columns) == columns
+
+
+def test_authoring_helper_evidence_policy_confirms_no_persistence():
+    policy = authoring_helper_evidence_policy()
+    for key in [
+        "raw_rows_persisted", "secrets_persisted", "raw_runtime_logs_persisted",
+        "raw_api_payloads_persisted", "model_binaries_persisted",
+        "release_artifacts_persisted", "publisher_artifacts_persisted",
+    ]:
+        assert policy[key] is False, f"authoring_helper_evidence_policy.{key} must be False"

@@ -11,19 +11,40 @@ Boundaries enforced by this module:
 - No contract promotion, model training, or release publication is performed.
 - Raw dataset content is not persisted; only aggregate statistics are recorded.
 - Candidate target columns are flagged non-authoritative; no automatic selection occurs.
+
+This module also exposes a small reusable helper surface (Project Spec S0012) for
+dataset-authoring notebooks: repository-relative path resolution, explicit CSV
+loading, structural summaries, per-field authoring observations, target/identifier
+column summaries, and feature-candidate derivation. These helpers are independent
+of the schema-governed `generate_discovery_evidence`/`write_discovery_evidence`
+pair above and do not persist raw rows, secrets, logs, API payloads, model
+binaries, release artifacts, or publisher artifacts.
 """
 
 from __future__ import annotations
 
 import csv
 import json
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Sequence
 
 
 _GENERATOR_VERSION = "discovery-evidence.v1"
 _CATEGORICAL_MAX_CARDINALITY = 20
+_NULL_LIKE_TOKENS = {"na", "n/a", "nan", "null", "none"}
+_REDUCED_SAMPLE_BOUND = 5
+
+AUTHORING_HELPER_EVIDENCE_POLICY: dict[str, bool] = {
+    "raw_rows_persisted": False,
+    "secrets_persisted": False,
+    "raw_runtime_logs_persisted": False,
+    "raw_api_payloads_persisted": False,
+    "model_binaries_persisted": False,
+    "release_artifacts_persisted": False,
+    "publisher_artifacts_persisted": False,
+}
 
 
 def _utc_now_iso() -> str:
@@ -229,3 +250,145 @@ def write_discovery_evidence(
         json.dumps(evidence, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+# ---------------------------------------------------------------------------
+# Reusable dataset-authoring helpers (Project Spec S0012)
+#
+# Callable from dataset-authoring notebooks, including notebooks nested under
+# notebooks/datasets/<slug>/. These helpers are deliberately independent of
+# the schema-governed generate_discovery_evidence()/write_discovery_evidence()
+# artifact above: they return plain dicts/lists for notebook-side use and are
+# not validated against dataset-discovery-evidence.schema.json.
+# ---------------------------------------------------------------------------
+
+
+def resolve_repository_path(relative_path: str | Path, repo_root: str | Path | None = None) -> Path:
+    """Resolve a repository-relative path against an explicit or default repo root.
+
+    `repo_root` defaults to the current working directory, which is the
+    expected convention for notebooks run from the repository root. Pass an
+    explicit `repo_root` when the caller (for example a nested notebook, or
+    papermill) cannot rely on the current working directory.
+    """
+    base = Path(repo_root) if repo_root else Path.cwd()
+    return (base / relative_path).resolve()
+
+
+def load_dataset_csv(path: str | Path) -> list[dict[str, str]]:
+    """Load a CSV dataset from an explicit path.
+
+    Raises FileNotFoundError if the path does not exist. Does not persist or
+    return raw rows anywhere other than the caller's own memory.
+    """
+    csv_path = Path(path)
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Dataset not found at: {csv_path}")
+    return _read_csv(csv_path)
+
+
+def summarize_structure(rows: Sequence[dict[str, str]]) -> dict[str, Any]:
+    """Return row count, column count, and the ordered column list for rows."""
+    ordered_columns = list(rows[0].keys()) if rows else []
+    return {
+        "row_count": len(rows),
+        "column_count": len(ordered_columns),
+        "ordered_columns": ordered_columns,
+    }
+
+
+def _is_null_like(value: str) -> bool:
+    return value.strip().lower() in _NULL_LIKE_TOKENS
+
+
+def observe_authoring_field(
+    name: str,
+    values: Sequence[str],
+    sample_bound: int = _REDUCED_SAMPLE_BOUND,
+) -> dict[str, Any]:
+    """Return an authoring-time observation for a single field's raw string values.
+
+    Distinguishes blank strings (empty or whitespace-only, e.g. "" or " ")
+    from other null-like tokens (e.g. "NA", "N/A", "NaN", "null", "None") and
+    reports a reduced, bounded sample of distinct observed values rather than
+    the full column.
+    """
+    non_blank = [v for v in values if v.strip() != ""]
+    blank_string_count = len(values) - len(non_blank)
+    null_like_count = sum(1 for v in non_blank if _is_null_like(v))
+    non_null_like = [v for v in non_blank if not _is_null_like(v)]
+    cardinality = len(set(non_null_like))
+    reduced_sample_values = sorted(set(non_null_like))[:sample_bound]
+
+    return {
+        "name": name,
+        "inferred_type": _infer_type(non_blank),
+        "blank_string_count": blank_string_count,
+        "null_like_count": null_like_count,
+        "cardinality": cardinality,
+        "reduced_sample_values": reduced_sample_values,
+    }
+
+
+def observe_authoring_fields(
+    rows: Sequence[dict[str, str]],
+    columns: Iterable[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Return authoring-time field observations for the given rows and columns."""
+    if columns is None:
+        columns = list(rows[0].keys()) if rows else []
+    return [
+        observe_authoring_field(column, [row[column] for row in rows])
+        for column in columns
+    ]
+
+
+def summarize_target_column(rows: Sequence[dict[str, str]], target_column: str) -> dict[str, Any]:
+    """Return an explicit, non-authoritative summary of a supplied target column."""
+    values = [row[target_column] for row in rows]
+    return {
+        "target_column": target_column,
+        "observed_labels": sorted(set(values)),
+        "observed_distribution": dict(Counter(values)),
+        "is_authoritative": False,
+    }
+
+
+def summarize_identifier_columns(
+    rows: Sequence[dict[str, str]],
+    identifier_columns: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Return an explicit summary of supplied identifier candidate columns."""
+    summaries = []
+    for column in identifier_columns:
+        values = [row[column] for row in rows]
+        unique_count = len(set(values))
+        summaries.append({
+            "name": column,
+            "row_count": len(values),
+            "unique_count": unique_count,
+            "is_unique_per_row": unique_count == len(values),
+        })
+    return summaries
+
+
+def derive_feature_candidates(
+    columns: Iterable[str],
+    target_column: str | None = None,
+    identifier_columns: Iterable[str] | None = None,
+) -> list[str]:
+    """Return feature-candidate columns, excluding the target and identifier columns."""
+    excluded = set(identifier_columns or [])
+    if target_column:
+        excluded.add(target_column)
+    return [column for column in columns if column not in excluded]
+
+
+def authoring_helper_evidence_policy() -> dict[str, bool]:
+    """Return the reduced evidence policy confirmation for the authoring helpers.
+
+    All flags are False: these helpers never persist raw rows, secrets, raw
+    runtime logs, raw API payloads, model binaries, release artifacts, or
+    publisher artifacts.
+    """
+    return dict(AUTHORING_HELPER_EVIDENCE_POLICY)

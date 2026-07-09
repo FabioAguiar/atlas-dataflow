@@ -19,6 +19,13 @@ column summaries, and feature-candidate derivation. These helpers are independen
 of the schema-governed `generate_discovery_evidence`/`write_discovery_evidence`
 pair above and do not persist raw rows, secrets, logs, API payloads, model
 binaries, release artifacts, or publisher artifacts.
+
+It also exposes `build_dataset_modeling_intent` (Project Spec S0013), a
+deterministic builder for a narrow `dataset_modeling_intent.v1` authoring
+contract assembled from already-observed values. This is an authoring-intent
+object only, not an execution contract, runtime contract, public contract,
+release candidate input, publisher input, registry artifact, API fixture, or
+UI fixture.
 """
 
 from __future__ import annotations
@@ -392,3 +399,113 @@ def authoring_helper_evidence_policy() -> dict[str, bool]:
     publisher artifacts.
     """
     return dict(AUTHORING_HELPER_EVIDENCE_POLICY)
+
+
+# ---------------------------------------------------------------------------
+# Dataset modeling intent (Project Spec S0013)
+#
+# A narrow authoring-level `dataset_modeling_intent.v1` contract, built from
+# already-computed authoring observations (see the S0012 helpers above). This
+# is deliberately not an execution contract, runtime contract, public
+# contract, release candidate input, publisher input, registry artifact, API
+# fixture, or UI fixture — it only records reviewed authoring intent for a
+# later, separately authorized execution-contract draft projection spec.
+# ---------------------------------------------------------------------------
+
+_MODELING_INTENT_CONTRACT_VERSION = "dataset_modeling_intent.v1"
+_MODELING_INTENT_DEFAULT_TYPE_INTENT = "requires_review"
+
+MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
+    "is_execution_contract": False,
+    "is_runtime_contract": False,
+    "is_public_contract": False,
+    "is_release_candidate_input": False,
+    "is_publisher_input": False,
+    "is_registry_artifact": False,
+    "is_api_fixture": False,
+    "is_ui_fixture": False,
+    "model_training_performed": False,
+}
+
+
+def build_dataset_modeling_intent(
+    dataset_slug: str,
+    dataset_source_ref: str,
+    authoring_notebook_ref: str,
+    columns: Sequence[str],
+    target_column: str,
+    task_type: str,
+    observed_labels: Iterable[str],
+    positive_label_candidate: str,
+    observed_target_distribution: dict[str, int],
+    identifier_columns: Sequence[str],
+    feature_review_notes: dict[str, str] | None = None,
+    feature_type_intent_overrides: dict[str, str] | None = None,
+    blank_value_policy_candidates: dict[str, str] | None = None,
+    metric_candidates: Sequence[str] | None = None,
+    split_policy_candidate: dict[str, Any] | None = None,
+    open_questions: Sequence[str] | None = None,
+    reduced_discovery_evidence_ref: str | None = None,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build a `dataset_modeling_intent.v1` authoring-intent object.
+
+    Deterministic and notebook-callable without requiring Jupyter execution:
+    every input is an explicit, already-observed value (for example from the
+    `summarize_target_column`/`summarize_identifier_columns`/
+    `derive_feature_candidates` helpers above), not raw dataset rows. Initial
+    feature candidates are always derived as non-target, non-identifier
+    columns via `derive_feature_candidates`; a column's coarse type intent
+    defaults to `"requires_review"` unless explicitly overridden, so ambiguous
+    fields are never silently coerced.
+    """
+    feature_candidates = derive_feature_candidates(
+        columns, target_column=target_column, identifier_columns=identifier_columns
+    )
+
+    feature_type_intent_overrides = dict(feature_type_intent_overrides or {})
+    feature_type_intent = [
+        {
+            "name": name,
+            "type_intent": feature_type_intent_overrides.get(
+                name, _MODELING_INTENT_DEFAULT_TYPE_INTENT
+            ),
+        }
+        for name in feature_candidates
+    ]
+
+    return {
+        "artifact_type": "dataset_modeling_intent",
+        "contract_version": _MODELING_INTENT_CONTRACT_VERSION,
+        "dataset_identity": {
+            "dataset_slug": dataset_slug,
+            "dataset_source_ref": dataset_source_ref,
+        },
+        "authoring_source": {
+            "authoring_notebook_ref": authoring_notebook_ref,
+            "reduced_discovery_evidence_ref": reduced_discovery_evidence_ref,
+        },
+        "target_intent": {
+            "target_column": target_column,
+            "task_type": task_type,
+            "observed_labels": sorted(observed_labels),
+            "positive_label_candidate": positive_label_candidate,
+            "observed_target_distribution": dict(observed_target_distribution),
+            "is_final_training_configuration": False,
+        },
+        "identifier_and_ignored_columns": [
+            {"name": name, "reason": "identifier_candidate_excluded_from_features"}
+            for name in identifier_columns
+        ],
+        "initial_feature_candidates": feature_candidates,
+        "feature_review_notes": dict(feature_review_notes or {}),
+        "feature_type_intent": feature_type_intent,
+        "blank_value_policy_candidates": dict(blank_value_policy_candidates or {}),
+        "metric_candidates": list(metric_candidates or []),
+        "split_policy_candidate": split_policy_candidate,
+        "open_questions": list(open_questions or []),
+        "modeling_intent_boundary_confirmations": dict(
+            MODELING_INTENT_BOUNDARY_CONFIRMATIONS
+        ),
+        "generated_at": generated_at or _utc_now_iso(),
+    }

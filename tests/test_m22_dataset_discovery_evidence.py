@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.discovery_evidence import (
     authoring_helper_evidence_policy,
+    build_dataset_modeling_intent,
     derive_feature_candidates,
     generate_discovery_evidence,
     load_dataset_csv,
@@ -390,3 +391,145 @@ def test_authoring_helper_evidence_policy_confirms_no_persistence():
         "release_artifacts_persisted", "publisher_artifacts_persisted",
     ]:
         assert policy[key] is False, f"authoring_helper_evidence_policy.{key} must be False"
+
+
+# --- dataset modeling intent (Project Spec S0013) ---
+# Built from small in-memory/synthetic values shaped like the Telco authoring
+# notebook's own observations; does not depend on the real Telco CSV.
+
+MODELING_INTENT_COLUMNS = ["customerID", "SeniorCitizen", "TotalCharges", "tenure", "Churn"]
+
+
+def _build_telco_shaped_modeling_intent(**overrides):
+    kwargs = dict(
+        dataset_slug="telco-customer-churn",
+        dataset_source_ref="data/raw/telco-customer-churn.csv",
+        authoring_notebook_ref="notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb",
+        columns=MODELING_INTENT_COLUMNS,
+        target_column="Churn",
+        task_type="binary_classification",
+        observed_labels=["No", "Yes"],
+        positive_label_candidate="Yes",
+        observed_target_distribution={"No": 5174, "Yes": 1869},
+        identifier_columns=["customerID"],
+        feature_review_notes={
+            "TotalCharges": "Requires explicit blank-value handling before execution-contract projection.",
+        },
+        feature_type_intent_overrides={"SeniorCitizen": "requires_review"},
+        blank_value_policy_candidates={"TotalCharges": "unresolved_pending_review"},
+        open_questions=["Final TotalCharges blank-value handling policy is not yet decided."],
+        generated_at="2026-07-09T00:00:00+00:00",
+    )
+    kwargs.update(overrides)
+    return build_dataset_modeling_intent(**kwargs)
+
+
+def test_modeling_intent_artifact_identity():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["artifact_type"] == "dataset_modeling_intent"
+    assert intent["contract_version"] == "dataset_modeling_intent.v1"
+
+
+def test_modeling_intent_dataset_identity():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["dataset_identity"]["dataset_slug"] == "telco-customer-churn"
+    assert intent["dataset_identity"]["dataset_source_ref"] == "data/raw/telco-customer-churn.csv"
+
+
+def test_modeling_intent_authoring_source():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["authoring_source"]["authoring_notebook_ref"] == (
+        "notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb"
+    )
+
+
+def test_modeling_intent_target_intent_fields():
+    intent = _build_telco_shaped_modeling_intent()
+    target_intent = intent["target_intent"]
+    assert target_intent["target_column"] == "Churn"
+    assert target_intent["task_type"] == "binary_classification"
+    assert target_intent["observed_labels"] == ["No", "Yes"]
+    assert target_intent["positive_label_candidate"] == "Yes"
+    assert target_intent["observed_target_distribution"] == {"No": 5174, "Yes": 1869}
+    assert target_intent["is_final_training_configuration"] is False
+
+
+def test_modeling_intent_identifier_columns_excluded_from_features():
+    intent = _build_telco_shaped_modeling_intent()
+    identifier_names = [c["name"] for c in intent["identifier_and_ignored_columns"]]
+    assert identifier_names == ["customerID"]
+    assert "customerID" not in intent["initial_feature_candidates"]
+
+
+def test_modeling_intent_initial_feature_candidates_exclude_target_and_identifier():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["initial_feature_candidates"] == ["SeniorCitizen", "TotalCharges", "tenure"]
+
+
+def test_modeling_intent_feature_review_notes_flag_total_charges():
+    intent = _build_telco_shaped_modeling_intent()
+    assert "TotalCharges" in intent["feature_review_notes"]
+
+
+def test_modeling_intent_feature_type_intent_defaults_to_requires_review():
+    intent = _build_telco_shaped_modeling_intent()
+    type_intent_by_name = {f["name"]: f["type_intent"] for f in intent["feature_type_intent"]}
+    assert type_intent_by_name["SeniorCitizen"] == "requires_review"
+    # No explicit override supplied for "tenure"; must still default, not be coerced.
+    assert type_intent_by_name["tenure"] == "requires_review"
+
+
+def test_modeling_intent_blank_value_policy_candidates_marked_unresolved():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["blank_value_policy_candidates"]["TotalCharges"] == "unresolved_pending_review"
+
+
+def test_modeling_intent_open_questions_are_not_accepted_policy():
+    intent = _build_telco_shaped_modeling_intent()
+    assert len(intent["open_questions"]) >= 1
+    assert intent["target_intent"]["is_final_training_configuration"] is False
+
+
+def test_modeling_intent_metric_and_split_candidates_optional_and_marked_as_candidates():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["metric_candidates"] == []
+    assert intent["split_policy_candidate"] is None
+
+    intent_with_candidates = _build_telco_shaped_modeling_intent(
+        metric_candidates=["roc_auc"],
+        split_policy_candidate={"strategy": "stratified_holdout", "is_final": False},
+    )
+    assert intent_with_candidates["metric_candidates"] == ["roc_auc"]
+    assert intent_with_candidates["split_policy_candidate"]["is_final"] is False
+
+
+def test_modeling_intent_boundary_confirmations_all_false():
+    intent = _build_telco_shaped_modeling_intent()
+    for key, value in intent["modeling_intent_boundary_confirmations"].items():
+        assert value is False, f"modeling_intent_boundary_confirmations.{key} must be False"
+
+
+def test_modeling_intent_is_deterministic_for_same_inputs():
+    intent1 = _build_telco_shaped_modeling_intent()
+    intent2 = _build_telco_shaped_modeling_intent()
+    assert json.dumps(intent1, sort_keys=True) == json.dumps(intent2, sort_keys=True)
+
+
+def test_modeling_intent_builds_from_synthetic_non_telco_shape():
+    # Confirms the builder is dataset-agnostic and does not require the real
+    # Telco CSV or Telco-specific column names.
+    intent = build_dataset_modeling_intent(
+        dataset_slug="synthetic-widgets",
+        dataset_source_ref="data/raw/synthetic-widgets.csv",
+        authoring_notebook_ref="notebooks/datasets/synthetic-widgets/01_dataset_authoring.ipynb",
+        columns=["widget_id", "color", "weight", "is_defective"],
+        target_column="is_defective",
+        task_type="binary_classification",
+        observed_labels=["0", "1"],
+        positive_label_candidate="1",
+        observed_target_distribution={"0": 8, "1": 2},
+        identifier_columns=["widget_id"],
+    )
+    assert intent["initial_feature_candidates"] == ["color", "weight"]
+    assert intent["feature_review_notes"] == {}
+    assert intent["open_questions"] == []

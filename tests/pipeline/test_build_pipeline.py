@@ -9,7 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from pipeline import assemble_candidate  # noqa: E402
+from pipeline import assemble_candidate, training  # noqa: E402
 from publisher import validate  # noqa: E402
 
 
@@ -64,7 +64,7 @@ def _write_governed_artifacts(repo_root: Path, *, missing_role: str | None = Non
         "preparation_recipe": source_dir / "m22" / "preparation-recipe.json",
         "prepared_data_metadata": source_dir / "m23" / "prepared-data-metadata.json",
         "training_parameter_record": source_dir / "m24" / "training-parameter-record.json",
-        "model_artifact": source_dir / "m24" / "model.joblib",
+        "model_artifact": source_dir / "m24" / training.MODEL_ARTIFACT_FILENAME,
         "training_metrics": source_dir / "m24" / "metrics.json",
         "model_card": source_dir / "m24" / "model-card.json",
         "public_context": source_dir / "m23" / "public-context.json",
@@ -430,7 +430,7 @@ def _write_handoff_governed_artifacts(repo_root: Path) -> dict[str, str]:
         "preparation_recipe": "governed-artifacts/m22/preparation-recipe.json",
         "prepared_data_metadata": "governed-artifacts/m23/prepared-data-metadata.json",
         "training_parameter_record": "governed-artifacts/m24/training-parameter-record.json",
-        "model_artifact": "governed-artifacts/m24/model-artifact-reference.json",
+        "model_artifact": f"governed-artifacts/m24/{training.MODEL_ARTIFACT_FILENAME}",
         "training_metrics": "governed-artifacts/m24/metrics.json",
         "model_card": "governed-artifacts/m24/model-card.json",
         "public_context": "governed-artifacts/m23/public-context.json",
@@ -532,6 +532,45 @@ def test_handoff_readiness_explicit_real_references_are_ready(tmp_path):
     assert readiness["not_ready_roles"] == []
     assert readiness["blocking_reasons"] == []
     assert set(readiness["required_roles"]) == set(assemble_candidate._HANDOFF_REQUIRED_ROLES)
+
+
+def test_handoff_readiness_uses_explicit_repo_root_for_public_context(tmp_path, monkeypatch):
+    tmp_repo = tmp_path / "repo"
+    nested_notebook_dir = tmp_repo / "notebooks" / "datasets" / DATASET_SLUG
+    nested_notebook_dir.mkdir(parents=True)
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    paths["public_context"] = f"contracts/{DATASET_SLUG}/dataset-context.json"
+    _write_json(tmp_repo / paths["public_context"], {"role": "public_context", "governed": True})
+
+    monkeypatch.chdir(nested_notebook_dir)
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    public_context_result = next(
+        r for r in readiness["role_results"] if r["role"] == "public_context"
+    )
+    assert public_context_result == {
+        "role": "public_context",
+        "path": f"contracts/{DATASET_SLUG}/dataset-context.json",
+        "ready": True,
+        "reason": None,
+    }
+
+
+def test_handoff_readiness_model_artifact_uses_training_filename(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+
+    assert paths["model_artifact"].endswith(f"/{training.MODEL_ARTIFACT_FILENAME}")
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    model_result = next(r for r in readiness["role_results"] if r["role"] == "model_artifact")
+    assert model_result["path"] == f"governed-artifacts/m24/{training.MODEL_ARTIFACT_FILENAME}"
+    assert model_result["ready"] is True
 
 
 def test_handoff_readiness_never_performs_assembly_or_downstream_actions(tmp_path):

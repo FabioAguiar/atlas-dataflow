@@ -92,7 +92,7 @@ def _classify_handoff_reference(role: str, path_value: Any, repo_root: Path) -> 
     if any(marker in normalized for marker in _HANDOFF_FIXTURE_PATH_MARKERS):
         return _handoff_role_result(role, path_value, ready=False, reason="fixture_only_path_rejected")
 
-    resolved = repo_root / path
+    resolved = repo_root.resolve() / path
     if not resolved.is_file():
         return _handoff_role_result(role, path_value, ready=False, reason="missing_reference")
 
@@ -130,7 +130,7 @@ def build_release_candidate_handoff_readiness(
     assembles a release candidate, invokes publisher validation, promotes a
     release, activates a registry entry, or fills API/UI data.
     """
-    resolved_repo_root = Path(repo_root) if repo_root is not None else _REPO_ROOT
+    resolved_repo_root = Path(repo_root or _REPO_ROOT).expanduser().resolve()
     if not isinstance(artifact_references, dict):
         artifact_references = {}
 

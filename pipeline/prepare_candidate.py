@@ -31,6 +31,7 @@ from typing import Any
 
 _GENERATOR_VERSION = "prepare-candidate.v1"
 _SCHEMA_VERSION = "candidate-preparation-recipe.v1"
+_PREPARED_DATA_METADATA_SCHEMA_VERSION = "prepared-data-metadata.v1"
 _APPLICABLE_STATUSES = ("explicit", "inferred_approved")
 _REVIEW_STATUSES = ("explicit", "inferred_pending_review", "inferred_approved")
 
@@ -542,6 +543,205 @@ def materialize_review_only_preparation_recipe(
     )
     write_preparation_recipe(output_path, recipe, resolved_repo_root)
     return recipe
+
+
+def _content_sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_prepared_data_metadata(
+    dataset_slug: str,
+    raw_dataset_relative_path: str,
+    discovery_evidence_path: str | Path,
+    preparation_recipe_path: str | Path,
+    prepared_candidate_path: str | Path | None = None,
+    generated_at: str | None = None,
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build a reduced `prepared-data-metadata.v1` object from explicit inputs.
+
+    Reads only the discovery evidence and preparation recipe artifacts (plus
+    the prepared candidate file's header/row count, when a candidate file is
+    supplied and exists) to describe the prepared-candidate boundary and its
+    provenance. Never reads raw dataset rows beyond the prepared candidate's
+    own header/row count, never depends on notebook variables or hidden
+    global state, and never claims training readiness when unresolved
+    preparation review items remain or no prepared candidate was produced.
+    """
+    discovery_evidence_path = Path(discovery_evidence_path)
+    preparation_recipe_path = Path(preparation_recipe_path)
+    resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else None
+
+    if not discovery_evidence_path.exists():
+        raise FileNotFoundError(f"Discovery evidence not found: {discovery_evidence_path}")
+    if not preparation_recipe_path.exists():
+        raise FileNotFoundError(f"Preparation recipe not found: {preparation_recipe_path}")
+
+    discovery_evidence = json.loads(discovery_evidence_path.read_text(encoding="utf-8"))
+    preparation_recipe = json.loads(preparation_recipe_path.read_text(encoding="utf-8"))
+
+    dataset_metadata = discovery_evidence.get("dataset_metadata", {})
+    candidate_output = preparation_recipe.get("candidate_output", {})
+    transformations = preparation_recipe.get("transformations", [])
+
+    applied_transformations = [
+        t for t in transformations if t.get("review_status") in _APPLICABLE_STATUSES
+    ]
+    unresolved_review_items = [
+        t for t in transformations if t.get("review_status") == "inferred_pending_review"
+    ]
+
+    candidate_produced = bool(candidate_output.get("produced"))
+
+    resolved_candidate_path = (
+        Path(prepared_candidate_path) if prepared_candidate_path is not None else None
+    )
+    ordered_prepared_columns: list[str] | None = None
+    prepared_candidate_ref: dict[str, Any] | None = None
+
+    if candidate_produced and resolved_candidate_path is not None and resolved_candidate_path.exists():
+        candidate_columns, candidate_rows = _read_csv(resolved_candidate_path)
+        ordered_prepared_columns = candidate_columns
+        candidate_ref_path = _reduced_path(resolved_candidate_path)
+        if resolved_repo_root is not None:
+            candidate_ref_path = _repository_relative_path(
+                resolved_candidate_path, resolved_repo_root
+            )
+        prepared_candidate_ref = {
+            "path": candidate_ref_path,
+            "row_count": len(candidate_rows),
+            "column_count": len(candidate_columns),
+            "content_sha256": _content_sha256(resolved_candidate_path),
+        }
+
+    is_training_ready = bool(
+        candidate_produced and not unresolved_review_items and prepared_candidate_ref is not None
+    )
+    if is_training_ready:
+        training_readiness_reason = None
+    elif not candidate_produced:
+        training_readiness_reason = (
+            "No prepared candidate has been produced yet: "
+            f"{candidate_output.get('reason_not_produced') or 'no approved transformations exist.'}"
+        )
+    elif unresolved_review_items:
+        training_readiness_reason = (
+            f"{len(unresolved_review_items)} preparation review item(s) remain "
+            "unresolved (review_status 'inferred_pending_review')."
+        )
+    else:
+        training_readiness_reason = (
+            "Prepared candidate output was marked produced but no readable candidate "
+            "file reference was supplied."
+        )
+
+    discovery_ref_path = _reduced_path(discovery_evidence_path)
+    recipe_ref_path = _reduced_path(preparation_recipe_path)
+    if resolved_repo_root is not None:
+        discovery_ref_path = _repository_relative_path(
+            discovery_evidence_path, resolved_repo_root
+        )
+        recipe_ref_path = _repository_relative_path(preparation_recipe_path, resolved_repo_root)
+
+    return {
+        "schema_version": _PREPARED_DATA_METADATA_SCHEMA_VERSION,
+        "producer": "pipeline/prepare_candidate.py",
+        "dataset_identity": {
+            "dataset_slug": dataset_slug,
+            "raw_dataset_ref": {"path": raw_dataset_relative_path},
+        },
+        "source_references": {
+            "discovery_evidence_ref": {
+                "path": discovery_ref_path,
+                "schema_version": discovery_evidence.get("schema_version", "unknown"),
+            },
+            "preparation_recipe_ref": {
+                "path": recipe_ref_path,
+                "schema_version": preparation_recipe.get("schema_version", "unknown"),
+            },
+        },
+        "prepared_candidate": {
+            "produced": candidate_produced,
+            "reason_not_produced": candidate_output.get("reason_not_produced"),
+            "reference": prepared_candidate_ref,
+        },
+        "row_column_counts": {
+            "row_count_before": dataset_metadata.get("row_count"),
+            "column_count_before": dataset_metadata.get("column_count"),
+            "row_count_after": candidate_output.get("row_count_after"),
+            "column_count_after": candidate_output.get("column_count_after"),
+        },
+        "ordered_prepared_columns": ordered_prepared_columns,
+        "applied_transformations_summary": applied_transformations,
+        "unresolved_review_items": unresolved_review_items,
+        "training_readiness": {
+            "is_final_training_input": False,
+            "is_training_ready": is_training_ready,
+            "reason": training_readiness_reason,
+        },
+        "generation_settings": {
+            "generator_version": _GENERATOR_VERSION,
+        },
+        "generated_at": generated_at or _utc_now_iso(),
+        "materialization_boundary_confirmations": {
+            "model_training_performed": False,
+            "release_candidate_assembly_performed": False,
+            "publisher_operation_performed": False,
+            "registry_mutation_performed": False,
+            "api_mutation_performed": False,
+            "ui_mutation_performed": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def materialize_prepared_data_metadata(
+    dataset_slug: str,
+    raw_dataset_relative_path: str,
+    discovery_evidence_relative_path: str | Path,
+    preparation_recipe_relative_path: str | Path,
+    output_relative_path: str | Path,
+    repo_root: str | Path,
+    prepared_candidate_relative_path: str | Path | None = None,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build, then write, a `prepared-data-metadata.v1` object from explicit
+    repository-relative inputs. Resolves every path against `repo_root` so
+    the call is correct regardless of the caller's working directory (e.g. a
+    notebook running from a nested dataset directory)."""
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+    discovery_evidence_path = (resolved_repo_root / discovery_evidence_relative_path).resolve()
+    preparation_recipe_path = (resolved_repo_root / preparation_recipe_relative_path).resolve()
+    output_path = (resolved_repo_root / output_relative_path).resolve()
+
+    prepared_candidate_path: Path | None = None
+    if prepared_candidate_relative_path is not None:
+        candidate_path = (resolved_repo_root / prepared_candidate_relative_path).resolve()
+        if candidate_path.exists():
+            prepared_candidate_path = candidate_path
+
+    metadata = build_prepared_data_metadata(
+        dataset_slug=dataset_slug,
+        raw_dataset_relative_path=raw_dataset_relative_path,
+        discovery_evidence_path=discovery_evidence_path,
+        preparation_recipe_path=preparation_recipe_path,
+        prepared_candidate_path=prepared_candidate_path,
+        generated_at=generated_at,
+        repo_root=resolved_repo_root,
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+    return metadata
 
 
 def write_candidate_output(

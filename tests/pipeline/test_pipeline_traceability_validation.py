@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pipeline.discovery_evidence import materialize_discovery_evidence
-from pipeline.prepare_candidate import materialize_review_only_preparation_recipe
+from pipeline.prepare_candidate import (
+    materialize_prepared_data_metadata,
+    materialize_review_only_preparation_recipe,
+)
 
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -335,3 +338,151 @@ def test_materialize_review_only_preparation_recipe_records_pending_totalcharges
     assert recipe["candidate_output"]["row_count_after"] is None
     assert "pending human review" in recipe["candidate_output"]["reason_not_produced"]
     assert not any(recipe["preparation_boundary_confirmations"].values())
+
+
+def _write_evidence_and_recipe(
+    tmp_repo: Path,
+    *,
+    recipe_overrides: dict | None = None,
+) -> None:
+    evidence_path = tmp_repo / "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+    recipe_path = tmp_repo / "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dataset-discovery-evidence.v1",
+                "dataset_metadata": {
+                    "name": "telco-customer-churn",
+                    "row_count": 7043,
+                    "column_count": 21,
+                    "source_path": "data/raw/telco-customer-churn.csv",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    recipe = {
+        "schema_version": "candidate-preparation-recipe.v1",
+        "transformations": [
+            {
+                "transformation_type": "missing_value_handling",
+                "description": "Review TotalCharges blank values; no transformation is applied.",
+                "source_columns": ["TotalCharges"],
+                "target_columns": ["TotalCharges"],
+                "reason": "Observed blank TotalCharges values during authoring.",
+                "review_status": "inferred_pending_review",
+            }
+        ],
+        "candidate_output": {
+            "produced": False,
+            "reason_not_produced": (
+                "No transformation rules with review_status 'explicit' or "
+                "'inferred_approved' were applied. 1 rule(s) are pending human review."
+            ),
+            "row_count_after": None,
+            "column_count_after": None,
+        },
+    }
+    if recipe_overrides:
+        recipe.update(recipe_overrides)
+    recipe_path.write_text(json.dumps(recipe), encoding="utf-8")
+
+
+def test_materialize_prepared_data_metadata_pending_review_blocks_training_readiness(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _write_evidence_and_recipe(tmp_repo)
+
+    metadata = materialize_prepared_data_metadata(
+        dataset_slug="telco-customer-churn",
+        raw_dataset_relative_path="data/raw/telco-customer-churn.csv",
+        discovery_evidence_relative_path=(
+            "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+        ),
+        preparation_recipe_relative_path=(
+            "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+        ),
+        output_relative_path="pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        repo_root=tmp_repo,
+        prepared_candidate_relative_path="pipeline/prepared/telco-customer-churn/prepared-data.csv",
+        generated_at="2026-07-09T00:00:00+00:00",
+    )
+
+    written = json.loads(
+        (
+            tmp_repo / "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert written == metadata
+    assert metadata["schema_version"] == "prepared-data-metadata.v1"
+    assert metadata["dataset_identity"]["dataset_slug"] == "telco-customer-churn"
+    assert metadata["prepared_candidate"]["produced"] is False
+    assert metadata["prepared_candidate"]["reference"] is None
+    assert metadata["ordered_prepared_columns"] is None
+    assert metadata["applied_transformations_summary"] == []
+    assert len(metadata["unresolved_review_items"]) == 1
+    assert metadata["unresolved_review_items"][0]["source_columns"] == ["TotalCharges"]
+    assert metadata["training_readiness"]["is_training_ready"] is False
+    assert metadata["training_readiness"]["is_final_training_input"] is False
+    assert "pending human review" in metadata["training_readiness"]["reason"]
+    assert not any(metadata["materialization_boundary_confirmations"].values())
+    assert not Path(metadata["dataset_identity"]["raw_dataset_ref"]["path"]).is_absolute()
+
+
+def test_materialize_prepared_data_metadata_with_produced_candidate_is_training_ready(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _write_evidence_and_recipe(
+        tmp_repo,
+        recipe_overrides={
+            "transformations": [
+                {
+                    "transformation_type": "missing_value_handling",
+                    "description": "Drop rows with blank TotalCharges.",
+                    "source_columns": ["TotalCharges"],
+                    "target_columns": ["TotalCharges"],
+                    "reason": "Explicitly approved after human review.",
+                    "review_status": "explicit",
+                }
+            ],
+            "candidate_output": {
+                "produced": True,
+                "reason_not_produced": None,
+                "row_count_after": 2,
+                "column_count_after": 3,
+            },
+        },
+    )
+    candidate_path = tmp_repo / "pipeline/prepared/telco-customer-churn/prepared-data.csv"
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text(
+        "customerID,TotalCharges,Churn\nb,10.5,Yes\nc,20.0,No\n",
+        encoding="utf-8",
+    )
+
+    metadata = materialize_prepared_data_metadata(
+        dataset_slug="telco-customer-churn",
+        raw_dataset_relative_path="data/raw/telco-customer-churn.csv",
+        discovery_evidence_relative_path=(
+            "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+        ),
+        preparation_recipe_relative_path=(
+            "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+        ),
+        output_relative_path="pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        repo_root=tmp_repo,
+        prepared_candidate_relative_path="pipeline/prepared/telco-customer-churn/prepared-data.csv",
+        generated_at="2026-07-09T00:00:00+00:00",
+    )
+
+    assert metadata["prepared_candidate"]["produced"] is True
+    assert metadata["prepared_candidate"]["reference"]["path"] == (
+        "pipeline/prepared/telco-customer-churn/prepared-data.csv"
+    )
+    assert metadata["prepared_candidate"]["reference"]["row_count"] == 2
+    assert metadata["ordered_prepared_columns"] == ["customerID", "TotalCharges", "Churn"]
+    assert metadata["applied_transformations_summary"][0]["review_status"] == "explicit"
+    assert metadata["unresolved_review_items"] == []
+    assert metadata["training_readiness"]["is_training_ready"] is True
+    assert metadata["training_readiness"]["is_final_training_input"] is False
+    assert metadata["training_readiness"]["reason"] is None

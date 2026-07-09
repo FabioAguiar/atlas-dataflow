@@ -10,12 +10,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pipeline.training as training
 from pipeline.training import (
     MODEL_ARTIFACT_FILENAME,
+    MODEL_CARD_FILENAME,
     MODEL_CARD_INPUT_FILENAME,
     METRICS_ARTIFACT_FILENAME,
     TRAINING_PARAMETER_RECORD_FILENAME,
     TrainingInputError,
     _load_json_file,
     _require_valid_controlled_entrypoint_provenance,
+    convert_model_card_input_to_model_card,
+    materialize_training_run_from_prepared_metadata,
     prepare_training_invocation_readiness,
     train_from_paths,
 )
@@ -141,6 +144,7 @@ def test_valid_training_inputs_produce_expected_artifacts(
         TRAINING_PARAMETER_RECORD_FILENAME,
         METRICS_ARTIFACT_FILENAME,
         MODEL_CARD_INPUT_FILENAME,
+        MODEL_CARD_FILENAME,
     ]
     assert result.status == "trained"
     for artifact_name in expected_artifacts:
@@ -157,6 +161,20 @@ def test_valid_training_inputs_produce_expected_artifacts(
     assert parameter_record["controlled_entrypoint_provenance"]["entrypoint"] == (
         "pipeline.training.train_from_paths"
     )
+    # produced_outputs/hashes are schema-bound (additionalProperties: false)
+    # and must not gain a model_card_path/model_card_sha256 key (Project Spec
+    # S0026) — model-card.json is tracked only via TrainingResult, not inside
+    # this artifact.
+    assert "model_card_path" not in parameter_record["produced_outputs"]
+    assert "model_card_sha256" not in parameter_record["hashes"]
+
+    model_card = json.loads((output_directory / MODEL_CARD_FILENAME).read_text(encoding="utf-8"))
+    assert model_card["schema_version"] == "model-card.v1"
+    assert model_card["artifact_kind"] == "model_card"
+    assert model_card["prediction_target"] == "converted"
+    assert model_card["input_features"] == ["age", "segment", "balance"]
+    assert model_card["model_card_boundary_confirmations"]["release_publication_performed"] is False
+    assert model_card["model_card_boundary_confirmations"]["profile_publication_performed"] is False
 
 
 @pytest.mark.parametrize(
@@ -511,3 +529,327 @@ def test_readiness_rejects_unrecognized_contract_identity(tmp_path: Path) -> Non
     assert readiness["execution_contract_identity"] == "unrecognized_contract_identity"
     assert readiness["is_training_ready"] is False
     assert readiness["blocking_reasons"]
+
+
+# ---------------------------------------------------------------------------
+# Governed Telco training run materialization (Project Spec S0026)
+# ---------------------------------------------------------------------------
+
+
+def test_train_from_paths_rejects_execution_contract_draft(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(
+        tmp_path / "execution-contract-draft.json", _synthetic_execution_contract_draft()
+    )
+    dataset_path = _write_json(
+        tmp_path / "prepared-dataset.json", _valid_prepared_dataset()
+    )
+
+    with pytest.raises(TrainingInputError) as exc:
+        train_from_paths(
+            contract_path,
+            dataset_path,
+            dataset_slug="training-pipeline-test",
+            run_id="train-20260626T010700Z",
+        )
+
+    assert exc.value.code == "execution_contract_not_training_ready"
+    assert exc.value.field == "execution_contract_path"
+    assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
+
+
+def test_customer_id_feature_column_is_rejected(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _valid_execution_contract()
+    contract["feature_columns"].append("customerID")
+    contract["feature_definitions"]["customerID"] = {"type": "categorical"}
+    dataset = _valid_prepared_dataset()
+    for row in dataset["rows"]:
+        row["customerID"] = "0002-ORFBO"
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
+
+    with pytest.raises(TrainingInputError) as exc:
+        train_from_paths(
+            contract_path,
+            dataset_path,
+            dataset_slug="training-pipeline-test",
+            run_id="train-20260626T010700Z",
+        )
+
+    assert exc.value.code == "prohibited_training_feature"
+    assert exc.value.field == "feature_columns"
+
+
+def test_boolean_feature_type_mismatch_is_rejected(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _valid_execution_contract()
+    contract["feature_columns"].append("is_active")
+    contract["feature_definitions"]["is_active"] = {"type": "boolean"}
+    contract["missing_value_policy"]["is_active"] = "constant"
+    dataset = _valid_prepared_dataset()
+    boolean_encodings = ["0", "1", "Yes", "No", "true", "false", "1", "0"]
+    for row, encoding in zip(dataset["rows"], boolean_encodings):
+        row["is_active"] = encoding
+    dataset["rows"][0]["is_active"] = "maybe"
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
+
+    with pytest.raises(TrainingInputError) as exc:
+        train_from_paths(
+            contract_path,
+            dataset_path,
+            dataset_slug="training-pipeline-test",
+            run_id="train-20260626T010700Z",
+        )
+
+    assert exc.value.code == "contract_dataset_type_mismatch"
+    assert exc.value.field == "feature_definitions.is_active"
+
+
+def test_boolean_feature_accepts_mixed_established_encodings(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    """SeniorCitizen ('0'/'1') and Partner/Dependents ('Yes'/'No') are both
+    declared type: boolean in the real Telco execution contract but use
+    different on-disk encodings (confirmed via discovery-evidence.json) —
+    both conventions must be accepted, not just one."""
+    contract = _valid_execution_contract()
+    contract["feature_columns"].append("is_active")
+    contract["feature_definitions"]["is_active"] = {"type": "boolean"}
+    contract["missing_value_policy"]["is_active"] = "constant"
+    dataset = _valid_prepared_dataset()
+    boolean_encodings = ["0", "1", "Yes", "No", "true", "false", "1", "0"]
+    for row, encoding in zip(dataset["rows"], boolean_encodings):
+        row["is_active"] = encoding
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
+
+    result = train_from_paths(
+        contract_path,
+        dataset_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result.status == "trained"
+
+
+def test_unresolved_missing_value_policy_blocks_training(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _valid_execution_contract()
+    del contract["missing_value_policy"]["balance"]
+    dataset = _valid_prepared_dataset()
+    # A single-space blank, matching the real TotalCharges blank encoding
+    # confirmed in data/raw/telco-customer-churn.csv.
+    dataset["rows"][0]["balance"] = " "
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
+
+    with pytest.raises(TrainingInputError) as exc:
+        train_from_paths(
+            contract_path,
+            dataset_path,
+            dataset_slug="training-pipeline-test",
+            run_id="train-20260626T010700Z",
+        )
+
+    assert exc.value.code == "unresolved_missing_value_policy"
+    assert exc.value.field == "missing_value_policy.balance"
+
+
+def test_resolved_missing_value_policy_allows_training(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _valid_execution_contract()
+    assert "balance" in contract["missing_value_policy"]
+    dataset = _valid_prepared_dataset()
+    dataset["rows"][0]["balance"] = " "
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
+
+    result = train_from_paths(
+        contract_path,
+        dataset_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result.status == "trained"
+
+
+def _not_produced_prepared_data_metadata() -> dict:
+    """Shaped like the real, currently unresolved
+    pipeline/evidence/telco-customer-churn/prepared-data-metadata.json:
+    prepared_candidate.produced is false pending human review of TotalCharges
+    blanks, so no real prepared dataset artifact exists yet."""
+    return {
+        "schema_version": "prepared-data-metadata.v1",
+        "producer": "pipeline/prepare_candidate.py",
+        "dataset_identity": {"dataset_slug": "training-pipeline-test"},
+        "prepared_candidate": {
+            "produced": False,
+            "reason_not_produced": "1 inferred rule(s) are pending human review.",
+            "reference": None,
+        },
+        "unresolved_review_items": [
+            {
+                "transformation_type": "missing_value_handling",
+                "description": "Review balance blank values.",
+                "review_status": "inferred_pending_review",
+            }
+        ],
+        "training_readiness": {
+            "is_final_training_input": False,
+            "is_training_ready": False,
+            "reason": "No prepared candidate has been produced yet.",
+        },
+    }
+
+
+def _produced_prepared_data_metadata(reference: str) -> dict:
+    return {
+        "schema_version": "prepared-data-metadata.v1",
+        "producer": "pipeline/prepare_candidate.py",
+        "dataset_identity": {"dataset_slug": "training-pipeline-test"},
+        "prepared_candidate": {
+            "produced": True,
+            "reason_not_produced": None,
+            "reference": reference,
+        },
+        "unresolved_review_items": [],
+        "training_readiness": {
+            "is_final_training_input": True,
+            "is_training_ready": True,
+            "reason": None,
+        },
+    }
+
+
+def test_materialize_training_run_blocked_when_prepared_candidate_not_produced(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json", _not_produced_prepared_data_metadata()
+    )
+
+    result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["materialization_boundary_confirmations"]["model_training_performed"] is False
+    assert any("prepared_candidate.produced" in reason for reason in result["blocking_reasons"])
+    assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
+
+
+def test_materialize_training_run_blocked_when_execution_contract_is_draft(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _valid_prepared_dataset())
+    contract_path = _write_json(
+        tmp_path / "execution-contract-draft.json", _synthetic_execution_contract_draft()
+    )
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json",
+        _produced_prepared_data_metadata(str(dataset_path)),
+    )
+
+    result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result["status"] == "blocked"
+    assert any(
+        "execution_contract_draft.v1" in reason or "execution-ready" in reason
+        for reason in result["blocking_reasons"]
+    )
+    assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
+
+
+def test_materialize_training_run_succeeds_when_ready(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    prepared_reference = "pipeline/prepared/training-pipeline-test/prepared-dataset.json"
+    resolved_dataset_path = fixed_training_environment / prepared_reference
+    resolved_dataset_path.parent.mkdir(parents=True)
+    _write_json(resolved_dataset_path, _valid_prepared_dataset())
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json",
+        _produced_prepared_data_metadata(prepared_reference),
+    )
+
+    result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result["status"] == "trained"
+    assert result["materialization_boundary_confirmations"]["training_run_materialized"] is True
+    training_result = result["training_result"]
+    output_directory = (
+        fixed_training_environment / Path(training_result["serialized_model_path"]).parent
+    )
+    assert (output_directory / MODEL_ARTIFACT_FILENAME).exists()
+    assert (output_directory / METRICS_ARTIFACT_FILENAME).exists()
+    assert (output_directory / MODEL_CARD_FILENAME).exists()
+
+
+def test_convert_model_card_input_to_model_card(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path, dataset_path = _write_valid_inputs(tmp_path)
+    result = train_from_paths(
+        contract_path,
+        dataset_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+    model_card_input_path = fixed_training_environment / result.model_card_input_path
+    converted_path = tmp_path / "converted-model-card.json"
+
+    convert_model_card_input_to_model_card(model_card_input_path, converted_path)
+
+    converted = json.loads(converted_path.read_text(encoding="utf-8"))
+    assert converted["schema_version"] == "model-card.v1"
+    assert converted["artifact_kind"] == "model_card"
+    assert converted["prediction_target"] == "converted"
+    assert converted["hashes"]["model_card_input_sha256"] == _sha256_file(model_card_input_path)
+
+
+def test_convert_model_card_input_to_model_card_rejects_wrong_schema_version(
+    tmp_path: Path,
+) -> None:
+    wrong_shape_path = _write_json(
+        tmp_path / "not-a-model-card-input.json", {"schema_version": "model-selection-evidence.v1"}
+    )
+
+    with pytest.raises(TrainingInputError) as exc:
+        convert_model_card_input_to_model_card(wrong_shape_path, tmp_path / "model-card.json")
+
+    assert exc.value.code == "invalid_model_card_input"
+    assert exc.value.field == "model_card_input_path"

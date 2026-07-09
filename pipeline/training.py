@@ -63,7 +63,20 @@ TRAINING_PARAMETER_RECORD_FILENAME = "training-parameter-record.json"
 METRICS_ARTIFACT_FILENAME = "metrics.json"
 MODEL_SELECTION_EVIDENCE_FILENAME = "model-selection-evidence.json"
 MODEL_CARD_INPUT_FILENAME = "model-card-input.json"
+MODEL_CARD_FILENAME = "model-card.json"
 CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION = "controlled-entrypoint-provenance.v1"
+
+# Columns that must never enter training as a model feature, regardless of
+# what a given execution contract declares (Project Spec S0026). customerID
+# is a raw record identifier, never a predictive feature, for every dataset
+# this entrypoint has been asked to govern so far.
+PROHIBITED_TRAINING_FEATURE_COLUMNS = frozenset({"customerID"})
+
+# Accepted on-disk encodings for an execution-contract `boolean` feature type
+# (Project Spec S0026). Telco's own raw CSV alone uses two different
+# conventions for boolean-typed columns: SeniorCitizen as "0"/"1" and
+# Partner/Dependents as "Yes"/"No" (confirmed via discovery-evidence.json).
+_BOOLEAN_ENCODED_VALUES = frozenset({"0", "1", "true", "false", "yes", "no", "t", "f", "y", "n"})
 
 _LOWER_IS_BETTER_METRICS = frozenset({"log_loss"})
 
@@ -107,6 +120,7 @@ class TrainingResult:
     metrics_path: str
     model_selection_evidence_path: str | None
     model_card_input_path: str
+    model_card_path: str
     serializer_name: str
     serializer_version: str
     serialization_format_version: str
@@ -135,6 +149,7 @@ class TrainingResult:
             "metrics_path": self.metrics_path,
             "model_selection_evidence_path": self.model_selection_evidence_path,
             "model_card_input_path": self.model_card_input_path,
+            "model_card_path": self.model_card_path,
             "serializer": {
                 "name": self.serializer_name,
                 "installed_version": self.serializer_version,
@@ -146,6 +161,7 @@ class TrainingResult:
             "metrics": self.metrics,
             "model_selection_evidence_produced": self.model_selection_evidence_produced,
             "model_card_input_produced": True,
+            "model_card_produced": True,
             "training_parameter_record_persisted": True,
         }
 
@@ -227,6 +243,16 @@ def _load_execution_contract(path: Path) -> dict[str, Any]:
             "execution contract feature_columns must be a non-empty array.",
             field="feature_columns",
         )
+    prohibited = PROHIBITED_TRAINING_FEATURE_COLUMNS.intersection(reduced["feature_columns"])
+    if prohibited:
+        raise TrainingInputError(
+            "prohibited_training_feature",
+            (
+                "execution contract feature_columns must not include prohibited "
+                f"columns: {sorted(prohibited)}."
+            ),
+            field="feature_columns",
+        )
     return reduced
 
 
@@ -244,6 +270,16 @@ def _is_numeric_dataset_value(value: Any) -> bool:
             return math.isfinite(float(value.strip()))
         except ValueError:
             return False
+    return False
+
+
+def _is_boolean_dataset_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return float(value) in (0.0, 1.0)
+    if isinstance(value, str):
+        return value.strip().lower() in _BOOLEAN_ENCODED_VALUES
     return False
 
 
@@ -286,6 +322,51 @@ def _validate_contract_dataset_type_compatibility(
                         ),
                         field=f"feature_definitions.{column}",
                     )
+        elif declared_type == "boolean":
+            for row in rows:
+                value = row.get(column)
+                if _is_missing_dataset_value(value):
+                    continue
+                if not _is_boolean_dataset_value(value):
+                    raise TrainingInputError(
+                        "contract_dataset_type_mismatch",
+                        (
+                            f"dataset column {column} contains a value that is not "
+                            "compatible with declared boolean feature type; boolean "
+                            "semantics must not be silently generalized during training."
+                        ),
+                        field=f"feature_definitions.{column}",
+                    )
+
+
+def _validate_missing_value_policy(
+    rows: list[dict[str, Any]],
+    contract: dict[str, Any],
+) -> None:
+    """Block training on any feature column with unresolved missing values.
+
+    A blank/missing value in a feature column is only acceptable when the
+    execution contract's `missing_value_policy` carries an explicit entry
+    naming how that column's missing values are handled (Project Spec
+    S0026) — for example Telco's own `TotalCharges` blanks, which are
+    single-space strings in the raw CSV, not empty strings. Silent
+    acceptance without a recorded policy decision is never permitted.
+    """
+    missing_value_policy = contract.get("missing_value_policy")
+    missing_value_policy = missing_value_policy if isinstance(missing_value_policy, dict) else {}
+    for column in contract["feature_columns"]:
+        if column in missing_value_policy:
+            continue
+        if any(_is_missing_dataset_value(row.get(column)) for row in rows):
+            raise TrainingInputError(
+                "unresolved_missing_value_policy",
+                (
+                    f"dataset column {column} contains missing values but execution "
+                    "contract missing_value_policy has no explicit entry for it; "
+                    "unresolved missing-value handling must not be silently accepted."
+                ),
+                field=f"missing_value_policy.{column}",
+            )
 
 
 def _sha256_file(path: Path) -> str:
@@ -448,6 +529,7 @@ def _validate_dataset(
             field="dataset_path",
         )
     _validate_contract_dataset_type_compatibility(rows, contract)
+    _validate_missing_value_policy(rows, contract)
 
 
 def _split_indices(
@@ -1504,6 +1586,147 @@ def _build_model_card_input_artifact(
     }
 
 
+# ---------------------------------------------------------------------------
+# Handoff-compatible model card (Project Spec S0026)
+#
+# `model-card.json` is a distinct role from `model-card-input.json` in the
+# release-candidate handoff readiness gate (`pipeline/assemble_candidate.py`
+# `model_card` role). This deterministically converts an already-produced
+# `model-card-input.v1` artifact into that role, without embedding raw
+# dataset rows, model bytes, or notebook state, and without performing any
+# public release or profile publication step itself.
+# ---------------------------------------------------------------------------
+
+MODEL_CARD_SCHEMA_VERSION = "model-card.v1"
+
+
+def _model_card_artifact_from_input(
+    model_card_input: dict[str, Any],
+    *,
+    model_card_input_path_ref: str,
+    model_card_path_ref: str,
+    model_card_input_sha256: str,
+    created_at: str,
+) -> dict[str, Any]:
+    training_run_identity = model_card_input["training_run_identity"]
+    model = model_card_input["model"]
+    evaluation = model_card_input["evaluation"]
+    dataset = model_card_input["dataset"]
+    return {
+        "schema_version": MODEL_CARD_SCHEMA_VERSION,
+        "artifact_kind": "model_card",
+        "created_at": created_at,
+        "training_run_identity": dict(training_run_identity),
+        "model_summary": (
+            f"{model['model_family']} model trained for dataset "
+            f"{dataset['dataset_id']} to predict {dataset['target_column']}."
+        ),
+        "problem_type": model["task_type"],
+        "prediction_target": dataset["target_column"],
+        "intended_use": (
+            "Governed training-run output for internal review. Not yet reviewed "
+            "or approved for public release, profile publication, or production "
+            "decisioning."
+        ),
+        "input_features": list(dataset["feature_columns"]),
+        "evaluation": {
+            "primary_metric_name": evaluation["primary_metric_name"],
+            "primary_metric_value": evaluation["primary_metric_value"],
+            "secondary_metrics": _json_safe(evaluation["secondary_metrics"]),
+        },
+        "limitations": [
+            "Generated directly from a governed training run; not reviewed for "
+            "public release, profile publication, or production decisioning.",
+            "Reflects patterns in the prepared training dataset only; independent "
+            "validation is required before any downstream use.",
+        ],
+        "data_notes": (
+            "Reduced, deterministic training-run model card. No raw dataset rows, "
+            "model bytes, raw logs, raw runtime data, secrets, or notebook state "
+            "are included."
+        ),
+        "path_references": {
+            "model_card_path": model_card_path_ref,
+            "model_card_input_path": model_card_input_path_ref,
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "model_card_input_sha256": model_card_input_sha256,
+        },
+        "model_card_boundary_confirmations": {
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "release_publication_performed": False,
+            "profile_publication_performed": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def convert_model_card_input_to_model_card(
+    model_card_input_path: str | Path,
+    model_card_path: str | Path,
+) -> str:
+    """Deterministically convert an existing `model-card-input.v1` artifact
+    into a handoff-compatible `model-card.json` (Project Spec S0026), without
+    training a model, mutating the input artifact, or performing any public
+    release/profile publication step. Returns the written file's SHA-256.
+    """
+    input_path = Path(model_card_input_path)
+    output_path = Path(model_card_path)
+    model_card_input = _load_json_file(input_path, "model_card_input_path")
+    if model_card_input.get("schema_version") != "model-card-input.v1":
+        raise TrainingInputError(
+            "invalid_model_card_input",
+            "model_card_input_path does not declare schema_version model-card-input.v1.",
+            field="model_card_input_path",
+        )
+    artifact = _model_card_artifact_from_input(
+        model_card_input,
+        model_card_input_path_ref=_reduced_path_reference(input_path),
+        model_card_path_ref=_reduced_path_reference(output_path),
+        model_card_input_sha256=_sha256_file(input_path),
+        created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    )
+    return _write_reduced_json_artifact(output_path, artifact)
+
+
+def _require_execution_ready_contract(full_contract: dict[str, Any]) -> None:
+    """Reject any execution-contract input that is not execution-ready.
+
+    An `execution_contract_draft.v1` (Project Spec S0014) must never be
+    treated as training-ready by the actual training entrypoint (Project
+    Spec S0026) — not only by the `prepare_training_invocation_readiness`
+    bridge (Project Spec S0015), which is only an advisory pre-check that a
+    caller could bypass by invoking `train_from_paths` directly.
+    """
+    identity = _execution_contract_identity(full_contract)
+    if identity == "execution_ready":
+        return
+    blocking_reasons = (
+        _draft_review_blocking_reasons(full_contract)
+        if identity == "execution_contract_draft"
+        else []
+    )
+    detail = f" Unresolved review items: {blocking_reasons}" if blocking_reasons else ""
+    raise TrainingInputError(
+        "execution_contract_not_training_ready",
+        (
+            "execution_contract_path does not reference an execution-ready "
+            f"{EXECUTION_READY_CONTRACT_VERSION} contract (identity: {identity})."
+            f"{detail}"
+        ),
+        field="execution_contract_path",
+    )
+
+
 def train_from_paths(
     execution_contract_path: str | Path,
     dataset_path: str | Path,
@@ -1515,6 +1738,7 @@ def train_from_paths(
     contract_path = Path(execution_contract_path)
     prepared_dataset_path = Path(dataset_path)
     full_contract = _load_json_file(contract_path, "execution_contract_path")
+    _require_execution_ready_contract(full_contract)
     contract = _load_execution_contract(contract_path)
     rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
     _validate_dataset(rows, prepared_dataset_id, contract)
@@ -1640,6 +1864,15 @@ def train_from_paths(
         model_card_input_path,
         model_card_input_artifact,
     )
+    model_card_path = output_directory / MODEL_CARD_FILENAME
+    model_card_artifact = _model_card_artifact_from_input(
+        model_card_input_artifact,
+        model_card_input_path_ref=_repo_relative_path(model_card_input_path),
+        model_card_path_ref=_repo_relative_path(model_card_path),
+        model_card_input_sha256=model_card_input_sha256,
+        created_at=training_timestamp,
+    )
+    model_card_sha256 = _write_reduced_json_artifact(model_card_path, model_card_artifact)
 
     return TrainingResult(
         status="trained",
@@ -1662,6 +1895,7 @@ def train_from_paths(
             else None
         ),
         model_card_input_path=_repo_relative_path(model_card_input_path),
+        model_card_path=_repo_relative_path(model_card_path),
         serializer_name=SERIALIZER_NAME,
         serializer_version=serializer_version,
         serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
@@ -1673,6 +1907,7 @@ def train_from_paths(
             "metrics_sha256": metrics_sha256,
             "training_parameter_record_sha256": parameter_record_sha256,
             "model_card_input_sha256": model_card_input_sha256,
+            "model_card_sha256": model_card_sha256,
             "model_selection_evidence_sha256": model_selection_evidence_sha256,
         },
         metrics=metric_values,
@@ -1817,6 +2052,144 @@ def prepare_training_invocation_readiness(
             "training_invoked": False,
             "execution_contract_draft_promoted_to_official_contract": False,
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Governed training run materialization from prepared-data-metadata
+# (Project Spec S0026)
+#
+# `materialize_training_run_from_prepared_metadata` bridges a
+# `prepared-data-metadata.v1` artifact (`pipeline/prepare_candidate.py`) to
+# this module's own `train_from_paths`. It never trains from the raw CSV, a
+# notebook-held DataFrame, or notebook memory: the only dataset input it
+# will ever pass to `train_from_paths` is the explicit repository-relative
+# `prepared_candidate.reference` path recorded by that metadata artifact,
+# and only once the metadata itself declares both
+# `prepared_candidate.produced` and `training_readiness.is_training_ready`
+# true. An `execution_contract_draft.v1` (Project Spec S0014) is rejected
+# here up front, in addition to `train_from_paths`'s own rejection, so a
+# blocked result can report a clear reason instead of surfacing as a raised
+# exception.
+# ---------------------------------------------------------------------------
+
+TRAINING_RUN_MATERIALIZATION_CONTRACT_VERSION = "training_run_materialization_result.v1"
+PREPARED_DATASET_METADATA_SCHEMA_VERSION = "prepared-data-metadata.v1"
+
+
+def _prepared_dataset_metadata_blocking_reasons(
+    metadata: dict[str, Any],
+) -> tuple[list[str], str | None]:
+    blocking_reasons: list[str] = []
+    if metadata.get("schema_version") != PREPARED_DATASET_METADATA_SCHEMA_VERSION:
+        blocking_reasons.append(
+            "prepared_data_metadata_path does not declare schema_version "
+            f"{PREPARED_DATASET_METADATA_SCHEMA_VERSION!r}."
+        )
+
+    prepared_candidate = metadata.get("prepared_candidate")
+    prepared_candidate = prepared_candidate if isinstance(prepared_candidate, dict) else {}
+    if prepared_candidate.get("produced") is not True:
+        blocking_reasons.append(
+            "prepared_data_metadata.prepared_candidate.produced is not true: "
+            f"{prepared_candidate.get('reason_not_produced') or 'no reason recorded'}"
+        )
+
+    reference = prepared_candidate.get("reference")
+    if not isinstance(reference, str) or not reference.strip():
+        reference = None
+        blocking_reasons.append(
+            "prepared_data_metadata.prepared_candidate.reference is not an explicit "
+            "prepared dataset artifact/payload path; raw CSV inference and notebook "
+            "memory are never accepted as training input."
+        )
+
+    training_readiness = metadata.get("training_readiness")
+    training_readiness = training_readiness if isinstance(training_readiness, dict) else {}
+    if training_readiness.get("is_training_ready") is not True:
+        blocking_reasons.append(
+            "prepared_data_metadata.training_readiness.is_training_ready is not true: "
+            f"{training_readiness.get('reason') or 'no reason recorded'}"
+        )
+
+    for item in metadata.get("unresolved_review_items") or []:
+        if isinstance(item, dict) and item.get("review_status") != "explicit":
+            description = item.get("description") or "unresolved review item"
+            blocking_reasons.append(f"unresolved_review_item: {description}")
+
+    return blocking_reasons, reference
+
+
+def materialize_training_run_from_prepared_metadata(
+    execution_contract_path: str | Path,
+    prepared_data_metadata_path: str | Path,
+    *,
+    dataset_slug: str | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Materialize a governed training run from explicit path references only.
+
+    Requires an execution-ready `execution_contract.v1` (never an
+    `execution_contract_draft.v1`) and a `prepared-data-metadata.v1`
+    artifact whose `prepared_candidate.produced` and
+    `training_readiness.is_training_ready` are both true, with an explicit
+    `prepared_candidate.reference` path. When any of that is not yet true,
+    returns a `status: "blocked"` result with `blocking_reasons` instead of
+    training. Never reads the raw dataset CSV directly and never accepts a
+    notebook-held DataFrame.
+    """
+    contract_path = Path(execution_contract_path)
+    metadata_path = Path(prepared_data_metadata_path)
+    full_contract = _load_json_file(contract_path, "execution_contract_path")
+    metadata = _load_json_file(metadata_path, "prepared_data_metadata_path")
+
+    contract_identity = _execution_contract_identity(full_contract)
+    blocking_reasons: list[str] = []
+    if contract_identity != "execution_ready":
+        blocking_reasons.append(
+            "execution_contract_path does not reference an execution-ready "
+            f"{EXECUTION_READY_CONTRACT_VERSION} contract (identity: {contract_identity})."
+        )
+        blocking_reasons.extend(_draft_review_blocking_reasons(full_contract))
+
+    dataset_blocking_reasons, reference = _prepared_dataset_metadata_blocking_reasons(metadata)
+    blocking_reasons.extend(dataset_blocking_reasons)
+
+    if blocking_reasons:
+        return {
+            "artifact_type": "training_run_materialization_result",
+            "contract_version": TRAINING_RUN_MATERIALIZATION_CONTRACT_VERSION,
+            "status": "blocked",
+            "execution_contract_identity": contract_identity,
+            "prepared_dataset_reference": reference,
+            "blocking_reasons": blocking_reasons,
+            "governed_entrypoint": "pipeline.training.train_from_paths",
+            "materialization_boundary_confirmations": {
+                "model_training_performed": False,
+                "training_run_materialized": False,
+            },
+        }
+
+    resolved_dataset_path = _repo_root() / reference
+    result = train_from_paths(
+        contract_path,
+        resolved_dataset_path,
+        dataset_slug=dataset_slug,
+        run_id=run_id,
+    )
+    return {
+        "artifact_type": "training_run_materialization_result",
+        "contract_version": TRAINING_RUN_MATERIALIZATION_CONTRACT_VERSION,
+        "status": "trained",
+        "execution_contract_identity": contract_identity,
+        "prepared_dataset_reference": reference,
+        "blocking_reasons": [],
+        "governed_entrypoint": "pipeline.training.train_from_paths",
+        "materialization_boundary_confirmations": {
+            "model_training_performed": True,
+            "training_run_materialized": True,
+        },
+        "training_result": result.to_summary(),
     }
 
 

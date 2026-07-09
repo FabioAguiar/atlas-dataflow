@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from pipeline import assemble_candidate
 from publisher import validate
 
 
@@ -208,3 +209,137 @@ def test_cross_artifact_validation_rejects_non_real_required_artifact(
     assert result["valid"] is False
     assert expected_code in _rejection_codes(result)
     assert result["role_results"]["metrics"]["status"] == "incomplete"
+
+
+# --- Release-candidate-input assembly from a governed training run (Project Spec S0032) ---
+#
+# These tests exercise pipeline/assemble_candidate.py's build_release_candidate_input,
+# derive_deterministic_release_id, and assemble_release_candidate end to end: proving a
+# valid, Telco-style release-candidate-input.v1 can be built from explicit governed
+# artifact references and assembled into a publisher-compatible candidate, and that a
+# missing required artifact is rejected -- both before input construction (handoff not
+# ready) and at assembly time (artifact removed after the input was built).
+
+S0032_DATASET_SLUG = "telco-style-dataset"
+S0032_TRAINING_RUN_ID = "train-20260709T224340Z"
+
+
+def _write_s0032_governed_artifacts(repo_root: Path, *, omit_role: str | None = None) -> dict:
+    dataset_slug = S0032_DATASET_SLUG
+    run_id = S0032_TRAINING_RUN_ID
+    references = {
+        "discovery_evidence": f"pipeline/evidence/{dataset_slug}/discovery-evidence.json",
+        "execution_contract": f"contracts/{dataset_slug}/execution-contract.json",
+        "runtime_contract": f"contracts/{dataset_slug}/runtime-contract.json",
+        "public_contract": f"contracts/{dataset_slug}/public-contract.json",
+        "preparation_recipe": f"pipeline/evidence/{dataset_slug}/preparation-recipe.json",
+        "prepared_data_metadata": f"pipeline/prepared/{dataset_slug}/prepared-data-metadata.json",
+        "training_parameter_record": (
+            f"pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json"
+        ),
+        "model_artifact": f"pipeline/training-runs/{dataset_slug}/{run_id}/model.pkl",
+        "training_metrics": f"pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json",
+        "model_card": f"pipeline/training-runs/{dataset_slug}/{run_id}/model-card.json",
+        "public_context": f"contracts/{dataset_slug}/dataset-context.json",
+        "inference_bundle": f"contracts/{dataset_slug}/inference-bundle.json",
+    }
+    for role, relative_path in references.items():
+        if role == omit_role:
+            continue
+        if role == "model_artifact":
+            path = repo_root / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"not-a-real-model-but-real-bytes")
+        else:
+            _write_json(
+                repo_root / relative_path,
+                {"role": role, "contract_version": f"{role}.v1", "schema_version": f"{role}.v1"},
+            )
+    return references
+
+
+def test_build_release_candidate_input_assembles_valid_telco_style_candidate(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0032_governed_artifacts(repo_root)
+
+    release_id = assemble_candidate.derive_deterministic_release_id(S0032_TRAINING_RUN_ID)
+    assert release_id == "release-20260709t224340z"
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0032_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0032_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+    assert candidate_input["contract_version"] == "release-candidate-input.v1"
+    assert candidate_input["artifact_inputs"]["inference_bundle"]["availability_status"] == (
+        "real_dataflow_artifact"
+    )
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0032-test-input",
+    )
+
+    assert result["status"] == "accepted", result
+    candidate_dir = Path(result["candidate_dir"])
+    assert (candidate_dir / "release-candidate.json").is_file()
+    assert (candidate_dir / "manifest-input.json").is_file()
+    assert (candidate_dir / "build-evidence.json").is_file()
+    assert (candidate_dir / "contracts" / "runtime-contract.json").is_file()
+    assert (candidate_dir / "contracts" / "public-contract.json").is_file()
+    assert (candidate_dir / "metrics" / "metrics.json").is_file()
+    assert (candidate_dir / "predictions" / "bundle.json").is_file()
+    assert (candidate_dir / "model-card.json").is_file()
+    assert (candidate_dir / "public-context.json").is_file()
+    # The candidate is assembled, not published: this spec must not create a
+    # publisher run.
+    assert not (repo_root / "publisher" / "runs").exists()
+
+
+def test_build_release_candidate_input_rejects_when_a_required_role_is_missing(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0032_governed_artifacts(repo_root, omit_role="inference_bundle")
+    release_id = assemble_candidate.derive_deterministic_release_id(S0032_TRAINING_RUN_ID)
+
+    with pytest.raises(ValueError, match="inference_bundle"):
+        assemble_candidate.build_release_candidate_input(
+            dataset_slug=S0032_DATASET_SLUG,
+            release_id=release_id,
+            source_run_id=S0032_TRAINING_RUN_ID,
+            artifact_references=artifact_references,
+            repo_root=repo_root,
+        )
+
+
+def test_assemble_release_candidate_rejects_when_a_referenced_artifact_goes_missing(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0032_governed_artifacts(repo_root)
+    release_id = assemble_candidate.derive_deterministic_release_id(S0032_TRAINING_RUN_ID)
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0032_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0032_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+
+    # Simulate a required artifact disappearing between input construction and
+    # assembly (for example a caller reusing a stale input document).
+    (repo_root / artifact_references["public_contract"]).unlink()
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0032-test-input",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "candidate_artifact_missing"
+    assert artifact_references["public_contract"] in result["missing_paths"]
+    assert not any((repo_root / "releases").rglob("release-candidate.json"))

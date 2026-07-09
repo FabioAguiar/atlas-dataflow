@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import pipeline.assemble_candidate as assemble_candidate
 import pipeline.training as training
 from pipeline.training import (
     MODEL_ARTIFACT_FILENAME,
@@ -979,3 +980,107 @@ def test_convert_model_card_input_to_model_card_rejects_wrong_schema_version(
 
     assert exc.value.code == "invalid_model_card_input"
     assert exc.value.field == "model_card_input_path"
+
+
+def test_normalize_training_handoff_references_uses_real_training_result_paths(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    prepared_reference = "pipeline/prepared/training-pipeline-test/prepared-dataset.json"
+    resolved_dataset_path = fixed_training_environment / prepared_reference
+    resolved_dataset_path.parent.mkdir(parents=True)
+    _write_json(resolved_dataset_path, _valid_prepared_dataset())
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json",
+        _produced_prepared_data_metadata(prepared_reference),
+    )
+
+    materialization_result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+    assert materialization_result["status"] == "trained"
+
+    normalized = assemble_candidate.normalize_training_handoff_references(
+        materialization_result,
+        repo_root=fixed_training_environment,
+    )
+
+    training_result = materialization_result["training_result"]
+    assert normalized["source_status"] == "trained"
+    assert normalized["rejected_roles"] == {}
+    assert normalized["role_paths"] == {
+        "training_parameter_record": training_result["training_parameter_record_path"],
+        "model_artifact": training_result["serialized_model_path"],
+        "training_metrics": training_result["metrics_path"],
+        "model_card": training_result["model_card_path"],
+    }
+
+
+def test_normalize_training_handoff_references_rejects_blocked_training_result(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json", _not_produced_prepared_data_metadata()
+    )
+
+    materialization_result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+    assert materialization_result["status"] == "blocked"
+
+    normalized = assemble_candidate.normalize_training_handoff_references(
+        materialization_result,
+        repo_root=fixed_training_environment,
+    )
+
+    assert normalized["source_status"] == "blocked"
+    assert normalized["role_paths"] == {}
+    assert normalized["rejected_roles"] == {}
+
+
+def test_normalize_training_handoff_references_rejects_incomplete_trained_result(
+    fixed_training_environment: Path,
+) -> None:
+    normalized = assemble_candidate.normalize_training_handoff_references(
+        {"status": "trained"},
+        repo_root=fixed_training_environment,
+    )
+
+    assert normalized["source_status"] == "trained_without_training_result"
+    assert normalized["role_paths"] == {}
+
+
+def test_normalize_training_handoff_references_rejects_unsafe_paths_in_training_result(
+    fixed_training_environment: Path,
+) -> None:
+    unsafe_training_result = {
+        "status": "trained",
+        "training_result": {
+            "training_parameter_record_path": "/etc/passwd",
+            "serialized_model_path": "../outside-repo/model.pkl",
+            "metrics_path": "pipeline/examples/metrics.json",
+            "model_card_path": "pipeline/training-runs/training-pipeline-test/train-missing/model-card.json",
+        },
+    }
+
+    normalized = assemble_candidate.normalize_training_handoff_references(
+        unsafe_training_result,
+        repo_root=fixed_training_environment,
+    )
+
+    assert normalized["role_paths"] == {}
+    assert normalized["rejected_roles"] == {
+        "training_parameter_record": "absolute_path_rejected",
+        "model_artifact": "parent_traversal_rejected",
+        "training_metrics": "fixture_only_path_rejected",
+        "model_card": "missing_reference",
+    }

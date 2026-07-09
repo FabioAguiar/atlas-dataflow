@@ -1,0 +1,143 @@
+{
+  "contract_version": "execution_contract.v1",
+  "dataset_id": "telco-customer-churn",
+  "target_column": "Churn",
+  "feature_columns": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges"
+  ],
+  "ignored_columns": [
+    "customerID",
+    "TotalCharges"
+  ],
+  "required_columns": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges"
+  ],
+  "optional_columns": [],
+  "feature_definitions": {
+    "gender": {
+      "type": "categorical"
+    },
+    "SeniorCitizen": {
+      "type": "boolean"
+    },
+    "Partner": {
+      "type": "boolean"
+    },
+    "Dependents": {
+      "type": "boolean"
+    },
+    "tenure": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0,
+        "max": 72
+      }
+    },
+    "PhoneService": {
+      "type": "boolean"
+    },
+    "MultipleLines": {
+      "type": "categorical"
+    },
+    "InternetService": {
+      "type": "categorical"
+    },
+    "OnlineSecurity": {
+      "type": "categorical"
+    },
+    "OnlineBackup": {
+      "type": "categorical"
+    },
+    "DeviceProtection": {
+      "type": "categorical"
+    },
+    "TechSupport": {
+      "type": "categorical"
+    },
+    "StreamingTV": {
+      "type": "categorical"
+    },
+    "StreamingMovies": {
+      "type": "categorical"
+    },
+    "Contract": {
+      "type": "categorical"
+    },
+    "PaperlessBilling": {
+      "type": "boolean"
+    },
+    "PaymentMethod": {
+      "type": "categorical"
+    },
+    "MonthlyCharges": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 18.25,
+        "max": 118.75
+      }
+    }
+  },
+  "missing_value_policy": {},
+  "categorical_encoding_policy": "onehot",
+  "numeric_handling": "standardize",
+  "allowed_transformations": [
+    "passthrough"
+  ],
+  "split_policy": {
+    "strategy": "stratified",
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15
+  },
+  "random_seed": 0,
+  "primary_metric": "roc_auc",
+  "secondary_metrics": [
+    "f1",
+    "pr_auc"
+  ],
+  "modeling_constraints": {
+    "allowed_model_families": [
+      "logistic_regression",
+      "gradient_boosting",
+      "random_forest",
+      "xgboost",
+      "lightgbm"
+    ],
+    "no_automl": true,
+    "max_training_time_seconds": null
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "artifact_type": "execution_contract_materialization_evidence",
+  "contract_version": "execution_contract_materialization_evidence.v1",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "dataset_source_ref": "data/raw/telco-customer-churn.csv"
+  },
+  "execution_contract_ref": "contracts/telco-customer-churn/execution-contract.json",
+  "source_artifact_references": {
+    "discovery_evidence_ref": "pipeline/evidence/telco-customer-churn/discovery-evidence.json",
+    "preparation_recipe_ref": "pipeline/evidence/telco-customer-churn/preparation-recipe.json",
+    "prepared_data_metadata_ref": "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+    "dataset_modeling_intent_ref": "pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+    "public_context_ref": "contracts/telco-customer-churn/dataset-context.json",
+    "raw_dataset_ref": "data/raw/telco-customer-churn.csv"
+  },
+  "target_policy": {
+    "target_column": "Churn",
+    "task_type": "binary_classification"
+  },
+  "positive_label_policy": {
+    "positive_label_candidate": "Yes",
+    "observed_labels": [
+      "No",
+      "Yes"
+    ],
+    "is_reviewed_final_decision": false
+  },
+  "identifier_exclusion_policy": [
+    {
+      "name": "customerID",
+      "reason": "identifier_candidate_excluded_from_features"
+    }
+  ],
+  "unresolved_feature_exclusions": [
+    {
+      "name": "TotalCharges",
+      "review_status": "inferred_pending_review",
+      "reason": "blank-value handling review_status is 'inferred_pending_review', not an approved status (['explicit', 'inferred_approved']); excluded from feature_columns rather than silently approved"
+    }
+  ],
+  "feature_type_grounding": {
+    "gender": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "SeniorCitizen": {
+      "declared_type": "boolean",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Partner": {
+      "declared_type": "boolean",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Dependents": {
+      "declared_type": "boolean",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "tenure": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "PhoneService": {
+      "declared_type": "boolean",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "MultipleLines": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "InternetService": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "OnlineSecurity": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "OnlineBackup": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "DeviceProtection": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "TechSupport": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "StreamingTV": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "StreamingMovies": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Contract": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "PaperlessBilling": {
+      "declared_type": "boolean",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "PaymentMethod": {
+      "declared_type": "categorical",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "MonthlyCharges": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    }
+  },
+  "policy_defaults_requiring_future_review": [
+    "categorical_encoding_policy",
+    "numeric_handling",
+    "allowed_transformations",
+    "split_policy",
+    "primary_metric",
+    "secondary_metrics",
+    "modeling_constraints"
+  ],
+  "execution_contract_boundary_confirmations": {
+    "is_runtime_contract": false,
+    "is_public_contract": false,
+    "is_release_candidate_input": false,
+    "is_publisher_input": false,
+    "is_registry_artifact": false,
+    "is_api_fixture": false,
+    "is_ui_fixture": false,
+    "model_training_performed": false,
+    "model_family_selected": false
+  },
+  "generated_at": "2026-07-09T17:59:34+00:00"
+}

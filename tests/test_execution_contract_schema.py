@@ -1,12 +1,22 @@
 import json
+import sys
 from pathlib import Path
 
 import jsonschema
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from pipeline.contract_derivation import (
+    _build_execution_contract,
+    _unresolved_review_columns,
+    materialize_execution_contract,
+)
 
 REPO_ROOT = Path(__file__).parent.parent
 SCHEMA_PATH = REPO_ROOT / "contracts" / "execution-contract.schema.json"
+TELCO_EXECUTION_CONTRACT_PATH = (
+    REPO_ROOT / "contracts" / "telco-customer-churn" / "execution-contract.json"
+)
 
 
 def _load_json(path: Path) -> dict:
@@ -217,3 +227,223 @@ def test_empty_ignored_columns_accepted():
     contract["ignored_columns"] = []
 
     jsonschema.validate(contract, schema)
+
+
+# ---------------------------------------------------------------------------
+# Execution contract materialization tests (Project Spec S0024)
+#
+# Exercise pipeline.contract_derivation.materialize_execution_contract /
+# _build_execution_contract against synthetic upstream artifacts (a small,
+# deliberately non-Telco "campaign-response" fixture, matching the
+# S0014-established dataset-agnosticism precedent), plus the real
+# materialized Telco artifact when present on disk.
+# ---------------------------------------------------------------------------
+
+
+def _modeling_intent(
+    dataset_slug: str = "campaign-response",
+    initial_feature_candidates: list | None = None,
+    identifier_and_ignored_columns: list | None = None,
+) -> dict:
+    if initial_feature_candidates is None:
+        initial_feature_candidates = ["age", "channel", "opted_in", "last_contact_days"]
+    if identifier_and_ignored_columns is None:
+        identifier_and_ignored_columns = [
+            {"name": "customer_ref", "reason": "identifier_candidate_excluded_from_features"}
+        ]
+    return {
+        "artifact_type": "dataset_modeling_intent",
+        "contract_version": "dataset_modeling_intent.v1",
+        "dataset_identity": {
+            "dataset_slug": dataset_slug,
+            "dataset_source_ref": f"data/raw/{dataset_slug}.csv",
+        },
+        "target_intent": {
+            "target_column": "responded",
+            "task_type": "binary_classification",
+            "observed_labels": ["No", "Yes"],
+            "positive_label_candidate": "Yes",
+            "observed_target_distribution": {"No": 800, "Yes": 200},
+            "is_final_training_configuration": False,
+        },
+        "identifier_and_ignored_columns": identifier_and_ignored_columns,
+        "initial_feature_candidates": initial_feature_candidates,
+    }
+
+
+def _discovery_evidence(seed: int = 0) -> dict:
+    return {
+        "schema_version": "dataset-discovery-evidence.v1",
+        "field_observations": [
+            {
+                "name": "age",
+                "inferred_type": "integer",
+                "null_count": 0,
+                "null_rate": 0.0,
+                "cardinality": 40,
+                "sample_min": 18,
+                "sample_max": 90,
+            },
+            {
+                "name": "channel",
+                "inferred_type": "string",
+                "null_count": 0,
+                "null_rate": 0.0,
+                "cardinality": 3,
+                "sample_min": "email",
+                "sample_max": "sms",
+            },
+            {
+                "name": "opted_in",
+                "inferred_type": "boolean",
+                "null_count": 0,
+                "null_rate": 0.0,
+                "cardinality": 2,
+                "sample_min": "0",
+                "sample_max": "1",
+            },
+            {
+                "name": "last_contact_days",
+                "inferred_type": "float",
+                "null_count": 5,
+                "null_rate": 0.005,
+                "cardinality": 300,
+                "sample_min": 0.0,
+                "sample_max": 365.0,
+            },
+        ],
+        "generation_settings": {"seed": seed, "generator_version": "discovery-evidence.v1"},
+    }
+
+
+def _preparation_recipe(review_status: str = "inferred_pending_review") -> dict:
+    return {
+        "schema_version": "candidate-preparation-recipe.v1",
+        "transformations": [
+            {
+                "transformation_type": "missing_value_handling",
+                "source_columns": ["last_contact_days"],
+                "target_columns": ["last_contact_days"],
+                "reason": "blank values observed",
+                "review_status": review_status,
+            }
+        ],
+    }
+
+
+def test_materialized_contract_excludes_identifier_and_unresolved_review_column():
+    modeling_intent = _modeling_intent()
+    discovery_evidence = _discovery_evidence()
+    preparation_recipe = _preparation_recipe()
+
+    contract = _build_execution_contract(modeling_intent, discovery_evidence, preparation_recipe)
+
+    assert "customer_ref" not in contract["feature_columns"]
+    assert "customer_ref" in contract["ignored_columns"]
+    assert "last_contact_days" not in contract["feature_columns"], (
+        "a column with an unresolved (not explicit/inferred_approved) "
+        "missing-value review_status must never be silently approved into "
+        "feature_columns"
+    )
+    assert "last_contact_days" in contract["ignored_columns"]
+    assert contract["feature_columns"] == ["age", "channel", "opted_in"]
+
+
+def test_materialized_contract_includes_column_with_approved_review_status():
+    modeling_intent = _modeling_intent()
+    discovery_evidence = _discovery_evidence()
+    preparation_recipe = _preparation_recipe(review_status="inferred_approved")
+
+    contract = _build_execution_contract(modeling_intent, discovery_evidence, preparation_recipe)
+
+    assert "last_contact_days" in contract["feature_columns"], (
+        "an explicitly approved review_status must be honored, not treated "
+        "the same as an unresolved one"
+    )
+    assert "last_contact_days" in contract["optional_columns"], (
+        "a feature with null_rate > 0 belongs in optional_columns, not required_columns"
+    )
+
+
+def test_materialized_contract_preserves_boolean_feature_type():
+    contract = _build_execution_contract(_modeling_intent(), _discovery_evidence(), None)
+    assert contract["feature_definitions"]["opted_in"]["type"] == "boolean"
+    assert "domain_constraints" not in contract["feature_definitions"]["opted_in"]
+
+
+def test_materialized_contract_numeric_domain_constraints_grounded_in_discovery_evidence():
+    contract = _build_execution_contract(_modeling_intent(), _discovery_evidence(), None)
+    assert contract["feature_definitions"]["age"]["domain_constraints"] == {"min": 18, "max": 90}
+
+
+def test_materialized_contract_validates_against_schema():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _build_execution_contract(_modeling_intent(), _discovery_evidence(), None)
+    jsonschema.validate(contract, schema)
+
+
+def test_materialize_execution_contract_writes_valid_contract(tmp_path):
+    schema_dir = tmp_path / "contracts"
+    schema_dir.mkdir()
+    (schema_dir / "execution-contract.schema.json").write_text(
+        SCHEMA_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    result = materialize_execution_contract(
+        _modeling_intent(),
+        _discovery_evidence(),
+        output_relative_path="contracts/campaign-response/execution-contract.json",
+        repo_root=tmp_path,
+        preparation_recipe=_preparation_recipe(),
+        evidence_output_relative_path=(
+            "pipeline/evidence/campaign-response/execution-contract-materialization-evidence.json"
+        ),
+    )
+
+    written_contract = _load_json(tmp_path / "contracts" / "campaign-response" / "execution-contract.json")
+    assert written_contract == result["execution_contract"]
+    jsonschema.validate(written_contract, _load_json(SCHEMA_PATH))
+
+    written_evidence = _load_json(
+        tmp_path
+        / "pipeline"
+        / "evidence"
+        / "campaign-response"
+        / "execution-contract-materialization-evidence.json"
+    )
+    assert written_evidence["contract_version"] == "execution_contract_materialization_evidence.v1"
+    assert written_evidence["positive_label_policy"]["positive_label_candidate"] == "Yes"
+    assert written_evidence["identifier_exclusion_policy"][0]["name"] == "customer_ref"
+    assert any(
+        entry["name"] == "last_contact_days"
+        for entry in written_evidence["unresolved_feature_exclusions"]
+    )
+    assert not any(written_evidence["execution_contract_boundary_confirmations"].values())
+
+
+def test_unresolved_review_columns_ignores_resolved_transformations():
+    resolved = _unresolved_review_columns(_preparation_recipe(review_status="explicit"))
+    assert resolved == {}
+    pending = _unresolved_review_columns(_preparation_recipe(review_status="inferred_pending_review"))
+    assert pending == {"last_contact_days": "inferred_pending_review"}
+
+
+@pytest.mark.skipif(
+    not TELCO_EXECUTION_CONTRACT_PATH.exists(),
+    reason="Telco execution contract not yet materialized on disk",
+)
+def test_real_telco_execution_contract_validates_and_excludes_unresolved_columns():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _load_json(TELCO_EXECUTION_CONTRACT_PATH)
+
+    jsonschema.validate(contract, schema)
+    assert contract["dataset_id"] == "telco-customer-churn"
+    assert contract["target_column"] == "Churn"
+    assert "customerID" not in contract["feature_columns"]
+    assert "customerID" in contract["ignored_columns"]
+    assert "TotalCharges" not in contract["feature_columns"], (
+        "TotalCharges blank-value handling is still pending review upstream "
+        "and must not be silently approved into the official contract"
+    )
+    assert "TotalCharges" in contract["ignored_columns"]
+    assert contract["feature_definitions"]["SeniorCitizen"]["type"] == "boolean"

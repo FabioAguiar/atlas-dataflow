@@ -267,3 +267,28 @@ def test_empty_inferred_type_passes(tmp_path):
     contract_path = _write_json(tmp_path, "contract.json", contract)
     evidence_path = _write_json(tmp_path, "evidence.json", evidence)
     check(contract_path, evidence_path, repo_root=REPO_ROOT)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Real materialized Telco artifact consistency check (Project Spec S0024).
+#
+# Cross-checks the actual, on-disk materialized Telco execution contract
+# against the actual, on-disk Telco discovery evidence -- proving the
+# materialization flow produces a contract consistent with real discovery
+# evidence, not just synthetic fixtures.
+# ---------------------------------------------------------------------------
+
+TELCO_EXECUTION_CONTRACT_PATH = (
+    REPO_ROOT / "contracts" / "telco-customer-churn" / "execution-contract.json"
+)
+TELCO_DISCOVERY_EVIDENCE_PATH = (
+    REPO_ROOT / "pipeline" / "evidence" / "telco-customer-churn" / "discovery-evidence.json"
+)
+
+
+@pytest.mark.skipif(
+    not (TELCO_EXECUTION_CONTRACT_PATH.exists() and TELCO_DISCOVERY_EVIDENCE_PATH.exists()),
+    reason="Telco execution contract and/or discovery evidence not yet materialized on disk",
+)
+def test_real_telco_execution_contract_is_consistent_with_real_discovery_evidence():
+    check(TELCO_EXECUTION_CONTRACT_PATH, TELCO_DISCOVERY_EVIDENCE_PATH, repo_root=REPO_ROOT)

@@ -47,6 +47,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -347,6 +348,389 @@ def project_execution_contract_draft(modeling_intent, generated_at=None):
             EXECUTION_CONTRACT_DRAFT_BOUNDARY_CONFIRMATIONS
         ),
         "generated_at": generated_at or _utc_now_iso(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Execution contract materialization (Project Spec S0024)
+#
+# Materializes an official `execution_contract.v1` artifact
+# (contracts/execution-contract.schema.json) from already-built upstream
+# artifacts: `dataset_modeling_intent.v1` (Project Spec S0013), dataset
+# discovery evidence, and an optional candidate preparation recipe. Unlike
+# `project_execution_contract_draft` above, this IS the official execution
+# contract -- it is schema-validated and written to
+# contracts/<dataset_slug>/execution-contract.json. The schema is
+# `additionalProperties: false` with a fixed required-field shape, so
+# `source_artifact_references`/`boundary_confirmations`/positive-label policy
+# cannot be embedded in the contract itself; those are recorded instead in a
+# companion `execution_contract_materialization_evidence.v1` reduced-evidence
+# object returned alongside the contract.
+# ---------------------------------------------------------------------------
+
+EXECUTION_CONTRACT_CONTRACT_VERSION = "execution_contract.v1"
+EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_CONTRACT_VERSION = (
+    "execution_contract_materialization_evidence.v1"
+)
+
+# Mirrors pipeline/discovery_evidence.py._RESOLVED_TRANSFORMATION_REVIEW_STATUSES.
+# If that module's constant changes, this constant must be updated to match.
+_RESOLVED_TRANSFORMATION_REVIEW_STATUSES = frozenset({"explicit", "inferred_approved"})
+
+# Mirrors pipeline/validate_contract_consistency.py._COMPAT, inverted: maps a
+# discovery inferred_type to the single execution_contract.v1 feature type it
+# is compatible with. Kept in sync manually -- no automatic synchronization.
+_INFERRED_TYPE_TO_FEATURE_TYPE = {
+    "integer": "numeric",
+    "float": "numeric",
+    "string": "categorical",
+    "boolean": "boolean",
+}
+
+EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS = {
+    "is_runtime_contract": False,
+    "is_public_contract": False,
+    "is_release_candidate_input": False,
+    "is_publisher_input": False,
+    "is_registry_artifact": False,
+    "is_api_fixture": False,
+    "is_ui_fixture": False,
+    "model_training_performed": False,
+    "model_family_selected": False,
+}
+
+# Training-policy fields this materialization populates with conservative,
+# disclosed repository-standard defaults whenever the upstream modeling
+# intent supplies no reviewed value for them (e.g. `metric_candidates: []`,
+# `split_policy_candidate: null`). Listed explicitly in the materialization
+# evidence rather than silently presented as reviewed policy.
+_POLICY_DEFAULT_FIELDS = (
+    "categorical_encoding_policy",
+    "numeric_handling",
+    "allowed_transformations",
+    "split_policy",
+    "primary_metric",
+    "secondary_metrics",
+    "modeling_constraints",
+)
+
+
+def _unresolved_review_columns(preparation_recipe: dict[str, Any] | None) -> dict[str, str]:
+    """Columns with a missing-value-handling transformation whose
+    review_status is not 'explicit'/'inferred_approved'.
+
+    Mirrors the dataset_modeling_intent blank-value-policy-candidate
+    convention: a column is only ever treated as resolved when the
+    preparation recipe itself recorded an approved review_status.
+    """
+    unresolved: dict[str, str] = {}
+    for transformation in (preparation_recipe or {}).get("transformations", []):
+        if transformation.get("transformation_type") != "missing_value_handling":
+            continue
+        review_status = transformation.get("review_status")
+        if review_status in _RESOLVED_TRANSFORMATION_REVIEW_STATUSES:
+            continue
+        for column in transformation.get("target_columns", []):
+            unresolved[column] = review_status
+    return unresolved
+
+
+def _build_execution_contract(
+    modeling_intent: dict[str, Any],
+    discovery_evidence: dict[str, Any],
+    preparation_recipe: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Pure projection of upstream artifacts into an execution_contract.v1 dict.
+
+    A feature candidate is excluded from `feature_columns` (moved into
+    `ignored_columns`) when either: it is an identifier
+    (`identifier_and_ignored_columns`), or discovery evidence has no
+    recognised `inferred_type` for it, or an unresolved (not
+    'explicit'/'inferred_approved') missing-value-handling review item names
+    it -- this is how a still-pending blank-value concern (e.g.
+    TotalCharges) is excluded from execution scope instead of being silently
+    approved. Per-feature `type` is grounded in discovery evidence's own
+    `inferred_type`, using the same compatibility mapping enforced by
+    `pipeline/validate_contract_consistency.py`, so a materialized contract
+    always passes that consistency check by construction.
+    """
+    dataset_identity = modeling_intent.get("dataset_identity") or {}
+    target_intent = modeling_intent.get("target_intent") or {}
+    target_column = target_intent.get("target_column")
+
+    identifier_columns = [
+        entry["name"]
+        for entry in modeling_intent.get("identifier_and_ignored_columns") or []
+    ]
+
+    obs_by_name = {
+        obs["name"]: obs for obs in discovery_evidence.get("field_observations", [])
+    }
+
+    unresolved_review_columns = _unresolved_review_columns(preparation_recipe)
+    candidate_features = list(modeling_intent.get("initial_feature_candidates") or [])
+
+    feature_columns: list[str] = []
+    excluded_for_review: list[str] = []
+    excluded_for_unrecognised_type: list[str] = []
+    for name in candidate_features:
+        if name in identifier_columns:
+            continue
+        if name in unresolved_review_columns:
+            excluded_for_review.append(name)
+            continue
+        obs = obs_by_name.get(name)
+        if obs is None or obs.get("inferred_type") not in _INFERRED_TYPE_TO_FEATURE_TYPE:
+            excluded_for_unrecognised_type.append(name)
+            continue
+        feature_columns.append(name)
+
+    ignored_columns = identifier_columns + excluded_for_review + excluded_for_unrecognised_type
+
+    feature_definitions: dict[str, Any] = {}
+    required_columns: list[str] = []
+    optional_columns: list[str] = []
+    for name in feature_columns:
+        obs = obs_by_name[name]
+        feature_type = _INFERRED_TYPE_TO_FEATURE_TYPE[obs["inferred_type"]]
+        definition: dict[str, Any] = {"type": feature_type}
+        if (
+            feature_type == "numeric"
+            and obs.get("sample_min") is not None
+            and obs.get("sample_max") is not None
+        ):
+            definition["domain_constraints"] = {
+                "min": obs["sample_min"],
+                "max": obs["sample_max"],
+            }
+        feature_definitions[name] = definition
+        if obs.get("null_rate") or 0:
+            optional_columns.append(name)
+        else:
+            required_columns.append(name)
+
+    seed = (discovery_evidence.get("generation_settings") or {}).get("seed")
+
+    return {
+        "contract_version": EXECUTION_CONTRACT_CONTRACT_VERSION,
+        "dataset_id": dataset_identity.get("dataset_slug"),
+        "target_column": target_column,
+        "feature_columns": feature_columns,
+        "ignored_columns": ignored_columns,
+        "required_columns": required_columns,
+        "optional_columns": optional_columns,
+        "feature_definitions": feature_definitions,
+        # No feature currently carries an approved missing-value strategy --
+        # TotalCharges (the only column with real missing values) is excluded
+        # from feature_columns above rather than assigned a fabricated
+        # strategy here.
+        "missing_value_policy": {},
+        "categorical_encoding_policy": "onehot",
+        "numeric_handling": "standardize",
+        "allowed_transformations": ["passthrough"],
+        "split_policy": {
+            "strategy": "stratified",
+            "train_ratio": 0.7,
+            "val_ratio": 0.15,
+            "test_ratio": 0.15,
+        },
+        "random_seed": seed if isinstance(seed, int) else None,
+        "primary_metric": "roc_auc",
+        "secondary_metrics": ["f1", "pr_auc"],
+        "modeling_constraints": {
+            # Full schema-permitted family space -- modeling_intent records
+            # no model family constraint (`metric_candidates: []`), so this
+            # deliberately narrows nothing beyond what the schema itself
+            # already scopes to Atlas classification families, rather than
+            # selecting a specific model family or candidate.
+            "allowed_model_families": [
+                "logistic_regression",
+                "gradient_boosting",
+                "random_forest",
+                "xgboost",
+                "lightgbm",
+            ],
+            "no_automl": True,
+            "max_training_time_seconds": None,
+        },
+    }
+
+
+def _build_execution_contract_materialization_evidence(
+    modeling_intent: dict[str, Any],
+    preparation_recipe: dict[str, Any] | None,
+    execution_contract: dict[str, Any],
+    *,
+    execution_contract_relative_path: str,
+    discovery_evidence_relative_path: str | Path | None,
+    preparation_recipe_relative_path: str | Path | None,
+    prepared_data_metadata_relative_path: str | Path | None,
+    modeling_intent_relative_path: str | Path | None,
+    public_context_relative_path: str | Path | None,
+    raw_dataset_relative_path: str | Path | None,
+    generated_at: str | None,
+) -> dict[str, Any]:
+    """Reduced evidence recording facts the schema-locked execution contract
+    has no room for: source artifact references, positive-label policy,
+    identifier/unresolved-feature exclusion rationale, per-feature type
+    grounding, and boundary confirmations.
+    """
+    dataset_identity = modeling_intent.get("dataset_identity") or {}
+    target_intent = modeling_intent.get("target_intent") or {}
+    unresolved_review_columns = _unresolved_review_columns(preparation_recipe)
+    candidate_features = set(modeling_intent.get("initial_feature_candidates") or [])
+
+    identifier_exclusion_policy = [
+        {"name": entry["name"], "reason": entry.get("reason")}
+        for entry in modeling_intent.get("identifier_and_ignored_columns") or []
+    ]
+
+    unresolved_feature_exclusions = [
+        {
+            "name": name,
+            "review_status": review_status,
+            "reason": (
+                "blank-value handling review_status is "
+                f"{review_status!r}, not an approved status "
+                f"({sorted(_RESOLVED_TRANSFORMATION_REVIEW_STATUSES)}); excluded "
+                "from feature_columns rather than silently approved"
+            ),
+        }
+        for name, review_status in sorted(unresolved_review_columns.items())
+        if name in candidate_features
+    ]
+
+    feature_type_grounding = {
+        name: {
+            "declared_type": definition["type"],
+            "grounded_from": "discovery_evidence.field_observations[].inferred_type",
+        }
+        for name, definition in execution_contract["feature_definitions"].items()
+    }
+
+    return {
+        "artifact_type": "execution_contract_materialization_evidence",
+        "contract_version": EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_CONTRACT_VERSION,
+        "dataset_identity": dict(dataset_identity),
+        "execution_contract_ref": str(execution_contract_relative_path),
+        "source_artifact_references": {
+            "discovery_evidence_ref": (
+                str(discovery_evidence_relative_path)
+                if discovery_evidence_relative_path
+                else None
+            ),
+            "preparation_recipe_ref": (
+                str(preparation_recipe_relative_path)
+                if preparation_recipe_relative_path
+                else None
+            ),
+            "prepared_data_metadata_ref": (
+                str(prepared_data_metadata_relative_path)
+                if prepared_data_metadata_relative_path
+                else None
+            ),
+            "dataset_modeling_intent_ref": (
+                str(modeling_intent_relative_path) if modeling_intent_relative_path else None
+            ),
+            "public_context_ref": (
+                str(public_context_relative_path) if public_context_relative_path else None
+            ),
+            "raw_dataset_ref": (
+                str(raw_dataset_relative_path) if raw_dataset_relative_path else None
+            ),
+        },
+        "target_policy": {
+            "target_column": target_intent.get("target_column"),
+            "task_type": target_intent.get("task_type"),
+        },
+        "positive_label_policy": {
+            "positive_label_candidate": target_intent.get("positive_label_candidate"),
+            "observed_labels": list(target_intent.get("observed_labels") or []),
+            "is_reviewed_final_decision": False,
+        },
+        "identifier_exclusion_policy": identifier_exclusion_policy,
+        "unresolved_feature_exclusions": unresolved_feature_exclusions,
+        "feature_type_grounding": feature_type_grounding,
+        "policy_defaults_requiring_future_review": list(_POLICY_DEFAULT_FIELDS),
+        "execution_contract_boundary_confirmations": dict(EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS),
+        "generated_at": generated_at or _utc_now_iso(),
+    }
+
+
+def materialize_execution_contract(
+    modeling_intent: dict[str, Any],
+    discovery_evidence: dict[str, Any],
+    output_relative_path: str | Path,
+    repo_root: str | Path,
+    preparation_recipe: dict[str, Any] | None = None,
+    evidence_output_relative_path: str | Path | None = None,
+    discovery_evidence_relative_path: str | Path | None = None,
+    preparation_recipe_relative_path: str | Path | None = None,
+    prepared_data_metadata_relative_path: str | Path | None = None,
+    modeling_intent_relative_path: str | Path | None = None,
+    public_context_relative_path: str | Path | None = None,
+    raw_dataset_relative_path: str | Path | None = None,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build, schema-validate, and write the official Telco execution contract.
+
+    Every field is read from already-built upstream objects
+    (`modeling_intent`, `discovery_evidence`, `preparation_recipe`) passed in
+    explicitly -- never from raw dataset rows or hidden notebook state.
+    Raises RuntimeError if the built contract fails validation against
+    contracts/execution-contract.schema.json; an invalid contract is never
+    written to disk. Also builds (and, when a path is supplied, writes) a
+    companion `execution_contract_materialization_evidence.v1` object.
+
+    Returns {"execution_contract": ..., "execution_contract_materialization_evidence": ...}.
+    """
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+
+    execution_contract = _build_execution_contract(
+        modeling_intent, discovery_evidence, preparation_recipe
+    )
+
+    schema_path = resolved_repo_root / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema_errors = _validate_schema(execution_contract, schema)
+    if schema_errors:
+        raise RuntimeError(
+            "Materialized execution contract failed schema validation: "
+            + "; ".join(schema_errors)
+        )
+
+    output_path = (resolved_repo_root / output_relative_path).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(execution_contract, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        preparation_recipe,
+        execution_contract,
+        execution_contract_relative_path=output_relative_path,
+        discovery_evidence_relative_path=discovery_evidence_relative_path,
+        preparation_recipe_relative_path=preparation_recipe_relative_path,
+        prepared_data_metadata_relative_path=prepared_data_metadata_relative_path,
+        modeling_intent_relative_path=modeling_intent_relative_path,
+        public_context_relative_path=public_context_relative_path,
+        raw_dataset_relative_path=raw_dataset_relative_path,
+        generated_at=generated_at,
+    )
+
+    if evidence_output_relative_path is not None:
+        evidence_output_path = (resolved_repo_root / evidence_output_relative_path).resolve()
+        evidence_output_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_output_path.write_text(
+            json.dumps(evidence, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    return {
+        "execution_contract": execution_contract,
+        "execution_contract_materialization_evidence": evidence,
     }
 
 

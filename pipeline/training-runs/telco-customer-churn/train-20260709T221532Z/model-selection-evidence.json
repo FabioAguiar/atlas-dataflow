@@ -1,0 +1,97 @@
+{
+  "artifact_kind": "model_selection_evidence",
+  "candidates": [
+    {
+      "candidate_id": "logistic_regression",
+      "model_family": "logistic_regression",
+      "primary_metric": {
+        "name": "roc_auc",
+        "value": 0.8432462957670337
+      },
+      "secondary_metrics": [
+        {
+          "name": "f1",
+          "value": 0.8039255453496518
+        },
+        {
+          "name": "pr_auc",
+          "value": 0.6391947628628339
+        }
+      ]
+    },
+    {
+      "candidate_id": "gradient_boosting",
+      "model_family": "gradient_boosting",
+      "primary_metric": {
+        "name": "roc_auc",
+        "value": 0.8435590708800057
+      },
+      "secondary_metrics": [
+        {
+          "name": "f1",
+          "value": 0.7939456048600292
+        },
+        {
+          "name": "pr_auc",
+          "value": 0.6656143652383235
+        }
+      ]
+    },
+    {
+      "candidate_id": "random_forest",
+      "model_family": "random_forest",
+      "primary_metric": {
+        "name": "roc_auc",
+        "value": 0.8150925183045179
+      },
+      "secondary_metrics": [
+        {
+          "name": "f1",
+          "value": 0.7685295962824781
+        },
+        {
+          "name": "pr_auc",
+          "value": 0.5935936949622136
+        }
+      ]
+    }
+  ],
+  "created_at": "2026-07-09T22:15:32.323957Z",
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "fdb47bbaf99486a44750d952cc29aab89c0ae4352ed8f711c60beeb89d8f360d"
+  },
+  "path_references": {
+    "execution_contract_path": "contracts/telco-customer-churn/execution-contract.json",
+    "model_selection_evidence_path": "pipeline/training-runs/telco-customer-churn/train-20260709T221532Z/model-selection-evidence.json",
+    "training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260709T221532Z/training-parameter-record.json"
+  },
+  "schema_version": "model-selection-evidence.v1",
+  "selected_model": {
+    "candidate_id": "gradient_boosting",
+    "model_family": "gradient_boosting",
+    "reference_kind": "training_parameter_record_path",
+    "selected_model_reference": "pipeline/training-runs/telco-customer-churn/train-20260709T221532Z/training-parameter-record.json"
+  },
+  "selection_policy": {
+    "condition": "produced_only_when_multiple_model_candidates_are_evaluated",
+    "primary_metric": "roc_auc",
+    "ranking_direction": "higher_is_better"
+  },
+  "selection_rationale": "Selected gradient_boosting by roc_auc using higher_is_better comparison on the controlled evaluation split.",
+  "training_run_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260709T221532Z/",
+    "run_id": "train-20260709T221532Z"
+  }
+}

@@ -717,7 +717,7 @@ def _not_produced_prepared_data_metadata() -> dict:
     }
 
 
-def _produced_prepared_data_metadata(reference: str) -> dict:
+def _produced_prepared_data_metadata(reference) -> dict:
     return {
         "schema_version": "prepared-data-metadata.v1",
         "producer": "pipeline/prepare_candidate.py",
@@ -810,12 +810,138 @@ def test_materialize_training_run_succeeds_when_ready(
     assert result["status"] == "trained"
     assert result["materialization_boundary_confirmations"]["training_run_materialized"] is True
     training_result = result["training_result"]
+    assert (
+        training_result["output_directory"]
+        == "pipeline/training-runs/training-pipeline-test/train-20260626T010700Z/"
+    )
     output_directory = (
         fixed_training_environment / Path(training_result["serialized_model_path"]).parent
     )
     assert (output_directory / MODEL_ARTIFACT_FILENAME).exists()
     assert (output_directory / METRICS_ARTIFACT_FILENAME).exists()
     assert (output_directory / MODEL_CARD_FILENAME).exists()
+
+
+def test_materialize_training_run_accepts_s0030_object_reference(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    prepared_reference = "pipeline/prepared/training-pipeline-test/prepared-dataset.json"
+    resolved_dataset_path = fixed_training_environment / prepared_reference
+    resolved_dataset_path.parent.mkdir(parents=True)
+    _write_json(resolved_dataset_path, _valid_prepared_dataset())
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json",
+        _produced_prepared_data_metadata(
+            {
+                "path": prepared_reference,
+                "row_count": len(_valid_prepared_dataset()["rows"]),
+                "column_count": 5,
+                "content_sha256": _sha256_file(resolved_dataset_path),
+            }
+        ),
+    )
+
+    result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result["status"] == "trained"
+    assert result["prepared_dataset_reference"] == prepared_reference
+
+
+def test_materialize_training_run_blocks_when_object_reference_file_missing(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    prepared_reference = "pipeline/prepared/training-pipeline-test/missing-dataset.json"
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json",
+        _produced_prepared_data_metadata(
+            {
+                "path": prepared_reference,
+                "row_count": len(_valid_prepared_dataset()["rows"]),
+                "column_count": 5,
+                "content_sha256": "not-used-when-file-is-missing",
+            }
+        ),
+    )
+
+    result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["prepared_dataset_reference"] == prepared_reference
+    assert any(
+        f"prepared dataset reference path does not exist: {prepared_reference}" in reason
+        for reason in result["blocking_reasons"]
+    )
+    assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
+
+
+def test_materialize_training_run_blocks_when_object_reference_hash_mismatches(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    prepared_reference = "pipeline/prepared/training-pipeline-test/prepared-dataset.json"
+    resolved_dataset_path = fixed_training_environment / prepared_reference
+    resolved_dataset_path.parent.mkdir(parents=True)
+    _write_json(resolved_dataset_path, _valid_prepared_dataset())
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json",
+        _produced_prepared_data_metadata(
+            {
+                "path": prepared_reference,
+                "row_count": len(_valid_prepared_dataset()["rows"]),
+                "column_count": 5,
+                "content_sha256": "0" * 64,
+            }
+        ),
+    )
+
+    result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result["status"] == "blocked"
+    assert any("content_sha256 mismatch" in reason for reason in result["blocking_reasons"])
+    assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
+
+
+def test_materialize_training_run_blocks_when_reference_outside_prepared_boundary(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path = _write_json(tmp_path / "execution-contract.json", _valid_execution_contract())
+    metadata_path = _write_json(
+        tmp_path / "prepared-data-metadata.json",
+        _produced_prepared_data_metadata("data/raw/telco-customer-churn.csv"),
+    )
+
+    result = materialize_training_run_from_prepared_metadata(
+        contract_path,
+        metadata_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["prepared_dataset_reference"] is None
+    assert any("outside the expected prepared dataset artifact boundary" in reason for reason in result["blocking_reasons"])
+    assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
 
 
 def test_convert_model_card_input_to_model_card(

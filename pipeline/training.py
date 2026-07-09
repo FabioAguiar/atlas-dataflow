@@ -144,6 +144,7 @@ class TrainingResult:
             },
             "model_object_returned": self.model is not None,
             "model_serialized": True,
+            "output_directory": self.output_directory,
             "serialized_model_path": self.serialized_model_path,
             "training_parameter_record_path": self.training_parameter_record_path,
             "metrics_path": self.metrics_path,
@@ -2077,6 +2078,108 @@ TRAINING_RUN_MATERIALIZATION_CONTRACT_VERSION = "training_run_materialization_re
 PREPARED_DATASET_METADATA_SCHEMA_VERSION = "prepared-data-metadata.v1"
 
 
+def _metadata_reference_path_and_checks(
+    reference: Any,
+    dataset_slug: str | None = None,
+) -> tuple[str | None, dict[str, Any], str | None]:
+    if isinstance(reference, str):
+        reference_path = reference.strip()
+        reference_checks: dict[str, Any] = {}
+    elif isinstance(reference, dict):
+        path_value = reference.get("path")
+        reference_path = path_value.strip() if isinstance(path_value, str) else ""
+        reference_checks = {
+            key: reference[key]
+            for key in ("row_count", "column_count", "content_sha256")
+            if key in reference
+        }
+    else:
+        reference_path = ""
+        reference_checks = {}
+
+    if not reference_path:
+        return None, reference_checks, (
+            "prepared_data_metadata.prepared_candidate.reference is not an explicit "
+            "prepared dataset artifact/payload path; raw CSV inference and notebook "
+            "memory are never accepted as training input."
+        )
+
+    reference_parts = Path(reference_path).parts
+    if Path(reference_path).is_absolute() or ".." in reference_parts:
+        return None, reference_checks, (
+            "prepared_data_metadata.prepared_candidate.reference must be a safe "
+            "repository-relative prepared dataset artifact path."
+        )
+
+    expected_prefix = ("pipeline", "prepared")
+    if reference_parts[:2] != expected_prefix:
+        return None, reference_checks, (
+            "prepared_data_metadata.prepared_candidate.reference is outside the "
+            "expected prepared dataset artifact boundary: pipeline/prepared/."
+        )
+    if dataset_slug and reference_parts[:3] != (*expected_prefix, dataset_slug):
+        return None, reference_checks, (
+            "prepared_data_metadata.prepared_candidate.reference is outside the "
+            f"expected prepared dataset artifact boundary: pipeline/prepared/{dataset_slug}/."
+        )
+
+    return Path(reference_path).as_posix(), reference_checks, None
+
+
+def _validate_prepared_dataset_reference_file(
+    reference: str,
+    reference_checks: dict[str, Any],
+) -> str | None:
+    resolved_path = (_repo_root() / reference).resolve()
+    try:
+        resolved_reference = resolved_path.relative_to(_repo_root().resolve()).as_posix()
+    except ValueError:
+        return "prepared dataset reference path resolves outside the repository."
+
+    if resolved_reference != reference:
+        return (
+            "prepared dataset reference path is not normalized to the resolved "
+            "repository-relative artifact path."
+        )
+    if not resolved_path.exists():
+        return f"prepared dataset reference path does not exist: {reference}"
+    if not resolved_path.is_file():
+        return f"prepared dataset reference path is not a file: {reference}"
+    try:
+        with resolved_path.open("rb"):
+            pass
+    except OSError as exc:
+        return f"prepared dataset reference path is not readable: {reference} ({exc})"
+
+    if any(key in reference_checks for key in ("row_count", "column_count")):
+        try:
+            rows, _ = _load_prepared_dataset(resolved_path)
+        except TrainingInputError as exc:
+            return str(exc)
+        if "row_count" in reference_checks and len(rows) != reference_checks["row_count"]:
+            return (
+                "prepared dataset reference row_count mismatch: metadata declares "
+                f"{reference_checks['row_count']}, actual file has {len(rows)}."
+            )
+        if "column_count" in reference_checks:
+            actual_columns = len(rows[0]) if rows else 0
+            if actual_columns != reference_checks["column_count"]:
+                return (
+                    "prepared dataset reference column_count mismatch: metadata declares "
+                    f"{reference_checks['column_count']}, actual file has {actual_columns}."
+                )
+
+    if "content_sha256" in reference_checks:
+        actual_sha256 = _sha256_file(resolved_path)
+        if actual_sha256 != reference_checks["content_sha256"]:
+            return (
+                "prepared dataset reference content_sha256 mismatch: metadata declares "
+                f"{reference_checks['content_sha256']}, actual file has {actual_sha256}."
+            )
+
+    return None
+
+
 def _prepared_dataset_metadata_blocking_reasons(
     metadata: dict[str, Any],
 ) -> tuple[list[str], str | None]:
@@ -2095,14 +2198,17 @@ def _prepared_dataset_metadata_blocking_reasons(
             f"{prepared_candidate.get('reason_not_produced') or 'no reason recorded'}"
         )
 
-    reference = prepared_candidate.get("reference")
-    if not isinstance(reference, str) or not reference.strip():
-        reference = None
-        blocking_reasons.append(
-            "prepared_data_metadata.prepared_candidate.reference is not an explicit "
-            "prepared dataset artifact/payload path; raw CSV inference and notebook "
-            "memory are never accepted as training input."
+    dataset_identity = metadata.get("dataset_identity")
+    dataset_identity = dataset_identity if isinstance(dataset_identity, dict) else {}
+    dataset_slug = dataset_identity.get("dataset_slug")
+    reference, reference_checks, reference_block_reason = (
+        _metadata_reference_path_and_checks(
+            prepared_candidate.get("reference"),
+            dataset_slug if isinstance(dataset_slug, str) else None,
         )
+    )
+    if reference_block_reason:
+        blocking_reasons.append(reference_block_reason)
 
     training_readiness = metadata.get("training_readiness")
     training_readiness = training_readiness if isinstance(training_readiness, dict) else {}
@@ -2116,6 +2222,14 @@ def _prepared_dataset_metadata_blocking_reasons(
         if isinstance(item, dict) and item.get("review_status") != "explicit":
             description = item.get("description") or "unresolved review item"
             blocking_reasons.append(f"unresolved_review_item: {description}")
+
+    if reference is not None:
+        reference_file_block_reason = _validate_prepared_dataset_reference_file(
+            reference,
+            reference_checks,
+        )
+        if reference_file_block_reason:
+            blocking_reasons.append(reference_file_block_reason)
 
     return blocking_reasons, reference
 

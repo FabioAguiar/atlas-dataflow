@@ -1,0 +1,205 @@
+{
+  "artifact_kind": "model_card_input",
+  "created_at": "2026-07-09T22:16:20.885992Z",
+  "dataset": {
+    "class_distribution": [
+      {
+        "label": "No",
+        "row_count": 5174
+      },
+      {
+        "label": "Yes",
+        "row_count": 1869
+      }
+    ],
+    "dataset_id": "telco-customer-churn",
+    "feature_columns": [
+      "gender",
+      "SeniorCitizen",
+      "Partner",
+      "Dependents",
+      "tenure",
+      "PhoneService",
+      "MultipleLines",
+      "InternetService",
+      "OnlineSecurity",
+      "OnlineBackup",
+      "DeviceProtection",
+      "TechSupport",
+      "StreamingTV",
+      "StreamingMovies",
+      "Contract",
+      "PaperlessBilling",
+      "PaymentMethod",
+      "MonthlyCharges",
+      "TotalCharges"
+    ],
+    "feature_count": 19,
+    "feature_definitions": {
+      "Contract": {
+        "type": "categorical"
+      },
+      "Dependents": {
+        "type": "boolean"
+      },
+      "DeviceProtection": {
+        "type": "categorical"
+      },
+      "InternetService": {
+        "type": "categorical"
+      },
+      "MonthlyCharges": {
+        "domain_constraints": {
+          "max": 118.75,
+          "min": 18.25
+        },
+        "type": "numeric"
+      },
+      "MultipleLines": {
+        "type": "categorical"
+      },
+      "OnlineBackup": {
+        "type": "categorical"
+      },
+      "OnlineSecurity": {
+        "type": "categorical"
+      },
+      "PaperlessBilling": {
+        "type": "boolean"
+      },
+      "Partner": {
+        "type": "boolean"
+      },
+      "PaymentMethod": {
+        "type": "categorical"
+      },
+      "PhoneService": {
+        "type": "boolean"
+      },
+      "SeniorCitizen": {
+        "type": "boolean"
+      },
+      "StreamingMovies": {
+        "type": "categorical"
+      },
+      "StreamingTV": {
+        "type": "categorical"
+      },
+      "TechSupport": {
+        "type": "categorical"
+      },
+      "TotalCharges": {
+        "domain_constraints": {
+          "max": 8684.8,
+          "min": 18.8
+        },
+        "type": "numeric"
+      },
+      "gender": {
+        "type": "categorical"
+      },
+      "tenure": {
+        "domain_constraints": {
+          "max": 72,
+          "min": 0
+        },
+        "type": "numeric"
+      }
+    },
+    "target_column": "Churn",
+    "target_description": {
+      "absence_reason": "execution contract does not declare target_description",
+      "declared": false,
+      "value": null
+    }
+  },
+  "evaluation": {
+    "primary_metric_name": "roc_auc",
+    "primary_metric_value": 0.8435590708800057,
+    "secondary_metrics": [
+      {
+        "name": "f1",
+        "value": 0.7939456048600292
+      },
+      {
+        "name": "pr_auc",
+        "value": 0.6656143652383235
+      }
+    ]
+  },
+  "evidence_policy": {
+    "full_metrics_artifact_embedded": false,
+    "full_training_parameter_record_embedded": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "fdb47bbaf99486a44750d952cc29aab89c0ae4352ed8f711c60beeb89d8f360d",
+    "metrics_sha256": "dfc905e887492486f032f6a70bf888df1d6fe1bc8a51f76f9ce0b960d181e84f",
+    "prepared_dataset_sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88",
+    "training_parameter_record_sha256": "843f04c235895954ea6bcaacf648656cf4a5157b419f0f06b15b0be1764b55f9"
+  },
+  "intended_use_context": {
+    "absence_reason": "execution contract does not declare intended_use_context",
+    "declared": false,
+    "value": null
+  },
+  "model": {
+    "hyperparameters": {
+      "ccp_alpha": 0.0,
+      "criterion": "deprecated",
+      "init": null,
+      "learning_rate": 0.1,
+      "loss": "log_loss",
+      "max_depth": 3,
+      "max_features": null,
+      "max_leaf_nodes": null,
+      "min_impurity_decrease": 0.0,
+      "min_samples_leaf": 1,
+      "min_samples_split": 2,
+      "min_weight_fraction_leaf": 0.0,
+      "n_estimators": 100,
+      "n_iter_no_change": null,
+      "random_state": 0,
+      "subsample": 1.0,
+      "tol": 0.0001,
+      "validation_fraction": 0.1,
+      "verbose": 0,
+      "warm_start": false
+    },
+    "model_family": "gradient_boosting",
+    "task_type": "classification"
+  },
+  "path_references": {
+    "dataset_path": "pipeline/prepared/telco-customer-churn/prepared-data.csv",
+    "execution_contract_path": "contracts/telco-customer-churn/execution-contract.json",
+    "metrics_path": "pipeline/training-runs/telco-customer-churn/train-20260709T221620Z/metrics.json",
+    "model_card_input_path": "pipeline/training-runs/telco-customer-churn/train-20260709T221620Z/model-card-input.json",
+    "training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260709T221620Z/training-parameter-record.json"
+  },
+  "schema_version": "model-card-input.v1",
+  "training": {
+    "evaluation_split_size": 2114,
+    "seed": 0,
+    "split_policy": {
+      "strategy": "stratified",
+      "test_ratio": 0.15,
+      "train_ratio": 0.7,
+      "val_ratio": 0.15
+    },
+    "training_data_row_count": 4929,
+    "training_timestamp": "2026-07-09T22:16:20.885992Z"
+  },
+  "training_run_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260709T221620Z/",
+    "run_id": "train-20260709T221620Z"
+  }
+}

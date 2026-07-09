@@ -1,0 +1,76 @@
+{
+  "artifact_kind": "model_card",
+  "created_at": "2026-07-09T22:16:20.885992Z",
+  "data_notes": "Reduced, deterministic training-run model card. No raw dataset rows, model bytes, raw logs, raw runtime data, secrets, or notebook state are included.",
+  "evaluation": {
+    "primary_metric_name": "roc_auc",
+    "primary_metric_value": 0.8435590708800057,
+    "secondary_metrics": [
+      {
+        "name": "f1",
+        "value": 0.7939456048600292
+      },
+      {
+        "name": "pr_auc",
+        "value": 0.6656143652383235
+      }
+    ]
+  },
+  "evidence_policy": {
+    "raw_api_payloads_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "model_card_input_sha256": "c3914204d285f6a19dce93510426cc097376f54cbf671f1af2ca5577b16c7350"
+  },
+  "input_features": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+  ],
+  "intended_use": "Governed training-run output for internal review. Not yet reviewed or approved for public release, profile publication, or production decisioning.",
+  "limitations": [
+    "Generated directly from a governed training run; not reviewed for public release, profile publication, or production decisioning.",
+    "Reflects patterns in the prepared training dataset only; independent validation is required before any downstream use."
+  ],
+  "model_card_boundary_confirmations": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "profile_publication_performed": false,
+    "raw_dataset_embedded": false,
+    "release_publication_performed": false
+  },
+  "model_summary": "gradient_boosting model trained for dataset telco-customer-churn to predict Churn.",
+  "path_references": {
+    "model_card_input_path": "pipeline/training-runs/telco-customer-churn/train-20260709T221620Z/model-card-input.json",
+    "model_card_path": "pipeline/training-runs/telco-customer-churn/train-20260709T221620Z/model-card.json"
+  },
+  "prediction_target": "Churn",
+  "problem_type": "classification",
+  "schema_version": "model-card.v1",
+  "training_run_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260709T221620Z/",
+    "run_id": "train-20260709T221620Z"
+  }
+}

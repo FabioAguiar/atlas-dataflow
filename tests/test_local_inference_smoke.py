@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from dataclasses import dataclass
@@ -7,7 +8,9 @@ from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from pipeline.generate_inference_bundle import _build_bundle, _build_parser
 from runtime import execute_prediction
+from runtime.inference import load_runtime_bundle_adapter
 
 
 @dataclass(frozen=True)
@@ -228,3 +231,255 @@ def test_local_inference_smoke_uses_bundle_contract(tmp_path: Path) -> None:
     assert "age" not in evidence
     assert "segment" not in evidence
     assert "balance" not in evidence
+
+
+TELCO_FEATURE_COLUMNS = [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "tenure",
+    "InternetService",
+    "MonthlyCharges",
+]
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _write_bytes(path: Path, data: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
+def _synthetic_execution_contract() -> dict[str, Any]:
+    return {
+        "contract_version": "execution_contract.v1",
+        "dataset_id": "telco-customer-churn",
+        "target_column": "Churn",
+        "feature_columns": list(TELCO_FEATURE_COLUMNS),
+        "ignored_columns": ["customerID", "TotalCharges"],
+        "required_columns": list(TELCO_FEATURE_COLUMNS),
+        "optional_columns": [],
+        "feature_definitions": {
+            "gender": {"type": "categorical"},
+            "SeniorCitizen": {"type": "boolean"},
+            "Partner": {"type": "boolean"},
+            "tenure": {"type": "numeric", "domain_constraints": {"min": 0, "max": 72}},
+            "InternetService": {"type": "categorical"},
+            "MonthlyCharges": {
+                "type": "numeric",
+                "domain_constraints": {"min": 18.25, "max": 118.75},
+            },
+        },
+        # The real Telco execution contract declares no per-feature missing-value
+        # handling because the only column with blanks (TotalCharges) is ignored;
+        # an empty policy must remain generation-valid, not be treated as absent.
+        "missing_value_policy": {},
+        "categorical_encoding_policy": "onehot",
+        "numeric_handling": "standardize",
+        "allowed_transformations": ["passthrough"],
+    }
+
+
+def _synthetic_runtime_contract() -> dict[str, Any]:
+    return {
+        "schema_version": "1.0.0",
+        "features": [{"name": name, "required": True} for name in TELCO_FEATURE_COLUMNS],
+    }
+
+
+def _synthetic_public_contract() -> dict[str, Any]:
+    return {
+        "schema_version": "1.0.0",
+        "features": [{"name": name, "label": name} for name in TELCO_FEATURE_COLUMNS],
+    }
+
+
+def _synthetic_prepared_dataset_metadata() -> dict[str, Any]:
+    return {
+        "schema_version": "prepared-data-metadata.v1",
+        "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+    }
+
+
+def _synthetic_training_record(
+    *,
+    execution_contract_sha256: str,
+    prepared_dataset_sha256: str,
+    model_artifact_sha256: str,
+    metrics_sha256: str,
+    model_family: str = "logistic_regression",
+    serializer_name: str = "joblib",
+    feature_columns: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "training-parameter-record.v1",
+        "training_run_identity": {
+            "dataset_slug": "telco-customer-churn",
+            "run_id": "train-20260709T000000Z",
+        },
+        "produced_outputs": {
+            "serialized_model_path": "models/model.pkl",
+            "training_parameter_record_path": "training/training-parameter-record.json",
+        },
+        "serializer": {"name": serializer_name, "installed_version": "1.4.0"},
+        "training_parameters": {
+            "model_family": model_family,
+            "feature_columns": feature_columns or list(TELCO_FEATURE_COLUMNS),
+        },
+        "hashes": {
+            "execution_contract_sha256": execution_contract_sha256,
+            "prepared_dataset_sha256": prepared_dataset_sha256,
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+        },
+    }
+
+
+def _synthetic_metrics() -> dict[str, Any]:
+    return {
+        "schema_version": "training-metrics.v1",
+        "training_run_identity": {
+            "dataset_slug": "telco-customer-churn",
+            "run_id": "train-20260709T000000Z",
+        },
+    }
+
+
+def _write_governed_fixtures(tmp_path: Path) -> tuple[list[str], dict[str, Path]]:
+    """Write a synthetic Telco-shaped governed fixture set (contracts, prepared
+    dataset metadata, training parameter record, metrics, model artifact) and
+    return the `generate_inference_bundle` CLI argv plus the written file paths.
+
+    All artifacts are explicit repository/release-relative references supplied
+    by the caller, matching the real Telco governed artifact shapes without
+    depending on real upstream artifacts existing in the repository yet.
+    """
+    execution_contract_path = _write_json(
+        tmp_path / "execution-contract.json", _synthetic_execution_contract()
+    )
+    runtime_contract_path = _write_json(
+        tmp_path / "runtime-contract.json", _synthetic_runtime_contract()
+    )
+    public_contract_path = _write_json(
+        tmp_path / "public-contract.json", _synthetic_public_contract()
+    )
+    prepared_dataset_path = _write_json(
+        tmp_path / "prepared-data-metadata.json", _synthetic_prepared_dataset_metadata()
+    )
+    model_artifact_path = _write_bytes(tmp_path / "model.pkl", b"synthetic-joblib-model-bytes")
+    metrics_path = _write_json(tmp_path / "metrics.json", _synthetic_metrics())
+
+    training_record = _synthetic_training_record(
+        execution_contract_sha256=_sha256_bytes(execution_contract_path.read_bytes()),
+        prepared_dataset_sha256=_sha256_bytes(prepared_dataset_path.read_bytes()),
+        model_artifact_sha256=_sha256_bytes(model_artifact_path.read_bytes()),
+        metrics_sha256=_sha256_bytes(metrics_path.read_bytes()),
+    )
+    training_record_path = _write_json(
+        tmp_path / "training-parameter-record.json", training_record
+    )
+
+    output_path = tmp_path / "inference-bundle.json"
+
+    argv = [
+        "--execution-contract", str(execution_contract_path),
+        "--runtime-contract", str(runtime_contract_path),
+        "--public-contract", str(public_contract_path),
+        "--prepared-dataset", str(prepared_dataset_path),
+        "--training-parameter-record", str(training_record_path),
+        "--training-metrics", str(metrics_path),
+        "--model-artifact", str(model_artifact_path),
+        "--output", str(output_path),
+        "--release-package-reference", "predictions/bundle.json",
+        "--prediction-type", "boolean",
+        "--release-id", "release-20260709-001",
+        "--dataset-slug", "telco-customer-churn",
+        "--class-label", "No",
+        "--class-label", "Yes",
+        "--execution-contract-ref", "contracts/telco-customer-churn/execution-contract.json",
+        "--runtime-contract-ref", "contracts/telco-customer-churn/runtime-contract.json",
+        "--public-contract-ref", "contracts/telco-customer-churn/public-contract.json",
+        "--prepared-dataset-ref",
+        "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        "--dataset-context-ref",
+        "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        "--training-parameter-record-ref", "training/training-parameter-record.json",
+        "--training-metrics-ref", "training/metrics.json",
+        "--model-artifact-ref", "models/model.pkl",
+    ]
+    paths = {
+        "execution_contract": execution_contract_path,
+        "runtime_contract": runtime_contract_path,
+        "public_contract": public_contract_path,
+        "prepared_dataset": prepared_dataset_path,
+        "training_record": training_record_path,
+        "metrics": metrics_path,
+        "model_artifact": model_artifact_path,
+        "output": output_path,
+    }
+    return argv, paths
+
+
+def test_generate_inference_bundle_produces_schema_valid_telco_descriptor(
+    tmp_path: Path,
+) -> None:
+    argv, _ = _write_governed_fixtures(tmp_path)
+    args = _build_parser().parse_args(argv)
+
+    # _build_bundle validates the result against the real
+    # contracts/inference-bundle.schema.json before returning; a successful
+    # call is itself proof of schema validity (acceptance criterion 7).
+    bundle = _build_bundle(args)
+
+    assert bundle["contract_version"] == "inference_bundle.v1"
+    assert bundle["feature_order"] == TELCO_FEATURE_COLUMNS
+    assert "customerID" not in bundle["feature_order"]
+    assert "TotalCharges" not in bundle["feature_order"]
+    assert "SeniorCitizen" in bundle["feature_order"]
+    assert bundle["preprocessing"]["missing_value_policy"] == {}
+    assert bundle["model_artifact"]["path"] == "models/model.pkl"
+    assert bundle["boundary_confirmations"] == {
+        "release_relative_paths_only": True,
+        "absolute_paths_embedded": False,
+        "parent_traversal_embedded": False,
+        "notebook_state_embedded": False,
+        "raw_dataset_embedded": False,
+        "model_bytes_embedded": False,
+        "runtime_payload_validation_duplicated": False,
+        "training_internals_required_at_runtime": False,
+    }
+
+
+def test_generated_bundle_is_consumable_by_runtime_adapter(tmp_path: Path) -> None:
+    argv, paths = _write_governed_fixtures(tmp_path)
+    args = _build_parser().parse_args(argv)
+    bundle = _build_bundle(args)
+
+    release_root = tmp_path / "release"
+    _write_json(release_root / "predictions" / "bundle.json", bundle)
+    _write_bytes(release_root / "models" / "model.pkl", paths["model_artifact"].read_bytes())
+
+    def _load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _load_model(path: Path, _declaration: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"loaded_from": path.name}
+
+    adapter = load_runtime_bundle_adapter(
+        {
+            "release_root": str(release_root),
+            "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+        },
+        bundle_loader=_load_declaration,
+        loader_strategies={"joblib_sklearn_predict": _load_model},
+        supported_serialization_formats=["joblib"],
+        prediction_executor=lambda model, payload: payload["SeniorCitizen"] is False,
+        compatibility_status={"status": "compatible"},
+    )
+
+    assert adapter.metadata.feature_order == tuple(TELCO_FEATURE_COLUMNS)
+    assert adapter.metadata.runtime_execution["loader_strategy"] == "joblib_sklearn_predict"
+    assert adapter.predict({"SeniorCitizen": False}) is True

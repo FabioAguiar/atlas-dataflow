@@ -4,9 +4,15 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from pipeline.generate_inference_bundle import (  # noqa: E402
+    BundleGenerationError,
+    _build_bundle,
+    _build_parser,
+)
 from runtime.inference import (  # noqa: E402
     BundleReferenceError,
     BundleUnavailableError,
@@ -280,3 +286,200 @@ def test_absolute_model_reference_rejected_without_internal_path_exposure(tmp_pa
         _assert_sanitized(exc, tmp_path)
     else:
         raise AssertionError("absolute model reference was accepted")
+
+
+# Generation-time invalid-input errors from pipeline.generate_inference_bundle,
+# distinct from the runtime load-time errors above. These synthetic Telco-shaped
+# governed fixtures cover the negative paths required before real Telco bundle
+# generation can proceed: missing upstream inputs, invalid path references,
+# stale/inconsistent hashes, and unsupported loader/serialization declarations.
+
+_TELCO_FEATURE_COLUMNS = ["gender", "SeniorCitizen", "tenure", "MonthlyCharges"]
+
+
+def _generation_execution_contract(*, contract_version: str = "execution_contract.v1") -> dict[str, Any]:
+    return {
+        "contract_version": contract_version,
+        "dataset_id": "telco-customer-churn",
+        "target_column": "Churn",
+        "feature_columns": list(_TELCO_FEATURE_COLUMNS),
+        "ignored_columns": ["customerID", "TotalCharges"],
+        "required_columns": list(_TELCO_FEATURE_COLUMNS),
+        "optional_columns": [],
+        "feature_definitions": {
+            "gender": {"type": "categorical"},
+            "SeniorCitizen": {"type": "boolean"},
+            "tenure": {"type": "numeric", "domain_constraints": {"min": 0, "max": 72}},
+            "MonthlyCharges": {
+                "type": "numeric",
+                "domain_constraints": {"min": 18.25, "max": 118.75},
+            },
+        },
+        "missing_value_policy": {},
+        "categorical_encoding_policy": "onehot",
+        "numeric_handling": "standardize",
+        "allowed_transformations": ["passthrough"],
+    }
+
+
+def _generation_training_record(
+    *,
+    execution_contract_sha256: str,
+    prepared_dataset_sha256: str,
+    model_artifact_sha256: str,
+    metrics_sha256: str,
+    model_family: str = "logistic_regression",
+    serializer_name: str = "joblib",
+) -> dict[str, Any]:
+    return {
+        "schema_version": "training-parameter-record.v1",
+        "training_run_identity": {
+            "dataset_slug": "telco-customer-churn",
+            "run_id": "train-20260709T000000Z",
+        },
+        "produced_outputs": {
+            "serialized_model_path": "models/model.pkl",
+            "training_parameter_record_path": "training/training-parameter-record.json",
+        },
+        "serializer": {"name": serializer_name, "installed_version": "1.4.0"},
+        "training_parameters": {
+            "model_family": model_family,
+            "feature_columns": list(_TELCO_FEATURE_COLUMNS),
+        },
+        "hashes": {
+            "execution_contract_sha256": execution_contract_sha256,
+            "prepared_dataset_sha256": prepared_dataset_sha256,
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+        },
+    }
+
+
+def _generation_argv(
+    tmp_path: Path,
+    *,
+    execution_contract_version: str = "execution_contract.v1",
+    execution_contract_ref: str = "contracts/telco-customer-churn/execution-contract.json",
+    release_package_reference: str = "predictions/bundle.json",
+    model_family: str = "logistic_regression",
+    serializer_name: str = "joblib",
+    write_model_artifact: bool = True,
+    corrupt_execution_contract_hash: bool = False,
+) -> list[str]:
+    execution_contract_path = tmp_path / "execution-contract.json"
+    _write_json(
+        execution_contract_path,
+        _generation_execution_contract(contract_version=execution_contract_version),
+    )
+    runtime_contract_path = tmp_path / "runtime-contract.json"
+    _write_json(runtime_contract_path, {"schema_version": "1.0.0"})
+    public_contract_path = tmp_path / "public-contract.json"
+    _write_json(public_contract_path, {"schema_version": "1.0.0"})
+    prepared_dataset_path = tmp_path / "prepared-data-metadata.json"
+    _write_json(prepared_dataset_path, {"schema_version": "prepared-data-metadata.v1"})
+    model_artifact_path = tmp_path / "model.pkl"
+    if write_model_artifact:
+        model_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        model_artifact_path.write_bytes(b"synthetic-joblib-model-bytes")
+    metrics_path = tmp_path / "metrics.json"
+    _write_json(metrics_path, {"schema_version": "training-metrics.v1"})
+
+    execution_contract_sha256 = hashlib.sha256(execution_contract_path.read_bytes()).hexdigest()
+    if corrupt_execution_contract_hash:
+        execution_contract_sha256 = "0" * 64
+    model_artifact_sha256 = (
+        hashlib.sha256(model_artifact_path.read_bytes()).hexdigest()
+        if write_model_artifact
+        else "1" * 64
+    )
+
+    training_record = _generation_training_record(
+        execution_contract_sha256=execution_contract_sha256,
+        prepared_dataset_sha256=hashlib.sha256(prepared_dataset_path.read_bytes()).hexdigest(),
+        model_artifact_sha256=model_artifact_sha256,
+        metrics_sha256=hashlib.sha256(metrics_path.read_bytes()).hexdigest(),
+        model_family=model_family,
+        serializer_name=serializer_name,
+    )
+    training_record_path = tmp_path / "training-parameter-record.json"
+    _write_json(training_record_path, training_record)
+
+    return [
+        "--execution-contract", str(execution_contract_path),
+        "--runtime-contract", str(runtime_contract_path),
+        "--public-contract", str(public_contract_path),
+        "--prepared-dataset", str(prepared_dataset_path),
+        "--training-parameter-record", str(training_record_path),
+        "--training-metrics", str(metrics_path),
+        "--model-artifact", str(model_artifact_path),
+        "--output", str(tmp_path / "inference-bundle.json"),
+        "--release-package-reference", release_package_reference,
+        "--prediction-type", "boolean",
+        "--release-id", "release-20260709-001",
+        "--dataset-slug", "telco-customer-churn",
+        "--execution-contract-ref", execution_contract_ref,
+        "--runtime-contract-ref", "contracts/telco-customer-churn/runtime-contract.json",
+        "--public-contract-ref", "contracts/telco-customer-churn/public-contract.json",
+        "--prepared-dataset-ref",
+        "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        "--dataset-context-ref",
+        "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        "--training-parameter-record-ref", "training/training-parameter-record.json",
+        "--training-metrics-ref", "training/metrics.json",
+        "--model-artifact-ref", "models/model.pkl",
+    ]
+
+
+def _build_from_argv(tmp_path: Path, **overrides: Any) -> dict[str, Any]:
+    argv = _generation_argv(tmp_path, **overrides)
+    args = _build_parser().parse_args(argv)
+    return _build_bundle(args)
+
+
+def test_generation_rejects_missing_upstream_model_artifact(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, write_model_artifact=False)
+    assert exc_info.value.code == "missing_required_artifact"
+
+
+def test_generation_rejects_absolute_path_reference(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(
+            tmp_path,
+            execution_contract_ref=str(tmp_path / "outside-execution-contract.json"),
+        )
+    assert exc_info.value.code == "invalid_release_reference"
+
+
+def test_generation_rejects_parent_traversal_reference(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(
+            tmp_path,
+            release_package_reference="../escape/bundle.json",
+        )
+    assert exc_info.value.code == "invalid_release_reference"
+
+
+def test_generation_rejects_stale_execution_contract_hash(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, corrupt_execution_contract_hash=True)
+    assert exc_info.value.code == "stale_or_inconsistent_artifact"
+    assert exc_info.value.field == "hashes.execution_contract_sha256"
+
+
+def test_generation_rejects_unsupported_model_family(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, model_family="xgboost")
+    assert exc_info.value.code == "unsupported_model_family"
+
+
+def test_generation_rejects_unsupported_serializer(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, serializer_name="pickle")
+    assert exc_info.value.code == "unsupported_serializer"
+
+
+def test_generation_rejects_draft_only_execution_contract(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, execution_contract_version="execution_contract.draft")
+    assert exc_info.value.code == "invalid_contract_version"

@@ -326,10 +326,10 @@ def _resolve_feature_order(
 
 def _resolve_preprocessing(execution_contract: dict[str, Any]) -> dict[str, Any]:
     missing_policy = execution_contract.get("missing_value_policy")
-    if not isinstance(missing_policy, dict) or not missing_policy:
+    if not isinstance(missing_policy, dict):
         raise BundleGenerationError(
             "missing_required_field",
-            "execution contract missing_value_policy must be a non-empty object.",
+            "execution contract missing_value_policy must be present as an object.",
             field="missing_value_policy",
         )
     invalid_policies = {

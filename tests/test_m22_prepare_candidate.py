@@ -15,7 +15,14 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from pipeline.prepare_candidate import prepare_candidate, write_candidate_output, write_preparation_recipe
+from pipeline.prepare_candidate import (
+    prepare_candidate,
+    write_candidate_output,
+    write_preparation_recipe,
+    verify_and_apply_conditional_fill,
+    build_verified_conditional_fill_preparation_recipe,
+    materialize_verified_conditional_fill_preparation_recipe,
+)
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -500,3 +507,375 @@ def test_no_candidate_recipe_validates_against_schema(fixture_csv, fixture_evide
         generated_at="2026-06-23T23:00:00+00:00",
     )
     jsonschema.validate(recipe, schema)
+
+
+# ---------------------------------------------------------------------------
+# Verified conditional fill (Project Spec S0028 — TotalCharges blank-value
+# policy resolution). Uses a small synthetic Telco-shaped fixture; does not
+# depend on the real data/raw/telco-customer-churn.csv dataset.
+# ---------------------------------------------------------------------------
+
+TOTAL_CHARGES_COLUMNS = ["customerID", "tenure", "TotalCharges", "Churn"]
+
+TOTAL_CHARGES_ROWS_VERIFIED = [
+    {"customerID": "C1", "tenure": "0", "TotalCharges": " ", "Churn": "No"},
+    {"customerID": "C2", "tenure": "5", "TotalCharges": "100.5", "Churn": "No"},
+    {"customerID": "C3", "tenure": "0", "TotalCharges": "", "Churn": "Yes"},
+    {"customerID": "C4", "tenure": "12", "TotalCharges": "300", "Churn": "No"},
+]
+
+TOTAL_CHARGES_ROWS_TENURE_MISMATCH = [
+    {"customerID": "C1", "tenure": "0", "TotalCharges": " ", "Churn": "No"},
+    {"customerID": "C2", "tenure": "3", "TotalCharges": "", "Churn": "No"},
+    {"customerID": "C3", "tenure": "12", "TotalCharges": "300", "Churn": "No"},
+]
+
+TOTAL_CHARGES_ROWS_NON_NUMERIC_TENURE = [
+    {"customerID": "C1", "tenure": "unknown", "TotalCharges": " ", "Churn": "No"},
+    {"customerID": "C2", "tenure": "12", "TotalCharges": "300", "Churn": "No"},
+]
+
+TOTAL_CHARGES_DESCRIPTION = "Explicit approved TotalCharges preparation policy (Project Spec S0028)."
+TOTAL_CHARGES_REASON = "Approved by Project Spec S0028; verified against the fixture rows."
+
+
+def _write_total_charges_csv(path: Path, rows: list) -> None:
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=TOTAL_CHARGES_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+@pytest.fixture
+def total_charges_csv_verified(tmp_path):
+    p = tmp_path / "telco-fixture-verified.csv"
+    _write_total_charges_csv(p, TOTAL_CHARGES_ROWS_VERIFIED)
+    return p
+
+
+@pytest.fixture
+def total_charges_csv_tenure_mismatch(tmp_path):
+    p = tmp_path / "telco-fixture-mismatch.csv"
+    _write_total_charges_csv(p, TOTAL_CHARGES_ROWS_TENURE_MISMATCH)
+    return p
+
+
+@pytest.fixture
+def total_charges_csv_non_numeric_tenure(tmp_path):
+    p = tmp_path / "telco-fixture-non-numeric.csv"
+    _write_total_charges_csv(p, TOTAL_CHARGES_ROWS_NON_NUMERIC_TENURE)
+    return p
+
+
+# --- verify_and_apply_conditional_fill: unit-level behavior ---
+
+def test_verified_fill_fills_blank_rows_when_verification_passes():
+    rows, passed, failing = verify_and_apply_conditional_fill(
+        TOTAL_CHARGES_ROWS_VERIFIED,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+    )
+    assert passed is True
+    assert failing == 0
+    by_id = {r["customerID"]: r for r in rows}
+    assert by_id["C1"]["TotalCharges"] == "0.0"
+    assert by_id["C3"]["TotalCharges"] == "0.0"
+
+
+def test_verified_fill_normalizes_non_blank_values_to_numeric():
+    rows, passed, _ = verify_and_apply_conditional_fill(
+        TOTAL_CHARGES_ROWS_VERIFIED,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+    )
+    assert passed is True
+    by_id = {r["customerID"]: r for r in rows}
+    assert by_id["C2"]["TotalCharges"] == "100.5"
+    assert by_id["C4"]["TotalCharges"] == "300.0"
+
+
+def test_verified_fill_does_not_drop_rows():
+    rows, passed, _ = verify_and_apply_conditional_fill(
+        TOTAL_CHARGES_ROWS_VERIFIED,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+    )
+    assert passed is True
+    assert len(rows) == len(TOTAL_CHARGES_ROWS_VERIFIED)
+
+
+def test_verified_fill_does_not_add_missing_indicator_column():
+    rows, passed, _ = verify_and_apply_conditional_fill(
+        TOTAL_CHARGES_ROWS_VERIFIED,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+    )
+    assert passed is True
+    for row in rows:
+        assert set(row.keys()) == set(TOTAL_CHARGES_COLUMNS)
+
+
+def test_verified_fill_blocks_when_verification_column_mismatches():
+    rows, passed, failing = verify_and_apply_conditional_fill(
+        TOTAL_CHARGES_ROWS_TENURE_MISMATCH,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+    )
+    assert passed is False
+    assert rows is None
+    assert failing == 1
+
+
+def test_verified_fill_blocks_when_verification_column_non_numeric():
+    rows, passed, failing = verify_and_apply_conditional_fill(
+        TOTAL_CHARGES_ROWS_NON_NUMERIC_TENURE,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+    )
+    assert passed is False
+    assert rows is None
+    assert failing == 1
+
+
+def test_verified_fill_treats_null_as_blank():
+    rows, passed, failing = verify_and_apply_conditional_fill(
+        [{"customerID": "C1", "tenure": "0", "TotalCharges": None, "Churn": "No"}],
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+    )
+    assert passed is True
+    assert rows[0]["TotalCharges"] == "0.0"
+
+
+# --- build_verified_conditional_fill_preparation_recipe: recipe shape ---
+
+def test_verified_recipe_produced_when_verification_passes(total_charges_csv_verified, fixture_evidence):
+    recipe, columns, rows = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_verified,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+    )
+    assert recipe["candidate_output"]["produced"] is True
+    assert recipe["candidate_output"]["reason_not_produced"] is None
+    assert recipe["candidate_output"]["row_count_after"] == len(TOTAL_CHARGES_ROWS_VERIFIED)
+    assert recipe["candidate_output"]["column_count_after"] == len(TOTAL_CHARGES_COLUMNS)
+    assert columns == TOTAL_CHARGES_COLUMNS
+    assert rows is not None
+    assert len(rows) == len(TOTAL_CHARGES_ROWS_VERIFIED)
+
+
+def test_verified_recipe_review_status_is_inferred_approved(total_charges_csv_verified, fixture_evidence):
+    recipe, _, _ = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_verified,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+    )
+    assert len(recipe["transformations"]) == 1
+    assert recipe["transformations"][0]["review_status"] == "inferred_approved"
+    assert recipe["transformations"][0]["transformation_type"] == "missing_value_handling"
+    assert recipe["transformations"][0]["source_columns"] == ["TotalCharges"]
+
+
+def test_verified_recipe_not_produced_when_verification_fails(total_charges_csv_tenure_mismatch, fixture_evidence):
+    recipe, columns, rows = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_tenure_mismatch,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+    )
+    assert recipe["candidate_output"]["produced"] is False
+    assert recipe["candidate_output"]["reason_not_produced"] is not None
+    assert recipe["candidate_output"]["row_count_after"] is None
+    assert recipe["candidate_output"]["column_count_after"] is None
+    assert columns is None
+    assert rows is None
+    # Still recorded (rule is authorized/approved; the block is a runtime outcome).
+    assert recipe["transformations"][0]["review_status"] == "inferred_approved"
+
+
+def test_verified_recipe_block_reason_does_not_embed_raw_row_content(
+    total_charges_csv_tenure_mismatch, fixture_evidence
+):
+    recipe, _, _ = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_tenure_mismatch,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+    )
+    reason = recipe["candidate_output"]["reason_not_produced"]
+    for row in TOTAL_CHARGES_ROWS_TENURE_MISMATCH:
+        assert row["customerID"] not in reason
+
+
+def test_verified_recipe_no_row_dropping_on_success(total_charges_csv_verified, fixture_evidence):
+    recipe, _, _ = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_verified,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+    )
+    assert recipe["dataset_identity"]["row_count_before"] == recipe["candidate_output"]["row_count_after"]
+
+
+def test_verified_recipe_no_side_effect_boundary_confirmations(total_charges_csv_verified, fixture_evidence):
+    recipe, _, _ = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_verified,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+    )
+    bc = recipe["preparation_boundary_confirmations"]
+    assert bc["model_training_performed"] is False
+    assert bc["release_publication_performed"] is False
+    assert bc["inferred_rules_applied_without_approval"] is False
+
+
+def test_verified_recipe_validates_against_schema_when_produced(total_charges_csv_verified, fixture_evidence):
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = REPO_ROOT / "pipeline" / "candidate-preparation-recipe.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    recipe, _, _ = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_verified,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+        generated_at="2026-07-09T20:00:00+00:00",
+    )
+    jsonschema.validate(recipe, schema)
+
+
+def test_verified_recipe_validates_against_schema_when_blocked(
+    total_charges_csv_tenure_mismatch, fixture_evidence
+):
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = REPO_ROOT / "pipeline" / "candidate-preparation-recipe.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    recipe, _, _ = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=fixture_evidence,
+        dataset_input_path=total_charges_csv_tenure_mismatch,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+        generated_at="2026-07-09T20:00:00+00:00",
+    )
+    jsonschema.validate(recipe, schema)
+
+
+# --- materialize_verified_conditional_fill_preparation_recipe: write boundary ---
+
+def test_materialize_verified_recipe_writes_recipe_file(tmp_path, total_charges_csv_verified, fixture_evidence):
+    repo_root = tmp_path
+    dataset_rel = "raw.csv"
+    evidence_rel = "evidence.json"
+    output_rel = "preparation-recipe.json"
+    (repo_root / dataset_rel).write_bytes(total_charges_csv_verified.read_bytes())
+    (repo_root / evidence_rel).write_bytes(fixture_evidence.read_bytes())
+
+    recipe, columns, rows = materialize_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_relative_path=evidence_rel,
+        dataset_relative_path=dataset_rel,
+        output_relative_path=output_rel,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+        repo_root=repo_root,
+    )
+    written = json.loads((repo_root / output_rel).read_text(encoding="utf-8"))
+    assert written["candidate_output"]["produced"] is True
+    assert written == recipe
+
+
+def test_materialize_verified_recipe_never_writes_prepared_candidate_csv(
+    tmp_path, total_charges_csv_verified, fixture_evidence
+):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    dataset_rel = "raw.csv"
+    evidence_rel = "evidence.json"
+    output_rel = "preparation-recipe.json"
+    (repo_root / dataset_rel).write_bytes(total_charges_csv_verified.read_bytes())
+    (repo_root / evidence_rel).write_bytes(fixture_evidence.read_bytes())
+
+    materialize_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_relative_path=evidence_rel,
+        dataset_relative_path=dataset_rel,
+        output_relative_path=output_rel,
+        column="TotalCharges",
+        verification_column="tenure",
+        verification_value="0",
+        fill_value="0.0",
+        description=TOTAL_CHARGES_DESCRIPTION,
+        reason=TOTAL_CHARGES_REASON,
+        preparation_rules_source="pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)",
+        repo_root=repo_root,
+    )
+    written_paths = {p.name for p in repo_root.rglob("*") if p.is_file()}
+    assert "prepared-data.csv" not in written_paths
+    assert written_paths == {dataset_rel, evidence_rel, output_rel}

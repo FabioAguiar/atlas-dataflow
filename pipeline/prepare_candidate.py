@@ -545,6 +545,245 @@ def materialize_review_only_preparation_recipe(
     return recipe
 
 
+def _is_blank_value(value: str | None) -> bool:
+    """True for null, empty-string, or whitespace-only values."""
+    return value is None or str(value).strip() == ""
+
+
+def verify_and_apply_conditional_fill(
+    rows: list[dict[str, str]],
+    column: str,
+    verification_column: str,
+    verification_value: str,
+    fill_value: str,
+) -> tuple[list[dict[str, str]] | None, bool, int]:
+    """Fill blank/whitespace-only `column` values with `fill_value`, but only
+    when every row with a blank `column` value has `verification_column`
+    numerically equal to `verification_value`.
+
+    This never drops rows, never applies a broad imputation strategy (mean,
+    median, mode, or model-based), and never creates a missing-value
+    indicator column. Non-blank `column` values are also normalized to a
+    float string representation, since this rule's transformation type is
+    missing-value handling plus numeric normalization.
+
+    Returns `(filled_rows, True, 0)` when verification passes for every
+    blank row, or `(None, False, failing_row_count)` when at least one blank
+    row fails verification (a non-matching or non-numeric
+    `verification_column` value). The caller must treat a failed
+    verification as a block: no candidate rows, no partial fill.
+    """
+    failing_row_count = 0
+    for row in rows:
+        if not _is_blank_value(row.get(column)):
+            continue
+        verify_cell = row.get(verification_column)
+        try:
+            verify_ok = verify_cell is not None and float(verify_cell) == float(verification_value)
+        except (TypeError, ValueError):
+            verify_ok = False
+        if not verify_ok:
+            failing_row_count += 1
+
+    if failing_row_count:
+        return None, False, failing_row_count
+
+    filled_rows: list[dict[str, str]] = []
+    for row in rows:
+        row = dict(row)
+        if _is_blank_value(row.get(column)):
+            row[column] = str(float(fill_value))
+        else:
+            row[column] = str(float(row[column]))
+        filled_rows.append(row)
+    return filled_rows, True, 0
+
+
+def build_verified_conditional_fill_preparation_recipe(
+    discovery_evidence_path: str | Path,
+    dataset_input_path: str | Path,
+    column: str,
+    verification_column: str,
+    verification_value: str,
+    fill_value: str,
+    description: str,
+    reason: str,
+    preparation_rules_source: str,
+    generated_at: str | None = None,
+    repo_root: str | Path | None = None,
+) -> tuple[dict[str, Any], list[str] | None, list[dict[str, str]] | None]:
+    """Build a schema-aligned recipe for an explicit, approved missing-value
+    policy that requires cross-column verification before any fill is
+    applied (for example: Project Spec S0028's TotalCharges policy).
+
+    Unlike `build_review_only_preparation_recipe`, the recorded
+    transformation carries `review_status: "inferred_approved"` (the closest
+    existing accepted status for a rule that was originally inferred from
+    discovery evidence and has since been approved) and, when verification
+    passes, `candidate_output.produced` is `True` with the filled rows
+    returned to the caller. Writing those rows to a prepared-candidate CSV
+    on disk is a separate, explicit step (`write_candidate_output`) left to
+    the caller, so this function never persists a prepared dataset file by
+    itself.
+
+    When verification fails for any blank row, no rows are dropped, imputed,
+    or partially filled -- `candidate_output.produced` is `False`, the
+    reason names only the count of failing rows (never raw row content), and
+    the returned columns/rows are `None`.
+    """
+    discovery_evidence_path = Path(discovery_evidence_path)
+    dataset_input_path = Path(dataset_input_path)
+    resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else None
+
+    if not discovery_evidence_path.exists():
+        raise FileNotFoundError(f"Discovery evidence not found: {discovery_evidence_path}")
+    if not dataset_input_path.exists():
+        raise FileNotFoundError(f"Dataset not found: {dataset_input_path}")
+    if not preparation_rules_source or Path(preparation_rules_source).is_absolute():
+        raise ValueError("preparation_rules_source must be a non-empty reduced path reference.")
+
+    discovery_evidence = json.loads(discovery_evidence_path.read_text(encoding="utf-8"))
+    columns, rows = _read_csv(dataset_input_path)
+    row_count_before = len(rows)
+    col_count_before = len(columns)
+
+    filled_rows, verification_passed, failing_row_count = verify_and_apply_conditional_fill(
+        rows,
+        column=column,
+        verification_column=verification_column,
+        verification_value=verification_value,
+        fill_value=fill_value,
+    )
+
+    transformation = _normalize_transformation_record({
+        "transformation_type": "missing_value_handling",
+        "description": description,
+        "source_columns": [column],
+        "target_columns": [column],
+        "reason": reason,
+        "review_status": "inferred_approved",
+    })
+
+    output_columns: list[str] | None = None
+    output_rows: list[dict[str, str]] | None = None
+
+    if verification_passed:
+        candidate_produced = True
+        reason_not_produced = None
+        row_count_after = row_count_before
+        column_count_after = col_count_before
+        output_columns = columns
+        output_rows = filled_rows
+    else:
+        candidate_produced = False
+        reason_not_produced = (
+            f"Preparation blocked: {failing_row_count} row(s) with a blank or "
+            f"whitespace-only '{column}' value failed verification against "
+            f"'{verification_column}' == {verification_value}. The approved policy "
+            f"requires every blank '{column}' row to satisfy this verification before "
+            "any fill is applied; no rows were dropped, imputed, or filled, and no "
+            "prepared candidate was produced."
+        )
+        row_count_after = None
+        column_count_after = None
+
+    discovery_ref_path = _reduced_path(discovery_evidence_path)
+    dataset_name = _reduced_path(dataset_input_path)
+    if resolved_repo_root is not None:
+        discovery_ref_path = _repository_relative_path(discovery_evidence_path, resolved_repo_root)
+        dataset_name = _repository_relative_path(dataset_input_path, resolved_repo_root)
+
+    recipe: dict[str, Any] = {
+        "schema_version": _SCHEMA_VERSION,
+        "producer": "pipeline/prepare_candidate.py",
+        "dataset_identity": {
+            "name": dataset_name,
+            "row_count_before": row_count_before,
+            "column_count_before": col_count_before,
+        },
+        "discovery_evidence_ref": {
+            "path": discovery_ref_path,
+            "schema_version": discovery_evidence.get("schema_version", "unknown"),
+        },
+        "transformations": [transformation],
+        "candidate_output": {
+            "produced": candidate_produced,
+            "reason_not_produced": reason_not_produced,
+            "row_count_after": row_count_after,
+            "column_count_after": column_count_after,
+        },
+        "candidate_status": {
+            "is_final_training_input": False,
+            "requires_m23_validation": True,
+            "authorized_for": "candidate_only",
+        },
+        "generation_settings": {
+            "generator_version": _GENERATOR_VERSION,
+            "preparation_rules_source": preparation_rules_source,
+        },
+        "generated_at": generated_at or _utc_now_iso(),
+        "preparation_boundary_confirmations": {
+            "complex_feature_engineering_performed": False,
+            "model_training_performed": False,
+            "release_publication_performed": False,
+            "hidden_notebook_transformations": False,
+            "inferred_rules_applied_without_approval": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+    return recipe, output_columns, output_rows
+
+
+def materialize_verified_conditional_fill_preparation_recipe(
+    discovery_evidence_relative_path: str | Path,
+    dataset_relative_path: str | Path,
+    output_relative_path: str | Path,
+    column: str,
+    verification_column: str,
+    verification_value: str,
+    fill_value: str,
+    description: str,
+    reason: str,
+    preparation_rules_source: str,
+    repo_root: str | Path,
+    generated_at: str | None = None,
+) -> tuple[dict[str, Any], list[str] | None, list[dict[str, str]] | None]:
+    """Build, validate, and write a verified-conditional-fill preparation
+    recipe from explicit repository-relative inputs. Resolves every path
+    against `repo_root`, so the call is correct regardless of the caller's
+    working directory (for example a notebook running from a nested dataset
+    directory). Never writes a prepared-candidate CSV -- see
+    `write_candidate_output` for that separate, explicit step."""
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+    discovery_evidence_path = (resolved_repo_root / discovery_evidence_relative_path).resolve()
+    dataset_input_path = (resolved_repo_root / dataset_relative_path).resolve()
+    output_path = (resolved_repo_root / output_relative_path).resolve()
+
+    recipe, output_columns, output_rows = build_verified_conditional_fill_preparation_recipe(
+        discovery_evidence_path=discovery_evidence_path,
+        dataset_input_path=dataset_input_path,
+        column=column,
+        verification_column=verification_column,
+        verification_value=verification_value,
+        fill_value=fill_value,
+        description=description,
+        reason=reason,
+        preparation_rules_source=preparation_rules_source,
+        generated_at=generated_at,
+        repo_root=resolved_repo_root,
+    )
+    write_preparation_recipe(output_path, recipe, resolved_repo_root)
+    return recipe, output_columns, output_rows
+
+
 def _content_sha256(path: Path) -> str:
     import hashlib
 

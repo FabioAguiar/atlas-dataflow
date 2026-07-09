@@ -54,7 +54,7 @@
     "TotalCharges"
   ],
   "feature_review_notes": {
-    "TotalCharges": "Raw blank string values observed; requires explicit blank-value handling before execution-contract projection.",
+    "TotalCharges": "Blank-value policy resolved (Project Spec S0028): null/empty/whitespace-only values verified against 'tenure' == 0 for all 11 observed blank rows, then filled with 0.0 and normalized to numeric. Downstream execution-contract regeneration to move TotalCharges from ignored_columns into feature_columns is out of scope for this policy resolution and requires a separate, explicitly authorized implementation request.",
     "SeniorCitizen": "Raw representation is numeric (0/1) but the semantic domain is binary; requires explicit type intent before encoding."
   },
   "feature_type_intent": [
@@ -136,12 +136,11 @@
     }
   ],
   "blank_value_policy_candidates": {
-    "TotalCharges": "unresolved_pending_review"
+    "TotalCharges": "inferred_approved"
   },
   "metric_candidates": [],
   "split_policy_candidate": null,
   "open_questions": [
-    "Final 'TotalCharges' blank-value handling policy is not yet decided (candidates include impute-as-zero, drop, or a distinct missing-value indicator).",
     "Final 'SeniorCitizen' semantic type/encoding treatment is not yet decided.",
     "Final positive-label decision for 'Churn' requires explicit confirmation despite the observed candidate recorded here."
   ],
@@ -156,21 +155,8 @@
     "is_ui_fixture": false,
     "model_training_performed": false
   },
-  "generated_at": "2026-07-09T19:40:04+00:00",
-  "unresolved_review_items": [
-    {
-      "transformation_type": "missing_value_handling",
-      "description": "Review TotalCharges blank values; no row dropping, imputation, type normalization, or feature selection is applied.",
-      "source_columns": [
-        "TotalCharges"
-      ],
-      "target_columns": [
-        "TotalCharges"
-      ],
-      "reason": "Observed 11 blank TotalCharges value(s) during Telco authoring; policy requires human review before any transformation.",
-      "review_status": "inferred_pending_review"
-    }
-  ],
+  "generated_at": "2026-07-09T20:15:10+00:00",
+  "unresolved_review_items": [],
   "evidence_policy": {
     "raw_logs_prohibited": true,
     "raw_runtime_prohibited": true,

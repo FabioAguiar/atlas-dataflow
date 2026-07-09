@@ -18,41 +18,41 @@
     }
   },
   "prepared_candidate": {
-    "produced": false,
-    "reason_not_produced": "No transformation rules with review_status 'explicit' or 'inferred_approved' were applied. 1 inferred rule(s) are pending human review and cannot be applied without explicit approval.",
+    "produced": true,
+    "reason_not_produced": null,
     "reference": null
   },
   "row_column_counts": {
     "row_count_before": 7043,
     "column_count_before": 21,
-    "row_count_after": null,
-    "column_count_after": null
+    "row_count_after": 7043,
+    "column_count_after": 21
   },
   "ordered_prepared_columns": null,
-  "applied_transformations_summary": [],
-  "unresolved_review_items": [
+  "applied_transformations_summary": [
     {
       "transformation_type": "missing_value_handling",
-      "description": "Review TotalCharges blank values; no row dropping, imputation, type normalization, or feature selection is applied.",
+      "description": "Explicit approved TotalCharges preparation policy (Project Spec S0028): treat null, empty-string, or whitespace-only 'TotalCharges' values as missing; before filling, verify that every row with a blank 'TotalCharges' value has 'tenure' == 0; if and only if that verification succeeds for all blank rows, convert 'TotalCharges' to numeric and fill the verified blanks with 0.0; row dropping is not allowed by this policy; broad mean/median/mode imputation is not allowed by this policy; creating a missing-value indicator column is not allowed by this policy; if any blank 'TotalCharges' row fails verification (tenure != 0, non-numeric tenure, or otherwise), preparation is blocked and no prepared candidate is produced.",
       "source_columns": [
         "TotalCharges"
       ],
       "target_columns": [
         "TotalCharges"
       ],
-      "reason": "Observed 11 blank TotalCharges value(s) during Telco authoring; policy requires human review before any transformation.",
-      "review_status": "inferred_pending_review"
+      "reason": "Approved by Project Spec S0028 (Telco TotalCharges Preparation Policy Resolution), superseding the prior inferred_pending_review status. Verified against the real raw dataset (data/raw/telco-customer-churn.csv): all 11 observed blank 'TotalCharges' rows have 'tenure' == 0, confirming the fill is safe under this policy's verification predicate.",
+      "review_status": "inferred_approved"
     }
   ],
+  "unresolved_review_items": [],
   "training_readiness": {
     "is_final_training_input": false,
     "is_training_ready": false,
-    "reason": "No prepared candidate has been produced yet: No transformation rules with review_status 'explicit' or 'inferred_approved' were applied. 1 inferred rule(s) are pending human review and cannot be applied without explicit approval."
+    "reason": "Prepared candidate output was marked produced but no readable candidate file reference was supplied."
   },
   "generation_settings": {
     "generator_version": "prepare-candidate.v1"
   },
-  "generated_at": "2026-07-09T19:40:13+00:00",
+  "generated_at": "2026-07-09T20:15:05+00:00",
   "materialization_boundary_confirmations": {
     "model_training_performed": false,
     "release_candidate_assembly_performed": false,

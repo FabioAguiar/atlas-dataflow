@@ -13,22 +13,22 @@
   "transformations": [
     {
       "transformation_type": "missing_value_handling",
-      "description": "Review TotalCharges blank values; no row dropping, imputation, type normalization, or feature selection is applied.",
+      "description": "Explicit approved TotalCharges preparation policy (Project Spec S0028): treat null, empty-string, or whitespace-only 'TotalCharges' values as missing; before filling, verify that every row with a blank 'TotalCharges' value has 'tenure' == 0; if and only if that verification succeeds for all blank rows, convert 'TotalCharges' to numeric and fill the verified blanks with 0.0; row dropping is not allowed by this policy; broad mean/median/mode imputation is not allowed by this policy; creating a missing-value indicator column is not allowed by this policy; if any blank 'TotalCharges' row fails verification (tenure != 0, non-numeric tenure, or otherwise), preparation is blocked and no prepared candidate is produced.",
       "source_columns": [
         "TotalCharges"
       ],
       "target_columns": [
         "TotalCharges"
       ],
-      "reason": "Observed 11 blank TotalCharges value(s) during Telco authoring; policy requires human review before any transformation.",
-      "review_status": "inferred_pending_review"
+      "reason": "Approved by Project Spec S0028 (Telco TotalCharges Preparation Policy Resolution), superseding the prior inferred_pending_review status. Verified against the real raw dataset (data/raw/telco-customer-churn.csv): all 11 observed blank 'TotalCharges' rows have 'tenure' == 0, confirming the fill is safe under this policy's verification predicate.",
+      "review_status": "inferred_approved"
     }
   ],
   "candidate_output": {
-    "produced": false,
-    "reason_not_produced": "No transformation rules with review_status 'explicit' or 'inferred_approved' were applied. 1 inferred rule(s) are pending human review and cannot be applied without explicit approval.",
-    "row_count_after": null,
-    "column_count_after": null
+    "produced": true,
+    "reason_not_produced": null,
+    "row_count_after": 7043,
+    "column_count_after": 21
   },
   "candidate_status": {
     "is_final_training_input": false,
@@ -37,9 +37,9 @@
   },
   "generation_settings": {
     "generator_version": "prepare-candidate.v1",
-    "preparation_rules_source": "notebook:telco-preparation-review-transformations"
+    "preparation_rules_source": "pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)"
   },
-  "generated_at": "2026-07-09T19:40:12+00:00",
+  "generated_at": "2026-07-09T20:15:00+00:00",
   "preparation_boundary_confirmations": {
     "complex_feature_engineering_performed": false,
     "model_training_performed": false,

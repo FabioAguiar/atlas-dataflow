@@ -30,11 +30,22 @@ Categorical (select) features additionally carry an options projection (M32-01):
 
 _RUNTIME_ONLY_KEYS mirrors api/public_contract_loader.py._RUNTIME_ONLY_KEYS.
 If that module's constant changes, this constant must be updated to match.
+
+This module also exposes `project_execution_contract_draft` (Project Spec
+S0014): a deterministic projection from a `dataset_modeling_intent.v1`
+authoring-intent object (Project Spec S0013,
+`pipeline/discovery_evidence.py.build_dataset_modeling_intent`) into an
+`execution_contract_draft.v1` candidate. This draft reuses
+`execution_contract.v1` vocabulary (target_column, feature_columns,
+ignored_columns, feature type) where the modeling intent already supports
+it, but is never itself an execution contract — unresolved review items stay
+visible instead of being converted into accepted execution policy.
 """
 
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -184,6 +195,158 @@ def _acceptance(dataset_slug, release_id, runtime_path, public_path):
         "release_id": release_id,
         "runtime_contract_path": str(runtime_path),
         "public_contract_path": str(public_path),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Execution contract draft projection (Project Spec S0014)
+#
+# Projects a `dataset_modeling_intent.v1` authoring-intent object into a
+# narrow `execution_contract_draft.v1` candidate. This is deliberately not an
+# `execution_contract.v1` (contracts/execution-contract.schema.json): the
+# draft never populates that schema's execution-only training policy fields
+# (missing_value_policy, categorical_encoding_policy, numeric_handling,
+# allowed_transformations, split_policy, random_seed, primary_metric,
+# secondary_metrics, modeling_constraints) — those remain explicit unresolved
+# review items until a later, separately authorized spec supplies reviewed
+# policy. Not an execution contract, runtime contract, public contract,
+# release candidate input, publisher input, registry artifact, API fixture,
+# or UI fixture.
+# ---------------------------------------------------------------------------
+
+EXECUTION_CONTRACT_DRAFT_CONTRACT_VERSION = "execution_contract_draft.v1"
+
+# execution_contract.v1 required fields this projection never derives —
+# surfaced as standing blocking reasons so a draft can never look
+# execution-ready just because its known fields happen to be filled in.
+_UNRESOLVED_EXECUTION_CONTRACT_POLICY_FIELDS = (
+    "missing_value_policy",
+    "categorical_encoding_policy",
+    "numeric_handling",
+    "allowed_transformations",
+    "split_policy",
+    "random_seed",
+    "primary_metric",
+    "secondary_metrics",
+    "modeling_constraints",
+)
+
+EXECUTION_CONTRACT_DRAFT_BOUNDARY_CONFIRMATIONS = {
+    "is_execution_contract": False,
+    "is_runtime_contract": False,
+    "is_public_contract": False,
+    "is_release_candidate_input": False,
+    "is_publisher_input": False,
+    "is_registry_artifact": False,
+    "is_api_fixture": False,
+    "is_ui_fixture": False,
+    "model_training_performed": False,
+    "promoted_to_official_execution_contract": False,
+}
+
+
+def _utc_now_iso():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _draft_blocking_reasons(modeling_intent):
+    """Collect explicit, unresolved preparation review items.
+
+    Never invents a blocking reason for something the modeling intent
+    doesn't itself flag — only surfaces blank-value policy candidates and
+    feature-type entries the modeling intent already marked as under review,
+    plus the standing execution-contract policy fields this projection never
+    derives.
+    """
+    reasons = []
+    blank_value_policy_candidates = modeling_intent.get("blank_value_policy_candidates") or {}
+    for column in sorted(blank_value_policy_candidates):
+        policy = blank_value_policy_candidates[column]
+        reasons.append(
+            f"{column}: blank-value handling is only a candidate policy "
+            f"({policy!r}), not yet accepted — requires explicit resolution "
+            "before execution-ready use"
+        )
+    for entry in modeling_intent.get("feature_type_intent") or []:
+        if entry.get("type_intent") == "requires_review":
+            reasons.append(
+                f"{entry.get('name')}: feature type/semantic classification "
+                "requires explicit review before execution-ready use"
+            )
+    for field in _UNRESOLVED_EXECUTION_CONTRACT_POLICY_FIELDS:
+        reasons.append(
+            f"{field}: not supplied by this draft projection; required by "
+            "execution_contract.v1 before promotion to an official contract"
+        )
+    return reasons
+
+
+def project_execution_contract_draft(modeling_intent, generated_at=None):
+    """Project a `dataset_modeling_intent.v1` object into an execution-contract draft.
+
+    Deterministic and independent of Jupyter execution: every field is read
+    from the already-built modeling-intent object (see
+    `pipeline.discovery_evidence.build_dataset_modeling_intent`), never from
+    raw dataset rows. Reuses `execution_contract.v1` vocabulary
+    (`target_column`, `feature_columns`, `ignored_columns`) where the
+    modeling intent already supports it, but `artifact_type`/
+    `contract_version` are distinct from `execution_contract.v1` and
+    `execution_readiness.is_execution_ready` is always `False` — this
+    projection never emits final preprocessing, split, metric, or
+    model-family policy, so the result must never be mistaken for an
+    execution-ready contract.
+    """
+    dataset_identity = modeling_intent.get("dataset_identity") or {}
+    authoring_source = modeling_intent.get("authoring_source") or {}
+    target_intent = modeling_intent.get("target_intent") or {}
+    identifier_and_ignored_columns = list(
+        modeling_intent.get("identifier_and_ignored_columns") or []
+    )
+
+    feature_definitions = {
+        entry["name"]: {"type_intent": entry.get("type_intent", "requires_review")}
+        for entry in modeling_intent.get("feature_type_intent") or []
+    }
+
+    return {
+        "artifact_type": "execution_contract_draft",
+        "contract_version": EXECUTION_CONTRACT_DRAFT_CONTRACT_VERSION,
+        "draft_status": "not_execution_ready",
+        "dataset_identity": dict(dataset_identity),
+        "authoring_traceability": {
+            "authoring_notebook_ref": authoring_source.get("authoring_notebook_ref"),
+            "reduced_discovery_evidence_ref": authoring_source.get(
+                "reduced_discovery_evidence_ref"
+            ),
+            "source_modeling_intent_contract_version": modeling_intent.get("contract_version"),
+            "source_modeling_intent_generated_at": modeling_intent.get("generated_at"),
+        },
+        "task_intent": {"task_type": target_intent.get("task_type")},
+        "target_column": target_intent.get("target_column"),
+        "target_intent": {
+            "target_column": target_intent.get("target_column"),
+            "observed_labels": list(target_intent.get("observed_labels") or []),
+            "observed_target_distribution": dict(
+                target_intent.get("observed_target_distribution") or {}
+            ),
+            "positive_label_candidate": target_intent.get("positive_label_candidate"),
+        },
+        "ignored_columns": [entry["name"] for entry in identifier_and_ignored_columns],
+        "identifier_and_ignored_columns": identifier_and_ignored_columns,
+        "feature_columns": list(modeling_intent.get("initial_feature_candidates") or []),
+        "feature_definitions": feature_definitions,
+        "feature_review_notes": dict(modeling_intent.get("feature_review_notes") or {}),
+        "blank_value_policy_candidates": dict(
+            modeling_intent.get("blank_value_policy_candidates") or {}
+        ),
+        "execution_readiness": {
+            "is_execution_ready": False,
+            "blocking_reasons": _draft_blocking_reasons(modeling_intent),
+        },
+        "execution_contract_draft_boundary_confirmations": dict(
+            EXECUTION_CONTRACT_DRAFT_BOUNDARY_CONFIRMATIONS
+        ),
+        "generated_at": generated_at or _utc_now_iso(),
     }
 
 

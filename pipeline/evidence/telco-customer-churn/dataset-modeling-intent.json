@@ -1,0 +1,182 @@
+{
+  "artifact_type": "dataset_modeling_intent",
+  "contract_version": "dataset_modeling_intent.v1",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "dataset_source_ref": "data/raw/telco-customer-churn.csv"
+  },
+  "authoring_source": {
+    "authoring_notebook_ref": "notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb",
+    "reduced_discovery_evidence_ref": "pipeline/evidence/telco-customer-churn/discovery-evidence.json",
+    "preparation_recipe_ref": "pipeline/evidence/telco-customer-churn/preparation-recipe.json",
+    "prepared_data_metadata_ref": "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+    "public_context_ref": "contracts/telco-customer-churn/dataset-context.json"
+  },
+  "target_intent": {
+    "target_column": "Churn",
+    "task_type": "binary_classification",
+    "observed_labels": [
+      "No",
+      "Yes"
+    ],
+    "positive_label_candidate": "Yes",
+    "observed_target_distribution": {
+      "No": 5174,
+      "Yes": 1869
+    },
+    "is_final_training_configuration": false
+  },
+  "identifier_and_ignored_columns": [
+    {
+      "name": "customerID",
+      "reason": "identifier_candidate_excluded_from_features"
+    }
+  ],
+  "initial_feature_candidates": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+  ],
+  "feature_review_notes": {
+    "TotalCharges": "Raw blank string values observed; requires explicit blank-value handling before execution-contract projection.",
+    "SeniorCitizen": "Raw representation is numeric (0/1) but the semantic domain is binary; requires explicit type intent before encoding."
+  },
+  "feature_type_intent": [
+    {
+      "name": "gender",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "SeniorCitizen",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "Partner",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "Dependents",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "tenure",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "PhoneService",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "MultipleLines",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "InternetService",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "OnlineSecurity",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "OnlineBackup",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "DeviceProtection",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "TechSupport",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "StreamingTV",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "StreamingMovies",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "Contract",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "PaperlessBilling",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "PaymentMethod",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "MonthlyCharges",
+      "type_intent": "requires_review"
+    },
+    {
+      "name": "TotalCharges",
+      "type_intent": "requires_review"
+    }
+  ],
+  "blank_value_policy_candidates": {
+    "TotalCharges": "unresolved_pending_review"
+  },
+  "metric_candidates": [],
+  "split_policy_candidate": null,
+  "open_questions": [
+    "Final 'TotalCharges' blank-value handling policy is not yet decided (candidates include impute-as-zero, drop, or a distinct missing-value indicator).",
+    "Final 'SeniorCitizen' semantic type/encoding treatment is not yet decided.",
+    "Final positive-label decision for 'Churn' requires explicit confirmation despite the observed candidate recorded here."
+  ],
+  "modeling_intent_boundary_confirmations": {
+    "is_execution_contract": false,
+    "is_runtime_contract": false,
+    "is_public_contract": false,
+    "is_release_candidate_input": false,
+    "is_publisher_input": false,
+    "is_registry_artifact": false,
+    "is_api_fixture": false,
+    "is_ui_fixture": false,
+    "model_training_performed": false
+  },
+  "generated_at": "2026-07-09T17:40:11+00:00",
+  "unresolved_review_items": [
+    {
+      "transformation_type": "missing_value_handling",
+      "description": "Review TotalCharges blank values; no row dropping, imputation, type normalization, or feature selection is applied.",
+      "source_columns": [
+        "TotalCharges"
+      ],
+      "target_columns": [
+        "TotalCharges"
+      ],
+      "reason": "Observed 11 blank TotalCharges value(s) during Telco authoring; policy requires human review before any transformation.",
+      "review_status": "inferred_pending_review"
+    }
+  ],
+  "evidence_policy": {
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "secrets_prohibited": true,
+    "private_source_paths_prohibited": true,
+    "reduced_and_sanitized": true
+  }
+}

@@ -26,6 +26,15 @@ contract assembled from already-observed values. This is an authoring-intent
 object only, not an execution contract, runtime contract, public contract,
 release candidate input, publisher input, registry artifact, API fixture, or
 UI fixture.
+
+It also exposes `materialize_dataset_modeling_intent` (Project Spec S0023),
+which persists an already-built `dataset_modeling_intent.v1` object to a
+repository-relative path, enriched with explicit upstream artifact
+traceability (discovery evidence, preparation recipe, prepared dataset
+metadata, public context references) and the reduced evidence policy. It
+reads only those named upstream artifacts, only when their relative path is
+supplied and the file exists on disk, and never treats a preparation
+recipe's `inferred_pending_review` transformation as resolved.
 """
 
 from __future__ import annotations
@@ -590,3 +599,165 @@ def build_dataset_modeling_intent(
         ),
         "generated_at": generated_at or _utc_now_iso(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Dataset modeling intent persistence (Project Spec S0023)
+#
+# `materialize_dataset_modeling_intent` persists an already-built
+# `dataset_modeling_intent.v1` object (see `build_dataset_modeling_intent`
+# above) to an explicit repository-relative path, enriched with upstream
+# artifact traceability and the reduced evidence policy. It never derives
+# target/feature/identifier decisions itself -- those remain explicit inputs
+# to `build_dataset_modeling_intent` -- and it never treats a preparation
+# recipe's `inferred_pending_review` transformation as resolved on its own
+# authority.
+# ---------------------------------------------------------------------------
+
+DATASET_MODELING_INTENT_EVIDENCE_POLICY: dict[str, bool] = {
+    "raw_logs_prohibited": True,
+    "raw_runtime_prohibited": True,
+    "raw_api_payloads_prohibited": True,
+    "secrets_prohibited": True,
+    "private_source_paths_prohibited": True,
+    "reduced_and_sanitized": True,
+}
+
+_RESOLVED_TRANSFORMATION_REVIEW_STATUSES = frozenset({"explicit", "inferred_approved"})
+
+
+def _repo_relative_ref_if_present(
+    relative_path: str | Path | None, repo_root: Path
+) -> str | None:
+    """Return a repository-relative reference string, or None.
+
+    Returns None when `relative_path` is not supplied or the referenced file
+    does not exist on disk -- this never invents a reference.
+    """
+    if relative_path is None:
+        return None
+    candidate = (repo_root / relative_path).resolve()
+    if not candidate.exists():
+        return None
+    return Path(relative_path).as_posix()
+
+
+def _preparation_recipe_blank_value_policy_candidates(
+    preparation_recipe: dict[str, Any],
+) -> dict[str, str]:
+    """Derive blank-value policy candidates from a preparation recipe's own
+    missing-value-handling transformations, keyed by target column.
+
+    A column is only ever reported with the recipe's own review_status when
+    that status is 'explicit' or 'inferred_approved'; every other status
+    (including the recipe's absence of an entry) is reported as
+    'unresolved_pending_review'. This function never marks a column resolved
+    on its own authority -- it only reads what the recipe already recorded.
+    """
+    candidates: dict[str, str] = {}
+    for transformation in preparation_recipe.get("transformations", []):
+        if transformation.get("transformation_type") != "missing_value_handling":
+            continue
+        review_status = transformation.get("review_status")
+        resolved = review_status in _RESOLVED_TRANSFORMATION_REVIEW_STATUSES
+        for column in transformation.get("target_columns", []):
+            candidates[column] = review_status if resolved else "unresolved_pending_review"
+    return candidates
+
+
+def _preparation_recipe_unresolved_review_items(
+    preparation_recipe: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return preparation recipe transformations still pending human review, verbatim."""
+    return [
+        dict(transformation)
+        for transformation in preparation_recipe.get("transformations", [])
+        if transformation.get("review_status") == "inferred_pending_review"
+    ]
+
+
+def materialize_dataset_modeling_intent(
+    modeling_intent: dict[str, Any],
+    output_relative_path: str | Path,
+    repo_root: str | Path,
+    discovery_evidence_relative_path: str | Path | None = None,
+    preparation_recipe_relative_path: str | Path | None = None,
+    prepared_data_metadata_relative_path: str | Path | None = None,
+    public_context_relative_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Persist an already-built `dataset_modeling_intent.v1` object.
+
+    `modeling_intent` must already be the return value of
+    `build_dataset_modeling_intent` (or an equivalent object with the same
+    shape). This function enriches a copy of it with:
+
+    - `authoring_source` references to the discovery evidence, preparation
+      recipe, prepared dataset metadata, and public context artifacts, each
+      included only when its relative path argument is supplied and the file
+      exists on disk;
+    - `blank_value_policy_candidates` re-derived from the preparation
+      recipe's own transformations when a preparation recipe is present and
+      readable, so a column is never silently reported as resolved unless
+      the recipe itself recorded an 'explicit' or 'inferred_approved'
+      review_status;
+    - `unresolved_review_items`, the preparation recipe's still-pending
+      transformations, forwarded verbatim;
+    - `evidence_policy`, the reduced evidence policy confirmation shared by
+      this module's other materialized artifacts.
+
+    Every path is resolved against `repo_root`, so the call is correct
+    regardless of the caller's working directory (for example a notebook
+    running from a nested dataset directory). Raises FileNotFoundError only
+    if `repo_root` itself is not a usable path; missing upstream artifacts
+    are recorded as absent references, not errors.
+    """
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+    output_path = (resolved_repo_root / output_relative_path).resolve()
+
+    discovery_evidence_ref = _repo_relative_ref_if_present(
+        discovery_evidence_relative_path, resolved_repo_root
+    )
+    preparation_recipe_ref = _repo_relative_ref_if_present(
+        preparation_recipe_relative_path, resolved_repo_root
+    )
+    prepared_data_metadata_ref = _repo_relative_ref_if_present(
+        prepared_data_metadata_relative_path, resolved_repo_root
+    )
+    public_context_ref = _repo_relative_ref_if_present(
+        public_context_relative_path, resolved_repo_root
+    )
+
+    materialized_intent = dict(modeling_intent)
+    authoring_source = dict(materialized_intent.get("authoring_source") or {})
+    if discovery_evidence_ref is not None:
+        authoring_source["reduced_discovery_evidence_ref"] = discovery_evidence_ref
+    authoring_source["preparation_recipe_ref"] = preparation_recipe_ref
+    authoring_source["prepared_data_metadata_ref"] = prepared_data_metadata_ref
+    authoring_source["public_context_ref"] = public_context_ref
+    materialized_intent["authoring_source"] = authoring_source
+
+    if preparation_recipe_ref is not None:
+        preparation_recipe = json.loads(
+            (resolved_repo_root / preparation_recipe_ref).read_text(encoding="utf-8")
+        )
+        blank_value_policy_candidates = dict(
+            materialized_intent.get("blank_value_policy_candidates") or {}
+        )
+        blank_value_policy_candidates.update(
+            _preparation_recipe_blank_value_policy_candidates(preparation_recipe)
+        )
+        materialized_intent["blank_value_policy_candidates"] = blank_value_policy_candidates
+        materialized_intent["unresolved_review_items"] = (
+            _preparation_recipe_unresolved_review_items(preparation_recipe)
+        )
+    else:
+        materialized_intent.setdefault("unresolved_review_items", [])
+
+    materialized_intent["evidence_policy"] = dict(DATASET_MODELING_INTENT_EVIDENCE_POLICY)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(materialized_intent, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return materialized_intent

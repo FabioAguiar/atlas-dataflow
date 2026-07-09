@@ -3,7 +3,11 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from pipeline.discovery_evidence import materialize_discovery_evidence
+from pipeline.discovery_evidence import (
+    build_dataset_modeling_intent,
+    materialize_dataset_modeling_intent,
+    materialize_discovery_evidence,
+)
 from pipeline.prepare_candidate import (
     materialize_prepared_data_metadata,
     materialize_review_only_preparation_recipe,
@@ -486,3 +490,186 @@ def test_materialize_prepared_data_metadata_with_produced_candidate_is_training_
     assert metadata["training_readiness"]["is_training_ready"] is True
     assert metadata["training_readiness"]["is_final_training_input"] is False
     assert metadata["training_readiness"]["reason"] is None
+
+
+def _telco_shaped_modeling_intent(**overrides) -> dict:
+    kwargs = dict(
+        dataset_slug="telco-customer-churn",
+        dataset_source_ref="data/raw/telco-customer-churn.csv",
+        authoring_notebook_ref="notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb",
+        columns=["customerID", "SeniorCitizen", "TotalCharges", "tenure", "Churn"],
+        target_column="Churn",
+        task_type="binary_classification",
+        observed_labels=["No", "Yes"],
+        positive_label_candidate="Yes",
+        observed_target_distribution={"No": 5174, "Yes": 1869},
+        identifier_columns=["customerID"],
+        feature_review_notes={
+            "TotalCharges": "Requires explicit blank-value handling before execution-contract projection.",
+            "SeniorCitizen": "Raw representation is numeric (0/1) but the semantic domain is binary.",
+        },
+        feature_type_intent_overrides={"SeniorCitizen": "requires_review"},
+        blank_value_policy_candidates={"TotalCharges": "unresolved_pending_review"},
+        open_questions=["Final TotalCharges blank-value handling policy is not yet decided."],
+        generated_at="2026-07-09T00:00:00+00:00",
+    )
+    kwargs.update(overrides)
+    return build_dataset_modeling_intent(**kwargs)
+
+
+def test_materialize_dataset_modeling_intent_writes_expected_repository_relative_path(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    tmp_repo.mkdir()
+
+    materialized = materialize_dataset_modeling_intent(
+        _telco_shaped_modeling_intent(),
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+    )
+
+    written = json.loads(
+        (
+            tmp_repo / "pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert written == materialized
+    assert materialized["artifact_type"] == "dataset_modeling_intent"
+    assert materialized["contract_version"] == "dataset_modeling_intent.v1"
+
+
+def test_materialize_dataset_modeling_intent_omits_absent_upstream_references(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    tmp_repo.mkdir()
+
+    materialized = materialize_dataset_modeling_intent(
+        _telco_shaped_modeling_intent(),
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+        discovery_evidence_relative_path="pipeline/evidence/telco-customer-churn/discovery-evidence.json",
+        preparation_recipe_relative_path="pipeline/evidence/telco-customer-churn/preparation-recipe.json",
+        prepared_data_metadata_relative_path="pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        public_context_relative_path="contracts/telco-customer-churn/dataset-context.json",
+    )
+
+    assert materialized["authoring_source"]["reduced_discovery_evidence_ref"] is None
+    assert materialized["authoring_source"]["preparation_recipe_ref"] is None
+    assert materialized["authoring_source"]["prepared_data_metadata_ref"] is None
+    assert materialized["authoring_source"]["public_context_ref"] is None
+    assert materialized["unresolved_review_items"] == []
+    assert materialized["blank_value_policy_candidates"]["TotalCharges"] == (
+        "unresolved_pending_review"
+    )
+
+
+def test_materialize_dataset_modeling_intent_references_present_upstream_artifacts(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _write_evidence_and_recipe(tmp_repo)
+    (tmp_repo / "pipeline/prepared/telco-customer-churn").mkdir(parents=True)
+    (tmp_repo / "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (tmp_repo / "contracts/telco-customer-churn").mkdir(parents=True)
+    (tmp_repo / "contracts/telco-customer-churn/dataset-context.json").write_text(
+        "{}", encoding="utf-8"
+    )
+
+    materialized = materialize_dataset_modeling_intent(
+        _telco_shaped_modeling_intent(),
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+        discovery_evidence_relative_path="pipeline/evidence/telco-customer-churn/discovery-evidence.json",
+        preparation_recipe_relative_path="pipeline/evidence/telco-customer-churn/preparation-recipe.json",
+        prepared_data_metadata_relative_path="pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        public_context_relative_path="contracts/telco-customer-churn/dataset-context.json",
+    )
+
+    assert materialized["authoring_source"]["reduced_discovery_evidence_ref"] == (
+        "pipeline/evidence/telco-customer-churn/discovery-evidence.json"
+    )
+    assert materialized["authoring_source"]["preparation_recipe_ref"] == (
+        "pipeline/evidence/telco-customer-churn/preparation-recipe.json"
+    )
+    assert materialized["authoring_source"]["prepared_data_metadata_ref"] == (
+        "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json"
+    )
+    assert materialized["authoring_source"]["public_context_ref"] == (
+        "contracts/telco-customer-churn/dataset-context.json"
+    )
+
+
+def test_materialize_dataset_modeling_intent_keeps_totalcharges_unresolved_when_recipe_pending(
+    tmp_path,
+):
+    tmp_repo = tmp_path / "repo"
+    _write_evidence_and_recipe(tmp_repo)
+
+    materialized = materialize_dataset_modeling_intent(
+        _telco_shaped_modeling_intent(),
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+        preparation_recipe_relative_path="pipeline/evidence/telco-customer-churn/preparation-recipe.json",
+    )
+
+    assert materialized["blank_value_policy_candidates"]["TotalCharges"] == (
+        "unresolved_pending_review"
+    )
+    assert len(materialized["unresolved_review_items"]) == 1
+    assert materialized["unresolved_review_items"][0]["source_columns"] == ["TotalCharges"]
+    assert materialized["unresolved_review_items"][0]["review_status"] == (
+        "inferred_pending_review"
+    )
+
+
+def test_materialize_dataset_modeling_intent_reflects_recipe_approved_review_status(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _write_evidence_and_recipe(
+        tmp_repo,
+        recipe_overrides={
+            "transformations": [
+                {
+                    "transformation_type": "missing_value_handling",
+                    "description": "Drop rows with blank TotalCharges.",
+                    "source_columns": ["TotalCharges"],
+                    "target_columns": ["TotalCharges"],
+                    "reason": "Explicitly approved after human review.",
+                    "review_status": "explicit",
+                }
+            ],
+        },
+    )
+
+    materialized = materialize_dataset_modeling_intent(
+        _telco_shaped_modeling_intent(),
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+        preparation_recipe_relative_path="pipeline/evidence/telco-customer-churn/preparation-recipe.json",
+    )
+
+    assert materialized["blank_value_policy_candidates"]["TotalCharges"] == "explicit"
+    assert materialized["unresolved_review_items"] == []
+
+
+def test_materialize_dataset_modeling_intent_excludes_identifier_from_features_and_sets_evidence_policy(
+    tmp_path,
+):
+    tmp_repo = tmp_path / "repo"
+    tmp_repo.mkdir()
+
+    materialized = materialize_dataset_modeling_intent(
+        _telco_shaped_modeling_intent(),
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+    )
+
+    assert "customerID" not in materialized["initial_feature_candidates"]
+    assert materialized["target_intent"]["target_column"] == "Churn"
+    assert materialized["target_intent"]["positive_label_candidate"] == "Yes"
+    assert materialized["evidence_policy"] == {
+        "raw_logs_prohibited": True,
+        "raw_runtime_prohibited": True,
+        "raw_api_payloads_prohibited": True,
+        "secrets_prohibited": True,
+        "private_source_paths_prohibited": True,
+        "reduced_and_sanitized": True,
+    }
+    assert not any(materialized["modeling_intent_boundary_confirmations"].values())

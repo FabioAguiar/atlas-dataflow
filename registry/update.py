@@ -12,6 +12,16 @@ S0036), a new safe public entry is created from the promoted release's
 public-context.json rather than raising -- this is what makes a first-time
 promotion resolvable at GET /datasets/{slug} without a manual registry edit.
 
+Project Spec S0042 adds an explicit `mode` boundary so a promotion whose
+candidate/base dataset_slug collides with an already-registered entry can
+either intentionally update that existing entry (the historical default,
+`MODE_UPDATE_EXISTING_OR_CREATE`) or deterministically allocate a new,
+numbered public slug for a genuinely new Dataset Detail
+(`MODE_CREATE_NEW_DATASET_DETAIL`) without ever silently choosing between the
+two. `allocate_unique_dataset_slug()` is the reusable allocation boundary:
+smallest available `base`, `base1`, `base2`, ... considering only current
+registry entries, so removed/absent entries never reserve their old slug.
+
 Does NOT modify promotion-result.json.
 Does NOT produce a separate promotion-update document.
 Does NOT expose any HTTP endpoint. run() and main() are internal CLI only.
@@ -27,6 +37,10 @@ from registry.validate import RELEASE_ID_PATTERN, validate_registry
 
 
 DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+MODE_UPDATE_EXISTING_OR_CREATE = "update_existing_or_create"
+MODE_CREATE_NEW_DATASET_DETAIL = "create_new_dataset_detail"
+_VALID_MODES = (MODE_UPDATE_EXISTING_OR_CREATE, MODE_CREATE_NEW_DATASET_DETAIL)
 
 
 def _load_json_file(path: Path, label: str) -> dict:
@@ -121,17 +135,55 @@ def _read_optional_json_object(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _find_or_create_dataset_entry(
-    registry: dict, dataset_slug: str, release_dir: Path
-) -> tuple[dict, bool]:
-    """Return (entry, created) for dataset_slug, creating a safe new entry if absent."""
+def allocate_unique_dataset_slug(base_slug: str, registry: dict) -> str:
+    """Return the smallest available public dataset_slug for base_slug.
+
+    Considers only the current `registry['datasets']` entries -- a removed or
+    absent entry never reserves its previous slug, so gaps are always reused
+    deterministically. Returns base_slug unchanged when it is not already
+    present; otherwise returns base_slug with the lowest unused numeric
+    suffix and no separator (base1, base2, base3, ...).
+    """
+    datasets = registry.get("datasets")
+    existing_slugs = {
+        entry.get("dataset_slug")
+        for entry in (datasets if isinstance(datasets, list) else [])
+        if isinstance(entry, dict)
+    }
+
+    if base_slug not in existing_slugs:
+        return base_slug
+
+    suffix = 1
+    while f"{base_slug}{suffix}" in existing_slugs:
+        suffix += 1
+    return f"{base_slug}{suffix}"
+
+
+def _find_dataset_entry(registry: dict, dataset_slug: str) -> dict | None:
     datasets = registry.get("datasets")
     if not isinstance(datasets, list):
         raise RuntimeError("Registry is missing required list field 'datasets'.")
-
     for entry in datasets:
         if isinstance(entry, dict) and entry.get("dataset_slug") == dataset_slug:
-            return entry, False
+            return entry
+    return None
+
+
+def _find_entry_by_active_release(registry: dict, release_id: str) -> dict | None:
+    datasets = registry.get("datasets")
+    if not isinstance(datasets, list):
+        return None
+    for entry in datasets:
+        if isinstance(entry, dict) and entry.get("active_release") == release_id:
+            return entry
+    return None
+
+
+def _append_dataset_entry(registry: dict, dataset_slug: str, release_dir: Path) -> dict:
+    datasets = registry.get("datasets")
+    if not isinstance(datasets, list):
+        raise RuntimeError("Registry is missing required list field 'datasets'.")
 
     new_entry = {
         "dataset_slug": dataset_slug,
@@ -139,17 +191,64 @@ def _find_or_create_dataset_entry(
         "public_metadata": _derive_public_metadata(dataset_slug, release_dir),
     }
     datasets.append(new_entry)
-    return new_entry, True
+    return new_entry
 
 
-def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
+def _find_or_create_dataset_entry(
+    registry: dict, dataset_slug: str, release_dir: Path
+) -> tuple[dict, bool]:
+    """Return (entry, created) for dataset_slug, creating a safe new entry if absent."""
+    entry = _find_dataset_entry(registry, dataset_slug)
+    if entry is not None:
+        return entry, False
+    return _append_dataset_entry(registry, dataset_slug, release_dir), True
+
+
+def _apply_create_new_dataset_detail(
+    registry: dict, base_slug: str, release_id: str, release_dir: Path
+) -> tuple[dict, bool, str]:
+    """Apply MODE_CREATE_NEW_DATASET_DETAIL and return (entry, created, allocated_slug).
+
+    Idempotent for a repeated promotion of the same release: if a registry
+    entry already has active_release == release_id (this exact release was
+    already registered by a prior call), that entry is reused unchanged
+    instead of allocating a new suffix. Otherwise base_slug is allocated via
+    allocate_unique_dataset_slug() and a brand-new entry is appended --
+    an existing colliding entry's active_release is never touched.
+    """
+    existing_for_release = _find_entry_by_active_release(registry, release_id)
+    if existing_for_release is not None:
+        return existing_for_release, False, existing_for_release["dataset_slug"]
+
+    allocated_slug = allocate_unique_dataset_slug(base_slug, registry)
+    entry = _append_dataset_entry(registry, allocated_slug, release_dir)
+    return entry, True, allocated_slug
+
+
+def run(
+    result_path_or_run_dir: str,
+    repo_root: Path | None = None,
+    mode: str = MODE_UPDATE_EXISTING_OR_CREATE,
+) -> dict:
     """
     Apply the controlled registry active_release update.
 
     Accepts either a path to promotion-result.json or the containing run
     directory. Returns an informational dict and writes no artifact other than
     registry/datasets.json.previous and registry/datasets.json.
+
+    `mode` must be explicit -- MODE_UPDATE_EXISTING_OR_CREATE (default,
+    preserves the historical behavior: a colliding base dataset_slug updates
+    that existing entry's active_release) or MODE_CREATE_NEW_DATASET_DETAIL
+    (a colliding base dataset_slug never touches the existing entry; instead
+    allocate_unique_dataset_slug() allocates the next available numbered
+    public slug for a brand-new entry, idempotently for repeated promotions
+    of the same release). Any other value raises RuntimeError rather than
+    silently choosing between the two behaviors.
     """
+    if mode not in _VALID_MODES:
+        raise RuntimeError(f"Registry update halted: unknown mode {mode!r}.")
+
     if repo_root is None:
         repo_root = Path(__file__).parent.parent
     else:
@@ -174,9 +273,18 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
     backup_path = repo_root / "registry" / "datasets.json.previous"
 
     registry = _load_json_file(registry_path, "registry")
-    entry, created = _find_or_create_dataset_entry(registry, dataset_slug, release_dir)
-    previous_active_release_id = entry.get("active_release")
-    entry["active_release"] = release_id
+
+    if mode == MODE_CREATE_NEW_DATASET_DETAIL:
+        entry, created, allocated_slug = _apply_create_new_dataset_detail(
+            registry, dataset_slug, release_id, release_dir
+        )
+        previous_active_release_id = entry.get("active_release")
+        entry["active_release"] = release_id
+    else:
+        entry, created = _find_or_create_dataset_entry(registry, dataset_slug, release_dir)
+        allocated_slug = dataset_slug
+        previous_active_release_id = entry.get("active_release")
+        entry["active_release"] = release_id
 
     validation = validate_registry(registry)
     if validation.get("valid") is not True:
@@ -195,9 +303,11 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
     print(f"previous_active_release: {previous_display}")
     print(f"new_active_release: {release_id}")
     print(f"dataset_slug: {dataset_slug}")
+    print(f"allocated_dataset_slug: {allocated_slug}")
 
     return {
         "dataset_slug": dataset_slug,
+        "allocated_dataset_slug": allocated_slug,
         "release_id": release_id,
         "previous_active_release_id": previous_active_release_id,
         "update_applied": True,

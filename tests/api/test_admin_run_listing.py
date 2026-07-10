@@ -29,6 +29,7 @@ sys.path.insert(0, str(API_ROOT))
 import admin_runs  # noqa: E402
 import main as api_main  # noqa: E402
 from fastapi import Request  # noqa: E402
+from registry import update as registry_update  # noqa: E402
 from registry.resolve import resolve_dataset  # noqa: E402
 from registry.validate import validate_registry  # noqa: E402
 
@@ -730,6 +731,7 @@ def test_promote_admin_run_creates_new_registry_entry_from_public_context(tmp_pa
         "dataset_slug": "new-dataset",
         "release_id": "release-20260710t101438z",
         "registry_action": "created",
+        "public_dataset_slug": "new-dataset",
         "errors": [],
     }
 
@@ -790,6 +792,111 @@ def test_promote_admin_run_updates_existing_registry_entry(tmp_path):
     entry = registry["datasets"][0]
     assert entry["active_release"] == "release-20260710t101438z"
     assert entry["public_metadata"]["title"] == "Existing Dataset"
+
+
+def test_promote_admin_run_create_new_mode_allocates_numbered_slug_and_preserves_existing_entry(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    existing_entry = {
+        "dataset_slug": "telco-customer-churn",
+        "active_release": "release-20260601-001",
+        "public_metadata": {
+            "title": "Telco Customer Churn",
+            "summary": "Already published.",
+            "domain": "telco",
+            "visibility": "public",
+            "tags": ["telco"],
+        },
+    }
+    _write_promotable_run(
+        root,
+        repo_root,
+        "promote-new-detail",
+        "telco-customer-churn",
+        "release-20260710t101438z",
+        registry_entries=[existing_entry],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run(
+            "promote-new-detail", mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+        )
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is True
+    assert result["dataset_slug"] == "telco-customer-churn"
+    assert result["registry_action"] == "created"
+    assert result["public_dataset_slug"] == "telco-customer-churn1"
+
+    registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+    assert len(registry["datasets"]) == 2
+    original_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn")
+    assert original_entry["active_release"] == "release-20260601-001"
+    new_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn1")
+    assert new_entry["active_release"] == "release-20260710t101438z"
+    _assert_no_private_markers(result)
+    _assert_no_private_markers(new_entry)
+
+
+def test_promote_admin_run_create_new_mode_is_idempotent_on_retry(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    existing_entry = {
+        "dataset_slug": "telco-customer-churn",
+        "active_release": "release-20260601-001",
+        "public_metadata": {
+            "title": "Telco Customer Churn",
+            "summary": "Already published.",
+            "domain": "telco",
+            "visibility": "public",
+            "tags": ["telco"],
+        },
+    }
+    _write_promotable_run(
+        root,
+        repo_root,
+        "promote-new-detail-retry",
+        "telco-customer-churn",
+        "release-20260710t101438z",
+        registry_entries=[existing_entry],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        first = admin_runs.promote_admin_run(
+            "promote-new-detail-retry", mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+        )
+        second = admin_runs.promote_admin_run(
+            "promote-new-detail-retry", mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+        )
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert first["public_dataset_slug"] == "telco-customer-churn1"
+    assert second["public_dataset_slug"] == "telco-customer-churn1"
+
+    registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+    matching = [e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn1"]
+    assert len(matching) == 1
+
+
+def test_promote_admin_run_rejects_unrecognized_mode():
+    result = admin_runs.promote_admin_run("any-run", mode="not_a_real_mode")
+    assert result["promoted"] is False
+    assert result["errors"][0]["code"] == "PROMOTION_MODE_INVALID"
+    assert result["public_dataset_slug"] is None
 
 
 def test_promote_admin_run_repeated_call_reuses_existing_promotion_safely(tmp_path):

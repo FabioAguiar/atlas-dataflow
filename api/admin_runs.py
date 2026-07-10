@@ -55,6 +55,20 @@ _REGISTRY_UPDATE_FAILED_ERROR = {
     "field": None,
     "message": "The dataset registry could not be updated after promotion.",
 }
+_PROMOTION_MODE_INVALID_ERROR = {
+    "code": "PROMOTION_MODE_INVALID",
+    "field": "mode",
+    "message": "The requested promotion mode is not recognized.",
+}
+
+# Project Spec S0042: an explicit mode is always required so a colliding base
+# dataset_slug never silently decides between updating the existing Dataset
+# Detail and allocating a new one. Defaults to the historical
+# update-or-create behavior so existing callers/tests are unaffected.
+_VALID_PROMOTION_MODES = (
+    registry_update.MODE_UPDATE_EXISTING_OR_CREATE,
+    registry_update.MODE_CREATE_NEW_DATASET_DETAIL,
+)
 
 # contracts/admin-run-summary.schema.json's validation_summary.outcome enum.
 _VALIDATION_OUTCOME_MAP = {
@@ -305,16 +319,19 @@ def _promotion_failure_result(run_id: str, error: dict) -> dict:
         "dataset_slug": None,
         "release_id": None,
         "registry_action": None,
+        "public_dataset_slug": None,
         "errors": [error],
     }
 
 
-def promote_admin_run(run_id: str) -> dict:
+def promote_admin_run(
+    run_id: str, mode: str = registry_update.MODE_UPDATE_EXISTING_OR_CREATE
+) -> dict:
     """Promote exactly one accepted, promotion-eligible run into a public release.
 
     Returns {"run_id", "promoted": bool, "dataset_slug": str|None,
     "release_id": str|None, "registry_action": "created"|"updated"|None,
-    "errors": [...]}.
+    "public_dataset_slug": str|None, "errors": [...]}.
 
     Gates on the run's own validation-result.json: validation_outcome must be
     "accepted" and promotion_gate.promotion_allowed must be exactly True --
@@ -323,13 +340,27 @@ def promote_admin_run(run_id: str) -> dict:
     already-promoted run's existing promotion-result.json once its manifest is
     confirmed to still match the promoted release, so a repeated Promote click
     is a safe no-op instead of publisher/promote.py's "already exists"
-    failure. If the dataset_slug is not yet in the registry, registry/update.py
-    creates a safe public entry from the promoted release's public context;
-    otherwise the existing entry's active_release is updated. Never raises for
-    an invalid run id, missing run, ineligible run, or a downstream promotion/
-    registry failure -- those are reported as a non-promoted result with a
-    reduced error instead.
+    failure.
+
+    `mode` (Project Spec S0042) is forwarded to registry/update.py and defaults
+    to the historical update-or-create behavior: if the base dataset_slug is
+    not yet in the registry, a safe public entry is created from the promoted
+    release's public context; otherwise the existing entry's active_release is
+    updated. Passing registry_update.MODE_CREATE_NEW_DATASET_DETAIL instead
+    treats a colliding base dataset_slug as a brand-new Dataset Detail and
+    allocates the next available numbered public slug without touching the
+    existing entry. An unrecognized mode is rejected with a structured
+    failure rather than silently choosing a behavior. `public_dataset_slug`
+    always reports the final allocated registry slug (equal to `dataset_slug`
+    unless a numbered slug was allocated), so callers can distinguish the
+    candidate/base slug from the actual public one. Never raises for an
+    invalid run id, missing run, ineligible run, invalid mode, or a downstream
+    promotion/registry failure -- those are reported as a non-promoted result
+    with a reduced error instead.
     """
+    if mode not in _VALID_PROMOTION_MODES:
+        return _promotion_failure_result(run_id, _PROMOTION_MODE_INVALID_ERROR)
+
     validity_error = _run_id_validation_error(run_id)
     if validity_error is not None:
         return _promotion_failure_result(run_id, validity_error)
@@ -371,7 +402,7 @@ def promote_admin_run(run_id: str) -> dict:
             return _promotion_failure_result(run_id, _PROMOTION_FAILED_ERROR)
 
     try:
-        registry_result = registry_update.run(str(run_dir), repo_root=_REPO_ROOT)
+        registry_result = registry_update.run(str(run_dir), repo_root=_REPO_ROOT, mode=mode)
     except (RuntimeError, ValueError):
         return _promotion_failure_result(run_id, _REGISTRY_UPDATE_FAILED_ERROR)
 
@@ -382,5 +413,6 @@ def promote_admin_run(run_id: str) -> dict:
         "dataset_slug": candidate_identity.get("dataset_slug"),
         "release_id": candidate_identity.get("release_id"),
         "registry_action": "created" if registry_result.get("dataset_entry_created") else "updated",
+        "public_dataset_slug": registry_result.get("allocated_dataset_slug"),
         "errors": [],
     }

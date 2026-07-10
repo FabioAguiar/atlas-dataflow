@@ -279,6 +279,133 @@ def test_registry_update_uses_temporary_registry_only(tmp_path):
     assert (tmp_repo / "registry" / "datasets.json.previous").is_file()
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0043: slug collision/reuse coverage through the full
+# validate -> manifest -> promote -> registry_update pipeline. Complements
+# the unit-level allocate_unique_dataset_slug() coverage in
+# tests/registry/test_registry_validation.py and the admin_runs.py-mocked
+# coverage in tests/api/test_admin_run_listing.py by exercising the real
+# publisher artifact copy + registry write path end to end.
+# ---------------------------------------------------------------------------
+
+
+def _write_registry_with_datasets(tmp_repo: Path, datasets: list) -> None:
+    registry_dir = tmp_repo / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    registry = {
+        "schema_version": "atlas.dataflow.registry.v1",
+        "conventions": {
+            "dataset_slug": {
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                "description": "Stable dataset identifier.",
+            },
+            "release_id": {
+                "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+                "description": "Stable release identifier.",
+            },
+            "active_release": {
+                "description": "Release currently served for the dataset.",
+            },
+        },
+        "datasets": datasets,
+    }
+    (registry_dir / "datasets.json").write_text(
+        json.dumps(registry, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _dataset_entry(slug: str, active_release: str) -> dict:
+    return {
+        "dataset_slug": slug,
+        "active_release": active_release,
+        "public_metadata": {
+            "title": "Example Dataset",
+            "summary": "Publisher flow fixture.",
+            "domain": "example",
+            "visibility": "public",
+            "tags": ["example", "publisher"],
+        },
+    }
+
+
+def _validate_manifest_promote(tmp_repo: Path) -> Path:
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+    manifest.run(str(run_dir), repo_root=tmp_repo)
+    promote.run(str(run_dir), repo_root=tmp_repo)
+    return run_dir
+
+
+def test_create_new_dataset_detail_mode_allocates_numbered_slug_and_preserves_existing_entry(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry_with_datasets(tmp_repo, [_dataset_entry(DATASET_SLUG, PREVIOUS_RELEASE_ID)])
+    _write_candidate(tmp_repo)
+
+    run_dir = _validate_manifest_promote(tmp_repo)
+    registry_result = registry_update.run(
+        str(run_dir), repo_root=tmp_repo, mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+    )
+
+    assert registry_result["dataset_slug"] == DATASET_SLUG
+    assert registry_result["allocated_dataset_slug"] == f"{DATASET_SLUG}1"
+
+    registry_after = json.loads((tmp_repo / "registry" / "datasets.json").read_text())
+    assert len(registry_after["datasets"]) == 2
+    original = next(e for e in registry_after["datasets"] if e["dataset_slug"] == DATASET_SLUG)
+    assert original["active_release"] == PREVIOUS_RELEASE_ID
+    created = next(e for e in registry_after["datasets"] if e["dataset_slug"] == f"{DATASET_SLUG}1")
+    assert created["active_release"] == RELEASE_ID
+
+
+def test_create_new_dataset_detail_mode_retry_reuses_same_allocated_slug(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry_with_datasets(tmp_repo, [_dataset_entry(DATASET_SLUG, PREVIOUS_RELEASE_ID)])
+    _write_candidate(tmp_repo)
+
+    run_dir = _validate_manifest_promote(tmp_repo)
+
+    first = registry_update.run(
+        str(run_dir), repo_root=tmp_repo, mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+    )
+    second = registry_update.run(
+        str(run_dir), repo_root=tmp_repo, mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+    )
+
+    assert first["allocated_dataset_slug"] == f"{DATASET_SLUG}1"
+    assert second["allocated_dataset_slug"] == f"{DATASET_SLUG}1"
+
+    registry_after = json.loads((tmp_repo / "registry" / "datasets.json").read_text())
+    matching = [e for e in registry_after["datasets"] if e["dataset_slug"] == f"{DATASET_SLUG}1"]
+    assert len(matching) == 1
+
+
+def test_create_new_dataset_detail_mode_reuses_slug_absent_from_current_registry(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    # Simulates a Dataset Detail whose slug was previously used and later
+    # removed from the registry: DATASET_SLUG itself is absent from the
+    # current fixture even though a numbered sibling remains, so history
+    # must not reserve it -- it must allocate like a never-used slug.
+    _write_registry_with_datasets(
+        tmp_repo, [_dataset_entry(f"{DATASET_SLUG}2", "release-20260610-001")]
+    )
+    _write_candidate(tmp_repo)
+
+    run_dir = _validate_manifest_promote(tmp_repo)
+    registry_result = registry_update.run(
+        str(run_dir), repo_root=tmp_repo, mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+    )
+
+    assert registry_result["allocated_dataset_slug"] == DATASET_SLUG
+
+    registry_after = json.loads((tmp_repo / "registry" / "datasets.json").read_text())
+    slugs = {e["dataset_slug"] for e in registry_after["datasets"]}
+    assert slugs == {DATASET_SLUG, f"{DATASET_SLUG}2"}
+
+
 def test_evidence_requires_schema_validation_before_write(tmp_path, monkeypatch):
     tmp_repo = _prepare_tmp_repo(tmp_path)
     validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)

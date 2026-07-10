@@ -17,6 +17,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from registry.update import allocate_unique_dataset_slug  # noqa: E402
 from registry.validate import validate_registry, validate_registry_file  # noqa: E402
 
 VALID_DIR = Path(__file__).parent / "valid"
@@ -152,6 +153,51 @@ def test_error_messages_contain_no_filesystem_paths():
 
 
 # ---------------------------------------------------------------------------
+# allocate_unique_dataset_slug (Project Spec S0042)
+# ---------------------------------------------------------------------------
+
+def _registry_with_slugs(*slugs: str) -> dict:
+    return {
+        "schema_version": "atlas.dataflow.registry.v1",
+        "datasets": [{"dataset_slug": slug} for slug in slugs],
+    }
+
+
+def test_allocate_unique_dataset_slug_empty_registry_returns_base():
+    registry = _registry_with_slugs()
+    assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn"
+
+
+def test_allocate_unique_dataset_slug_returns_base_when_free():
+    registry = _registry_with_slugs("bank-marketing")
+    assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn"
+
+
+def test_allocate_unique_dataset_slug_uses_suffix_one_when_base_taken():
+    registry = _registry_with_slugs("telco-customer-churn")
+    assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn1"
+
+
+def test_allocate_unique_dataset_slug_uses_suffix_two_when_base_and_one_taken():
+    registry = _registry_with_slugs("telco-customer-churn", "telco-customer-churn1")
+    assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn2"
+
+
+def test_allocate_unique_dataset_slug_reuses_gap_deterministically():
+    registry = _registry_with_slugs("telco-customer-churn", "telco-customer-churn2")
+    assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn1"
+
+
+def test_allocate_unique_dataset_slug_ignores_absent_removed_entries():
+    # A slug that is simply not present in the current registry (e.g. because
+    # its Dataset Detail was removed) must be treated as available, never as
+    # permanently reserved.
+    registry = _registry_with_slugs("telco-customer-churn2")
+    assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn"
+    assert allocate_unique_dataset_slug("telco-customer-churn2", registry) == "telco-customer-churn21"
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 
@@ -168,6 +214,12 @@ if __name__ == "__main__":
         test_invalid_slug_format_rejected,
         test_non_public_visibility_rejected,
         test_error_messages_contain_no_filesystem_paths,
+        test_allocate_unique_dataset_slug_empty_registry_returns_base,
+        test_allocate_unique_dataset_slug_returns_base_when_free,
+        test_allocate_unique_dataset_slug_uses_suffix_one_when_base_taken,
+        test_allocate_unique_dataset_slug_uses_suffix_two_when_base_and_one_taken,
+        test_allocate_unique_dataset_slug_reuses_gap_deterministically,
+        test_allocate_unique_dataset_slug_ignores_absent_removed_entries,
     ]
     passed = 0
     failed = 0

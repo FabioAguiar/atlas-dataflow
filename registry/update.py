@@ -44,6 +44,17 @@ api/admin_runs.py's _promotion_summary_from() naturally re-derives
 registry_bound: false for any run that was promoted to the removed release
 (Project Spec S0048), making that run promotable again without either
 module needing to know about the other's removal-specific logic.
+
+Project Spec S0051 adds rename_dataset_slug(): a safe Dataset Detail slug
+rename boundary that changes only the matching entry's dataset_slug field in
+registry/datasets.json (the same backup/validate/write sequence run() and
+remove_dataset_entry() use), never touching active_release, public_metadata,
+releases/, publisher/runs/, contracts, notebooks, model artifacts, profile
+artifacts, evidence, or support-root files. Rejects an invalid source or
+target slug format, a target slug that collides with another entry, a
+no-op (unchanged) rename, and a rename of a source slug that has no
+matching entry -- mirroring remove_dataset_entry()'s never-raise,
+structured-error contract.
 """
 
 import json
@@ -88,6 +99,23 @@ REGISTRY_WRITE_FAILED_ERROR = {
     "code": "REGISTRY_WRITE_FAILED",
     "field": None,
     "message": "The registry could not be written.",
+}
+
+# Project Spec S0051: reduced, sanitized errors for rename_dataset_slug().
+NEW_DATASET_SLUG_INVALID_ERROR = {
+    "code": "NEW_DATASET_SLUG_INVALID",
+    "field": "new_dataset_slug",
+    "message": "The new_dataset_slug is missing or does not match the required pattern.",
+}
+DATASET_SLUG_UNCHANGED_ERROR = {
+    "code": "DATASET_SLUG_UNCHANGED",
+    "field": "new_dataset_slug",
+    "message": "The new_dataset_slug must differ from the current dataset_slug.",
+}
+DATASET_SLUG_ALREADY_EXISTS_ERROR = {
+    "code": "DATASET_SLUG_ALREADY_EXISTS",
+    "field": "new_dataset_slug",
+    "message": "Another Dataset Detail already uses this dataset_slug.",
 }
 
 
@@ -488,6 +516,139 @@ def remove_dataset_entry(dataset_slug: str, repo_root: Path | None = None) -> di
         "dataset_slug": dataset_slug,
         "removed": True,
         "previous_active_release": previous_active_release if isinstance(previous_active_release, str) else None,
+        "errors": [],
+    }
+
+
+def rename_dataset_slug(
+    dataset_slug: str, new_dataset_slug: str, repo_root: Path | None = None
+) -> dict:
+    """Rename exactly one dataset entry's dataset_slug in registry/datasets.json.
+
+    Changes only the matching entry's dataset_slug field -- active_release,
+    public_metadata, and every other entry are left byte-for-byte unchanged.
+    Uses the same validate-before-write/backup sequence as run() and
+    remove_dataset_entry(). Never touches releases/, publisher/runs/,
+    contracts, notebooks, model artifacts, profile artifacts, evidence, or
+    support-root files -- this function never reads or writes any path other
+    than the registry file and its backup.
+
+    Returns {"dataset_slug": str, "new_dataset_slug": str, "renamed": bool,
+    "errors": [...]}, where errors is a list of {"code", "field", "message"}
+    entries. Never raises: an invalid source or target slug format, a target
+    slug that duplicates another entry, a no-op (unchanged) rename, an
+    absent source entry, an unreadable registry, a post-rename validation
+    failure, or a filesystem write failure are all reported as a
+    non-renamed result with a reduced, sanitized error instead. The
+    registry is left byte-for-byte untouched on every non-renamed outcome.
+    """
+    if not isinstance(dataset_slug, str) or not DATASET_SLUG_PATTERN.match(dataset_slug):
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [DATASET_SLUG_INVALID_ERROR],
+        }
+
+    if not isinstance(new_dataset_slug, str) or not DATASET_SLUG_PATTERN.match(new_dataset_slug):
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [NEW_DATASET_SLUG_INVALID_ERROR],
+        }
+
+    if new_dataset_slug == dataset_slug:
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [DATASET_SLUG_UNCHANGED_ERROR],
+        }
+
+    if repo_root is None:
+        repo_root = Path(__file__).parent.parent
+    else:
+        repo_root = Path(repo_root)
+
+    registry_path = repo_root / "registry" / "datasets.json"
+    backup_path = repo_root / "registry" / "datasets.json.previous"
+
+    try:
+        registry = _load_json_file(registry_path, "registry")
+    except RuntimeError:
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [REGISTRY_UNAVAILABLE_ERROR],
+        }
+
+    datasets = registry.get("datasets")
+    if not isinstance(datasets, list):
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [DATASET_DETAIL_NOT_FOUND_ERROR],
+        }
+
+    target_entry = None
+    duplicate_exists = False
+    for entry in datasets:
+        if not isinstance(entry, dict):
+            continue
+        slug = entry.get("dataset_slug")
+        if slug == dataset_slug:
+            target_entry = entry
+        elif slug == new_dataset_slug:
+            duplicate_exists = True
+
+    if target_entry is None:
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [DATASET_DETAIL_NOT_FOUND_ERROR],
+        }
+
+    if duplicate_exists:
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [DATASET_SLUG_ALREADY_EXISTS_ERROR],
+        }
+
+    target_entry["dataset_slug"] = new_dataset_slug
+
+    validation = validate_registry(registry)
+    if validation.get("valid") is not True:
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [REGISTRY_VALIDATION_FAILED_ERROR],
+        }
+
+    try:
+        shutil.copy2(registry_path, backup_path)
+        registry_path.write_text(
+            json.dumps(registry, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [REGISTRY_WRITE_FAILED_ERROR],
+        }
+
+    return {
+        "dataset_slug": dataset_slug,
+        "new_dataset_slug": new_dataset_slug,
+        "renamed": True,
         "errors": [],
     }
 

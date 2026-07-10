@@ -87,6 +87,22 @@ type DatasetDetailRemovalState =
   | { status: "removing"; slug: string }
   | { status: "error"; slug: string; message: string };
 
+// Project Spec S0051: mirrors registry/validate.py's DATASET_SLUG_PATTERN
+// exactly, so client-side validation and the backend agree on what a valid
+// dataset_slug looks like.
+const DATASET_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function isValidDatasetSlug(value: string): boolean {
+  return DATASET_SLUG_PATTERN.test(value);
+}
+
+type DatasetSlugSaveState =
+  | { status: "idle" }
+  | { status: "saving"; originalSlug: string }
+  | { status: "duplicate"; originalSlug: string; attemptedSlug: string }
+  | { status: "invalid"; originalSlug: string; attemptedSlug: string }
+  | { status: "error"; originalSlug: string; message: string };
+
 type RunPromotionEntry =
   | { status: "promoting" }
   | {
@@ -261,10 +277,6 @@ const disabledIntentButtonStyle: CSSProperties = {
   width: "fit-content",
 };
 
-const actionButtonStyle: CSSProperties = {
-  width: "fit-content",
-};
-
 // Project Spec S0050: Promoted/Promote and Remove must occupy the same,
 // fixed width in the Runs card so the two actions stay visually aligned
 // regardless of label length or enabled/disabled state.
@@ -273,6 +285,17 @@ const runActionButtonStyle: CSSProperties = {
 };
 
 const disabledRunActionButtonStyle: CSSProperties = {
+  ...disabledIntentButtonStyle,
+  width: "7rem",
+};
+
+// Project Spec S0051: Save and Remove must occupy the same, fixed width in
+// the Dataset Details card, mirroring the S0050 Runs-card convention above.
+const datasetActionButtonStyle: CSSProperties = {
+  width: "7rem",
+};
+
+const disabledDatasetActionButtonStyle: CSSProperties = {
   ...disabledIntentButtonStyle,
   width: "7rem",
 };
@@ -719,6 +742,8 @@ export default function DashboardPage() {
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
   const [datasetRemovalState, setDatasetRemovalState] = useState<DatasetDetailRemovalState>({ status: "idle" });
+  const [datasetSlugEdits, setDatasetSlugEdits] = useState<Record<string, string>>({});
+  const [datasetSlugSaveState, setDatasetSlugSaveState] = useState<DatasetSlugSaveState>({ status: "idle" });
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
   const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
   const [promotedInfoModalState, setPromotedInfoModalState] = useState<PromotedInfoModalState>({ status: "idle" });
@@ -943,6 +968,84 @@ export default function DashboardPage() {
       });
   }
 
+  function handleDatasetSlugInputChange(originalSlug: string, rawValue: string) {
+    // Project Spec S0051: an edit that would make the slug exactly equal to
+    // another existing Dataset Detail's slug is reverted (ignored) rather
+    // than committed to state -- the original slug for the row being
+    // edited is explicitly excluded from this check.
+    const wouldDuplicateAnotherEntry =
+      rawValue !== originalSlug &&
+      registryDatasets !== null &&
+      registryDatasets.some((dataset) => dataset.dataset_slug === rawValue);
+
+    if (wouldDuplicateAnotherEntry) {
+      return;
+    }
+
+    setDatasetSlugEdits((previous) => ({ ...previous, [originalSlug]: rawValue }));
+  }
+
+  function closeDatasetSlugFeedback() {
+    setDatasetSlugSaveState({ status: "idle" });
+  }
+
+  function saveDatasetSlug(originalSlug: string, newSlug: string) {
+    setDatasetSlugSaveState({ status: "saving", originalSlug });
+
+    // Project Spec S0051: Save persists only the slug rename intent, through
+    // a dedicated private Admin route distinct from DELETE
+    // /admin/datasets/{dataset_slug} (full removal) and
+    // POST /admin/runs/{run_id}/promote (unrelated to Dataset Detail edits).
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(originalSlug)}/slug`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_dataset_slug: newSlug }),
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          setDatasetSlugSaveState({ status: "idle" });
+          setDatasetSlugEdits((previous) => {
+            const next = { ...previous };
+            delete next[originalSlug];
+            return next;
+          });
+          loadDatasetRegistry();
+          return;
+        }
+
+        let errorCode: string | null = null;
+        try {
+          const body = (await res.json()) as { errors?: Array<{ code?: string }> };
+          errorCode = Array.isArray(body.errors) && body.errors[0]?.code ? body.errors[0].code ?? null : null;
+        } catch {
+          errorCode = null;
+        }
+
+        if (errorCode === "DATASET_SLUG_ALREADY_EXISTS") {
+          setDatasetSlugSaveState({ status: "duplicate", originalSlug, attemptedSlug: newSlug });
+          return;
+        }
+
+        if (errorCode === "NEW_DATASET_SLUG_INVALID" || errorCode === "DATASET_SLUG_UNCHANGED") {
+          setDatasetSlugSaveState({ status: "invalid", originalSlug, attemptedSlug: newSlug });
+          return;
+        }
+
+        setDatasetSlugSaveState({
+          status: "error",
+          originalSlug,
+          message: "The Dataset Detail slug could not be saved. Confirm it is still registry-backed and try again.",
+        });
+      })
+      .catch(() => {
+        setDatasetSlugSaveState({
+          status: "error",
+          originalSlug,
+          message: "The Dataset Detail slug could not be saved. Check private admin API reachability.",
+        });
+      });
+  }
+
   function promoteRun(runId: string) {
     setPromotionState((previous) => ({ ...previous, [runId]: { status: "promoting" } }));
 
@@ -1159,57 +1262,109 @@ export default function DashboardPage() {
                       <span role="columnheader">Actions</span>
                     </div>
 
-                    {filteredDatasetRows.map((row) => (
-                      <TableRow key={row.displayName}>
-                        <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
-                          <input
-                            aria-label={`${row.displayName} display name`}
-                            defaultValue={row.displayName}
-                            style={slugInputStyle}
-                            type="text"
-                          />
-                          <input
-                            aria-label={`${row.displayName} slug`}
-                            defaultValue={row.slug}
-                            style={slugInputStyle}
-                            type="text"
-                          />
-                          <StatusPill tone="warning">Unavailable</StatusPill>
-                          <span>{formatCreatedAt(row.lastUpdated)}</span>
-                          <span style={stackedActionGroupStyle}>
-                            <Button
-                              data-dataset-action="save-disabled"
+                    {filteredDatasetRows.map((row) => {
+                      const editedSlug = datasetSlugEdits[row.slug] ?? row.slug;
+                      const isSlugChanged = editedSlug !== row.slug;
+                      const isSlugFormatValid = isValidDatasetSlug(editedSlug);
+                      const isSlugDuplicate =
+                        isSlugChanged &&
+                        registryDatasets !== null &&
+                        registryDatasets.some((dataset) => dataset.dataset_slug === editedSlug);
+                      const isSavingThisRow =
+                        datasetSlugSaveState.status === "saving" && datasetSlugSaveState.originalSlug === row.slug;
+                      const saveEligible =
+                        row.isRegistryBacked && isSlugChanged && isSlugFormatValid && !isSlugDuplicate && !isSavingThisRow;
+                      const rowSlugStatus = !row.isRegistryBacked
+                        ? "read-only"
+                        : !isSlugChanged
+                          ? "unchanged"
+                          : !isSlugFormatValid
+                            ? "invalid-format"
+                            : isSlugDuplicate
+                              ? "duplicate"
+                              : "valid";
+                      const rowSlugError =
+                        datasetSlugSaveState.status === "error" && datasetSlugSaveState.originalSlug === row.slug
+                          ? datasetSlugSaveState.message
+                          : null;
+
+                      return (
+                        <TableRow
+                          key={row.displayName}
+                          meta={
+                            rowSlugError && (
+                              <span role="alert" style={mutedTextStyle}>
+                                {rowSlugError}
+                              </span>
+                            )
+                          }
+                        >
+                          <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
+                            <input
+                              aria-label={`${row.displayName} display name`}
+                              defaultValue={row.displayName}
                               disabled
-                              style={disabledIntentButtonStyle}
-                              title="Save remains disabled until a safe owned API exists."
-                              variant="secondary"
-                            >
-                              <span aria-hidden="true" style={actionIconStyle}>
-                                <SaveActionIcon />
-                              </span>
-                              Save
-                            </Button>
-                            <Button
-                              data-dataset-action={row.isRegistryBacked ? "remove" : "remove-disabled"}
+                              style={slugInputStyle}
+                              type="text"
+                            />
+                            <input
+                              aria-invalid={row.isRegistryBacked && isSlugChanged && (!isSlugFormatValid || isSlugDuplicate)}
+                              aria-label={`${row.displayName} slug`}
+                              data-dataset-slug-status={rowSlugStatus}
                               disabled={!row.isRegistryBacked}
-                              onClick={() => openRemoveDatasetConfirmation(row.slug)}
-                              style={row.isRegistryBacked ? actionButtonStyle : disabledIntentButtonStyle}
-                              title={
-                                row.isRegistryBacked
-                                  ? "Remove this Dataset Detail from the active registry/public listing. Release artifacts and publisher run history are preserved."
-                                  : "Remove is only available for registry-backed Dataset Details."
-                              }
-                              variant="secondary"
-                            >
-                              <span aria-hidden="true" style={actionIconStyle}>
-                                <RemoveActionIcon />
-                              </span>
-                              Remove
-                            </Button>
-                          </span>
-                        </div>
-                      </TableRow>
-                    ))}
+                              onChange={(event) => handleDatasetSlugInputChange(row.slug, event.target.value)}
+                              style={slugInputStyle}
+                              type="text"
+                              value={editedSlug}
+                            />
+                            <StatusPill tone="warning">Unavailable</StatusPill>
+                            <span>{formatCreatedAt(row.lastUpdated)}</span>
+                            <span style={stackedActionGroupStyle}>
+                              <Button
+                                data-dataset-action={saveEligible ? "save" : "save-disabled"}
+                                disabled={!saveEligible}
+                                onClick={() => saveDatasetSlug(row.slug, editedSlug)}
+                                style={saveEligible ? datasetActionButtonStyle : disabledDatasetActionButtonStyle}
+                                title={
+                                  !row.isRegistryBacked
+                                    ? "Save is only available for registry-backed Dataset Details."
+                                    : !isSlugChanged
+                                      ? "Save is disabled until the slug is changed."
+                                      : !isSlugFormatValid
+                                        ? "The slug must use only lowercase letters, numbers, and single hyphens between segments."
+                                        : isSlugDuplicate
+                                          ? "This slug is already used by another Dataset Detail."
+                                          : "Save the updated slug for this Dataset Detail."
+                                }
+                                variant="secondary"
+                              >
+                                <span aria-hidden="true" style={actionIconStyle}>
+                                  <SaveActionIcon />
+                                </span>
+                                {isSavingThisRow ? "Saving..." : "Save"}
+                              </Button>
+                              <Button
+                                data-dataset-action={row.isRegistryBacked ? "remove" : "remove-disabled"}
+                                disabled={!row.isRegistryBacked}
+                                onClick={() => openRemoveDatasetConfirmation(row.slug)}
+                                style={row.isRegistryBacked ? datasetActionButtonStyle : disabledDatasetActionButtonStyle}
+                                title={
+                                  row.isRegistryBacked
+                                    ? "Remove this Dataset Detail from the active registry/public listing. Release artifacts and publisher run history are preserved."
+                                    : "Remove is only available for registry-backed Dataset Details."
+                                }
+                                variant="secondary"
+                              >
+                                <span aria-hidden="true" style={actionIconStyle}>
+                                  <RemoveActionIcon />
+                                </span>
+                                Remove
+                              </Button>
+                            </span>
+                          </div>
+                        </TableRow>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1451,6 +1606,44 @@ export default function DashboardPage() {
                 onClick={() => confirmRemoveDataset(datasetRemovalState.slug)}
               >
                 {datasetRemovalState.status === "removing" ? "Removing..." : "Remove Dataset Detail"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {datasetSlugSaveState.status === "duplicate" && (
+        <div style={modalBackdropStyle}>
+          <Card aria-labelledby="dataset-slug-duplicate-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
+            <h2 id="dataset-slug-duplicate-modal-title" style={cardTitleStyle}>
+              Slug "{datasetSlugSaveState.attemptedSlug}" is already in use
+            </h2>
+            <p style={{ margin: 0 }}>
+              Two Dataset Details cannot use the same slug. Choose a different slug for{" "}
+              <strong>{datasetSlugSaveState.originalSlug}</strong> and save again.
+            </p>
+            <div style={modalActionsStyle}>
+              <Button onClick={closeDatasetSlugFeedback} variant="secondary">
+                Close
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {datasetSlugSaveState.status === "invalid" && (
+        <div style={modalBackdropStyle}>
+          <Card aria-labelledby="dataset-slug-invalid-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
+            <h2 id="dataset-slug-invalid-modal-title" style={cardTitleStyle}>
+              Slug "{datasetSlugSaveState.attemptedSlug}" is not valid
+            </h2>
+            <p style={{ margin: 0 }}>
+              A Dataset Detail slug must use only lowercase letters, numbers, and single hyphens between segments,
+              and it must differ from the current slug.
+            </p>
+            <div style={modalActionsStyle}>
+              <Button onClick={closeDatasetSlugFeedback} variant="secondary">
+                Close
               </Button>
             </div>
           </Card>

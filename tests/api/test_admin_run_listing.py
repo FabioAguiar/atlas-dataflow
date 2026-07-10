@@ -2320,6 +2320,170 @@ def test_delete_dataset_route_frees_slug_for_create_new_promotion(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# PUT /admin/datasets/{dataset_slug}/slug: access-control boundary and safe
+# Dataset Detail slug rename lifecycle (Project Spec S0051)
+# ---------------------------------------------------------------------------
+
+def _make_dataset_slug_put_request(dataset_slug: str, headers: dict[str, str]) -> Request:
+    encoded_headers = [
+        (key.lower().encode("latin-1"), value.encode("latin-1"))
+        for key, value in headers.items()
+    ]
+    scope = {
+        "type": "http",
+        "method": "PUT",
+        "path": f"/admin/datasets/{dataset_slug}/slug",
+        "headers": encoded_headers,
+    }
+    return Request(scope)
+
+
+def test_put_dataset_slug_route_returns_generic_not_found_when_admin_runtime_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    request = _make_dataset_slug_put_request("telco-customer-churn", {})
+    response = api_main.put_admin_dataset_detail_slug(
+        "telco-customer-churn", request, {"new_dataset_slug": "telco-churn-renamed"}
+    )
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_put_dataset_slug_route_renames_only_matching_registry_entry(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    repo_root = tmp_path / "repo"
+    _write_registry(repo_root, [dict(_TELCO_REGISTRY_ENTRY), dict(_BANK_REGISTRY_ENTRY)])
+    release_dir = repo_root / "releases" / "release-20260616-001"
+    release_dir.mkdir(parents=True)
+    _write_json(release_dir / "manifest.json", _VALID_MANIFEST)
+    run_dir = repo_root / "publisher" / "runs" / "some-run"
+    run_dir.mkdir(parents=True)
+    _write_json(run_dir / "manifest.json", _VALID_MANIFEST)
+
+    original_repo_root = api_main._REPO_ROOT
+    try:
+        api_main._REPO_ROOT = repo_root
+        request = _make_dataset_slug_put_request("telco-customer-churn", {})
+        response = api_main.put_admin_dataset_detail_slug(
+            "telco-customer-churn", request, {"new_dataset_slug": "telco-churn-renamed"}
+        )
+
+        assert response == {
+            "dataset_slug": "telco-customer-churn",
+            "new_dataset_slug": "telco-churn-renamed",
+            "renamed": True,
+            "errors": [],
+        }
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text(encoding="utf-8"))
+        slugs = {entry["dataset_slug"] for entry in registry["datasets"]}
+        assert slugs == {"telco-churn-renamed", "bank-marketing"}
+
+        renamed_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-churn-renamed")
+        assert renamed_entry["active_release"] == _TELCO_REGISTRY_ENTRY["active_release"]
+        assert renamed_entry["public_metadata"] == _TELCO_REGISTRY_ENTRY["public_metadata"]
+
+        # Rename must never touch releases/ or publisher/runs/.
+        assert (release_dir / "manifest.json").is_file()
+        assert (run_dir / "manifest.json").is_file()
+        _assert_no_private_markers(response)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        api_main._REPO_ROOT = original_repo_root
+
+
+def test_put_dataset_slug_route_returns_sanitized_422_for_duplicate_target_and_does_not_mutate(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    repo_root = tmp_path / "repo"
+    _write_registry(repo_root, [dict(_TELCO_REGISTRY_ENTRY), dict(_BANK_REGISTRY_ENTRY)])
+    original_repo_root = api_main._REPO_ROOT
+    try:
+        api_main._REPO_ROOT = repo_root
+        original_content = (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+        request = _make_dataset_slug_put_request("telco-customer-churn", {})
+        response = api_main.put_admin_dataset_detail_slug(
+            "telco-customer-churn", request, {"new_dataset_slug": "bank-marketing"}
+        )
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode("utf-8"))
+        assert body["error_code"] == "ADMIN_DATASET_DETAIL_SLUG_RENAME_FAILED"
+        assert body["errors"][0]["code"] == "DATASET_SLUG_ALREADY_EXISTS"
+        _assert_no_private_markers(body)
+
+        assert (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8") == original_content
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        api_main._REPO_ROOT = original_repo_root
+
+
+def test_put_dataset_slug_route_returns_sanitized_422_for_invalid_target_and_does_not_mutate(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    repo_root = tmp_path / "repo"
+    _write_registry(repo_root, [dict(_TELCO_REGISTRY_ENTRY)])
+    original_repo_root = api_main._REPO_ROOT
+    try:
+        api_main._REPO_ROOT = repo_root
+        original_content = (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+        request = _make_dataset_slug_put_request("telco-customer-churn", {})
+        response = api_main.put_admin_dataset_detail_slug(
+            "telco-customer-churn", request, {"new_dataset_slug": "Not A Valid Slug!"}
+        )
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode("utf-8"))
+        assert body["error_code"] == "ADMIN_DATASET_DETAIL_SLUG_RENAME_FAILED"
+        assert body["errors"][0]["code"] == "NEW_DATASET_SLUG_INVALID"
+        _assert_no_private_markers(body)
+
+        assert (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8") == original_content
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        api_main._REPO_ROOT = original_repo_root
+
+
+def test_put_dataset_slug_route_returns_sanitized_422_when_source_slug_not_found(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    repo_root = tmp_path / "repo"
+    _write_registry(repo_root, [dict(_TELCO_REGISTRY_ENTRY)])
+    original_repo_root = api_main._REPO_ROOT
+    try:
+        api_main._REPO_ROOT = repo_root
+        original_content = (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+        request = _make_dataset_slug_put_request("does-not-exist", {})
+        response = api_main.put_admin_dataset_detail_slug(
+            "does-not-exist", request, {"new_dataset_slug": "does-not-exist-renamed"}
+        )
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode("utf-8"))
+        assert body["error_code"] == "ADMIN_DATASET_DETAIL_SLUG_RENAME_FAILED"
+        assert body["errors"][0]["code"] == "DATASET_DETAIL_NOT_FOUND"
+        _assert_no_private_markers(body)
+
+        assert (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8") == original_content
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        api_main._REPO_ROOT = original_repo_root
+
+
+def test_admin_dataset_slug_route_registered():
+    paths = {route.path for route in api_main.app.routes}
+    assert "/admin/datasets/{dataset_slug}/slug" in paths
+
+
+# ---------------------------------------------------------------------------
 # Public surface non-exposure
 # ---------------------------------------------------------------------------
 

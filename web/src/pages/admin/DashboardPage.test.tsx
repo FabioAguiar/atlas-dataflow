@@ -1554,6 +1554,268 @@ describe("DashboardPage", () => {
     });
   });
 
+  describe("Dataset Detail slug editing and validation lifecycle (Project Spec S0051)", () => {
+    function installDatasetSlugFetchMock(options: {
+      initialDatasets: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+      putResponse: MockResponse;
+      datasetsAfterSave?: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+    }) {
+      let datasets = options.initialDatasets;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (/\/admin\/datasets\/[^/]+\/slug$/.test(url) && init?.method === "PUT") {
+          if (options.putResponse.ok && options.datasetsAfterSave) {
+            datasets = options.datasetsAfterSave;
+          }
+          return options.putResponse;
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({ datasets });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    const TELCO_DATASET = { dataset_slug: "telco-customer-churn", title: "Telco Customer Churn", display_title: "Telco Customer Churn" };
+    const BANK_DATASET = { dataset_slug: "bank-marketing", title: "Bank Marketing", display_title: "Bank Marketing" };
+
+    function rowFor(input: HTMLElement) {
+      return within(input.closest('[role="row"]') as HTMLElement);
+    }
+
+    it("keeps only the slug input editable for a registry-backed Dataset Detail row", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET],
+        putResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      expect(within(table).getByRole("textbox", { name: "Telco Customer Churn display name" })).toBeDisabled();
+      expect(within(table).getByRole("textbox", { name: "Telco Customer Churn slug" })).not.toBeDisabled();
+    });
+
+    it("keeps the slug input disabled for a run-derived placeholder row", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [],
+        putResponse: jsonResponse({}),
+      }).mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({ error_type: "registry_unavailable" }, 503);
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast slug" })).toBeDisabled();
+    });
+
+    it("keeps Save disabled while the slug is unchanged", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET],
+        putResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      expect(within(table).getByRole("button", { name: "Save" })).toBeDisabled();
+    });
+
+    it("keeps Save disabled and flags an invalid slug", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET],
+        putResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      const slugInput = within(table).getByRole("textbox", { name: "Telco Customer Churn slug" });
+      fireEvent.change(slugInput, { target: { value: "Not A Valid Slug!" } });
+
+      expect(slugInput).toHaveValue("Not A Valid Slug!");
+      expect(slugInput).toHaveAttribute("aria-invalid", "true");
+      expect(within(table).getByRole("button", { name: "Save" })).toBeDisabled();
+    });
+
+    it("reverts an edit that would duplicate another Dataset Detail's slug and keeps Save disabled", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET, BANK_DATASET],
+        putResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      const slugInput = within(table).getByRole("textbox", { name: "Telco Customer Churn slug" });
+      fireEvent.change(slugInput, { target: { value: "bank-marketing" } });
+
+      // The exact-duplicate edit is reverted, not committed.
+      expect(slugInput).toHaveValue("telco-customer-churn");
+      expect(rowFor(slugInput).getByRole("button", { name: "Save" })).toBeDisabled();
+    });
+
+    it("enables Save for a valid, changed, non-duplicate slug", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET],
+        putResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      const slugInput = within(table).getByRole("textbox", { name: "Telco Customer Churn slug" });
+      fireEvent.change(slugInput, { target: { value: "telco-churn-renamed" } });
+
+      expect(within(table).getByRole("button", { name: "Save" })).not.toBeDisabled();
+    });
+
+    it("sends only the slug rename intent and refreshes Dataset Details after a successful save", async () => {
+      const fetchMock = installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET],
+        putResponse: jsonResponse({
+          dataset_slug: "telco-customer-churn",
+          new_dataset_slug: "telco-churn-renamed",
+          renamed: true,
+          errors: [],
+        }),
+        datasetsAfterSave: [
+          { dataset_slug: "telco-churn-renamed", title: "Telco Customer Churn", display_title: "Telco Customer Churn" },
+        ],
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      const slugInput = within(table).getByRole("textbox", { name: "Telco Customer Churn slug" });
+      fireEvent.change(slugInput, { target: { value: "telco-churn-renamed" } });
+      fireEvent.click(within(table).getByRole("button", { name: "Save" }));
+
+      await screen.findByDisplayValue("telco-churn-renamed");
+
+      const putCalls = fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          /\/admin\/datasets\/telco-customer-churn\/slug$/.test(String(input)) &&
+          (init as RequestInit | undefined)?.method === "PUT",
+      );
+      expect(putCalls).toHaveLength(1);
+      const [, putInit] = putCalls[0];
+      expect(JSON.parse(String((putInit as RequestInit).body))).toEqual({ new_dataset_slug: "telco-churn-renamed" });
+
+      const datasetsCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/datasets"));
+      // Initial load plus a post-save refresh.
+      expect(datasetsCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("shows a duplicate-slug-specific modal when the save fails with a duplicate target", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET, BANK_DATASET],
+        putResponse: jsonResponse(
+          {
+            dataset_slug: "telco-customer-churn",
+            new_dataset_slug: "telco-churn-renamed",
+            renamed: false,
+            errors: [{ code: "DATASET_SLUG_ALREADY_EXISTS", field: "new_dataset_slug", message: "x" }],
+          },
+          422,
+        ),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      const slugInput = within(table).getByRole("textbox", { name: "Telco Customer Churn slug" });
+      fireEvent.change(slugInput, { target: { value: "telco-churn-renamed" } });
+      fireEvent.click(rowFor(slugInput).getByRole("button", { name: "Save" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText(/already in use/i)).toBeInTheDocument();
+      expect(within(dialog).getByText(/cannot use the same slug/i)).toBeInTheDocument();
+    });
+
+    it("shows invalid-slug-specific feedback when the save fails with an invalid target", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET],
+        putResponse: jsonResponse(
+          {
+            dataset_slug: "telco-customer-churn",
+            new_dataset_slug: "telco-churn-renamed",
+            renamed: false,
+            errors: [{ code: "NEW_DATASET_SLUG_INVALID", field: "new_dataset_slug", message: "x" }],
+          },
+          422,
+        ),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      const slugInput = within(table).getByRole("textbox", { name: "Telco Customer Churn slug" });
+      fireEvent.change(slugInput, { target: { value: "telco-churn-renamed" } });
+      fireEvent.click(within(table).getByRole("button", { name: "Save" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText(/is not valid/i)).toBeInTheDocument();
+      expect(within(dialog).getByText(/lowercase letters, numbers/i)).toBeInTheDocument();
+    });
+
+    it("gives Save and Remove the same width in the Dataset Details card", async () => {
+      installDatasetSlugFetchMock({
+        initialDatasets: [TELCO_DATASET],
+        putResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Dataset details" });
+      const saveButton = within(table).getByRole("button", { name: "Save" });
+      const removeButton = within(table).getByRole("button", { name: "Remove" });
+
+      expect(saveButton.style.width).not.toBe("");
+      expect(saveButton.style.width).toBe(removeButton.style.width);
+    });
+  });
+
   it("renders multiple runs with mixed statuses and no hardcoded upper bound on the counters", async () => {
     installRunsFetchMock(
       jsonResponse({

@@ -198,6 +198,13 @@ ADMIN_DATASET_DETAIL_REMOVAL_FAILED = PublicError(
     message="The Dataset Detail could not be removed.",
 )
 
+ADMIN_DATASET_DETAIL_SLUG_RENAME_FAILED = PublicError(
+    status_code=422,
+    error_type="admin_dataset_detail_slug_rename_failed",
+    error_code="ADMIN_DATASET_DETAIL_SLUG_RENAME_FAILED",
+    message="The Dataset Detail slug could not be renamed.",
+)
+
 PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID = PublicError(
     status_code=422,
     error_type="predict_view_customization_identifier_invalid",
@@ -221,6 +228,7 @@ from registry.resolve import (  # noqa: E402
 from registry.update import (  # noqa: E402
     MODE_CREATE_NEW_DATASET_DETAIL,
     remove_dataset_entry,
+    rename_dataset_slug,
 )
 
 
@@ -715,6 +723,28 @@ def delete_admin_dataset_detail(dataset_slug: str, request: Request):
     result = remove_dataset_entry(dataset_slug, repo_root=_REPO_ROOT)
     if not result["removed"]:
         return ADMIN_DATASET_DETAIL_REMOVAL_FAILED.response(errors=result["errors"])
+
+    return result
+
+
+@app.put("/admin/datasets/{dataset_slug}/slug")
+def put_admin_dataset_detail_slug(
+    dataset_slug: str, request: Request, payload: dict = Body(...)
+):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    # Project Spec S0051: renames only the matching registry/datasets.json
+    # entry's dataset_slug -- active_release, public_metadata, releases/,
+    # publisher/runs/, contracts, notebooks, model artifacts, profile
+    # artifacts, evidence, and support-root files are never touched.
+    # Distinct from DELETE /admin/datasets/{dataset_slug}, which removes the
+    # entry entirely rather than renaming it.
+    new_dataset_slug = payload.get("new_dataset_slug") if isinstance(payload, dict) else None
+
+    result = rename_dataset_slug(dataset_slug, new_dataset_slug, repo_root=_REPO_ROOT)
+    if not result["renamed"]:
+        return ADMIN_DATASET_DETAIL_SLUG_RENAME_FAILED.response(errors=result["errors"])
 
     return result
 

@@ -21,6 +21,7 @@ from registry.update import (  # noqa: E402
     allocate_unique_dataset_slug,
     derive_registry_action,
     remove_dataset_entry,
+    rename_dataset_slug,
 )
 from registry.validate import validate_registry, validate_registry_file  # noqa: E402
 
@@ -380,6 +381,174 @@ def test_remove_dataset_entry_frees_slug_for_reallocation(tmp_path):
 
     registry = json.loads((tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8"))
     assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn"
+
+
+# ---------------------------------------------------------------------------
+# rename_dataset_slug (Project Spec S0051)
+# ---------------------------------------------------------------------------
+
+def test_rename_dataset_slug_updates_only_matching_entry_dataset_slug(tmp_path):
+    _write_full_registry(
+        tmp_path,
+        [
+            _full_entry("telco-customer-churn", "release-20260616-001"),
+            _full_entry("bank-marketing", "release-20260617-001"),
+        ],
+    )
+
+    result = rename_dataset_slug("telco-customer-churn", "telco-churn-renamed", repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": "telco-customer-churn",
+        "new_dataset_slug": "telco-churn-renamed",
+        "renamed": True,
+        "errors": [],
+    }
+
+    registry = json.loads((tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    renamed_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-churn-renamed")
+    other_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "bank-marketing")
+
+    # active_release and public_metadata for the renamed entry are preserved.
+    assert renamed_entry["active_release"] == "release-20260616-001"
+    assert renamed_entry["public_metadata"] == _full_entry("telco-customer-churn", "release-20260616-001")["public_metadata"]
+    # The other entry is untouched.
+    assert other_entry == _full_entry("bank-marketing", "release-20260617-001")
+    assert validate_registry(registry)["valid"] is True
+
+
+def test_rename_dataset_slug_writes_backup_before_mutating_registry(tmp_path):
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+    original_content = (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    rename_dataset_slug("telco-customer-churn", "telco-churn-renamed", repo_root=tmp_path)
+
+    backup_content = (tmp_path / "registry" / "datasets.json.previous").read_text(encoding="utf-8")
+    assert backup_content == original_content
+
+
+def test_rename_dataset_slug_rejects_duplicate_target_and_does_not_mutate(tmp_path):
+    _write_full_registry(
+        tmp_path,
+        [
+            _full_entry("telco-customer-churn", "release-20260616-001"),
+            _full_entry("bank-marketing", "release-20260617-001"),
+        ],
+    )
+    original_content = (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    result = rename_dataset_slug("telco-customer-churn", "bank-marketing", repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": "telco-customer-churn",
+        "new_dataset_slug": "bank-marketing",
+        "renamed": False,
+        "errors": [
+            {
+                "code": "DATASET_SLUG_ALREADY_EXISTS",
+                "field": "new_dataset_slug",
+                "message": "Another Dataset Detail already uses this dataset_slug.",
+            }
+        ],
+    }
+    assert (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8") == original_content
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+def test_rename_dataset_slug_allows_the_original_slug_of_the_edited_row():
+    # Renaming a slug to itself is a no-op, distinct from a duplicate with
+    # another entry, and is rejected with its own dedicated error code.
+    result = rename_dataset_slug("telco-customer-churn", "telco-customer-churn")
+
+    assert result == {
+        "dataset_slug": "telco-customer-churn",
+        "new_dataset_slug": "telco-customer-churn",
+        "renamed": False,
+        "errors": [
+            {
+                "code": "DATASET_SLUG_UNCHANGED",
+                "field": "new_dataset_slug",
+                "message": "The new_dataset_slug must differ from the current dataset_slug.",
+            }
+        ],
+    }
+
+
+def test_rename_dataset_slug_rejects_invalid_target_format_and_does_not_mutate(tmp_path):
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+    original_content = (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    result = rename_dataset_slug("telco-customer-churn", "Not A Valid Slug!", repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": "telco-customer-churn",
+        "new_dataset_slug": "Not A Valid Slug!",
+        "renamed": False,
+        "errors": [
+            {
+                "code": "NEW_DATASET_SLUG_INVALID",
+                "field": "new_dataset_slug",
+                "message": "The new_dataset_slug is missing or does not match the required pattern.",
+            }
+        ],
+    }
+    assert (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8") == original_content
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+def test_rename_dataset_slug_rejects_invalid_source_format():
+    result = rename_dataset_slug("Not A Valid Slug!", "telco-churn-renamed")
+
+    assert result == {
+        "dataset_slug": "Not A Valid Slug!",
+        "new_dataset_slug": "telco-churn-renamed",
+        "renamed": False,
+        "errors": [
+            {
+                "code": "DATASET_SLUG_INVALID",
+                "field": "dataset_slug",
+                "message": "The dataset_slug is missing or does not match the required pattern.",
+            }
+        ],
+    }
+
+
+def test_rename_dataset_slug_rejects_missing_source_slug_and_does_not_mutate(tmp_path):
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+    original_content = (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    result = rename_dataset_slug("does-not-exist", "does-not-exist-renamed", repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": "does-not-exist",
+        "new_dataset_slug": "does-not-exist-renamed",
+        "renamed": False,
+        "errors": [
+            {
+                "code": "DATASET_DETAIL_NOT_FOUND",
+                "field": "dataset_slug",
+                "message": "No Dataset Detail was found for the given dataset_slug.",
+            }
+        ],
+    }
+    assert (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8") == original_content
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+def test_rename_dataset_slug_leaves_release_and_publisher_run_directories_untouched(tmp_path):
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+    release_dir = tmp_path / "releases" / "release-20260616-001"
+    release_dir.mkdir(parents=True)
+    (release_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    run_dir = tmp_path / "publisher" / "runs" / "some-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
+
+    result = rename_dataset_slug("telco-customer-churn", "telco-churn-renamed", repo_root=tmp_path)
+
+    assert result["renamed"] is True
+    assert (release_dir / "manifest.json").is_file()
+    assert (run_dir / "manifest.json").is_file()
 
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,12 @@ type DashboardState =
   | { status: "invalid"; message: string }
   | { status: "error"; message: string };
 
+type RunRemovalState =
+  | { status: "idle" }
+  | { status: "confirming"; runId: string }
+  | { status: "removing"; runId: string }
+  | { status: "error"; runId: string; message: string };
+
 const pageStyle: CSSProperties = {
   display: "grid",
   gap: "var(--atlas-space-6)",
@@ -135,7 +141,7 @@ const datasetTableHeaderStyle: CSSProperties = {
   ...stickyTableHeaderStyle,
   display: "grid",
   gridTemplateColumns:
-    "minmax(0, 1.15fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(14rem, 1fr)",
+    "minmax(0, 1.15fr) minmax(11rem, 1.05fr) minmax(7rem, 0.6fr) minmax(9rem, 0.85fr) minmax(6.5rem, 0.55fr)",
   gap: "var(--atlas-space-3)",
   borderBottom: "1px solid var(--atlas-color-border-strong)",
   paddingBottom: "var(--atlas-space-3)",
@@ -148,7 +154,7 @@ const datasetTableHeaderStyle: CSSProperties = {
 const datasetRowContentStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns:
-    "minmax(0, 1.15fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(14rem, 1fr)",
+    "minmax(0, 1.15fr) minmax(11rem, 1.05fr) minmax(7rem, 0.6fr) minmax(9rem, 0.85fr) minmax(6.5rem, 0.55fr)",
   gap: "var(--atlas-space-3)",
   alignItems: "center",
 };
@@ -187,9 +193,43 @@ const disabledIntentButtonStyle: CSSProperties = {
   width: "fit-content",
 };
 
+const actionButtonStyle: CSSProperties = {
+  width: "fit-content",
+};
+
+const modalBackdropStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "var(--atlas-space-5)",
+  background: "rgba(15, 23, 42, 0.55)",
+  zIndex: 10,
+};
+
+const modalCardStyle: CSSProperties = {
+  display: "grid",
+  gap: "var(--atlas-space-4)",
+  width: "min(28rem, 100%)",
+};
+
+const modalActionsStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: "var(--atlas-space-3)",
+};
+
 const actionGroupStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
+  gap: "var(--atlas-space-2)",
+};
+
+const stackedActionGroupStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
   gap: "var(--atlas-space-2)",
 };
 
@@ -420,6 +460,7 @@ export default function DashboardPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [state, setState] = useState<DashboardState>({ status: "idle" });
+  const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
 
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent) {
@@ -510,6 +551,49 @@ export default function DashboardPage() {
         if (err.name !== "AbortError") {
           setState({ status: "error", message: "Run summaries could not be loaded. Check private admin API reachability." });
         }
+      });
+  }
+
+  function openRemoveConfirmation(runId: string) {
+    setRemovalState({ status: "confirming", runId });
+  }
+
+  function cancelRemoveConfirmation() {
+    setRemovalState({ status: "idle" });
+  }
+
+  function confirmRemoveRun(runId: string) {
+    setRemovalState({ status: "removing", runId });
+
+    fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}`, {
+      method: "DELETE",
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setRemovalState({
+            status: "error",
+            runId,
+            message: "The run could not be removed. Confirm the run is still available and try again.",
+          });
+          return;
+        }
+
+        setState((previous) =>
+          previous.status === "ready"
+            ? {
+                status: "ready",
+                data: { ...previous.data, runs: previous.data.runs.filter((run) => run.run_id !== runId) },
+              }
+            : previous,
+        );
+        setRemovalState({ status: "idle" });
+      })
+      .catch(() => {
+        setRemovalState({
+          status: "error",
+          runId,
+          message: "The run could not be removed. Check private admin API reachability.",
+        });
       });
   }
 
@@ -659,7 +743,7 @@ export default function DashboardPage() {
                     <div role="row" style={datasetTableHeaderStyle}>
                       <span role="columnheader">Display name</span>
                       <span role="columnheader">Slug</span>
-                      <span role="columnheader">Visibility status</span>
+                      <span role="columnheader">Status</span>
                       <span role="columnheader">Last updated</span>
                       <span role="columnheader">Actions</span>
                     </div>
@@ -667,7 +751,12 @@ export default function DashboardPage() {
                     {filteredDatasetRows.map((row) => (
                       <TableRow key={row.displayName}>
                         <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
-                          <strong>{row.displayName}</strong>
+                          <input
+                            aria-label={`${row.displayName} display name`}
+                            defaultValue={row.displayName}
+                            style={slugInputStyle}
+                            type="text"
+                          />
                           <input
                             aria-label={`${row.displayName} slug`}
                             defaultValue={row.slug}
@@ -676,7 +765,7 @@ export default function DashboardPage() {
                           />
                           <StatusPill tone="warning">Unavailable</StatusPill>
                           <span>{formatCreatedAt(row.lastUpdated)}</span>
-                          <span style={actionGroupStyle}>
+                          <span style={stackedActionGroupStyle}>
                             <Button
                               data-dataset-action="save-disabled"
                               disabled
@@ -752,10 +841,15 @@ export default function DashboardPage() {
                               Promote
                             </Button>
                             <Button
-                              data-run-action="remove-disabled"
-                              disabled
-                              style={disabledIntentButtonStyle}
-                              title="Remove remains disabled until a safe owned API exists."
+                              data-run-action={run.status === "available" ? "remove" : "remove-disabled"}
+                              disabled={run.status !== "available"}
+                              onClick={() => openRemoveConfirmation(run.run_id)}
+                              style={run.status === "available" ? actionButtonStyle : disabledIntentButtonStyle}
+                              title={
+                                run.status === "available"
+                                  ? "Remove this run from the Admin Dashboard after confirmation."
+                                  : "Remove is only available for safe, available runs."
+                              }
                               variant="secondary"
                             >
                               <span aria-hidden="true" style={actionIconStyle}>
@@ -773,6 +867,40 @@ export default function DashboardPage() {
             </Card>
           </div>
         </>
+      )}
+
+      {removalState.status !== "idle" && (
+        <div style={modalBackdropStyle}>
+          <Card aria-labelledby="remove-run-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
+            <h2 id="remove-run-modal-title" style={cardTitleStyle}>
+              Remove run {removalState.runId}?
+            </h2>
+            <p style={{ margin: 0 }}>
+              This removes the publisher validation run record for <strong>{removalState.runId}</strong> from the
+              Admin Dashboard. This action cannot be undone.
+            </p>
+
+            {removalState.status === "error" && (
+              <ErrorState title="Run removal failed" message={removalState.message} />
+            )}
+
+            <div style={modalActionsStyle}>
+              <Button
+                disabled={removalState.status === "removing"}
+                onClick={cancelRemoveConfirmation}
+                variant="secondary"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={removalState.status === "removing"}
+                onClick={() => confirmRemoveRun(removalState.runId)}
+              >
+                {removalState.status === "removing" ? "Removing..." : "Remove run"}
+              </Button>
+            </div>
+          </Card>
+        </div>
       )}
     </section>
   );

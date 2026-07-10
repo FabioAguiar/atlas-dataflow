@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
@@ -10,6 +11,24 @@ _RUN_ARTIFACT_VALIDATION_RESULT = "validation-result.json"
 _RUN_ARTIFACT_PROMOTION_RESULT = "promotion-result.json"
 
 _DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+_WINDOWS_DRIVE_ABSOLUTE_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
+
+_RUN_ID_INVALID_ERROR = {
+    "code": "RUN_ID_INVALID",
+    "field": "run_id",
+    "message": "The run id is missing or does not match the required pattern.",
+}
+_RUN_NOT_FOUND_ERROR = {
+    "code": "RUN_NOT_FOUND",
+    "field": None,
+    "message": "No run was found for the given run id under the configured runs root.",
+}
+_RUN_REMOVAL_FAILED_ERROR = {
+    "code": "RUN_REMOVAL_FAILED",
+    "field": None,
+    "message": "The run could not be removed.",
+}
 
 # contracts/admin-run-summary.schema.json's validation_summary.outcome enum.
 _VALIDATION_OUTCOME_MAP = {
@@ -43,6 +62,18 @@ def _is_within_root(candidate: Path, root: Path) -> bool:
     except (OSError, ValueError):
         return False
     return True
+
+
+def _run_id_validation_error(run_id: str) -> dict | None:
+    if not isinstance(run_id, str) or not run_id:
+        return _RUN_ID_INVALID_ERROR
+    if run_id in (".", ".."):
+        return _RUN_ID_INVALID_ERROR
+    if "/" in run_id or "\\" in run_id or ".." in run_id:
+        return _RUN_ID_INVALID_ERROR
+    if os.path.isabs(run_id) or _WINDOWS_DRIVE_ABSOLUTE_PATTERN.match(run_id):
+        return _RUN_ID_INVALID_ERROR
+    return None
 
 
 def _unavailable_entry(run_id: str, reason: str) -> dict:
@@ -175,3 +206,44 @@ def list_admin_run_summaries() -> dict:
         "runs_root_status": "available",
         "runs": [_derive_run_summary(run_dir, runs_root) for run_dir in run_dirs],
     }
+
+
+def remove_admin_run(run_id: str) -> dict:
+    """Remove exactly one run directory identified by run_id.
+
+    Returns {"run_id": str, "removed": bool, "errors": [...]}, where errors
+    is a list of {"code", "field", "message"} entries (mirrors the
+    admin_profile_publish.py/admin_predict_view_customizations.py result
+    shape). Never raises for an invalid, missing, or non-directory run_id --
+    those are reported as a non-removed result with a reduced error instead.
+
+    A run_id containing a path separator, "..", or an absolute path is
+    rejected before any filesystem lookup. Resolution is always checked
+    against the configured runs root (never following a symlink outside it,
+    matching list_admin_run_summaries' own boundary), so only a run
+    directory that genuinely resolves under the configured runs root can
+    ever be removed.
+    """
+    validity_error = _run_id_validation_error(run_id)
+    if validity_error is not None:
+        return {"run_id": run_id, "removed": False, "errors": [validity_error]}
+
+    runs_root = _admin_runs_root()
+    run_dir = runs_root / run_id
+
+    if not _is_within_root(run_dir, runs_root):
+        return {"run_id": run_id, "removed": False, "errors": [_RUN_NOT_FOUND_ERROR]}
+
+    try:
+        is_directory = run_dir.is_dir()
+    except OSError:
+        is_directory = False
+    if not is_directory:
+        return {"run_id": run_id, "removed": False, "errors": [_RUN_NOT_FOUND_ERROR]}
+
+    try:
+        shutil.rmtree(run_dir)
+    except OSError:
+        return {"run_id": run_id, "removed": False, "errors": [_RUN_REMOVAL_FAILED_ERROR]}
+
+    return {"run_id": run_id, "removed": True, "errors": []}

@@ -69,7 +69,7 @@ from public_profile_visibility import (  # noqa: E402
     resolve_dataset_visibility,
     resolve_public_presentation_overlay,
 )
-from admin_runs import list_admin_run_summaries  # noqa: E402
+from admin_runs import list_admin_run_summaries, remove_admin_run  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
 from admin_profile_publish import publish_profile  # noqa: E402
 from admin_profile_visibility import set_dataset_visibility  # noqa: E402
@@ -168,6 +168,13 @@ PROFILE_VISIBILITY_PAYLOAD_INVALID = PublicError(
     error_type="profile_visibility_payload_invalid",
     error_code="PROFILE_VISIBILITY_PAYLOAD_INVALID",
     message="The visibility payload must be a JSON object with a boolean 'visible' field.",
+)
+
+ADMIN_RUN_REMOVAL_FAILED = PublicError(
+    status_code=422,
+    error_type="admin_run_removal_failed",
+    error_code="ADMIN_RUN_REMOVAL_FAILED",
+    message="The run could not be removed.",
 )
 
 ADMIN_SETTINGS_INVALID = PublicError(
@@ -623,6 +630,18 @@ def list_admin_runs(request: Request):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
     return list_admin_run_summaries()
+
+
+@app.delete("/admin/runs/{run_id}")
+def delete_admin_run(run_id: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    result = remove_admin_run(run_id)
+    if not result["removed"]:
+        return ADMIN_RUN_REMOVAL_FAILED.response(errors=result["errors"])
+
+    return result
 
 
 @app.get("/admin/settings")

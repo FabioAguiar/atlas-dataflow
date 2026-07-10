@@ -130,7 +130,9 @@ describe("DashboardPage", () => {
 
     const table = await screen.findByRole("table", { name: "Dataset details" });
     expect(table).toHaveAttribute("data-filtered-dataset-count", "1");
-    expect(within(table).getByText("Synthetic Retail Forecast")).toBeInTheDocument();
+    expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast display name" })).toHaveValue(
+      "Synthetic Retail Forecast",
+    );
     expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast slug" })).toHaveValue(
       "synthetic-retail-forecast",
     );
@@ -178,8 +180,12 @@ describe("DashboardPage", () => {
     expect(datasetsTable).toHaveAttribute("data-filtered-dataset-count", "1");
     expect(within(runsTable).queryByText("run-agnostic-001")).not.toBeInTheDocument();
     expect(within(runsTable).getByText("run-agnostic-002")).toBeInTheDocument();
-    expect(within(datasetsTable).queryByText("Synthetic Retail Forecast")).not.toBeInTheDocument();
-    expect(within(datasetsTable).getByText("Synthetic Energy Usage")).toBeInTheDocument();
+    expect(
+      within(datasetsTable).queryByRole("textbox", { name: "Synthetic Retail Forecast display name" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(datasetsTable).getByRole("textbox", { name: "Synthetic Energy Usage display name" }),
+    ).toHaveValue("Synthetic Energy Usage");
   });
 
   it("focuses and selects the search input when Ctrl+K or Cmd+K is pressed", () => {
@@ -238,10 +244,12 @@ describe("DashboardPage", () => {
     expect(runsTable).toHaveAttribute("data-filtered-run-count", "1");
     expect(datasetsTable).toHaveAttribute("data-filtered-dataset-count", "1");
     expect(within(runsTable).getByText("run-café-010")).toBeInTheDocument();
-    expect(within(datasetsTable).getByText("Café Forecast")).toBeInTheDocument();
+    expect(within(datasetsTable).getByRole("textbox", { name: "Café Forecast display name" })).toHaveValue(
+      "Café Forecast",
+    );
   });
 
-  it("renders disabled Promote and Remove buttons on each Runs row", async () => {
+  it("renders a disabled Promote button and an enabled Remove button for an available run", async () => {
     installRunsFetchMock(
       jsonResponse({
         runs_root_status: "available",
@@ -265,6 +273,32 @@ describe("DashboardPage", () => {
     const table = await screen.findByRole("table", { name: "Run summaries" });
     expect(within(table).getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
     expect(within(table).getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(within(table).getByRole("button", { name: "Remove" })).not.toBeDisabled();
+  });
+
+  it("disables the Remove button for a run that is not in the available status", async () => {
+    installRunsFetchMock(
+      jsonResponse({
+        runs_root_status: "available",
+        runs: [
+          {
+            schema_version: "admin-run-summary.v1",
+            run_id: "run-agnostic-invalid",
+            status: "invalid",
+            dataset_candidate: null,
+            created_at: null,
+            trace_reference: null,
+            validation_summary: null,
+            invalid_reason: "source_run_evidence_malformed",
+          },
+        ],
+      }),
+    );
+    render(<DashboardPage />);
+
+    await loadRuns();
+
+    const table = await screen.findByRole("table", { name: "Run summaries" });
     expect(within(table).getByRole("button", { name: "Remove" })).toBeDisabled();
   });
 
@@ -294,17 +328,141 @@ describe("DashboardPage", () => {
     const callCountAfterLoad = fetchMock.mock.calls.length;
 
     fireEvent.click(within(runsTable).getByRole("button", { name: "Promote" }));
-    fireEvent.click(within(runsTable).getByRole("button", { name: "Remove" }));
     fireEvent.click(within(datasetTable).getByRole("button", { name: "Save" }));
     fireEvent.click(within(datasetTable).getByRole("button", { name: "Remove" }));
 
     expect(fetchMock).toHaveBeenCalledTimes(callCountAfterLoad);
     expect(within(runsTable).getByRole("button", { name: "Promote" })).toBeDisabled();
-    expect(within(runsTable).getByRole("button", { name: "Remove" })).toBeDisabled();
     expect(within(datasetTable).getByRole("button", { name: "Save" })).toBeDisabled();
     expect(within(datasetTable).getByRole("button", { name: "Remove" })).toBeDisabled();
     expect(within(datasetTable).queryByRole("button", { name: "Open admin" })).not.toBeInTheDocument();
     expect(datasetTable).toHaveAttribute("data-filtered-dataset-count", "1");
+  });
+
+  describe("Runs row removal", () => {
+    function installSoleRunFetchMock() {
+      return installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-agnostic-solo",
+              status: "available",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-agnostic-solo",
+              validation_summary: { outcome: "accepted" },
+            },
+          ],
+        }),
+      );
+    }
+
+    async function openRunRemovalModal() {
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Remove" }));
+      return screen.findByRole("dialog", { name: /Remove run run-agnostic-solo\?/ });
+    }
+
+    it("opens an English confirmation modal identifying the run id when Remove is clicked", async () => {
+      installSoleRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const dialog = await openRunRemovalModal();
+
+      expect(within(dialog).getByText(/removes the publisher validation run record/i)).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Remove run" })).toBeInTheDocument();
+    });
+
+    it("performs no backend call and leaves the row unchanged when the modal is canceled", async () => {
+      const fetchMock = installSoleRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+      const callCountAfterLoad = fetchMock.mock.calls.length;
+
+      const dialog = await openRunRemovalModal();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(callCountAfterLoad);
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
+    });
+
+    it("removes the row from the Dashboard after a successful confirmed removal", async () => {
+      const fetchMock = installSoleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo") && init?.method === "DELETE") {
+          return jsonResponse({ run_id: "run-agnostic-solo", removed: true, errors: [] });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const dialog = await openRunRemovalModal();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove run" }));
+
+      await screen.findByRole("heading", { name: "No runs found" });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByText("run-agnostic-solo")).not.toBeInTheDocument();
+    });
+
+    it("shows a sanitized English error and keeps the row visible when removal fails", async () => {
+      const fetchMock = installSoleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo") && init?.method === "DELETE") {
+          return jsonResponse({ error_type: "admin_run_removal_failed", message: "The run could not be removed." }, 422);
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const dialog = await openRunRemovalModal();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove run" }));
+
+      expect(await within(dialog).findByRole("heading", { name: "Run removal failed" })).toBeInTheDocument();
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
+    });
   });
 
   it("renders multiple runs with mixed statuses and no hardcoded upper bound on the counters", async () => {

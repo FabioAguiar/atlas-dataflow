@@ -334,6 +334,103 @@ def test_run_id_does_not_allow_path_traversal_to_private_details():
 
 
 # ---------------------------------------------------------------------------
+# remove_admin_run: happy path and rejection states
+# ---------------------------------------------------------------------------
+
+def test_remove_admin_run_deletes_existing_run_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        run_dir = _write_run_dir(root, "removable-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.remove_admin_run("removable-run")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result == {"run_id": "removable-run", "removed": True, "errors": []}
+        assert not run_dir.exists()
+
+
+def test_remove_admin_run_rejects_empty_id():
+    result = admin_runs.remove_admin_run("")
+    assert result["removed"] is False
+    assert result["errors"][0]["code"] == "RUN_ID_INVALID"
+
+
+def test_remove_admin_run_rejects_ids_with_path_separators():
+    for candidate in ("nested/run", "nested\\run"):
+        result = admin_runs.remove_admin_run(candidate)
+        assert result["removed"] is False
+        assert result["errors"][0]["code"] == "RUN_ID_INVALID"
+
+
+def test_remove_admin_run_rejects_dot_dot_traversal():
+    for candidate in ("..", "../escape", "run..id"):
+        result = admin_runs.remove_admin_run(candidate)
+        assert result["removed"] is False
+        assert result["errors"][0]["code"] == "RUN_ID_INVALID"
+
+
+def test_remove_admin_run_rejects_absolute_paths():
+    for candidate in ("/etc/passwd", "C:\\Windows"):
+        result = admin_runs.remove_admin_run(candidate)
+        assert result["removed"] is False
+        assert result["errors"][0]["code"] == "RUN_ID_INVALID"
+
+
+def test_remove_admin_run_reports_not_found_for_missing_run_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.remove_admin_run("does-not-exist")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["removed"] is False
+        assert result["errors"][0]["code"] == "RUN_NOT_FOUND"
+
+
+def test_remove_admin_run_reports_not_found_for_non_directory_target():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "not-a-directory").write_text("not a run", encoding="utf-8")
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.remove_admin_run("not-a-directory")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["removed"] is False
+        assert result["errors"][0]["code"] == "RUN_NOT_FOUND"
+        assert (root / "not-a-directory").exists()
+
+
+def test_remove_admin_run_rejects_symlink_escaping_runs_root():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "runs"
+        outside = Path(tmp) / "outside"
+        root.mkdir()
+        _write_run_dir(outside, "secret-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+        escaping_link = root / "escaping-link"
+        escaping_link.symlink_to(outside / "secret-run", target_is_directory=True)
+
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.remove_admin_run("escaping-link")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["removed"] is False
+        assert result["errors"][0]["code"] == "RUN_NOT_FOUND"
+        assert (outside / "secret-run").exists()
+
+
+# ---------------------------------------------------------------------------
 # GET /admin/runs: access-control boundary
 # ---------------------------------------------------------------------------
 
@@ -466,6 +563,91 @@ def test_route_listing_is_sanitized_even_when_source_contains_private_fields():
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
         admin_runs._admin_runs_root = original_root
+
+
+# ---------------------------------------------------------------------------
+# DELETE /admin/runs/{run_id}: access-control boundary
+# ---------------------------------------------------------------------------
+
+def _make_delete_request(run_id: str, headers: dict[str, str]) -> Request:
+    encoded_headers = [
+        (key.lower().encode("latin-1"), value.encode("latin-1"))
+        for key, value in headers.items()
+    ]
+    scope = {
+        "type": "http",
+        "method": "DELETE",
+        "path": f"/admin/runs/{run_id}",
+        "headers": encoded_headers,
+    }
+    return Request(scope)
+
+
+def test_delete_route_returns_generic_not_found_when_admin_runtime_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    request = _make_delete_request("any-run", {})
+    response = api_main.delete_admin_run("any-run", request)
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_delete_route_removes_run_when_admin_runtime_enabled():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    original_root = admin_runs._admin_runs_root
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = _write_run_dir(root, "removable-route-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+            admin_runs._admin_runs_root = lambda: root
+            request = _make_delete_request("removable-route-run", {})
+            response = api_main.delete_admin_run("removable-route-run", request)
+
+            assert response == {"run_id": "removable-route-run", "removed": True, "errors": []}
+            assert not run_dir.exists()
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+
+
+def test_delete_route_returns_sanitized_422_when_run_not_found():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    original_root = admin_runs._admin_runs_root
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            admin_runs._admin_runs_root = lambda: root
+            request = _make_delete_request("does-not-exist", {})
+            response = api_main.delete_admin_run("does-not-exist", request)
+
+            assert response.status_code == 422
+            body = json.loads(response.body.decode("utf-8"))
+            assert body["error_code"] == "ADMIN_RUN_REMOVAL_FAILED"
+            assert body["errors"][0]["code"] == "RUN_NOT_FOUND"
+            _assert_no_private_markers(body)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+
+
+def test_delete_route_returns_sanitized_422_for_traversal_attempt():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    try:
+        request = _make_delete_request("..%2Fescape", {})
+        response = api_main.delete_admin_run("../escape", request)
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode("utf-8"))
+        assert body["error_code"] == "ADMIN_RUN_REMOVAL_FAILED"
+        assert body["errors"][0]["code"] == "RUN_ID_INVALID"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 # ---------------------------------------------------------------------------

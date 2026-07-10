@@ -131,12 +131,13 @@ describe("DashboardPage", () => {
     const table = await screen.findByRole("table", { name: "Dataset details" });
     expect(table).toHaveAttribute("data-filtered-dataset-count", "1");
     expect(within(table).getByText("Synthetic Retail Forecast")).toBeInTheDocument();
-    expect(within(table).getByText("Pending safe profile source")).toBeInTheDocument();
+    expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast slug" })).toHaveValue(
+      "synthetic-retail-forecast",
+    );
 
-    expect(within(table).getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(within(table).getByRole("button", { name: "Save" })).toBeDisabled();
     expect(within(table).getByRole("button", { name: "Remove" })).toBeDisabled();
-    expect(within(table).getByRole("button", { name: "Open admin" })).toBeDisabled();
-    expect(within(table).getByText("Safe action owner unavailable")).toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: "Open admin" })).not.toBeInTheDocument();
   });
 
   it("filters runs and Dataset Details from the shared Dashboard search", async () => {
@@ -267,7 +268,7 @@ describe("DashboardPage", () => {
     expect(within(table).getByRole("button", { name: "Remove" })).toBeDisabled();
   });
 
-  it("does not trigger any network request or state change when a disabled Promote, Remove, or Open admin button is clicked", async () => {
+  it("does not trigger any network request or state change when a disabled Promote, Remove, or Save button is clicked", async () => {
     const fetchMock = installRunsFetchMock(
       jsonResponse({
         runs_root_status: "available",
@@ -294,16 +295,15 @@ describe("DashboardPage", () => {
 
     fireEvent.click(within(runsTable).getByRole("button", { name: "Promote" }));
     fireEvent.click(within(runsTable).getByRole("button", { name: "Remove" }));
-    fireEvent.click(within(datasetTable).getByRole("button", { name: "Promote" }));
+    fireEvent.click(within(datasetTable).getByRole("button", { name: "Save" }));
     fireEvent.click(within(datasetTable).getByRole("button", { name: "Remove" }));
-    fireEvent.click(within(datasetTable).getByRole("button", { name: "Open admin" }));
 
     expect(fetchMock).toHaveBeenCalledTimes(callCountAfterLoad);
     expect(within(runsTable).getByRole("button", { name: "Promote" })).toBeDisabled();
     expect(within(runsTable).getByRole("button", { name: "Remove" })).toBeDisabled();
-    expect(within(datasetTable).getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(within(datasetTable).getByRole("button", { name: "Save" })).toBeDisabled();
     expect(within(datasetTable).getByRole("button", { name: "Remove" })).toBeDisabled();
-    expect(within(datasetTable).getByRole("button", { name: "Open admin" })).toBeDisabled();
+    expect(within(datasetTable).queryByRole("button", { name: "Open admin" })).not.toBeInTheDocument();
     expect(datasetTable).toHaveAttribute("data-filtered-dataset-count", "1");
   });
 

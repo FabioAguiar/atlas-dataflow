@@ -28,10 +28,9 @@ type AdminRunsResponse = {
 
 type DatasetDetailRow = {
   displayName: string;
-  problemType: string;
+  slug: string;
   visibilityStatus: "unavailable";
   lastUpdated: string | null;
-  sourceRunCount: number;
 };
 
 const validationOutcomes: ValidationOutcome[] = ["accepted", "rejected", "failed", "unknown"];
@@ -170,9 +169,16 @@ const cardTitleStyle: CSSProperties = {
   fontWeight: 800,
 };
 
-const promotionIntentStyle: CSSProperties = {
-  display: "grid",
-  gap: "var(--atlas-space-2)",
+const slugInputStyle: CSSProperties = {
+  minHeight: "2.25rem",
+  width: "100%",
+  border: "1px solid var(--atlas-color-border-strong)",
+  borderRadius: "var(--atlas-radius-md)",
+  padding: "0 var(--atlas-space-3)",
+  color: "var(--atlas-color-text)",
+  font: "inherit",
+  fontSize: "var(--atlas-text-sm)",
+  background: "var(--atlas-color-surface)",
 };
 
 const disabledIntentButtonStyle: CSSProperties = {
@@ -245,12 +251,12 @@ function RemoveActionIcon() {
   );
 }
 
-function OpenAdminActionIcon() {
+function SaveActionIcon() {
   return (
     <svg aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} viewBox="0 0 24 24">
-      <path d="M14 4h6v6" />
-      <path d="m20 4-9 9" />
-      <path d="M10 6H6v12h12v-4" />
+      <path d="M5 4h11l3 3v13H5z" />
+      <path d="M8 4v5h7V4" />
+      <path d="M8 14h8v6H8z" />
     </svg>
   );
 }
@@ -381,10 +387,9 @@ function buildDatasetDetailRows(runs: AdminRunSummary[]): DatasetDetailRow[] {
 
     rows.set(run.dataset_candidate, {
       displayName: datasetDisplayName(run.dataset_candidate),
-      problemType: "Pending safe profile source",
+      slug: run.dataset_candidate,
       visibilityStatus: "unavailable",
       lastUpdated: nextLastUpdated ?? null,
-      sourceRunCount: (existing?.sourceRunCount ?? 0) + 1,
     });
   }
 
@@ -405,7 +410,7 @@ function datasetMatchesQuery(row: DatasetDetailRow, query: string): boolean {
 
   return (
     normalizeSearchText(row.displayName).includes(query) ||
-    normalizeSearchText(row.problemType).includes(query) ||
+    normalizeSearchText(row.slug).includes(query) ||
     normalizeSearchText(row.visibilityStatus).includes(query)
   );
 }
@@ -653,62 +658,49 @@ export default function DashboardPage() {
                   >
                     <div role="row" style={datasetTableHeaderStyle}>
                       <span role="columnheader">Display name</span>
-                      <span role="columnheader">Problem type</span>
+                      <span role="columnheader">Slug</span>
                       <span role="columnheader">Visibility status</span>
                       <span role="columnheader">Last updated</span>
                       <span role="columnheader">Actions</span>
                     </div>
 
                     {filteredDatasetRows.map((row) => (
-                      <TableRow
-                        key={row.displayName}
-                        meta={<span style={mutedTextStyle}>{row.sourceRunCount} source run summaries</span>}
-                      >
+                      <TableRow key={row.displayName}>
                         <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
                           <strong>{row.displayName}</strong>
-                          <span>{row.problemType}</span>
+                          <input
+                            aria-label={`${row.displayName} slug`}
+                            defaultValue={row.slug}
+                            style={slugInputStyle}
+                            type="text"
+                          />
                           <StatusPill tone="warning">Unavailable</StatusPill>
                           <span>{formatCreatedAt(row.lastUpdated)}</span>
-                          <span style={promotionIntentStyle}>
-                            <span style={actionGroupStyle}>
-                              <Button
-                                data-dataset-action="promote-disabled"
-                                disabled
-                                style={disabledIntentButtonStyle}
-                                title="Promote remains disabled until a safe owned API exists."
-                                variant="secondary"
-                              >
-                                <span aria-hidden="true" style={actionIconStyle}>
-                                  <PromoteActionIcon />
-                                </span>
-                                Promote
-                              </Button>
-                              <Button
-                                data-dataset-action="remove-disabled"
-                                disabled
-                                style={disabledIntentButtonStyle}
-                                title="Remove remains disabled until a safe owned API exists."
-                                variant="secondary"
-                              >
-                                <span aria-hidden="true" style={actionIconStyle}>
-                                  <RemoveActionIcon />
-                                </span>
-                                Remove
-                              </Button>
-                              <Button
-                                data-dataset-action="open-admin-disabled"
-                                disabled
-                                style={disabledIntentButtonStyle}
-                                title="Open admin requires a safe route and identifier."
-                                variant="secondary"
-                              >
-                                <span aria-hidden="true" style={actionIconStyle}>
-                                  <OpenAdminActionIcon />
-                                </span>
-                                Open admin
-                              </Button>
-                            </span>
-                            <span style={mutedTextStyle}>Safe action owner unavailable</span>
+                          <span style={actionGroupStyle}>
+                            <Button
+                              data-dataset-action="save-disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Save remains disabled until a safe owned API exists."
+                              variant="secondary"
+                            >
+                              <span aria-hidden="true" style={actionIconStyle}>
+                                <SaveActionIcon />
+                              </span>
+                              Save
+                            </Button>
+                            <Button
+                              data-dataset-action="remove-disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Remove remains disabled until a safe owned API exists."
+                              variant="secondary"
+                            >
+                              <span aria-hidden="true" style={actionIconStyle}>
+                                <RemoveActionIcon />
+                              </span>
+                              Remove
+                            </Button>
                           </span>
                         </div>
                       </TableRow>

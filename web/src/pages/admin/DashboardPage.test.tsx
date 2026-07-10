@@ -79,7 +79,7 @@ describe("DashboardPage", () => {
     expect(screen.queryByRole("heading", { name: "Runs root unavailable" })).not.toBeInTheDocument();
   });
 
-  it("renders exactly one run row with its status pill", async () => {
+  it("renders exactly one run row without a Status column or outcome tag", async () => {
     installRunsFetchMock(
       jsonResponse({
         runs_root_status: "available",
@@ -103,7 +103,8 @@ describe("DashboardPage", () => {
     const table = await screen.findByRole("table", { name: "Run summaries" });
     expect(table).toHaveAttribute("data-filtered-run-count", "1");
     expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
-    expect(within(table).getByText("Available")).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "Status" })).not.toBeInTheDocument();
+    expect(within(table).queryByText("accepted")).not.toBeInTheDocument();
   });
 
   it("renders Dataset Details from safe run-summary data with unavailable actions", async () => {
@@ -167,6 +168,7 @@ describe("DashboardPage", () => {
     render(<DashboardPage />);
 
     await loadRuns();
+    await screen.findByRole("table", { name: "Run summaries" });
     fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "energy" } });
 
     const runsTable = screen.getByRole("table", { name: "Run summaries" });
@@ -227,6 +229,7 @@ describe("DashboardPage", () => {
     render(<DashboardPage />);
 
     await loadRuns();
+    await screen.findByRole("table", { name: "Run summaries" });
     fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "cafe" } });
 
     const runsTable = screen.getByRole("table", { name: "Run summaries" });
@@ -237,7 +240,7 @@ describe("DashboardPage", () => {
     expect(within(datasetsTable).getByText("Café Forecast")).toBeInTheDocument();
   });
 
-  it("exposes the Runs and Dataset Details safe-action boundaries as accessible status regions", async () => {
+  it("renders disabled Promote and Remove buttons on each Runs row", async () => {
     installRunsFetchMock(
       jsonResponse({
         runs_root_status: "available",
@@ -258,10 +261,10 @@ describe("DashboardPage", () => {
 
     await loadRuns();
 
-    const statusRegions = await screen.findAllByRole("status");
-    expect(statusRegions).toHaveLength(2);
-    expect(screen.getByLabelText("Promotion boundary")).toHaveAttribute("role", "status");
-    expect(screen.getByLabelText("Safe action boundary")).toHaveAttribute("role", "status");
+    const table = await screen.findByRole("table", { name: "Run summaries" });
+    expect(within(table).getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(within(table).getByRole("button", { name: "Remove" })).toBeDisabled();
   });
 
   it("does not trigger any network request or state change when a disabled Promote, Remove, or Open admin button is clicked", async () => {
@@ -285,18 +288,23 @@ describe("DashboardPage", () => {
 
     await loadRuns();
 
-    const table = await screen.findByRole("table", { name: "Dataset details" });
+    const runsTable = await screen.findByRole("table", { name: "Run summaries" });
+    const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
     const callCountAfterLoad = fetchMock.mock.calls.length;
 
-    fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
-    fireEvent.click(within(table).getByRole("button", { name: "Remove" }));
-    fireEvent.click(within(table).getByRole("button", { name: "Open admin" }));
+    fireEvent.click(within(runsTable).getByRole("button", { name: "Promote" }));
+    fireEvent.click(within(runsTable).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(datasetTable).getByRole("button", { name: "Promote" }));
+    fireEvent.click(within(datasetTable).getByRole("button", { name: "Remove" }));
+    fireEvent.click(within(datasetTable).getByRole("button", { name: "Open admin" }));
 
     expect(fetchMock).toHaveBeenCalledTimes(callCountAfterLoad);
-    expect(within(table).getByRole("button", { name: "Promote" })).toBeDisabled();
-    expect(within(table).getByRole("button", { name: "Remove" })).toBeDisabled();
-    expect(within(table).getByRole("button", { name: "Open admin" })).toBeDisabled();
-    expect(table).toHaveAttribute("data-filtered-dataset-count", "1");
+    expect(within(runsTable).getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(within(runsTable).getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(within(datasetTable).getByRole("button", { name: "Promote" })).toBeDisabled();
+    expect(within(datasetTable).getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(within(datasetTable).getByRole("button", { name: "Open admin" })).toBeDisabled();
+    expect(datasetTable).toHaveAttribute("data-filtered-dataset-count", "1");
   });
 
   it("renders multiple runs with mixed statuses and no hardcoded upper bound on the counters", async () => {

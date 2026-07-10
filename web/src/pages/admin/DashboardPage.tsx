@@ -88,12 +88,6 @@ const inputStyle: CSSProperties = {
   background: "var(--atlas-color-surface)",
 };
 
-const filterBarStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "var(--atlas-space-3)",
-};
-
 const statusGridStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(4, minmax(9.5rem, 1fr))",
@@ -111,10 +105,17 @@ const tableStyle: CSSProperties = {
   gap: 0,
 };
 
+const stickyTableHeaderStyle: CSSProperties = {
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  background: "var(--atlas-color-surface)",
+};
+
 const runsTableHeaderStyle: CSSProperties = {
+  ...stickyTableHeaderStyle,
   display: "grid",
-  gridTemplateColumns:
-    "minmax(0, 1.1fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(11rem, 0.85fr)",
+  gridTemplateColumns: "minmax(0, 1.2fr) minmax(9rem, 0.9fr) minmax(9rem, 0.9fr) minmax(14rem, 1.1fr)",
   gap: "var(--atlas-space-3)",
   borderBottom: "1px solid var(--atlas-color-border-strong)",
   paddingBottom: "var(--atlas-space-3)",
@@ -126,13 +127,13 @@ const runsTableHeaderStyle: CSSProperties = {
 
 const runRowContentStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns:
-    "minmax(0, 1.1fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(11rem, 0.85fr)",
+  gridTemplateColumns: "minmax(0, 1.2fr) minmax(9rem, 0.9fr) minmax(9rem, 0.9fr) minmax(14rem, 1.1fr)",
   gap: "var(--atlas-space-3)",
   alignItems: "center",
 };
 
 const datasetTableHeaderStyle: CSSProperties = {
+  ...stickyTableHeaderStyle,
   display: "grid",
   gridTemplateColumns:
     "minmax(0, 1.15fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(8rem, 0.75fr) minmax(14rem, 1fr)",
@@ -162,13 +163,11 @@ const mutedTextStyle: CSSProperties = {
   color: "var(--atlas-color-text-muted)",
 };
 
-const intentBoundaryStyle: CSSProperties = {
-  display: "grid",
-  gap: "var(--atlas-space-2)",
-  border: "1px solid var(--atlas-color-border-strong)",
-  borderRadius: "var(--atlas-radius-md)",
-  padding: "var(--atlas-space-4)",
-  background: "var(--atlas-color-surface-muted)",
+const cardTitleStyle: CSSProperties = {
+  margin: 0,
+  color: "var(--atlas-color-text)",
+  fontSize: "var(--atlas-text-xl)",
+  fontWeight: 800,
 };
 
 const promotionIntentStyle: CSSProperties = {
@@ -324,26 +323,6 @@ function isAdminRunsResponse(value: unknown): value is AdminRunsResponse {
   );
 }
 
-function statusTone(status: RunStatus): "success" | "warning" | "danger" {
-  if (status === "available") {
-    return "success";
-  }
-  if (status === "invalid") {
-    return "danger";
-  }
-  return "warning";
-}
-
-function statusLabel(status: RunStatus): string {
-  if (status === "available") {
-    return "Available";
-  }
-  if (status === "invalid") {
-    return "Invalid";
-  }
-  return "Unavailable";
-}
-
 function reasonLabel(run: AdminRunSummary): string | null {
   if (run.status === "invalid") {
     return run.invalid_reason?.replaceAll("_", " ") ?? "Invalid source evidence";
@@ -374,14 +353,6 @@ function rootStatusMessage(status: RunsRootStatus): string {
   return status === "available"
     ? "Runs root available"
     : "Runs root unavailable";
-}
-
-function promotionIntentMessage(run: AdminRunSummary): string {
-  if (run.status === "available") {
-    return "Future publisher and profile validation required.";
-  }
-
-  return "Resolve run evidence before future promotion review.";
 }
 
 function datasetDisplayName(value: string): string {
@@ -546,7 +517,6 @@ export default function DashboardPage() {
     >
       <div className="admin-dashboard__header" style={headerStyle}>
         <div>
-          <p className="eyebrow">Dashboard</p>
           <h1 id="admin-dashboard-title">Dashboard</h1>
           <p className="summary">
             Private run and dataset readiness from safe admin projections. Statuses come from the backend; no raw
@@ -659,97 +629,11 @@ export default function DashboardPage() {
           )}
 
           <div style={sectionGridStyle}>
-            <Card aria-labelledby="admin-runs-table-title">
-              <div>
-                <p className="eyebrow">Runs</p>
-                <h2 id="admin-runs-table-title" style={{ margin: 0 }}>
-                  Safe run summaries
-                </h2>
-              </div>
-
-              <div aria-label="Promotion boundary" role="status" style={intentBoundaryStyle}>
-                <StatusPill tone="warning">Promotion intent disabled</StatusPill>
-                <p style={{ ...mutedTextStyle, margin: 0 }}>
-                  Dashboard promotion is a future workflow entry point only. It does not create drafts, release
-                  candidates, publications, published snapshot visibility changes, registry updates, or release artifact
-                  mutations.
-                </p>
-              </div>
-
-              <div aria-label="Run filter summary" style={filterBarStyle}>
-                <Badge>{statusFilter === "all" ? "All run statuses" : `${statusLabel(statusFilter)} runs`}</Badge>
-                <span style={mutedTextStyle}>{filteredRuns.length} matching run summaries</span>
-              </div>
-
-              {filteredRuns.length === 0 ? (
-                <EmptyState title="No matching runs" message="Adjust the Dashboard filters to view returned summaries." />
-              ) : (
-                <div className="admin-dashboard__table-wrap">
-                  <div role="table" aria-label="Run summaries" data-filtered-run-count={filteredRuns.length} style={tableStyle}>
-                    <div role="row" style={runsTableHeaderStyle}>
-                      <span role="columnheader">Run ID</span>
-                      <span role="columnheader">Dataset</span>
-                      <span role="columnheader">Created at</span>
-                      <span role="columnheader">Status</span>
-                      <span role="columnheader">Promotion intent</span>
-                    </div>
-
-                    {filteredRuns.map((run) => (
-                      <TableRow
-                        key={run.run_id}
-                        meta={
-                          <>
-                            {run.validation_summary && <Badge>{run.validation_summary.outcome}</Badge>}
-                            {reasonLabel(run) && <span style={mutedTextStyle}>{reasonLabel(run)}</span>}
-                          </>
-                        }
-                      >
-                        <div data-run-status={run.status} style={runRowContentStyle}>
-                          <strong>{run.run_id}</strong>
-                          <span>{run.dataset_candidate ?? "Not resolved"}</span>
-                          <span>{formatCreatedAt(run.created_at)}</span>
-                          <StatusPill tone={statusTone(run.status)}>{statusLabel(run.status)}</StatusPill>
-                          <span style={promotionIntentStyle}>
-                            <Button
-                              data-promotion-intent="disabled"
-                              disabled
-                              style={disabledIntentButtonStyle}
-                              title="Promotion remains disabled until a later publisher/profile workflow owns validation."
-                              variant="secondary"
-                            >
-                              <span aria-hidden="true" style={actionIconStyle}>
-                                <PromoteActionIcon />
-                              </span>
-                              Future workflow
-                            </Button>
-                            <span style={mutedTextStyle}>{promotionIntentMessage(run)}</span>
-                          </span>
-                        </div>
-                      </TableRow>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </Card>
-
             <Card aria-labelledby="dataset-details-table-title">
               <div>
-                <p className="eyebrow">Dataset Details</p>
-                <h2 id="dataset-details-table-title" style={{ margin: 0 }}>
-                  Safe dataset readiness
+                <h2 id="dataset-details-table-title" style={cardTitleStyle}>
+                  Dataset Details
                 </h2>
-                <p style={{ ...mutedTextStyle, margin: 0 }}>
-                  Dataset rows are derived only from validated run summaries until a safe profile, publication, or
-                  visibility projection is owned.
-                </p>
-              </div>
-
-              <div aria-label="Safe action boundary" role="status" style={intentBoundaryStyle}>
-                <StatusPill tone="warning">Dataset actions disabled</StatusPill>
-                <p style={{ ...mutedTextStyle, margin: 0 }}>
-                  Promote, Remove, and Open admin remain disabled until a safe, owned backend API exists for dataset
-                  promotion, removal, or admin navigation.
-                </p>
               </div>
 
               {datasetRows.length === 0 ? (
@@ -760,7 +644,7 @@ export default function DashboardPage() {
               ) : filteredDatasetRows.length === 0 ? (
                 <EmptyState title="No matching datasets" message="Adjust the Dashboard search to view dataset rows." />
               ) : (
-                <div className="admin-dashboard__table-wrap">
+                <div className="admin-dashboard__table-wrap admin-dashboard__table-wrap--scrollable">
                   <div
                     role="table"
                     aria-label="Dataset details"
@@ -825,6 +709,68 @@ export default function DashboardPage() {
                               </Button>
                             </span>
                             <span style={mutedTextStyle}>Safe action owner unavailable</span>
+                          </span>
+                        </div>
+                      </TableRow>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            <Card aria-labelledby="admin-runs-table-title">
+              <div>
+                <h2 id="admin-runs-table-title" style={cardTitleStyle}>
+                  Runs
+                </h2>
+              </div>
+
+              {filteredRuns.length === 0 ? (
+                <EmptyState title="No matching runs" message="Adjust the Dashboard filters to view returned summaries." />
+              ) : (
+                <div className="admin-dashboard__table-wrap admin-dashboard__table-wrap--scrollable">
+                  <div role="table" aria-label="Run summaries" data-filtered-run-count={filteredRuns.length} style={tableStyle}>
+                    <div role="row" style={runsTableHeaderStyle}>
+                      <span role="columnheader">Run ID</span>
+                      <span role="columnheader">Dataset</span>
+                      <span role="columnheader">Created at</span>
+                      <span role="columnheader">Actions</span>
+                    </div>
+
+                    {filteredRuns.map((run) => (
+                      <TableRow
+                        key={run.run_id}
+                        meta={reasonLabel(run) && <span style={mutedTextStyle}>{reasonLabel(run)}</span>}
+                      >
+                        <div data-run-status={run.status} style={runRowContentStyle}>
+                          <strong>{run.run_id}</strong>
+                          <span>{run.dataset_candidate ?? "Not resolved"}</span>
+                          <span>{formatCreatedAt(run.created_at)}</span>
+                          <span style={actionGroupStyle}>
+                            <Button
+                              data-run-action="promote-disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Promote remains disabled until a safe owned API exists."
+                              variant="secondary"
+                            >
+                              <span aria-hidden="true" style={actionIconStyle}>
+                                <PromoteActionIcon />
+                              </span>
+                              Promote
+                            </Button>
+                            <Button
+                              data-run-action="remove-disabled"
+                              disabled
+                              style={disabledIntentButtonStyle}
+                              title="Remove remains disabled until a safe owned API exists."
+                              variant="secondary"
+                            >
+                              <span aria-hidden="true" style={actionIconStyle}>
+                                <RemoveActionIcon />
+                              </span>
+                              Remove
+                            </Button>
                           </span>
                         </div>
                       </TableRow>

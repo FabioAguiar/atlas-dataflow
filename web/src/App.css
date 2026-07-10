@@ -973,32 +973,6 @@ h1 {
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  grid-template-rows: auto 1fr;
-}
-
-.admin-shell__header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--atlas-space-4);
-  min-height: 4rem;
-  border-bottom: 1px solid var(--atlas-color-border);
-  padding: var(--atlas-space-4) clamp(var(--atlas-space-5), 4vw, var(--atlas-space-8));
-  background: var(--atlas-color-surface);
-}
-
-.admin-shell__header-eyebrow {
-  margin: 0;
-  color: var(--atlas-color-accent);
-  font-size: var(--atlas-text-sm);
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.admin-shell__header-subtitle {
-  margin: 0;
-  color: var(--atlas-color-text-muted);
 }
 
 .admin-shell__main {
@@ -1941,6 +1915,11 @@ h1 {
 
 .admin-dashboard__table-wrap {
   overflow-x: auto;
+}
+
+.admin-dashboard__table-wrap--scrollable {
+  max-height: 22rem;
+  overflow-y: auto;
 }
 
 @media (max-width: 1400px) {

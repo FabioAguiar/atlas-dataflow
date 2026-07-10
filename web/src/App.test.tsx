@@ -99,7 +99,6 @@ describe("App admin routing", () => {
   it("renders Dataset Admin only inside the private admin shell", async () => {
     await renderApp("/admin/dataset-admin", true);
 
-    expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dataset Detail" })).toHaveAttribute(
       "href",
@@ -114,7 +113,6 @@ describe("App admin routing", () => {
   it("renders Settings only inside the private admin shell", async () => {
     await renderApp("/admin/settings", true);
 
-    expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/admin/settings");
     expect(screen.getByRole("heading", { name: /Admin settings/i })).toBeInTheDocument();
@@ -123,7 +121,6 @@ describe("App admin routing", () => {
   it("renders Help only inside the private admin shell", async () => {
     await renderApp("/admin/help", true);
 
-    expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Help" })).toHaveAttribute("href", "/admin/help");
     expect(screen.getByRole("heading", { name: /Admin help/i })).toBeInTheDocument();
@@ -132,7 +129,6 @@ describe("App admin routing", () => {
   it("renders the Dashboard only inside the private admin shell", async () => {
     await renderApp("/admin", true);
 
-    expect(await screen.findByText("Private administration")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Admin sections" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
   });
@@ -149,7 +145,6 @@ describe("App admin routing", () => {
   it("does not render admin shell or admin navigation for direct admin URLs when admin is disabled", async () => {
     const { container } = await renderApp("/admin/dataset-admin", false);
 
-    expect(screen.queryByText("Private administration")).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin utilities" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Dataset -- Telco Customer Churn" })).not.toBeInTheDocument();
@@ -159,7 +154,6 @@ describe("App admin routing", () => {
   it("does not render admin shell or admin navigation for the bare /admin route when admin is disabled", async () => {
     const { container } = await renderApp("/admin", false);
 
-    expect(screen.queryByText("Private administration")).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Dashboard" })).not.toBeInTheDocument();
     expect(container).toBeEmptyDOMElement();
@@ -169,7 +163,6 @@ describe("App admin routing", () => {
     await renderApp("/", false);
 
     expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
-    expect(screen.queryByText("Private administration")).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
   });
 });

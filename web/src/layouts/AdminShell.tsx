@@ -149,13 +149,6 @@ export default function AdminShell() {
         </aside>
 
         <div className="admin-shell__workspace">
-          <header className="admin-shell__header">
-            <div>
-              <p className="admin-shell__header-eyebrow">Private administration</p>
-              <p className="admin-shell__header-subtitle">Private workspace for governed dataset publication workflows.</p>
-            </div>
-          </header>
-
           <main className="admin-shell__main">
             <Outlet />
           </main>

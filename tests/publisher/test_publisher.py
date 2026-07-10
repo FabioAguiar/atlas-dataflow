@@ -376,3 +376,214 @@ def test_manifest_verify_detects_hash_mismatch(tmp_path):
     valid, errors = manifest.verify(manifest_path, candidate_dir)
     assert valid is False
     assert any(e["code"] == "MANIFEST_HASH_MISMATCH" for e in errors)
+
+
+# --- S0034: Telco publisher-validation run materialization ---
+
+TELCO_DATASET_SLUG = "telco-customer-churn"
+TELCO_RELEASE_ID = "release-20260701-001"
+
+
+def _write_telco_release_candidate(tmp_repo: Path, missing_role: str | None = None) -> Path:
+    candidate_dir = tmp_repo / "releases" / "candidates" / TELCO_DATASET_SLUG / TELCO_RELEASE_ID
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+
+    artifact_roles = {}
+    for role in REQUIRED_ROLES:
+        role_path = _role_path(role)
+        artifact_roles[role] = {"role": role, "path": role_path, "required": True}
+        if role == missing_role:
+            continue
+
+        payload = {
+            "role": role,
+            "dataset_identity": {"dataset_slug": TELCO_DATASET_SLUG},
+            "release_identity": {"release_id": TELCO_RELEASE_ID},
+            "availability_status": "real_dataflow_artifact",
+            "placeholder_policy": {
+                "fixtures_allowed": False,
+                "placeholders_allowed": False,
+                "missing_required_behavior": "reject",
+            },
+        }
+        if role in {"metrics", "model_card", "predictive_bundle"}:
+            payload["model_id"] = "telco-model-001"
+        if role == "predictive_bundle":
+            payload["runtime_contract_ref"] = "artifacts/contracts.json"
+        if role == "public_context":
+            payload["public_projection"] = {"safe_for_public": True}
+
+        artifact_path = candidate_dir / role_path
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    candidate = {
+        "schema_version": "release-candidate.v1",
+        "candidate_kind": "release_candidate",
+        "dataset_identity": {
+            "dataset_slug": TELCO_DATASET_SLUG,
+            "dataset_title": "Telco Customer Churn",
+        },
+        "release_identity": {
+            "release_id": TELCO_RELEASE_ID,
+            "release_version": "1.0.0-rc.1",
+            "created_at": "2026-07-01T00:00:00Z",
+        },
+        "source_run": {
+            "run_id": "train-20260701T000000Z",
+            "producer": "pytest",
+            "created_at": "2026-07-01T00:00:00Z",
+        },
+        "artifact_roles": artifact_roles,
+        "candidate_metadata": {
+            "assembled_by": "pytest",
+            "assembled_at": "2026-07-01T00:00:00Z",
+            "intended_publisher_action": "validate_candidate",
+            "completeness_validation": {
+                "required_artifact_roles": list(REQUIRED_ROLES),
+                "hash_policy": "publisher_calculates_hashes",
+                "manifest_policy": "publisher_generates_manifest",
+            },
+        },
+        "state_boundaries": {
+            "pipeline_run_is_publishable": False,
+            "candidate_is_published_release": False,
+            "promotion_required": True,
+            "registry_update_allowed_in_candidate": False,
+            "public_upload_required": False,
+            "web_administration_required": False,
+            "database_publication_management_required": False,
+            "runtime_consumes_temporary_pipeline_output": False,
+        },
+    }
+    (candidate_dir / "release-candidate.json").write_text(
+        json.dumps(candidate, indent=2),
+        encoding="utf-8",
+    )
+    return candidate_dir
+
+
+def test_materialize_telco_validation_run_accepted_candidate_writes_manifest(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_telco_release_candidate(tmp_repo)
+
+    result = validate.materialize_telco_validation_run(
+        candidate_dir=str(candidate_dir.relative_to(tmp_repo)),
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "accepted"
+    assert result["dataset_slug"] == TELCO_DATASET_SLUG
+    assert result["release_id"] == TELCO_RELEASE_ID
+    assert result["manifest_generated"] is True
+    assert result["manifest_path"] is not None
+
+    run_dir = tmp_repo / result["run_dir"]
+    assert run_dir.name.startswith("validate-")
+    assert (run_dir / "validation-result.json").is_file()
+    assert (run_dir / "manifest.json").is_file()
+    assert not (tmp_repo / "registry").exists()
+    assert (candidate_dir / "release-candidate.json").is_file()
+
+
+def test_materialize_telco_validation_run_rejected_candidate_skips_manifest(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_telco_release_candidate(tmp_repo, missing_role="metrics")
+
+    result = validate.materialize_telco_validation_run(
+        candidate_dir=f"releases/candidates/{TELCO_DATASET_SLUG}/{TELCO_RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "rejected"
+    assert result["manifest_generated"] is False
+    assert result["manifest_path"] is None
+
+    run_dir = tmp_repo / result["run_dir"]
+    assert (run_dir / "validation-result.json").is_file()
+    assert not (run_dir / "manifest.json").exists()
+
+
+def test_materialize_telco_validation_run_blocks_non_telco_candidate(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_candidate(tmp_repo)  # example-dataset, not telco-customer-churn
+
+    result = validate.materialize_telco_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "non_telco_candidate_rejected"
+    runs_dir = tmp_repo / "publisher" / "runs"
+    assert not runs_dir.exists() or not any(runs_dir.iterdir())
+
+
+def test_materialize_telco_validation_run_from_accepted_assembly_result(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_telco_release_candidate(tmp_repo)
+
+    assembly_result = {
+        "status": "accepted",
+        "dataset_slug": TELCO_DATASET_SLUG,
+        "release_id": TELCO_RELEASE_ID,
+        "candidate_dir": str(candidate_dir),
+    }
+
+    result = validate.materialize_telco_validation_run(assembly_result, repo_root=tmp_repo)
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "accepted"
+    assert result["manifest_generated"] is True
+
+
+def test_materialize_telco_validation_run_blocks_rejected_assembly_result(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+
+    assembly_result = {
+        "status": "rejected",
+        "reason": "release-candidate-input JSON failed required assembly checks",
+        "rejection_phase": "candidate_input_parse",
+    }
+
+    result = validate.materialize_telco_validation_run(assembly_result, repo_root=tmp_repo)
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "release_candidate_assembly_not_accepted"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_telco_validation_run_rejects_absolute_candidate_dir(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+
+    result = validate.materialize_telco_validation_run(
+        candidate_dir="/etc/passwd",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "absolute_path_rejected"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_telco_validation_run_rejects_both_references_given(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_telco_release_candidate(tmp_repo)
+
+    result = validate.materialize_telco_validation_run(
+        {"status": "accepted", "dataset_slug": TELCO_DATASET_SLUG, "candidate_dir": str(candidate_dir)},
+        candidate_dir=str(candidate_dir.relative_to(tmp_repo)),
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "ambiguous_candidate_reference"

@@ -79,7 +79,7 @@
   "generation_settings": {
     "generator_version": "prepare-candidate.v1"
   },
-  "generated_at": "2026-07-09T23:48:46+00:00",
+  "generated_at": "2026-07-10T00:17:40+00:00",
   "materialization_boundary_confirmations": {
     "model_training_performed": false,
     "release_candidate_assembly_performed": false,

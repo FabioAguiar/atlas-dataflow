@@ -849,6 +849,206 @@ def run(candidate_dir_path: str, repo_root: Path | None = None) -> dict:
     return result
 
 
+_TELCO_DATASET_SLUG = "telco-customer-churn"
+_CANDIDATE_STAGING_PREFIX = ("releases", "candidates")
+_AMBIGUOUS_PATH_CHARS = frozenset("*?[]")
+
+
+def _telco_validation_materialization_result(
+    *,
+    materialization_status: str,
+    reason_code: str | None = None,
+    message: str | None = None,
+    run_id: str | None = None,
+    run_dir: str | None = None,
+    dataset_slug: str | None = None,
+    release_id: str | None = None,
+    validation_outcome: str | None = None,
+    manifest_generated: bool = False,
+    manifest_path: str | None = None,
+    manifest_error: str | None = None,
+) -> dict:
+    return {
+        "materialization_status": materialization_status,
+        "reason_code": reason_code,
+        "message": message,
+        "run_id": run_id,
+        "run_dir": run_dir,
+        "dataset_slug": dataset_slug,
+        "release_id": release_id,
+        "validation_outcome": validation_outcome,
+        "manifest_generated": manifest_generated,
+        "manifest_path": manifest_path,
+        "manifest_error": manifest_error,
+        "boundary_confirmations": {
+            "publisher_promotion_performed": False,
+            "registry_activation_performed": False,
+            "release_candidate_artifact_modified": False,
+        },
+    }
+
+
+def materialize_telco_validation_run(
+    release_candidate_assembly_result: dict | None = None,
+    *,
+    candidate_dir: str | Path | None = None,
+    repo_root: Path | None = None,
+) -> dict:
+    """
+    Materialize a publisher validation run (and manifest, when permitted)
+    from an already-assembled Telco release candidate.
+
+    Accepts exactly one candidate reference: either the dict returned by
+    `pipeline.assemble_candidate.assemble_release_candidate` (the mode used
+    by the Telco notebook, keyed off its own `status`/`candidate_dir`
+    fields) or an explicit repository-relative candidate directory path
+    string. Never infers a candidate from notebook memory, a glob over
+    `releases/candidates/`, or any dataset other than
+    `telco-customer-churn`. Calls the existing `run()` validation boundary
+    above to write `validation-result.json`, then calls
+    `publisher.manifest.run()` to write `manifest.json` in the same run
+    directory only when `validation-result.json`'s own
+    `promotion_gate.promotion_allowed` is `true`. Never promotes a release,
+    never updates the registry, and never modifies any release-candidate
+    artifact.
+    """
+    if repo_root is None:
+        repo_root = Path(__file__).parent.parent
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+
+    if release_candidate_assembly_result is None and candidate_dir is None:
+        return _telco_validation_materialization_result(
+            materialization_status="blocked",
+            reason_code="missing_candidate_reference",
+            message="Provide either release_candidate_assembly_result or candidate_dir.",
+        )
+    if release_candidate_assembly_result is not None and candidate_dir is not None:
+        return _telco_validation_materialization_result(
+            materialization_status="blocked",
+            reason_code="ambiguous_candidate_reference",
+            message="Provide exactly one of release_candidate_assembly_result or candidate_dir, not both.",
+        )
+
+    if release_candidate_assembly_result is not None:
+        if not isinstance(release_candidate_assembly_result, dict):
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="malformed_assembly_result",
+                message="release_candidate_assembly_result must be a dict.",
+            )
+        if release_candidate_assembly_result.get("status") != "accepted":
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="release_candidate_assembly_not_accepted",
+                message="Release-candidate assembly result status is not 'accepted'.",
+            )
+        dataset_slug = release_candidate_assembly_result.get("dataset_slug")
+        if not isinstance(dataset_slug, str) or not dataset_slug:
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="malformed_assembly_result",
+                message="release_candidate_assembly_result is missing dataset_slug.",
+            )
+        candidate_dir_value = release_candidate_assembly_result.get("candidate_dir")
+        if not isinstance(candidate_dir_value, str) or not candidate_dir_value.strip():
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="missing_candidate_reference",
+                message="release_candidate_assembly_result is missing candidate_dir.",
+            )
+        resolved_candidate_dir = Path(candidate_dir_value).resolve()
+    else:
+        if not isinstance(candidate_dir, (str, Path)) or not str(candidate_dir).strip():
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="missing_candidate_reference",
+                message="candidate_dir must be a non-empty repository-relative path.",
+            )
+        candidate_dir_str = str(candidate_dir)
+        if _AMBIGUOUS_PATH_CHARS.intersection(candidate_dir_str):
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="ambiguous_candidate_reference",
+                message="candidate_dir must be a single explicit path, not a glob pattern.",
+            )
+        raw_path = Path(candidate_dir_str)
+        if raw_path.is_absolute():
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="absolute_path_rejected",
+                message="candidate_dir must be repository-relative, not absolute.",
+            )
+        if ".." in raw_path.parts:
+            return _telco_validation_materialization_result(
+                materialization_status="blocked",
+                reason_code="parent_traversal_rejected",
+                message="candidate_dir must not contain parent-directory traversal.",
+            )
+        resolved_candidate_dir = (resolved_repo_root / raw_path).resolve()
+        dataset_slug = resolved_candidate_dir.parent.name
+
+    staging_prefix = resolved_repo_root.joinpath(*_CANDIDATE_STAGING_PREFIX).resolve()
+    if not resolved_candidate_dir.is_relative_to(staging_prefix):
+        return _telco_validation_materialization_result(
+            materialization_status="blocked",
+            reason_code="unstable_candidate_reference",
+            message="Candidate directory must resolve under releases/candidates/ in the repository.",
+        )
+    if dataset_slug != _TELCO_DATASET_SLUG:
+        return _telco_validation_materialization_result(
+            materialization_status="blocked",
+            reason_code="non_telco_candidate_rejected",
+            message=f"Candidate dataset_slug must be {_TELCO_DATASET_SLUG!r}.",
+        )
+    if not resolved_candidate_dir.is_dir():
+        return _telco_validation_materialization_result(
+            materialization_status="blocked",
+            reason_code="candidate_directory_missing",
+            message="Candidate directory does not exist.",
+            dataset_slug=dataset_slug,
+        )
+
+    runs_root = resolved_repo_root / "publisher" / "runs"
+    existing_run_dirs = (
+        {p.name for p in runs_root.iterdir() if p.is_dir()} if runs_root.is_dir() else set()
+    )
+
+    validation_result = run(str(resolved_candidate_dir), repo_root=resolved_repo_root)
+
+    new_run_dirs = sorted(
+        p.name for p in runs_root.iterdir() if p.is_dir() and p.name not in existing_run_dirs
+    )
+    run_id = new_run_dirs[-1] if new_run_dirs else sorted(p.name for p in runs_root.iterdir() if p.is_dir())[-1]
+    run_dir = runs_root / run_id
+
+    manifest_path: str | None = None
+    manifest_generated = False
+    manifest_error: str | None = None
+    promotion_gate = validation_result.get("promotion_gate") or {}
+    if promotion_gate.get("promotion_allowed") is True:
+        from publisher import manifest as manifest_module  # local import: avoid a package-level cross-module dependency
+
+        try:
+            manifest_module.run(str(run_dir), repo_root=resolved_repo_root)
+        except RuntimeError as exc:
+            manifest_error = str(exc)
+        else:
+            manifest_path = str((run_dir / "manifest.json").relative_to(resolved_repo_root))
+            manifest_generated = True
+
+    return _telco_validation_materialization_result(
+        materialization_status="materialized",
+        run_id=run_id,
+        run_dir=str(run_dir.relative_to(resolved_repo_root)),
+        dataset_slug=dataset_slug,
+        release_id=(validation_result.get("candidate_identity") or {}).get("release_id"),
+        validation_outcome=validation_result.get("validation_outcome"),
+        manifest_generated=manifest_generated,
+        manifest_path=manifest_path,
+        manifest_error=manifest_error,
+    )
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         print(

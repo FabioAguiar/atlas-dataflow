@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "gender",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "SeniorCitizen",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "Partner",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "Dependents",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "tenure",
+      "type": "numeric",
+      "required": true,
+      "domain_constraints": {
+        "min": 0,
+        "max": 72
+      }
+    },
+    {
+      "name": "PhoneService",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "MultipleLines",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "InternetService",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "OnlineSecurity",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "OnlineBackup",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "DeviceProtection",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "TechSupport",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "StreamingTV",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "StreamingMovies",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "Contract",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "PaperlessBilling",
+      "type": "boolean",
+      "required": true
+    },
+    {
+      "name": "PaymentMethod",
+      "type": "categorical",
+      "required": true
+    },
+    {
+      "name": "MonthlyCharges",
+      "type": "numeric",
+      "required": true,
+      "domain_constraints": {
+        "min": 18.25,
+        "max": 118.75
+      }
+    }
+  ]
+}

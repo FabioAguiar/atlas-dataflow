@@ -211,6 +211,7 @@ from registry.resolve import (  # noqa: E402
     ReleaseUnavailableError,
     resolve_dataset,
 )
+from registry.update import MODE_CREATE_NEW_DATASET_DETAIL  # noqa: E402
 
 
 def _resolve_problem_type(dataset_slug: str) -> str | None:
@@ -656,18 +657,16 @@ def promote_admin_run_route(run_id: str, request: Request, payload: dict | None 
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
-    # Project Spec S0044: the promotion mode is an explicit, typed request
-    # field (payload.mode) rather than an implicit default, so a colliding
-    # dataset_slug never silently decides between updating the existing
-    # Dataset Detail and creating a new one. A caller that sends no body (or
-    # a body without a "mode" key) still gets the historical
-    # update_existing_or_create default for backward compatibility; any
-    # other value -- known or unknown -- is forwarded verbatim so
-    # promote_admin_run's own mode validation is the single source of truth
-    # and rejects it with the existing structured PROMOTION_MODE_INVALID
-    # failure instead of a generic 500.
-    mode_provided = isinstance(payload, dict) and "mode" in payload
-    result = promote_admin_run(run_id, mode=payload["mode"]) if mode_provided else promote_admin_run(run_id)
+    # Project Spec S0047: Admin Dashboard promotion is create-new-only. A
+    # colliding base dataset_slug must never silently (or explicitly, via a
+    # legacy/unknown request body mode) update an existing Dataset Detail
+    # through this route, so no request-body mode is read or forwarded here
+    # -- this route always promotes with MODE_CREATE_NEW_DATASET_DETAIL,
+    # regardless of what (if anything) the request body contains.
+    # promote_admin_run's own `mode` parameter and PROMOTION_MODE_INVALID
+    # validation remain reachable for direct/non-Admin callers (tests,
+    # scripts), just never through this route.
+    result = promote_admin_run(run_id, mode=MODE_CREATE_NEW_DATASET_DETAIL)
     if not result["promoted"]:
         return ADMIN_RUN_PROMOTION_FAILED.response(errors=result["errors"])
 

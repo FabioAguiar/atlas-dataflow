@@ -731,20 +731,20 @@ describe("DashboardPage", () => {
       expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
     });
 
-    it("defaults the promotion mode selector to Update existing Dataset Detail and offers Create new Dataset Detail", async () => {
+    it("does not render a promotion mode selector or offer Update existing Dataset Detail as an option", async () => {
       installSoleEligibleRunFetchMock();
       render(<DashboardPage />);
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
-      const modeSelect = within(table).getByRole("combobox", { name: "run-agnostic-solo promotion mode" });
-
-      expect(modeSelect).toHaveValue("update_existing_or_create");
-      expect(within(modeSelect).getByRole("option", { name: "Update existing Dataset Detail" })).toBeInTheDocument();
-      expect(within(modeSelect).getByRole("option", { name: "Create new Dataset Detail" })).toBeInTheDocument();
+      expect(
+        within(table).queryByRole("combobox", { name: "run-agnostic-solo promotion mode" }),
+      ).not.toBeInTheDocument();
+      expect(within(table).queryByRole("combobox")).not.toBeInTheDocument();
+      expect(screen.queryByText("Update existing Dataset Detail")).not.toBeInTheDocument();
     });
 
-    it("sends the operator-selected promotion mode in the Promote request body", async () => {
+    it("always sends create_new_dataset_detail in the Promote request body, never update_existing_or_create", async () => {
       const fetchMock = installSoleEligibleRunFetchMock();
       fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -782,17 +782,18 @@ describe("DashboardPage", () => {
       const callCountAfterLoad = fetchMock.mock.calls.length;
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
-      fireEvent.change(within(table).getByRole("combobox", { name: "run-agnostic-solo promotion mode" }), {
-        target: { value: "create_new_dataset_detail" },
-      });
       fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
 
-      await screen.findByRole("status");
+      const status = await within(table).findByRole("status");
+      expect(status).toHaveTextContent(/created a new registry entry/i);
+      expect(status).not.toHaveTextContent(/updated the existing registry entry/i);
 
       const promoteCall = fetchMock.mock.calls[callCountAfterLoad];
       expect(promoteCall[0]).toContain("/admin/runs/run-agnostic-solo/promote");
       const requestInit = promoteCall[1] as RequestInit;
-      expect(JSON.parse(requestInit.body as string)).toEqual({ mode: "create_new_dataset_detail" });
+      const sentBody = JSON.parse(requestInit.body as string);
+      expect(sentBody).toEqual({ mode: "create_new_dataset_detail" });
+      expect(sentBody.mode).not.toBe("update_existing_or_create");
     });
 
     it("displays the final public Dataset Detail slug when it differs from the candidate slug", async () => {
@@ -832,9 +833,6 @@ describe("DashboardPage", () => {
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
-      fireEvent.change(within(table).getByRole("combobox", { name: "run-agnostic-solo promotion mode" }), {
-        target: { value: "create_new_dataset_detail" },
-      });
       fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
 
       const status = await within(table).findByRole("status");

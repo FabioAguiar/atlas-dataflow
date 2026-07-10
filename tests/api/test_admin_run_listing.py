@@ -1631,7 +1631,13 @@ def test_promote_route_maps_filesystem_failure_to_structured_error(tmp_path, mon
         admin_runs._REPO_ROOT = original_repo_root
 
 
-def test_promote_route_forwards_create_new_dataset_detail_mode_from_request_body(tmp_path):
+def test_promote_route_always_creates_new_dataset_detail_regardless_of_request_body_mode(tmp_path):
+    # Project Spec S0047: the Admin route never forwards a request-body mode
+    # -- it always promotes with MODE_CREATE_NEW_DATASET_DETAIL, so a
+    # colliding base dataset_slug always allocates a new numbered public
+    # slug and never touches the existing entry, regardless of what (if
+    # anything, including the historical or an unrecognized mode) the
+    # request body contains.
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
     root = tmp_path / "runs"
@@ -1648,83 +1654,47 @@ def test_promote_route_forwards_create_new_dataset_detail_mode_from_request_body
             "tags": ["telco"],
         },
     }
-    _write_promotable_run(
-        root,
-        repo_root,
-        "route-promote-new-detail",
-        "telco-customer-churn",
-        "release-20260710t101438z",
-        registry_entries=[existing_entry],
-    )
 
     original_root = admin_runs._admin_runs_root
     original_repo_root = admin_runs._REPO_ROOT
     try:
-        admin_runs._admin_runs_root = lambda: root
-        admin_runs._REPO_ROOT = repo_root
-        request = _make_promote_request("route-promote-new-detail", {})
-        response = api_main.promote_admin_run_route(
-            "route-promote-new-detail",
-            request,
-            {"mode": registry_update.MODE_CREATE_NEW_DATASET_DETAIL},
-        )
+        for run_id, payload in (
+            ("route-promote-no-body", None),
+            ("route-promote-explicit-create-new", {"mode": registry_update.MODE_CREATE_NEW_DATASET_DETAIL}),
+            ("route-promote-legacy-update-mode", {"mode": registry_update.MODE_UPDATE_EXISTING_OR_CREATE}),
+            ("route-promote-unknown-mode", {"mode": "not_a_real_mode"}),
+        ):
+            run_root = root / run_id
+            run_repo_root = repo_root / run_id
+            run_root.mkdir()
+            _write_promotable_run(
+                run_root,
+                run_repo_root,
+                run_id,
+                "telco-customer-churn",
+                "release-20260710t101438z",
+                registry_entries=[dict(existing_entry)],
+            )
 
-        assert response["promoted"] is True
-        assert response["registry_action"] == "created"
-        assert response["public_dataset_slug"] == "telco-customer-churn1"
+            admin_runs._admin_runs_root = lambda run_root=run_root: run_root
+            admin_runs._REPO_ROOT = run_repo_root
+            request = _make_promote_request(run_id, {})
+            response = api_main.promote_admin_run_route(run_id, request, payload)
 
-        registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
-        original_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn")
-        assert original_entry["active_release"] == "release-20260601-001"
+            assert response["promoted"] is True, payload
+            assert response["registry_action"] == "created", payload
+            assert response["public_dataset_slug"] == "telco-customer-churn1", payload
+
+            registry = json.loads((run_repo_root / "registry" / "datasets.json").read_text())
+            original_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn")
+            assert original_entry["active_release"] == "release-20260601-001", payload
+            new_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn1")
+            assert new_entry["active_release"] == "release-20260710t101438z", payload
     finally:
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
         admin_runs._admin_runs_root = original_root
         admin_runs._REPO_ROOT = original_repo_root
-
-
-def test_promote_route_uses_historical_default_mode_when_request_body_omits_mode(tmp_path):
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ.pop("ADMIN_API_TOKEN", None)
-    root = tmp_path / "runs"
-    repo_root = tmp_path / "repo"
-    root.mkdir()
-    _write_promotable_run(
-        root, repo_root, "route-promote-no-body", "route-no-body-dataset", "release-20260710t101438z"
-    )
-
-    original_root = admin_runs._admin_runs_root
-    original_repo_root = admin_runs._REPO_ROOT
-    try:
-        admin_runs._admin_runs_root = lambda: root
-        admin_runs._REPO_ROOT = repo_root
-        request = _make_promote_request("route-promote-no-body", {})
-        response = api_main.promote_admin_run_route("route-promote-no-body", request)
-
-        assert response["promoted"] is True
-        assert response["registry_action"] == "created"
-    finally:
-        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
-        os.environ.pop("ADMIN_API_TOKEN", None)
-        admin_runs._admin_runs_root = original_root
-        admin_runs._REPO_ROOT = original_repo_root
-
-
-def test_promote_route_rejects_unknown_mode_with_structured_failure_not_generic_500():
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ.pop("ADMIN_API_TOKEN", None)
-    try:
-        request = _make_promote_request("any-run", {})
-        response = api_main.promote_admin_run_route("any-run", request, {"mode": "not_a_real_mode"})
-
-        assert response.status_code == 422
-        body = json.loads(response.body.decode("utf-8"))
-        assert body["error_code"] == "ADMIN_RUN_PROMOTION_FAILED"
-        assert body["errors"][0]["code"] == "PROMOTION_MODE_INVALID"
-        _assert_no_private_markers(body)
-    finally:
-        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
-        os.environ.pop("ADMIN_API_TOKEN", None)
 
 
 def test_promote_route_returns_sanitized_422_for_rejected_run():

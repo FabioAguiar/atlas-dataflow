@@ -67,10 +67,6 @@ type RunRemovalState =
   | { status: "removing"; runId: string }
   | { status: "error"; runId: string; message: string };
 
-type PromotionMode = "update_existing_or_create" | "create_new_dataset_detail";
-
-const DEFAULT_PROMOTION_MODE: PromotionMode = "update_existing_or_create";
-
 type RunPromotionEntry =
   | { status: "promoting" }
   | {
@@ -498,15 +494,8 @@ function promotionOutcomeMessage(entry: {
   return `Promoted ${datasetPart}${releasePart} — ${actionPart}.${slugPart}`;
 }
 
-function promotionModeLabel(mode: PromotionMode): string {
-  return mode === "create_new_dataset_detail" ? "Create new Dataset Detail" : "Update existing Dataset Detail";
-}
-
-function promotionModeConsequence(mode: PromotionMode): string {
-  return mode === "create_new_dataset_detail"
-    ? "Creates a new Dataset Detail entry with a deterministic unique public slug, leaving any existing entry untouched."
-    : "Updates the existing Dataset Detail entry for this dataset, or creates it if none exists yet.";
-}
+const PROMOTION_CONSEQUENCE =
+  "Creates a new Dataset Detail entry with a deterministic unique public slug, leaving any existing entry untouched.";
 
 function canPromoteRun(run: AdminRunSummary): boolean {
   return run.status === "available" && run.validation_summary?.outcome === "accepted";
@@ -640,7 +629,6 @@ export default function DashboardPage() {
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
-  const [promotionModeByRun, setPromotionModeByRun] = useState<Record<string, PromotionMode>>({});
   const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
 
   useEffect(() => {
@@ -810,21 +798,16 @@ export default function DashboardPage() {
       });
   }
 
-  function runPromotionMode(runId: string): PromotionMode {
-    return promotionModeByRun[runId] ?? DEFAULT_PROMOTION_MODE;
-  }
-
-  function setRunPromotionMode(runId: string, mode: PromotionMode) {
-    setPromotionModeByRun((previous) => ({ ...previous, [runId]: mode }));
-  }
-
-  function promoteRun(runId: string, mode: PromotionMode) {
+  function promoteRun(runId: string) {
     setPromotionState((previous) => ({ ...previous, [runId]: { status: "promoting" } }));
 
+    // Project Spec S0047: Admin Dashboard promotion always requests
+    // create_new_dataset_detail -- there is no operator-facing choice
+    // between updating an existing Dataset Detail and creating a new one.
     fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/promote`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode: "create_new_dataset_detail" }),
     })
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as AdminRunPromotionResponse | null;
@@ -1112,7 +1095,6 @@ export default function DashboardPage() {
                       const alreadyPromoted = run.status === "promoted";
                       const metaMessage =
                         promotionSuccessMessage ?? promotionError ?? promotedStateMessage(run) ?? reasonLabel(run);
-                      const selectedPromotionMode = runPromotionMode(run.run_id);
 
                       return (
                       <TableRow
@@ -1133,18 +1115,6 @@ export default function DashboardPage() {
                           <span>{run.dataset_candidate ?? "Not resolved"}</span>
                           <span>{formatCreatedAt(run.created_at)}</span>
                           <span style={actionGroupStyle}>
-                            <select
-                              aria-label={`${run.run_id} promotion mode`}
-                              data-run-promotion-mode={run.run_id}
-                              disabled={promoteDisabled}
-                              onChange={(event) => setRunPromotionMode(run.run_id, event.target.value as PromotionMode)}
-                              style={{ ...inputStyle, minWidth: 0, minHeight: "2.25rem", fontSize: "var(--atlas-text-sm)" }}
-                              title={promotionModeConsequence(selectedPromotionMode)}
-                              value={selectedPromotionMode}
-                            >
-                              <option value="update_existing_or_create">{promotionModeLabel("update_existing_or_create")}</option>
-                              <option value="create_new_dataset_detail">{promotionModeLabel("create_new_dataset_detail")}</option>
-                            </select>
                             <Button
                               data-run-action={
                                 alreadyPromoted
@@ -1156,13 +1126,13 @@ export default function DashboardPage() {
                                       : "promote"
                               }
                               disabled={promoteDisabled}
-                              onClick={() => promoteRun(run.run_id, selectedPromotionMode)}
+                              onClick={() => promoteRun(run.run_id)}
                               style={promotionEligible ? actionButtonStyle : disabledIntentButtonStyle}
                               title={
                                 alreadyPromoted
                                   ? "This run has already been promoted. Promote is disabled because repeating it would only re-apply the same, unchanged promotion result."
                                   : promotionEligible
-                                    ? promotionModeConsequence(selectedPromotionMode)
+                                    ? PROMOTION_CONSEQUENCE
                                     : "Promote is only available for available runs with an accepted validation outcome."
                               }
                               variant="secondary"

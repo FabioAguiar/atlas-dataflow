@@ -130,16 +130,23 @@ describe("DashboardPage", () => {
 
     const table = await screen.findByRole("table", { name: "Dataset details" });
     expect(table).toHaveAttribute("data-filtered-dataset-count", "1");
+    expect(within(table).getByRole("columnheader", { name: "Slug" })).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "Problem type" })).not.toBeInTheDocument();
+    expect(within(table).queryByText(/problem type/i)).not.toBeInTheDocument();
     expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast display name" })).toHaveValue(
       "Synthetic Retail Forecast",
     );
     expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast slug" })).toHaveValue(
       "synthetic-retail-forecast",
     );
+    expect(within(table).queryByText(/source run summ/i)).not.toBeInTheDocument();
 
     expect(within(table).getByRole("button", { name: "Save" })).toBeDisabled();
     expect(within(table).getByRole("button", { name: "Remove" })).toBeDisabled();
     expect(within(table).queryByRole("button", { name: "Open admin" })).not.toBeInTheDocument();
+    expect(within(table).queryByText(/open admin/i)).not.toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+    expect(within(table).queryByText("Safe action owner unavailable")).not.toBeInTheDocument();
   });
 
   it("filters runs and Dataset Details from the shared Dashboard search", async () => {
@@ -249,7 +256,7 @@ describe("DashboardPage", () => {
     );
   });
 
-  it("renders a disabled Promote button and an enabled Remove button for an available run", async () => {
+  it("renders an enabled Promote button and an enabled Remove button for an eligible available run", async () => {
     installRunsFetchMock(
       jsonResponse({
         runs_root_status: "available",
@@ -272,6 +279,32 @@ describe("DashboardPage", () => {
 
     const table = await screen.findByRole("table", { name: "Run summaries" });
     expect(within(table).getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
+    expect(within(table).getByRole("button", { name: "Remove" })).not.toBeDisabled();
+  });
+
+  it("disables the Promote button for an available run whose validation outcome is not accepted", async () => {
+    installRunsFetchMock(
+      jsonResponse({
+        runs_root_status: "available",
+        runs: [
+          {
+            schema_version: "admin-run-summary.v1",
+            run_id: "run-agnostic-rejected",
+            status: "available",
+            dataset_candidate: "synthetic-retail-forecast",
+            created_at: "2026-06-01T12:00:00Z",
+            trace_reference: "trace/run-agnostic-rejected",
+            validation_summary: { outcome: "rejected", reason: "metrics artifact missing" },
+          },
+        ],
+      }),
+    );
+    render(<DashboardPage />);
+
+    await loadRuns();
+
+    const table = await screen.findByRole("table", { name: "Run summaries" });
     expect(within(table).getByRole("button", { name: "Promote" })).toBeDisabled();
     expect(within(table).getByRole("button", { name: "Remove" })).not.toBeDisabled();
   });
@@ -314,7 +347,7 @@ describe("DashboardPage", () => {
             dataset_candidate: "synthetic-retail-forecast",
             created_at: "2026-06-01T12:00:00Z",
             trace_reference: "trace/run-agnostic-solo",
-            validation_summary: { outcome: "accepted" },
+            validation_summary: { outcome: "rejected", reason: "metrics artifact missing" },
           },
         ],
       }),
@@ -462,6 +495,176 @@ describe("DashboardPage", () => {
       expect(await within(dialog).findByRole("heading", { name: "Run removal failed" })).toBeInTheDocument();
       const table = await screen.findByRole("table", { name: "Run summaries" });
       expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
+    });
+  });
+
+  describe("Runs row promotion", () => {
+    function installSoleEligibleRunFetchMock() {
+      return installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-agnostic-solo",
+              status: "available",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-agnostic-solo",
+              validation_summary: { outcome: "accepted" },
+            },
+          ],
+        }),
+      );
+    }
+
+    it("shows a loading label and disables the button while a promotion is in flight", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      let resolvePromote: (response: ReturnType<typeof jsonResponse>) => void = () => {};
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return new Promise((resolve) => {
+            resolvePromote = resolve;
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return Promise.resolve(
+            jsonResponse({
+              runs_root_status: "available",
+              runs: [
+                {
+                  schema_version: "admin-run-summary.v1",
+                  run_id: "run-agnostic-solo",
+                  status: "available",
+                  dataset_candidate: "synthetic-retail-forecast",
+                  created_at: "2026-06-01T12:00:00Z",
+                  trace_reference: "trace/run-agnostic-solo",
+                  validation_summary: { outcome: "accepted" },
+                },
+              ],
+            }),
+          );
+        }
+        return Promise.resolve(jsonResponse({}, 404));
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      expect(await within(table).findByRole("button", { name: "Promoting..." })).toBeDisabled();
+
+      resolvePromote(
+        jsonResponse({
+          run_id: "run-agnostic-solo",
+          promoted: true,
+          dataset_slug: "synthetic-retail-forecast",
+          release_id: "release-20260701-001",
+          registry_action: "updated",
+          errors: [],
+        }),
+      );
+
+      await screen.findByRole("button", { name: "Promote" });
+    });
+
+    it("calls the owned promote endpoint and refreshes the Dashboard after a successful promotion", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-agnostic-solo",
+            promoted: true,
+            dataset_slug: "synthetic-retail-forecast",
+            release_id: "release-20260701-001",
+            registry_action: "updated",
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+      const callCountAfterLoad = fetchMock.mock.calls.length;
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      await screen.findByRole("button", { name: "Promote" });
+
+      expect(fetchMock.mock.calls.length).toBe(callCountAfterLoad + 2);
+      expect(fetchMock.mock.calls[callCountAfterLoad][0]).toContain("/admin/runs/run-agnostic-solo/promote");
+      expect(fetchMock.mock.calls[callCountAfterLoad + 1][0]).toContain("/admin/runs");
+      expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
+    });
+
+    it("shows a sanitized English error and keeps the run promotable when promotion fails", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return jsonResponse(
+            {
+              error_type: "admin_run_promotion_failed",
+              error_code: "ADMIN_RUN_PROMOTION_FAILED",
+              message: "The run could not be promoted.",
+              errors: [
+                {
+                  code: "PROMOTION_NOT_ALLOWED",
+                  field: "promotion_gate.promotion_allowed",
+                  message: "This run is not eligible for promotion.",
+                },
+              ],
+            },
+            422,
+          );
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      expect(await within(table).findByText("This run is not eligible for promotion.")).toBeInTheDocument();
+      expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
+      expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
     });
   });
 

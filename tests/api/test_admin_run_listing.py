@@ -16,6 +16,7 @@ or directly:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -28,6 +29,8 @@ sys.path.insert(0, str(API_ROOT))
 import admin_runs  # noqa: E402
 import main as api_main  # noqa: E402
 from fastapi import Request  # noqa: E402
+from registry.resolve import resolve_dataset  # noqa: E402
+from registry.validate import validate_registry  # noqa: E402
 
 
 def _make_request(headers: dict[str, str]) -> Request:
@@ -431,6 +434,450 @@ def test_remove_admin_run_rejects_symlink_escaping_runs_root():
 
 
 # ---------------------------------------------------------------------------
+# promote_admin_run: happy path, registry create/update, and rejection states
+# ---------------------------------------------------------------------------
+
+def _write_promotable_run(
+    root: Path,
+    repo_root: Path,
+    run_id: str,
+    dataset_slug: str,
+    release_id: str,
+    *,
+    registry_entries: list | None = None,
+) -> Path:
+    """Build a self-contained repo_root (release candidate, operational note,
+    registry) plus a run_dir under root with an accepted, promotion-eligible
+    validation result -- everything promote_admin_run() needs end to end,
+    without touching the real target repository.
+    """
+    candidate_dir = repo_root / "releases" / "candidates" / dataset_slug / release_id
+    candidate_dir.mkdir(parents=True)
+    _write_json(
+        candidate_dir / "public-context.json",
+        {
+            "schema_version": "1.0.0",
+            "dataset_slug": dataset_slug,
+            "title": "Promotable Dataset",
+            "description": "Fixture dataset used to validate the promotion flow.",
+            "domain": "testing",
+            "tags": ["fixture", "promotion"],
+        },
+    )
+
+    manifest = {
+        "schema_version": "release-manifest.v1",
+        "manifest_kind": "release_manifest",
+        "dataset_identity": {"dataset_slug": dataset_slug, "dataset_title": "Promotable Dataset"},
+        "release_identity": {
+            "release_id": release_id,
+            "release_version": "1.0.0-rc.1",
+            "created_at": "2026-07-10T10:00:00Z",
+        },
+        "artifacts": [
+            {
+                "role": "public_context",
+                "reference": "public-context.json",
+                "hash_algorithm": "sha256",
+                "hash_value": "0" * 64,
+            },
+        ],
+    }
+
+    validation_result = {
+        "schema_version": "release-candidate-validation.v1",
+        "candidate_identity": {
+            "dataset_slug": dataset_slug,
+            "release_id": release_id,
+            "release_version": "1.0.0-rc.1",
+        },
+        "validation_outcome": "accepted",
+        "rejection": {"rejected": False, "reasons": []},
+        "promotion_gate": {"promotion_allowed": True, "registry_update_allowed": True},
+    }
+
+    run_dir = _write_run_dir(root, run_id, manifest, validation_result)
+
+    note_dst = repo_root / "publisher" / "release-candidate.operational-note.json"
+    note_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "publisher" / "release-candidate.operational-note.json", note_dst)
+
+    registry_dir = repo_root / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    registry = {
+        "schema_version": "atlas.dataflow.registry.v1",
+        "conventions": {
+            "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+            "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+            "active_release": {"description": "x"},
+        },
+        "datasets": registry_entries if registry_entries is not None else [],
+    }
+    _write_json(registry_dir / "datasets.json", registry)
+
+    return run_dir
+
+
+def test_promote_admin_run_rejects_invalid_run_id():
+    result = admin_runs.promote_admin_run("../escape")
+    assert result["promoted"] is False
+    assert result["errors"][0]["code"] == "RUN_ID_INVALID"
+
+
+def test_promote_admin_run_reports_not_found_for_missing_run_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.promote_admin_run("does-not-exist")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["promoted"] is False
+        assert result["errors"][0]["code"] == "RUN_NOT_FOUND"
+
+
+def test_promote_admin_run_rejects_run_missing_validation_result():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_run_dir(root, "no-validation", _VALID_MANIFEST, None)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.promote_admin_run("no-validation")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["promoted"] is False
+        assert result["errors"][0]["code"] == "RUN_VALIDATION_MISSING"
+
+
+def test_promote_admin_run_rejects_rejected_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_run_dir(root, "rejected-run", _VALID_MANIFEST, _REJECTED_VALIDATION_RESULT)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.promote_admin_run("rejected-run")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["promoted"] is False
+        assert result["errors"][0]["code"] == "PROMOTION_NOT_ALLOWED"
+
+
+def test_promote_admin_run_rejects_accepted_run_without_promotion_gate():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_run_dir(root, "no-gate", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.promote_admin_run("no-gate")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["promoted"] is False
+        assert result["errors"][0]["code"] == "PROMOTION_NOT_ALLOWED"
+
+
+def test_promote_admin_run_creates_new_registry_entry_from_public_context(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root, repo_root, "promote-new", "new-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-new")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result == {
+        "run_id": "promote-new",
+        "promoted": True,
+        "dataset_slug": "new-dataset",
+        "release_id": "release-20260710t101438z",
+        "registry_action": "created",
+        "errors": [],
+    }
+
+    registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+    entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "new-dataset")
+    assert entry["active_release"] == "release-20260710t101438z"
+    assert entry["public_metadata"] == {
+        "title": "Promotable Dataset",
+        "summary": "Fixture dataset used to validate the promotion flow.",
+        "domain": "testing",
+        "visibility": "public",
+        "tags": ["fixture", "promotion"],
+    }
+    assert (repo_root / "releases" / "release-20260710t101438z" / "public-context.json").is_file()
+    assert (run_dir / "promotion-result.json").is_file()
+    _assert_no_private_markers(entry)
+
+
+def test_promote_admin_run_updates_existing_registry_entry(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    existing_entry = {
+        "dataset_slug": "existing-dataset",
+        "active_release": "release-20260601-001",
+        "public_metadata": {
+            "title": "Existing Dataset",
+            "summary": "Already published.",
+            "domain": "existing",
+            "visibility": "public",
+            "tags": ["existing"],
+        },
+    }
+    _write_promotable_run(
+        root,
+        repo_root,
+        "promote-existing",
+        "existing-dataset",
+        "release-20260710t101438z",
+        registry_entries=[existing_entry],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-existing")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is True
+    assert result["registry_action"] == "updated"
+
+    registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+    assert len(registry["datasets"]) == 1
+    entry = registry["datasets"][0]
+    assert entry["active_release"] == "release-20260710t101438z"
+    assert entry["public_metadata"]["title"] == "Existing Dataset"
+
+
+def test_promote_admin_run_repeated_call_reuses_existing_promotion_safely(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root, repo_root, "promote-twice", "twice-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        first = admin_runs.promote_admin_run("promote-twice")
+        promotion_result_after_first = json.loads((run_dir / "promotion-result.json").read_text())
+        second = admin_runs.promote_admin_run("promote-twice")
+        promotion_result_after_second = json.loads((run_dir / "promotion-result.json").read_text())
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert first["promoted"] is True
+    assert second["promoted"] is True
+    assert second["dataset_slug"] == "twice-dataset"
+    assert second["release_id"] == "release-20260710t101438z"
+    assert second["registry_action"] == "updated"
+    assert promotion_result_after_first == promotion_result_after_second
+
+
+def test_promote_admin_run_rejects_removed_run_directory_between_check_and_promotion():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "not-a-directory").write_text("not a run", encoding="utf-8")
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.promote_admin_run("not-a-directory")
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result["promoted"] is False
+        assert result["errors"][0]["code"] == "RUN_NOT_FOUND"
+
+
+def test_promoted_dataset_slug_resolves_through_registry_resolver(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "resolve-check", "resolve-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("resolve-check")
+        assert result["promoted"] is True
+
+        resolved = resolve_dataset(
+            "resolve-dataset", registry_path=repo_root / "registry" / "datasets.json"
+        )
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert resolved.dataset_slug == "resolve-dataset"
+    assert resolved.active_release == "release-20260710t101438z"
+
+
+def test_registry_validate_accepts_deterministic_release_id_format():
+    registry = {
+        "schema_version": "atlas.dataflow.registry.v1",
+        "conventions": {
+            "dataset_slug": {"pattern": "x", "description": "x"},
+            "release_id": {"pattern": "x", "description": "x"},
+            "active_release": {"description": "x"},
+        },
+        "datasets": [
+            {
+                "dataset_slug": "deterministic-dataset",
+                "active_release": "release-20260710t101438z",
+                "public_metadata": {
+                    "title": "T",
+                    "summary": "S",
+                    "domain": "D",
+                    "visibility": "public",
+                    "tags": [],
+                },
+            },
+            {
+                "dataset_slug": "historical-dataset",
+                "active_release": "release-20260619-001",
+                "public_metadata": {
+                    "title": "T2",
+                    "summary": "S2",
+                    "domain": "D2",
+                    "visibility": "public",
+                    "tags": [],
+                },
+            },
+        ],
+    }
+    result = validate_registry(registry)
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/runs/{run_id}/promote: access-control boundary
+# ---------------------------------------------------------------------------
+
+def _make_promote_request(run_id: str, headers: dict[str, str]) -> Request:
+    encoded_headers = [
+        (key.lower().encode("latin-1"), value.encode("latin-1"))
+        for key, value in headers.items()
+    ]
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": f"/admin/runs/{run_id}/promote",
+        "headers": encoded_headers,
+    }
+    return Request(scope)
+
+
+def test_promote_route_returns_generic_not_found_when_admin_runtime_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    request = _make_promote_request("any-run", {})
+    response = api_main.promote_admin_run_route("any-run", request)
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_promote_route_promotes_run_when_admin_runtime_enabled(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "route-promote", "route-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        request = _make_promote_request("route-promote", {})
+        response = api_main.promote_admin_run_route("route-promote", request)
+
+        assert response["promoted"] is True
+        assert response["dataset_slug"] == "route-dataset"
+        assert response["registry_action"] == "created"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_promote_route_returns_sanitized_422_when_run_not_found():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    original_root = admin_runs._admin_runs_root
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            admin_runs._admin_runs_root = lambda: root
+            request = _make_promote_request("does-not-exist", {})
+            response = api_main.promote_admin_run_route("does-not-exist", request)
+
+            assert response.status_code == 422
+            body = json.loads(response.body.decode("utf-8"))
+            assert body["error_code"] == "ADMIN_RUN_PROMOTION_FAILED"
+            assert body["errors"][0]["code"] == "RUN_NOT_FOUND"
+            _assert_no_private_markers(body)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+
+
+def test_promote_route_returns_sanitized_422_for_rejected_run():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    original_root = admin_runs._admin_runs_root
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_run_dir(root, "rejected-route-run", _VALID_MANIFEST, _REJECTED_VALIDATION_RESULT)
+            admin_runs._admin_runs_root = lambda: root
+            request = _make_promote_request("rejected-route-run", {})
+            response = api_main.promote_admin_run_route("rejected-route-run", request)
+
+            assert response.status_code == 422
+            body = json.loads(response.body.decode("utf-8"))
+            assert body["error_code"] == "ADMIN_RUN_PROMOTION_FAILED"
+            assert body["errors"][0]["code"] == "PROMOTION_NOT_ALLOWED"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+
+
+# ---------------------------------------------------------------------------
 # GET /admin/runs: access-control boundary
 # ---------------------------------------------------------------------------
 
@@ -672,6 +1119,7 @@ _EXPECTED_PUBLIC_DATASET_PATHS = {
 def test_admin_route_registered_and_public_dataset_routes_unchanged():
     paths = {route.path for route in api_main.app.routes}
     assert "/admin/runs" in paths
+    assert "/admin/runs/{run_id}/promote" in paths
 
     dataset_paths = {path for path in paths if path.startswith("/datasets")}
     assert dataset_paths == _EXPECTED_PUBLIC_DATASET_PATHS

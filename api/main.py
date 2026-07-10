@@ -69,7 +69,7 @@ from public_profile_visibility import (  # noqa: E402
     resolve_dataset_visibility,
     resolve_public_presentation_overlay,
 )
-from admin_runs import list_admin_run_summaries, remove_admin_run  # noqa: E402
+from admin_runs import list_admin_run_summaries, promote_admin_run, remove_admin_run  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
 from admin_profile_publish import publish_profile  # noqa: E402
 from admin_profile_visibility import set_dataset_visibility  # noqa: E402
@@ -175,6 +175,13 @@ ADMIN_RUN_REMOVAL_FAILED = PublicError(
     error_type="admin_run_removal_failed",
     error_code="ADMIN_RUN_REMOVAL_FAILED",
     message="The run could not be removed.",
+)
+
+ADMIN_RUN_PROMOTION_FAILED = PublicError(
+    status_code=422,
+    error_type="admin_run_promotion_failed",
+    error_code="ADMIN_RUN_PROMOTION_FAILED",
+    message="The run could not be promoted.",
 )
 
 ADMIN_SETTINGS_INVALID = PublicError(
@@ -640,6 +647,18 @@ def delete_admin_run(run_id: str, request: Request):
     result = remove_admin_run(run_id)
     if not result["removed"]:
         return ADMIN_RUN_REMOVAL_FAILED.response(errors=result["errors"])
+
+    return result
+
+
+@app.post("/admin/runs/{run_id}/promote")
+def promote_admin_run_route(run_id: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    result = promote_admin_run(run_id)
+    if not result["promoted"]:
+        return ADMIN_RUN_PROMOTION_FAILED.response(errors=result["errors"])
 
     return result
 

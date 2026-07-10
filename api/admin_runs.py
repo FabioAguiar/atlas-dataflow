@@ -2,9 +2,15 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from publisher import promote as publisher_promote  # noqa: E402
+from registry import update as registry_update  # noqa: E402
 
 _RUN_ARTIFACT_MANIFEST = "manifest.json"
 _RUN_ARTIFACT_VALIDATION_RESULT = "validation-result.json"
@@ -28,6 +34,26 @@ _RUN_REMOVAL_FAILED_ERROR = {
     "code": "RUN_REMOVAL_FAILED",
     "field": None,
     "message": "The run could not be removed.",
+}
+_RUN_VALIDATION_MISSING_ERROR = {
+    "code": "RUN_VALIDATION_MISSING",
+    "field": None,
+    "message": "No validation result was found for the given run id.",
+}
+_PROMOTION_NOT_ALLOWED_ERROR = {
+    "code": "PROMOTION_NOT_ALLOWED",
+    "field": "promotion_gate.promotion_allowed",
+    "message": "This run is not eligible for promotion.",
+}
+_PROMOTION_FAILED_ERROR = {
+    "code": "PROMOTION_FAILED",
+    "field": None,
+    "message": "The run could not be promoted.",
+}
+_REGISTRY_UPDATE_FAILED_ERROR = {
+    "code": "REGISTRY_UPDATE_FAILED",
+    "field": None,
+    "message": "The dataset registry could not be updated after promotion.",
 }
 
 # contracts/admin-run-summary.schema.json's validation_summary.outcome enum.
@@ -247,3 +273,114 @@ def remove_admin_run(run_id: str) -> dict:
         return {"run_id": run_id, "removed": False, "errors": [_RUN_REMOVAL_FAILED_ERROR]}
 
     return {"run_id": run_id, "removed": True, "errors": []}
+
+
+def _promotion_gate_allows(validation_result: dict) -> bool:
+    if validation_result.get("validation_outcome") != "accepted":
+        return False
+    promotion_gate = validation_result.get("promotion_gate")
+    if not isinstance(promotion_gate, dict):
+        return False
+    return promotion_gate.get("promotion_allowed") is True
+
+
+def _promotion_matches_promoted_release(run_dir: Path, release_id: str) -> bool:
+    """Validate idempotence before reusing an already-promoted release.
+
+    Compares this run's own manifest.json against the manifest.json that was
+    copied into releases/{release_id}/ by the original promotion. A stale or
+    mismatched prior promotion-result.json is never reused silently.
+    """
+    run_manifest = _read_json_object(run_dir / _RUN_ARTIFACT_MANIFEST)
+    release_manifest = _read_json_object(_REPO_ROOT / "releases" / release_id / "manifest.json")
+    if run_manifest is None or release_manifest is None:
+        return False
+    return run_manifest == release_manifest
+
+
+def _promotion_failure_result(run_id: str, error: dict) -> dict:
+    return {
+        "run_id": run_id,
+        "promoted": False,
+        "dataset_slug": None,
+        "release_id": None,
+        "registry_action": None,
+        "errors": [error],
+    }
+
+
+def promote_admin_run(run_id: str) -> dict:
+    """Promote exactly one accepted, promotion-eligible run into a public release.
+
+    Returns {"run_id", "promoted": bool, "dataset_slug": str|None,
+    "release_id": str|None, "registry_action": "created"|"updated"|None,
+    "errors": [...]}.
+
+    Gates on the run's own validation-result.json: validation_outcome must be
+    "accepted" and promotion_gate.promotion_allowed must be exactly True --
+    the same gate publisher/promote.py enforces internally, not just the
+    reduced admin-run-summary projection. Reuses (never re-copies) an
+    already-promoted run's existing promotion-result.json once its manifest is
+    confirmed to still match the promoted release, so a repeated Promote click
+    is a safe no-op instead of publisher/promote.py's "already exists"
+    failure. If the dataset_slug is not yet in the registry, registry/update.py
+    creates a safe public entry from the promoted release's public context;
+    otherwise the existing entry's active_release is updated. Never raises for
+    an invalid run id, missing run, ineligible run, or a downstream promotion/
+    registry failure -- those are reported as a non-promoted result with a
+    reduced error instead.
+    """
+    validity_error = _run_id_validation_error(run_id)
+    if validity_error is not None:
+        return _promotion_failure_result(run_id, validity_error)
+
+    runs_root = _admin_runs_root()
+    run_dir = runs_root / run_id
+
+    if not _is_within_root(run_dir, runs_root):
+        return _promotion_failure_result(run_id, _RUN_NOT_FOUND_ERROR)
+
+    try:
+        is_directory = run_dir.is_dir()
+    except OSError:
+        is_directory = False
+    if not is_directory:
+        return _promotion_failure_result(run_id, _RUN_NOT_FOUND_ERROR)
+
+    validation_result = _read_json_object(run_dir / _RUN_ARTIFACT_VALIDATION_RESULT)
+    if validation_result is None:
+        return _promotion_failure_result(run_id, _RUN_VALIDATION_MISSING_ERROR)
+
+    if not _promotion_gate_allows(validation_result):
+        return _promotion_failure_result(run_id, _PROMOTION_NOT_ALLOWED_ERROR)
+
+    existing_promotion = _read_json_object(run_dir / _RUN_ARTIFACT_PROMOTION_RESULT)
+    promotion_result = None
+    if existing_promotion is not None and existing_promotion.get("promotion_outcome") == "promoted":
+        candidate_identity = existing_promotion.get("candidate_identity") or {}
+        release_id = candidate_identity.get("release_id")
+        if isinstance(release_id, str) and _promotion_matches_promoted_release(run_dir, release_id):
+            promotion_result = existing_promotion
+        else:
+            return _promotion_failure_result(run_id, _PROMOTION_FAILED_ERROR)
+
+    if promotion_result is None:
+        try:
+            promotion_result = publisher_promote.run(str(run_dir), repo_root=_REPO_ROOT)
+        except (RuntimeError, ValueError):
+            return _promotion_failure_result(run_id, _PROMOTION_FAILED_ERROR)
+
+    try:
+        registry_result = registry_update.run(str(run_dir), repo_root=_REPO_ROOT)
+    except (RuntimeError, ValueError):
+        return _promotion_failure_result(run_id, _REGISTRY_UPDATE_FAILED_ERROR)
+
+    candidate_identity = promotion_result.get("candidate_identity") or {}
+    return {
+        "run_id": run_id,
+        "promoted": True,
+        "dataset_slug": candidate_identity.get("dataset_slug"),
+        "release_id": candidate_identity.get("release_id"),
+        "registry_action": "created" if registry_result.get("dataset_entry_created") else "updated",
+        "errors": [],
+    }

@@ -12,7 +12,11 @@ from pathlib import Path
 
 REGISTRY_SCHEMA_VERSION = "atlas.dataflow.registry.v1"
 DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-RELEASE_ID_PATTERN = re.compile(r"^release-[0-9]{8}-[0-9]{3}$")
+# Accepts both the historical release-YYYYMMDD-NNN identifier and the
+# deterministic release-YYYYMMDDtHHMMSSz identifier that
+# pipeline/assemble_candidate.py.derive_deterministic_release_id() derives
+# from a governed train-<timestamp>Z training run id (Project Spec S0036).
+RELEASE_ID_PATTERN = re.compile(r"^release-(?:[0-9]{8}-[0-9]{3}|[0-9]{8}t[0-9]{6}z)$")
 
 _SAFE_METADATA_FIELDS = {"title", "summary", "domain", "visibility", "tags"}
 _REQUIRED_METADATA_FIELDS = ("title", "summary", "domain", "visibility", "tags")
@@ -109,7 +113,8 @@ def validate_registry(registry: dict) -> dict:
                 errors.append(_err(
                     "INVALID_ACTIVE_RELEASE_FORMAT",
                     f"{prefix}.active_release",
-                    f"Dataset entry at index {i} 'active_release' must match the format release-YYYYMMDD-NNN.",
+                    f"Dataset entry at index {i} 'active_release' must match the format "
+                    "release-YYYYMMDD-NNN or release-YYYYMMDDtHHMMSSz.",
                 ))
 
             metadata = entry.get("public_metadata")

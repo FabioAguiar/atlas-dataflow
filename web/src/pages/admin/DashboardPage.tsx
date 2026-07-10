@@ -58,6 +58,21 @@ type RunRemovalState =
   | { status: "removing"; runId: string }
   | { status: "error"; runId: string; message: string };
 
+type RunPromotionEntry =
+  | { status: "promoting" }
+  | { status: "error"; message: string };
+
+type RunPromotionState = Record<string, RunPromotionEntry>;
+
+type AdminRunPromotionResponse = {
+  run_id: string;
+  promoted: boolean;
+  dataset_slug: string | null;
+  release_id: string | null;
+  registry_action: "created" | "updated" | null;
+  errors: Array<{ code: string; field: string | null; message: string }>;
+};
+
 const pageStyle: CSSProperties = {
   display: "grid",
   gap: "var(--atlas-space-6)",
@@ -369,6 +384,10 @@ function isAdminRunsResponse(value: unknown): value is AdminRunsResponse {
   );
 }
 
+function canPromoteRun(run: AdminRunSummary): boolean {
+  return run.status === "available" && run.validation_summary?.outcome === "accepted";
+}
+
 function reasonLabel(run: AdminRunSummary): string | null {
   if (run.status === "invalid") {
     return run.invalid_reason?.replaceAll("_", " ") ?? "Invalid source evidence";
@@ -461,6 +480,7 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
+  const [promotionState, setPromotionState] = useState<RunPromotionState>({});
 
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent) {
@@ -594,6 +614,41 @@ export default function DashboardPage() {
           runId,
           message: "The run could not be removed. Check private admin API reachability.",
         });
+      });
+  }
+
+  function promoteRun(runId: string) {
+    setPromotionState((previous) => ({ ...previous, [runId]: { status: "promoting" } }));
+
+    fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/promote`, {
+      method: "POST",
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as AdminRunPromotionResponse | null;
+          const detail = body?.errors?.[0]?.message;
+          setPromotionState((previous) => ({
+            ...previous,
+            [runId]: {
+              status: "error",
+              message: detail ?? "The run could not be promoted. Confirm the run is still eligible and try again.",
+            },
+          }));
+          return;
+        }
+
+        setPromotionState((previous) => {
+          const next = { ...previous };
+          delete next[runId];
+          return next;
+        });
+        loadRuns();
+      })
+      .catch(() => {
+        setPromotionState((previous) => ({
+          ...previous,
+          [runId]: { status: "error", message: "The run could not be promoted. Check private admin API reachability." },
+        }));
       });
   }
 
@@ -818,10 +873,18 @@ export default function DashboardPage() {
                       <span role="columnheader">Actions</span>
                     </div>
 
-                    {filteredRuns.map((run) => (
+                    {filteredRuns.map((run) => {
+                      const promotionEntry = promotionState[run.run_id];
+                      const isPromoting = promotionEntry?.status === "promoting";
+                      const promotionError = promotionEntry?.status === "error" ? promotionEntry.message : null;
+                      const promotionEligible = canPromoteRun(run);
+                      const promoteDisabled = !promotionEligible || isPromoting;
+                      const metaMessage = promotionError ?? reasonLabel(run);
+
+                      return (
                       <TableRow
                         key={run.run_id}
-                        meta={reasonLabel(run) && <span style={mutedTextStyle}>{reasonLabel(run)}</span>}
+                        meta={metaMessage && <span style={mutedTextStyle}>{metaMessage}</span>}
                       >
                         <div data-run-status={run.status} style={runRowContentStyle}>
                           <strong>{run.run_id}</strong>
@@ -829,16 +892,23 @@ export default function DashboardPage() {
                           <span>{formatCreatedAt(run.created_at)}</span>
                           <span style={actionGroupStyle}>
                             <Button
-                              data-run-action="promote-disabled"
-                              disabled
-                              style={disabledIntentButtonStyle}
-                              title="Promote remains disabled until a safe owned API exists."
+                              data-run-action={
+                                !promotionEligible ? "promote-disabled" : isPromoting ? "promote-loading" : "promote"
+                              }
+                              disabled={promoteDisabled}
+                              onClick={() => promoteRun(run.run_id)}
+                              style={promotionEligible ? actionButtonStyle : disabledIntentButtonStyle}
+                              title={
+                                promotionEligible
+                                  ? "Promote this run into a public release."
+                                  : "Promote is only available for available runs with an accepted validation outcome."
+                              }
                               variant="secondary"
                             >
                               <span aria-hidden="true" style={actionIconStyle}>
                                 <PromoteActionIcon />
                               </span>
-                              Promote
+                              {isPromoting ? "Promoting..." : "Promote"}
                             </Button>
                             <Button
                               data-run-action={run.status === "available" ? "remove" : "remove-disabled"}
@@ -860,7 +930,8 @@ export default function DashboardPage() {
                           </span>
                         </div>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

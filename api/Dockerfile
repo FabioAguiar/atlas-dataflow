@@ -12,6 +12,8 @@ COPY api/*.py ./api/
 COPY registry/ ./registry/
 COPY runtime/ ./runtime/
 COPY releases/ ./releases/
+COPY publisher/*.py ./publisher/
+COPY publisher/release-candidate.operational-note.json ./publisher/release-candidate.operational-note.json
 
 WORKDIR /app/api
 

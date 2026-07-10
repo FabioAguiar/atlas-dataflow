@@ -10,6 +10,9 @@
 !runtime/**
 !releases/
 !releases/**
+!publisher/
+!publisher/*.py
+!publisher/release-candidate.operational-note.json
 
 # Ignore generated/cache files even inside included directories.
 **/__pycache__/

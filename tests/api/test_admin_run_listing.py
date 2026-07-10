@@ -665,9 +665,10 @@ def test_promoted_run_becomes_repromotable_after_registry_entry_removed(tmp_path
         assert bound_entry["promotion_summary"]["can_promote"] is False
 
         # The Dataset Detail is removed from the registry independently of
-        # this run (Dataset Detail deletion itself is out of scope for this
-        # spec) -- simulate that by writing back an empty registry.
-        _write_registry(repo_root, [])
+        # this run, via the real Project Spec S0049 removal boundary rather
+        # than a raw registry rewrite.
+        remove_result = registry_update.remove_dataset_entry("orphan-dataset", repo_root=repo_root)
+        assert remove_result["removed"] is True
 
         orphaned = admin_runs.list_admin_run_summaries()
         orphaned_entry = orphaned["runs"][0]
@@ -2155,6 +2156,170 @@ def test_delete_route_returns_sanitized_422_for_traversal_attempt():
 
 
 # ---------------------------------------------------------------------------
+# DELETE /admin/datasets/{dataset_slug}: access-control boundary and safe
+# Dataset Detail removal lifecycle (Project Spec S0049)
+# ---------------------------------------------------------------------------
+
+def _make_dataset_delete_request(dataset_slug: str, headers: dict[str, str]) -> Request:
+    encoded_headers = [
+        (key.lower().encode("latin-1"), value.encode("latin-1"))
+        for key, value in headers.items()
+    ]
+    scope = {
+        "type": "http",
+        "method": "DELETE",
+        "path": f"/admin/datasets/{dataset_slug}",
+        "headers": encoded_headers,
+    }
+    return Request(scope)
+
+
+_TELCO_REGISTRY_ENTRY = {
+    "dataset_slug": "telco-customer-churn",
+    "active_release": "release-20260616-001",
+    "public_metadata": {
+        "title": "Telco Customer Churn",
+        "summary": "Published dataset.",
+        "domain": "telco",
+        "visibility": "public",
+        "tags": [],
+    },
+}
+
+_BANK_REGISTRY_ENTRY = {
+    "dataset_slug": "bank-marketing",
+    "active_release": "release-20260617-001",
+    "public_metadata": {
+        "title": "Bank Marketing",
+        "summary": "Published dataset.",
+        "domain": "finance",
+        "visibility": "public",
+        "tags": [],
+    },
+}
+
+
+def test_delete_dataset_route_returns_generic_not_found_when_admin_runtime_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    request = _make_dataset_delete_request("telco-customer-churn", {})
+    response = api_main.delete_admin_dataset_detail("telco-customer-churn", request)
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_delete_dataset_route_removes_only_matching_registry_entry(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    repo_root = tmp_path / "repo"
+    _write_registry(repo_root, [dict(_TELCO_REGISTRY_ENTRY), dict(_BANK_REGISTRY_ENTRY)])
+    release_dir = repo_root / "releases" / "release-20260616-001"
+    release_dir.mkdir(parents=True)
+    _write_json(release_dir / "manifest.json", _VALID_MANIFEST)
+    run_dir = repo_root / "publisher" / "runs" / "some-run"
+    run_dir.mkdir(parents=True)
+    _write_json(run_dir / "manifest.json", _VALID_MANIFEST)
+
+    original_repo_root = api_main._REPO_ROOT
+    try:
+        api_main._REPO_ROOT = repo_root
+        request = _make_dataset_delete_request("telco-customer-churn", {})
+        response = api_main.delete_admin_dataset_detail("telco-customer-churn", request)
+
+        assert response == {
+            "dataset_slug": "telco-customer-churn",
+            "removed": True,
+            "previous_active_release": "release-20260616-001",
+            "errors": [],
+        }
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text(encoding="utf-8"))
+        slugs = [entry["dataset_slug"] for entry in registry["datasets"]]
+        assert slugs == ["bank-marketing"]
+
+        # Removal must never touch releases/ or publisher/runs/.
+        assert (release_dir / "manifest.json").is_file()
+        assert (run_dir / "manifest.json").is_file()
+        _assert_no_private_markers(response)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        api_main._REPO_ROOT = original_repo_root
+
+
+def test_delete_dataset_route_returns_sanitized_422_when_slug_not_found(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    repo_root = tmp_path / "repo"
+    _write_registry(repo_root, [dict(_TELCO_REGISTRY_ENTRY)])
+
+    original_repo_root = api_main._REPO_ROOT
+    try:
+        api_main._REPO_ROOT = repo_root
+        request = _make_dataset_delete_request("does-not-exist", {})
+        response = api_main.delete_admin_dataset_detail("does-not-exist", request)
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode("utf-8"))
+        assert body["error_code"] == "ADMIN_DATASET_DETAIL_REMOVAL_FAILED"
+        assert body["errors"][0]["code"] == "DATASET_DETAIL_NOT_FOUND"
+        _assert_no_private_markers(body)
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text(encoding="utf-8"))
+        assert [entry["dataset_slug"] for entry in registry["datasets"]] == ["telco-customer-churn"]
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        api_main._REPO_ROOT = original_repo_root
+
+
+def test_delete_dataset_route_frees_slug_for_create_new_promotion(tmp_path):
+    # End-to-end proof of the S0049 acceptance criterion tying this route to
+    # S0048/S0042 promotion semantics: once a Dataset Detail is removed from
+    # the registry, its slug is no longer occupied, so a fresh promotion of
+    # a run that shares the same base dataset_slug allocates the bare base
+    # slug again instead of a numbered suffix.
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root,
+        repo_root,
+        "reallocate-run",
+        "telco-customer-churn",
+        "release-20260710t101438z",
+        registry_entries=[dict(_TELCO_REGISTRY_ENTRY)],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_admin_repo_root = admin_runs._REPO_ROOT
+    original_api_repo_root = api_main._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        api_main._REPO_ROOT = repo_root
+
+        delete_request = _make_dataset_delete_request("telco-customer-churn", {})
+        delete_response = api_main.delete_admin_dataset_detail("telco-customer-churn", delete_request)
+        assert delete_response["removed"] is True
+
+        promote_request = _make_promote_request("reallocate-run", {})
+        promote_response = api_main.promote_admin_run_route("reallocate-run", promote_request)
+
+        assert promote_response["promoted"] is True
+        assert promote_response["registry_action"] == "created"
+        assert promote_response["public_dataset_slug"] == "telco-customer-churn"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_admin_repo_root
+        api_main._REPO_ROOT = original_api_repo_root
+
+
+# ---------------------------------------------------------------------------
 # Public surface non-exposure
 # ---------------------------------------------------------------------------
 
@@ -2177,6 +2342,7 @@ def test_admin_route_registered_and_public_dataset_routes_unchanged():
     paths = {route.path for route in api_main.app.routes}
     assert "/admin/runs" in paths
     assert "/admin/runs/{run_id}/promote" in paths
+    assert "/admin/datasets/{dataset_slug}" in paths
 
     dataset_paths = {path for path in paths if path.startswith("/datasets")}
     assert dataset_paths == _EXPECTED_PUBLIC_DATASET_PATHS

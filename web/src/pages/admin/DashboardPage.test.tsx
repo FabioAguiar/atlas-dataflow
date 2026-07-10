@@ -1354,6 +1354,181 @@ describe("DashboardPage", () => {
     });
   });
 
+  describe("Dataset Detail safe removal lifecycle (Project Spec S0049)", () => {
+    function installDatasetRemovalFetchMock(options: {
+      initialDatasets: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+      deleteResponse: MockResponse;
+      datasetsAfterRemoval?: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+    }) {
+      let datasets = options.initialDatasets;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (/\/admin\/datasets\/[^/]+$/.test(url) && init?.method === "DELETE") {
+          if (options.deleteResponse.ok && options.datasetsAfterRemoval) {
+            datasets = options.datasetsAfterRemoval;
+          }
+          return options.deleteResponse;
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({ datasets });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("disables Dataset Detail Remove for run-derived placeholder rows when the registry listing is unavailable", async () => {
+      installDatasetRemovalFetchMock({
+        initialDatasets: [],
+        deleteResponse: jsonResponse({}),
+      }).mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({ error_type: "registry_unavailable" }, 503);
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      expect(within(datasetTable).getByRole("button", { name: "Remove" })).toBeDisabled();
+    });
+
+    it("enables Remove for a registry-backed Dataset Detail row", async () => {
+      installDatasetRemovalFetchMock({
+        initialDatasets: [
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+        ],
+        deleteResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      expect(within(datasetTable).getByRole("button", { name: "Remove" })).not.toBeDisabled();
+    });
+
+    it("uses copy that distinguishes Dataset Detail removal from run removal and requires explicit confirmation", async () => {
+      installDatasetRemovalFetchMock({
+        initialDatasets: [
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+        ],
+        deleteResponse: jsonResponse({}),
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      fireEvent.click(within(datasetTable).getByRole("button", { name: "Remove" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getAllByText(/synthetic-retail-forecast/i).length).toBeGreaterThan(0);
+      expect(within(dialog).getByText(/active registry and public listing only/i)).toBeInTheDocument();
+      expect(within(dialog).getByText(/preserved/i)).toBeInTheDocument();
+      expect(within(dialog).queryByText(/publisher validation run record/i)).not.toBeInTheDocument();
+    });
+
+    it("calls the owned Dataset Detail removal route only after confirmation and refreshes the registry listing afterward", async () => {
+      const fetchMock = installDatasetRemovalFetchMock({
+        initialDatasets: [
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+        ],
+        deleteResponse: jsonResponse({
+          dataset_slug: "synthetic-retail-forecast",
+          removed: true,
+          previous_active_release: "release-20260701-001",
+          errors: [],
+        }),
+        datasetsAfterRemoval: [],
+      });
+
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      fireEvent.click(within(datasetTable).getByRole("button", { name: "Remove" }));
+
+      const dialog = await screen.findByRole("dialog");
+
+      function deleteCalls() {
+        return fetchMock.mock.calls.filter(
+          ([input, init]) =>
+            /\/admin\/datasets\/synthetic-retail-forecast$/.test(String(input)) &&
+            (init as RequestInit | undefined)?.method === "DELETE",
+        );
+      }
+
+      // Opening the confirmation must never call the removal route by itself.
+      expect(deleteCalls()).toHaveLength(0);
+
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove Dataset Detail" }));
+
+      await screen.findByRole("heading", { name: "Dataset Details unavailable" });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(deleteCalls()).toHaveLength(1);
+
+      const datasetsCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/datasets"));
+      // Initial load plus a post-removal refresh.
+      expect(datasetsCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("shows an accessible error and keeps the confirmation open when Dataset Detail removal fails", async () => {
+      installDatasetRemovalFetchMock({
+        initialDatasets: [
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+        ],
+        deleteResponse: jsonResponse({ error_code: "ADMIN_DATASET_DETAIL_REMOVAL_FAILED", errors: [] }, 422),
+      });
+
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      fireEvent.click(within(datasetTable).getByRole("button", { name: "Remove" }));
+
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove Dataset Detail" }));
+
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(/could not be removed/i);
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+  });
+
   it("renders multiple runs with mixed statuses and no hardcoded upper bound on the counters", async () => {
     installRunsFetchMock(
       jsonResponse({

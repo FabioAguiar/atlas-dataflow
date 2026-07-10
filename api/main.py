@@ -191,6 +191,13 @@ ADMIN_SETTINGS_INVALID = PublicError(
     message="The admin settings payload failed validation.",
 )
 
+ADMIN_DATASET_DETAIL_REMOVAL_FAILED = PublicError(
+    status_code=422,
+    error_type="admin_dataset_detail_removal_failed",
+    error_code="ADMIN_DATASET_DETAIL_REMOVAL_FAILED",
+    message="The Dataset Detail could not be removed.",
+)
+
 PREDICT_VIEW_CUSTOMIZATION_IDENTIFIER_INVALID = PublicError(
     status_code=422,
     error_type="predict_view_customization_identifier_invalid",
@@ -211,7 +218,10 @@ from registry.resolve import (  # noqa: E402
     ReleaseUnavailableError,
     resolve_dataset,
 )
-from registry.update import MODE_CREATE_NEW_DATASET_DETAIL  # noqa: E402
+from registry.update import (  # noqa: E402
+    MODE_CREATE_NEW_DATASET_DETAIL,
+    remove_dataset_entry,
+)
 
 
 def _resolve_problem_type(dataset_slug: str) -> str | None:
@@ -688,6 +698,23 @@ def put_admin_settings_route(request: Request, settings: dict = Body(...)):
     result = write_admin_settings(settings)
     if not result["saved"]:
         return ADMIN_SETTINGS_INVALID.response(errors=result["errors"])
+
+    return result
+
+
+@app.delete("/admin/datasets/{dataset_slug}")
+def delete_admin_dataset_detail(dataset_slug: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    # Project Spec S0049: removes only the matching registry/datasets.json
+    # entry -- releases/, publisher/runs/, contracts, notebooks, model
+    # artifacts, profile artifacts, evidence, and support-root files are
+    # never touched. Distinct from DELETE /admin/runs/{run_id}, which only
+    # ever removes a run artifact/directory and never mutates the registry.
+    result = remove_dataset_entry(dataset_slug, repo_root=_REPO_ROOT)
+    if not result["removed"]:
+        return ADMIN_DATASET_DETAIL_REMOVAL_FAILED.response(errors=result["errors"])
 
     return result
 

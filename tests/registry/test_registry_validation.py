@@ -17,7 +17,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from registry.update import allocate_unique_dataset_slug, derive_registry_action  # noqa: E402
+from registry.update import (  # noqa: E402
+    allocate_unique_dataset_slug,
+    derive_registry_action,
+    remove_dataset_entry,
+)
 from registry.validate import validate_registry, validate_registry_file  # noqa: E402
 
 VALID_DIR = Path(__file__).parent / "valid"
@@ -238,42 +242,155 @@ def test_derive_registry_action_updated_when_no_previous_active_release_and_entr
 
 
 # ---------------------------------------------------------------------------
+# remove_dataset_entry (Project Spec S0049)
+# ---------------------------------------------------------------------------
+
+def _full_entry(slug: str, release: str) -> dict:
+    return {
+        "dataset_slug": slug,
+        "active_release": release,
+        "public_metadata": {
+            "title": slug.replace("-", " ").title(),
+            "summary": f"Published dataset: {slug}.",
+            "domain": "example",
+            "visibility": "public",
+            "tags": [],
+        },
+    }
+
+
+def _write_full_registry(repo_root: Path, entries: list) -> None:
+    registry_dir = repo_root / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    (registry_dir / "datasets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "atlas.dataflow.registry.v1",
+                "conventions": {
+                    "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                    "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                    "active_release": {"description": "x"},
+                },
+                "datasets": entries,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_remove_dataset_entry_removes_only_matching_entry(tmp_path):
+    _write_full_registry(
+        tmp_path,
+        [
+            _full_entry("telco-customer-churn", "release-20260616-001"),
+            _full_entry("bank-marketing", "release-20260617-001"),
+        ],
+    )
+
+    result = remove_dataset_entry("telco-customer-churn", repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": "telco-customer-churn",
+        "removed": True,
+        "previous_active_release": "release-20260616-001",
+        "errors": [],
+    }
+
+    registry = json.loads((tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    slugs = [entry["dataset_slug"] for entry in registry["datasets"]]
+    assert slugs == ["bank-marketing"]
+    # The resulting registry must still validate cleanly after removal.
+    assert validate_registry(registry)["valid"] is True
+
+
+def test_remove_dataset_entry_writes_backup_before_mutating_registry(tmp_path):
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+    original_content = (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    remove_dataset_entry("telco-customer-churn", repo_root=tmp_path)
+
+    backup_content = (tmp_path / "registry" / "datasets.json.previous").read_text(encoding="utf-8")
+    assert backup_content == original_content
+
+
+def test_remove_dataset_entry_missing_slug_returns_structured_failure_and_does_not_mutate(tmp_path):
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+    original_content = (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    result = remove_dataset_entry("does-not-exist", repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": "does-not-exist",
+        "removed": False,
+        "previous_active_release": None,
+        "errors": [
+            {
+                "code": "DATASET_DETAIL_NOT_FOUND",
+                "field": "dataset_slug",
+                "message": "No Dataset Detail was found for the given dataset_slug.",
+            }
+        ],
+    }
+    assert (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8") == original_content
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+def test_remove_dataset_entry_invalid_slug_format_returns_structured_failure():
+    result = remove_dataset_entry("Not A Valid Slug!")
+
+    assert result == {
+        "dataset_slug": "Not A Valid Slug!",
+        "removed": False,
+        "previous_active_release": None,
+        "errors": [
+            {
+                "code": "DATASET_SLUG_INVALID",
+                "field": "dataset_slug",
+                "message": "The dataset_slug is missing or does not match the required pattern.",
+            }
+        ],
+    }
+
+
+def test_remove_dataset_entry_leaves_release_and_publisher_run_directories_untouched(tmp_path):
+    # Removal must only ever touch registry/datasets.json (and its backup) --
+    # never releases/, publisher/runs/, contracts, notebooks, or model
+    # artifacts, all of which live entirely outside the registry file.
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+    release_dir = tmp_path / "releases" / "release-20260616-001"
+    release_dir.mkdir(parents=True)
+    (release_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    run_dir = tmp_path / "publisher" / "runs" / "some-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text("{}", encoding="utf-8")
+
+    result = remove_dataset_entry("telco-customer-churn", repo_root=tmp_path)
+
+    assert result["removed"] is True
+    assert (release_dir / "manifest.json").is_file()
+    assert (run_dir / "manifest.json").is_file()
+
+
+def test_remove_dataset_entry_frees_slug_for_reallocation(tmp_path):
+    # After removal, allocate_unique_dataset_slug must offer the removed
+    # slug again rather than treating it as permanently reserved.
+    _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
+
+    remove_dataset_entry("telco-customer-churn", repo_root=tmp_path)
+
+    registry = json.loads((tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    assert allocate_unique_dataset_slug("telco-customer-churn", registry) == "telco-customer-churn"
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    tests = [
-        test_valid_registry_passes,
-        test_missing_schema_version_rejected,
-        test_missing_dataset_slug_rejected,
-        test_duplicate_slug_rejected,
-        test_missing_active_release_rejected,
-        test_malformed_active_release_rejected,
-        test_missing_public_metadata_rejected,
-        test_unsafe_metadata_rejected,
-        test_invalid_slug_format_rejected,
-        test_non_public_visibility_rejected,
-        test_error_messages_contain_no_filesystem_paths,
-        test_allocate_unique_dataset_slug_empty_registry_returns_base,
-        test_allocate_unique_dataset_slug_returns_base_when_free,
-        test_allocate_unique_dataset_slug_uses_suffix_one_when_base_taken,
-        test_allocate_unique_dataset_slug_uses_suffix_two_when_base_and_one_taken,
-        test_allocate_unique_dataset_slug_reuses_gap_deterministically,
-        test_allocate_unique_dataset_slug_ignores_absent_removed_entries,
-        test_derive_registry_action_created_when_dataset_entry_created,
-        test_derive_registry_action_reused_when_previous_matches_release,
-        test_derive_registry_action_updated_when_previous_differs_and_entry_not_created,
-        test_derive_registry_action_updated_when_no_previous_active_release_and_entry_not_created,
-    ]
-    passed = 0
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-            passed += 1
-        except AssertionError as exc:
-            print(f"  FAIL  {t.__name__}: {exc}")
-            failed += 1
-    print(f"\n{passed} passed, {failed} failed")
-    sys.exit(0 if failed == 0 else 1)
+    # remove_dataset_entry's tests use pytest's tmp_path fixture (Project
+    # Spec S0049), which the previous manual no-argument test list/runner
+    # above could not support -- delegate to pytest itself instead, matching
+    # tests/api/test_admin_run_listing.py's own standalone-runner convention.
+    import pytest
+
+    raise SystemExit(pytest.main([__file__, "-v"]))

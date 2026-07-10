@@ -44,6 +44,12 @@ type DatasetDetailRow = {
   slug: string;
   visibilityStatus: "unavailable";
   lastUpdated: string | null;
+  // Project Spec S0049: true only when this row was sourced from the real
+  // dataset registry listing (GET /datasets), never for a run-derived
+  // placeholder row shown while the registry listing is unavailable --
+  // removal must only ever be offered for a row backed by a real
+  // registry/datasets.json entry.
+  isRegistryBacked: boolean;
 };
 
 const validationOutcomes: ValidationOutcome[] = ["accepted", "rejected", "failed", "unknown"];
@@ -70,6 +76,12 @@ type RunRemovalState =
   | { status: "confirming"; runId: string }
   | { status: "removing"; runId: string }
   | { status: "error"; runId: string; message: string };
+
+type DatasetDetailRemovalState =
+  | { status: "idle" }
+  | { status: "confirming"; slug: string }
+  | { status: "removing"; slug: string }
+  | { status: "error"; slug: string; message: string };
 
 type RunPromotionEntry =
   | { status: "promoting" }
@@ -616,6 +628,7 @@ function buildRunDerivedDatasetDetailRows(runs: AdminRunSummary[]): Map<string, 
       slug: run.dataset_candidate,
       visibilityStatus: "unavailable",
       lastUpdated: nextLastUpdated ?? null,
+      isRegistryBacked: false,
     });
   }
 
@@ -635,6 +648,7 @@ function buildDatasetDetailRows(
         slug: dataset.dataset_slug,
         visibilityStatus: "unavailable" as const,
         lastUpdated: runDerivedRows.get(dataset.dataset_slug)?.lastUpdated ?? null,
+        isRegistryBacked: true,
       }))
       .sort((first, second) => first.displayName.localeCompare(second.displayName));
   }
@@ -667,6 +681,7 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
+  const [datasetRemovalState, setDatasetRemovalState] = useState<DatasetDetailRemovalState>({ status: "idle" });
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
   const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
 
@@ -833,6 +848,44 @@ export default function DashboardPage() {
           status: "error",
           runId,
           message: "The run could not be removed. Check private admin API reachability.",
+        });
+      });
+  }
+
+  function openRemoveDatasetConfirmation(slug: string) {
+    setDatasetRemovalState({ status: "confirming", slug });
+  }
+
+  function cancelRemoveDatasetConfirmation() {
+    setDatasetRemovalState({ status: "idle" });
+  }
+
+  function confirmRemoveDataset(slug: string) {
+    setDatasetRemovalState({ status: "removing", slug });
+
+    // Project Spec S0049: removes only the registry entry -- distinct from
+    // confirmRemoveRun above, which only ever removes a run artifact.
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setDatasetRemovalState({
+            status: "error",
+            slug,
+            message: "The Dataset Detail could not be removed. Confirm it is still registry-backed and try again.",
+          });
+          return;
+        }
+
+        setDatasetRemovalState({ status: "idle" });
+        loadDatasetRegistry();
+      })
+      .catch(() => {
+        setDatasetRemovalState({
+          status: "error",
+          slug,
+          message: "The Dataset Detail could not be removed. Check private admin API reachability.",
         });
       });
   }
@@ -1084,10 +1137,15 @@ export default function DashboardPage() {
                               Save
                             </Button>
                             <Button
-                              data-dataset-action="remove-disabled"
-                              disabled
-                              style={disabledIntentButtonStyle}
-                              title="Remove remains disabled until a safe owned API exists."
+                              data-dataset-action={row.isRegistryBacked ? "remove" : "remove-disabled"}
+                              disabled={!row.isRegistryBacked}
+                              onClick={() => openRemoveDatasetConfirmation(row.slug)}
+                              style={row.isRegistryBacked ? actionButtonStyle : disabledIntentButtonStyle}
+                              title={
+                                row.isRegistryBacked
+                                  ? "Remove this Dataset Detail from the active registry/public listing. Release artifacts and publisher run history are preserved."
+                                  : "Remove is only available for registry-backed Dataset Details."
+                              }
                               variant="secondary"
                             >
                               <span aria-hidden="true" style={actionIconStyle}>
@@ -1258,6 +1316,42 @@ export default function DashboardPage() {
                 onClick={() => confirmRemoveRun(removalState.runId)}
               >
                 {removalState.status === "removing" ? "Removing..." : "Remove run"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {datasetRemovalState.status !== "idle" && (
+        <div style={modalBackdropStyle}>
+          <Card aria-labelledby="remove-dataset-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
+            <h2 id="remove-dataset-modal-title" style={cardTitleStyle}>
+              Remove Dataset Detail "{datasetRemovalState.slug}"?
+            </h2>
+            <p style={{ margin: 0 }}>
+              This removes <strong>{datasetRemovalState.slug}</strong> from the active registry and public listing
+              only. Release artifacts, publisher run history, model artifacts, notebooks, and evidence are preserved
+              and are not deleted. This is a different action from removing a run above. Once removed, this slug
+              becomes available again for a new Create New promotion.
+            </p>
+
+            {datasetRemovalState.status === "error" && (
+              <ErrorState title="Dataset Detail removal failed" message={datasetRemovalState.message} />
+            )}
+
+            <div style={modalActionsStyle}>
+              <Button
+                disabled={datasetRemovalState.status === "removing"}
+                onClick={cancelRemoveDatasetConfirmation}
+                variant="secondary"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={datasetRemovalState.status === "removing"}
+                onClick={() => confirmRemoveDataset(datasetRemovalState.slug)}
+              >
+                {datasetRemovalState.status === "removing" ? "Removing..." : "Remove Dataset Detail"}
               </Button>
             </div>
           </Card>

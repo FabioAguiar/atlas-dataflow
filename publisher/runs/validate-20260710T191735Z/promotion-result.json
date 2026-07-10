@@ -3,7 +3,7 @@
   "result_kind": "promotion_result",
   "candidate_identity": {
     "dataset_slug": "telco-customer-churn",
-    "release_id": "release-20260710t162511z",
+    "release_id": "release-20260710t191735z",
     "release_version": "1.0.0-rc.1"
   },
   "promotion_outcome": "promoted",
@@ -15,10 +15,12 @@
     "all_preconditions_met": true
   },
   "registry_update_record": {
-    "update_applied": false,
-    "new_active_release_id": null,
+    "update_applied": true,
+    "new_active_release_id": "release-20260710t191735z",
     "previous_active_release_id": null,
-    "previous_release_preserved": true
+    "previous_release_preserved": true,
+    "promoted_at": "2026-07-10T21:03:57Z",
+    "registry_action": "created"
   },
   "evidence_safety": {
     "reduced_evidence_only": true,

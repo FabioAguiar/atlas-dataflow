@@ -14,37 +14,5 @@
       "description": "Each published dataset must declare exactly one active_release value. The active release is explicit registry data and must not be inferred from file scanning, latest runs, timestamps, directory order, or fallback artifacts."
     }
   },
-  "datasets": [
-    {
-      "dataset_slug": "telco-customer-churn",
-      "active_release": "release-20260710t162511z",
-      "public_metadata": {
-        "title": "Telco Customer Churn",
-        "summary": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
-        "domain": "telco",
-        "visibility": "public",
-        "tags": [
-          "telco",
-          "churn",
-          "classification"
-        ]
-      }
-    },
-    {
-      "dataset_slug": "bank-marketing",
-      "active_release": "release-20260620-002",
-      "public_metadata": {
-        "title": "Bank Marketing",
-        "summary": "A binary classification dataset for predicting client subscription to a term deposit in a bank marketing campaign. Used to validate Atlas DataFlow multi-dataset publication mechanics.",
-        "domain": "banking-marketing",
-        "visibility": "public",
-        "tags": [
-          "banking",
-          "binary-classification",
-          "marketing-campaign",
-          "subscription-prediction"
-        ]
-      }
-    }
-  ]
+  "datasets": []
 }

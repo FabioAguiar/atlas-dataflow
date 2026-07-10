@@ -31,6 +31,19 @@ response, so the two never derive "created"/"updated"/"reused" differently
 from the same run() outcome.
 Does NOT produce a separate promotion-update document.
 Does NOT expose any HTTP endpoint. run() and main() are internal CLI only.
+
+Project Spec S0049 adds remove_dataset_entry(): a safe Dataset Detail
+removal boundary that deletes only the matching entry from
+registry/datasets.json (the same backup/validate/write sequence run() uses),
+never touching releases/, publisher/runs/, contracts, notebooks, model
+artifacts, profile artifacts, evidence, or support-root files -- those live
+entirely outside registry/datasets.json. Once an entry is absent from the
+registry, allocate_unique_dataset_slug() naturally offers its slug again to
+a future MODE_CREATE_NEW_DATASET_DETAIL promotion, and
+api/admin_runs.py's _promotion_summary_from() naturally re-derives
+registry_bound: false for any run that was promoted to the removed release
+(Project Spec S0048), making that run promotable again without either
+module needing to know about the other's removal-specific logic.
 """
 
 import json
@@ -47,6 +60,35 @@ DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MODE_UPDATE_EXISTING_OR_CREATE = "update_existing_or_create"
 MODE_CREATE_NEW_DATASET_DETAIL = "create_new_dataset_detail"
 _VALID_MODES = (MODE_UPDATE_EXISTING_OR_CREATE, MODE_CREATE_NEW_DATASET_DETAIL)
+
+# Project Spec S0049: reduced, sanitized errors for remove_dataset_entry(),
+# mirroring the {"code", "field", "message"} shape used throughout
+# registry/validate.py and api/admin_runs.py's own run-removal errors.
+DATASET_SLUG_INVALID_ERROR = {
+    "code": "DATASET_SLUG_INVALID",
+    "field": "dataset_slug",
+    "message": "The dataset_slug is missing or does not match the required pattern.",
+}
+DATASET_DETAIL_NOT_FOUND_ERROR = {
+    "code": "DATASET_DETAIL_NOT_FOUND",
+    "field": "dataset_slug",
+    "message": "No Dataset Detail was found for the given dataset_slug.",
+}
+REGISTRY_UNAVAILABLE_ERROR = {
+    "code": "REGISTRY_UNAVAILABLE",
+    "field": None,
+    "message": "The registry could not be read.",
+}
+REGISTRY_VALIDATION_FAILED_ERROR = {
+    "code": "REGISTRY_VALIDATION_FAILED",
+    "field": None,
+    "message": "The registry could not be validated after removal.",
+}
+REGISTRY_WRITE_FAILED_ERROR = {
+    "code": "REGISTRY_WRITE_FAILED",
+    "field": None,
+    "message": "The registry could not be written.",
+}
 
 
 def _load_json_file(path: Path, label: str) -> dict:
@@ -340,6 +382,113 @@ def run(
         "update_applied": True,
         "backup_path": str(backup_path),
         "dataset_entry_created": created,
+    }
+
+
+def remove_dataset_entry(dataset_slug: str, repo_root: Path | None = None) -> dict:
+    """Remove exactly one dataset entry from registry/datasets.json by dataset_slug.
+
+    Removes only the matching entry from the in-memory registry, validates
+    the resulting registry with validate_registry() before writing anything,
+    backs up the previous registry to registry/datasets.json.previous (the
+    same shutil.copy2 backup run() uses) and writes the updated registry.
+    Never touches releases/, publisher/runs/, contracts, notebooks, model
+    artifacts, profile artifacts, evidence, or support-root files -- this
+    function never reads or writes any path other than the registry file and
+    its backup.
+
+    Returns {"dataset_slug": str, "removed": bool,
+    "previous_active_release": str | None, "errors": [...]}, where errors is
+    a list of {"code", "field", "message"} entries. Never raises: an invalid
+    dataset_slug, an absent entry, an unreadable registry, a post-removal
+    validation failure, or a filesystem write failure are all reported as a
+    non-removed result with a reduced, sanitized error instead -- mirroring
+    api/admin_runs.py's remove_admin_run() never-raise contract. The registry
+    is left byte-for-byte untouched on every non-removed outcome.
+    """
+    if not isinstance(dataset_slug, str) or not DATASET_SLUG_PATTERN.match(dataset_slug):
+        return {
+            "dataset_slug": dataset_slug,
+            "removed": False,
+            "previous_active_release": None,
+            "errors": [DATASET_SLUG_INVALID_ERROR],
+        }
+
+    if repo_root is None:
+        repo_root = Path(__file__).parent.parent
+    else:
+        repo_root = Path(repo_root)
+
+    registry_path = repo_root / "registry" / "datasets.json"
+    backup_path = repo_root / "registry" / "datasets.json.previous"
+
+    try:
+        registry = _load_json_file(registry_path, "registry")
+    except RuntimeError:
+        return {
+            "dataset_slug": dataset_slug,
+            "removed": False,
+            "previous_active_release": None,
+            "errors": [REGISTRY_UNAVAILABLE_ERROR],
+        }
+
+    datasets = registry.get("datasets")
+    if not isinstance(datasets, list):
+        return {
+            "dataset_slug": dataset_slug,
+            "removed": False,
+            "previous_active_release": None,
+            "errors": [DATASET_DETAIL_NOT_FOUND_ERROR],
+        }
+
+    removed_entry = None
+    remaining_entries = []
+    for entry in datasets:
+        if removed_entry is None and isinstance(entry, dict) and entry.get("dataset_slug") == dataset_slug:
+            removed_entry = entry
+            continue
+        remaining_entries.append(entry)
+
+    if removed_entry is None:
+        return {
+            "dataset_slug": dataset_slug,
+            "removed": False,
+            "previous_active_release": None,
+            "errors": [DATASET_DETAIL_NOT_FOUND_ERROR],
+        }
+
+    registry["datasets"] = remaining_entries
+
+    validation = validate_registry(registry)
+    if validation.get("valid") is not True:
+        return {
+            "dataset_slug": dataset_slug,
+            "removed": False,
+            "previous_active_release": None,
+            "errors": [REGISTRY_VALIDATION_FAILED_ERROR],
+        }
+
+    try:
+        shutil.copy2(registry_path, backup_path)
+        registry_path.write_text(
+            json.dumps(registry, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        return {
+            "dataset_slug": dataset_slug,
+            "removed": False,
+            "previous_active_release": None,
+            "errors": [REGISTRY_WRITE_FAILED_ERROR],
+        }
+
+    previous_active_release = removed_entry.get("active_release")
+
+    return {
+        "dataset_slug": dataset_slug,
+        "removed": True,
+        "previous_active_release": previous_active_release if isinstance(previous_active_release, str) else None,
+        "errors": [],
     }
 
 

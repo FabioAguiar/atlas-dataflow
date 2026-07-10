@@ -445,25 +445,31 @@ def _write_promotable_run(
     release_id: str,
     *,
     registry_entries: list | None = None,
+    create_candidate_dir: bool = True,
 ) -> Path:
     """Build a self-contained repo_root (release candidate, operational note,
     registry) plus a run_dir under root with an accepted, promotion-eligible
     validation result -- everything promote_admin_run() needs end to end,
     without touching the real target repository.
+
+    create_candidate_dir=False omits releases/candidates/{dataset_slug}/{release_id}/
+    entirely, for simulating a validation result whose referenced release_id
+    has no matching candidate directory in the fixture repository root.
     """
-    candidate_dir = repo_root / "releases" / "candidates" / dataset_slug / release_id
-    candidate_dir.mkdir(parents=True)
-    _write_json(
-        candidate_dir / "public-context.json",
-        {
-            "schema_version": "1.0.0",
-            "dataset_slug": dataset_slug,
-            "title": "Promotable Dataset",
-            "description": "Fixture dataset used to validate the promotion flow.",
-            "domain": "testing",
-            "tags": ["fixture", "promotion"],
-        },
-    )
+    if create_candidate_dir:
+        candidate_dir = repo_root / "releases" / "candidates" / dataset_slug / release_id
+        candidate_dir.mkdir(parents=True)
+        _write_json(
+            candidate_dir / "public-context.json",
+            {
+                "schema_version": "1.0.0",
+                "dataset_slug": dataset_slug,
+                "title": "Promotable Dataset",
+                "description": "Fixture dataset used to validate the promotion flow.",
+                "domain": "testing",
+                "tags": ["fixture", "promotion"],
+            },
+        )
 
     manifest = {
         "schema_version": "release-manifest.v1",
@@ -893,6 +899,108 @@ def test_registry_validate_accepts_deterministic_release_id_format():
     result = validate_registry(registry)
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+# ---------------------------------------------------------------------------
+# Runtime-boundary simulation (S0040): real chmod-based filesystem
+# boundaries, distinct from the monkeypatch-simulated failures above --
+# these reproduce the class of failure a genuinely read-only or
+# copy-then-fails runtime mount produces (see S0038/S0039), rather than an
+# internal function being made to raise on demand.
+# ---------------------------------------------------------------------------
+
+def test_remove_admin_run_reports_structured_failure_when_runs_root_is_effectively_read_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        run_dir = _write_run_dir(root, "readonly-boundary-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+        original_root_mode = root.stat().st_mode & 0o777
+        # read+execute only on the runs root: no write permission means the
+        # run directory entry itself cannot be unlinked, mirroring a
+        # read-only publisher/runs mount boundary.
+        os.chmod(root, 0o500)
+        try:
+            original = admin_runs._admin_runs_root
+            try:
+                admin_runs._admin_runs_root = lambda: root
+                result = admin_runs.remove_admin_run("readonly-boundary-run")
+            finally:
+                admin_runs._admin_runs_root = original
+        finally:
+            os.chmod(root, original_root_mode)
+
+        assert result["run_id"] == "readonly-boundary-run"
+        assert result["removed"] is False
+        assert result["errors"][0]["code"] == "RUN_REMOVAL_FAILED"
+        assert run_dir.exists()
+
+
+def test_promote_admin_run_reports_structured_failure_and_leaves_no_release_residue_when_run_directory_is_effectively_read_only(
+    tmp_path,
+):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root, repo_root, "promote-readonly-run-dir", "readonly-run-dir-dataset", "release-20260710t101438z"
+    )
+    release_dir = repo_root / "releases" / "release-20260710t101438z"
+    original_run_dir_mode = run_dir.stat().st_mode & 0o777
+    # read+execute only on the run directory, applied only after its fixture
+    # files (manifest.json, validation-result.json) already exist: the
+    # release artifact copy into releases/{release_id}/ can still succeed,
+    # but the run directory can no longer accept the new
+    # promotion-result.json file -- exactly the boundary a real read-only
+    # runs mount would produce mid-promotion.
+    os.chmod(run_dir, 0o500)
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-readonly-run-dir")
+    finally:
+        os.chmod(run_dir, original_run_dir_mode)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is False
+    assert result["errors"][0]["code"] == "PROMOTION_FAILED"
+    assert result["release_id"] is None
+    # No unhandled exception propagated (a structured failure was returned
+    # above) and no orphaned releases/{release_id}/ directory was left
+    # behind by the failed post-copy write.
+    assert not release_dir.exists()
+    assert not (run_dir / "promotion-result.json").exists()
+
+
+def test_promote_admin_run_reports_structured_failure_when_release_candidate_directory_is_absent(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root,
+        repo_root,
+        "promote-missing-candidate",
+        "missing-candidate-dataset",
+        "release-20260710t101438z",
+        create_candidate_dir=False,
+    )
+    release_dir = repo_root / "releases" / "release-20260710t101438z"
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-missing-candidate")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is False
+    assert result["errors"][0]["code"] == "PROMOTION_FAILED"
+    assert not release_dir.exists()
+    assert not (run_dir / "promotion-result.json").exists()
 
 
 # ---------------------------------------------------------------------------

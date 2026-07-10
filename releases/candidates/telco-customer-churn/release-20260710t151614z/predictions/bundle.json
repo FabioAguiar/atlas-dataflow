@@ -11,8 +11,8 @@
   },
   "bundle_identity": {
     "artifact_kind": "inference_bundle",
-    "bundle_id": "telco-customer-churn-inference-bundle-20260710T151619Z",
-    "created_at": "2026-07-10T15:16:19+00:00"
+    "bundle_id": "telco-customer-churn-inference-bundle-20260710T151614Z",
+    "created_at": "2026-07-10T15:16:14+00:00"
   },
   "compatibility_constraints": {
     "requires_contract_versions": {
@@ -77,9 +77,9 @@
     "runtime_contract_reference": "contract_references.runtime_contract"
   },
   "model_artifact": {
-    "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151619Z/model.pkl",
+    "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151614Z/model.pkl",
     "sha256": "ec2eb1127b5489449195629f8cbb5500291002fae0f633f99324a77e29bf8282",
-    "source_training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260710T151619Z/training-parameter-record.json"
+    "source_training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260710T151614Z/training-parameter-record.json"
   },
   "output_schema": {
     "class_labels": [
@@ -119,22 +119,22 @@
   "training_evidence": {
     "model_selection_evidence": {
       "contract_version": "model-selection-evidence.v1",
-      "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151619Z/model-selection-evidence.json",
-      "sha256": "2fdca7d2067d6a5a435c8d453e3ffde441198e9d4677c3bfe1059dacf460a3f3"
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151614Z/model-selection-evidence.json",
+      "sha256": "d5ab485456ec3a4781814fd1aef5842762c60a9aa133815621d58aa2dd1976e8"
     },
     "training_metrics": {
       "contract_version": "training-metrics.v1",
-      "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151619Z/metrics.json",
-      "sha256": "9ed646f381de52a82af82350f71f4188c600bd12220f3ec694181d184ffdd039"
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151614Z/metrics.json",
+      "sha256": "6e234f5af678a0aa4a7276b5dee169624587771873cfe8e1069e47b74c5bf89d"
     },
     "training_parameter_record": {
       "contract_version": "training-parameter-record.v1",
-      "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151619Z/training-parameter-record.json",
-      "sha256": "f6ec5a952088b361d00ea31d6a4c1118d3372d8520f767f16e379dde8c44250c"
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260710T151614Z/training-parameter-record.json",
+      "sha256": "57644a7730020bc712958f3cea5bf29e9bd235f6c53743ceb0720e85eeda07f8"
     },
     "training_run_identity": {
       "dataset_slug": "telco-customer-churn",
-      "run_id": "train-20260710T151619Z"
+      "run_id": "train-20260710T151614Z"
     }
   }
 }

@@ -570,7 +570,7 @@ describe("DashboardPage", () => {
       await screen.findByRole("button", { name: "Promote" });
     });
 
-    it("calls the owned promote endpoint and refreshes the Dashboard after a successful promotion", async () => {
+    it("calls the owned promote endpoint and refreshes both the run summaries and the safe dataset listing after a successful promotion", async () => {
       const fetchMock = installSoleEligibleRunFetchMock();
       fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -582,6 +582,17 @@ describe("DashboardPage", () => {
             release_id: "release-20260701-001",
             registry_action: "updated",
             errors: [],
+          });
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: "synthetic-retail-forecast",
+                title: "Synthetic Retail Forecast",
+                display_title: "Synthetic Retail Forecast",
+              },
+            ],
           });
         }
         if (url.endsWith("/admin/runs")) {
@@ -609,12 +620,65 @@ describe("DashboardPage", () => {
       const table = await screen.findByRole("table", { name: "Run summaries" });
       fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
 
+      const status = await within(table).findByRole("status");
+      expect(status).toHaveTextContent("synthetic-retail-forecast");
+      expect(status).toHaveTextContent("release-20260701-001");
+      expect(status).toHaveTextContent(/updated the existing registry entry/i);
+
       await screen.findByRole("button", { name: "Promote" });
 
-      expect(fetchMock.mock.calls.length).toBe(callCountAfterLoad + 2);
+      expect(fetchMock.mock.calls.length).toBe(callCountAfterLoad + 3);
       expect(fetchMock.mock.calls[callCountAfterLoad][0]).toContain("/admin/runs/run-agnostic-solo/promote");
       expect(fetchMock.mock.calls[callCountAfterLoad + 1][0]).toContain("/admin/runs");
+      expect(fetchMock.mock.calls[callCountAfterLoad + 2][0]).toContain("/datasets");
       expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
+
+      // The success status must survive the subsequent run-summary refresh.
+      expect(within(table).getByRole("status")).toHaveTextContent(/updated the existing registry entry/i);
+    });
+
+    it("renders a visible and accessible success status distinguishing a newly created registry entry", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-agnostic-solo",
+            promoted: true,
+            dataset_slug: "synthetic-retail-forecast",
+            release_id: "release-20260701-002",
+            registry_action: "created",
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      const status = await within(table).findByRole("status");
+      expect(status).toHaveTextContent("synthetic-retail-forecast");
+      expect(status).toHaveTextContent("release-20260701-002");
+      expect(status).toHaveTextContent(/created a new registry entry/i);
     });
 
     it("shows a sanitized English error and keeps the run promotable when promotion fails", async () => {
@@ -665,6 +729,96 @@ describe("DashboardPage", () => {
       expect(await within(table).findByText("This run is not eligible for promotion.")).toBeInTheDocument();
       expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
       expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
+    });
+  });
+
+  describe("Dataset registry reflection", () => {
+    function installRunsAndRegistryFetchMock(registryResponse: MockResponse) {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/datasets")) {
+          return registryResponse;
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it("derives the Published datasets count and Dataset Details rows from the safe dataset listing when available", async () => {
+      installRunsAndRegistryFetchMock(
+        jsonResponse({
+          datasets: [
+            {
+              dataset_slug: "synthetic-retail-forecast",
+              title: "Synthetic Retail Forecast",
+              display_title: "Synthetic Retail Forecast",
+            },
+            {
+              dataset_slug: "synthetic-energy-usage",
+              title: "Synthetic Energy Usage",
+              display_title: null,
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+      await loadRuns();
+
+      expect(await screen.findByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "2");
+      expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-registry-status", "ready");
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      expect(datasetTable).toHaveAttribute("data-filtered-dataset-count", "2");
+      expect(
+        within(datasetTable).getByRole("textbox", { name: "Synthetic Retail Forecast display name" }),
+      ).toBeInTheDocument();
+      expect(
+        within(datasetTable).getByRole("textbox", { name: "Synthetic Energy Usage display name" }),
+      ).toBeInTheDocument();
+    });
+
+    it("shows a non-blocking reduced state and keeps promotion feedback and run actions working when the dataset listing is unavailable", async () => {
+      installRunsAndRegistryFetchMock(jsonResponse({ error_type: "registry_unavailable" }, 503));
+      render(<DashboardPage />);
+      await loadRuns();
+
+      expect(await screen.findByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "0");
+      expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-registry-status", "unavailable");
+      expect(screen.getByText(/dataset registry listing unavailable/i)).toBeInTheDocument();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
+      expect(within(table).getByRole("button", { name: "Remove" })).not.toBeDisabled();
+    });
+
+    it("treats an invalid dataset listing shape as unavailable instead of crashing the Dashboard", async () => {
+      installRunsAndRegistryFetchMock(jsonResponse({ datasets: [{ title: "Missing slug" }] }));
+      render(<DashboardPage />);
+      await loadRuns();
+
+      expect(await screen.findByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "0");
+      expect(screen.getByText(/dataset registry listing unavailable/i)).toBeInTheDocument();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
     });
   });
 

@@ -60,6 +60,12 @@ type RunRemovalState =
 
 type RunPromotionEntry =
   | { status: "promoting" }
+  | {
+      status: "success";
+      dataset_slug: string | null;
+      release_id: string | null;
+      registry_action: "created" | "updated" | null;
+    }
   | { status: "error"; message: string };
 
 type RunPromotionState = Record<string, RunPromotionEntry>;
@@ -72,6 +78,22 @@ type AdminRunPromotionResponse = {
   registry_action: "created" | "updated" | null;
   errors: Array<{ code: string; field: string | null; message: string }>;
 };
+
+type DatasetRegistryEntry = {
+  dataset_slug: string;
+  title: string;
+  display_title?: string | null;
+};
+
+type DatasetRegistryResponse = {
+  datasets: DatasetRegistryEntry[];
+};
+
+type DatasetRegistryState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; datasets: DatasetRegistryEntry[] }
+  | { status: "unavailable" };
 
 const pageStyle: CSSProperties = {
   display: "grid",
@@ -384,6 +406,46 @@ function isAdminRunsResponse(value: unknown): value is AdminRunsResponse {
   );
 }
 
+function isDatasetRegistryEntry(value: unknown): value is DatasetRegistryEntry {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Partial<DatasetRegistryEntry>;
+  return (
+    typeof record.dataset_slug === "string" &&
+    record.dataset_slug.length > 0 &&
+    typeof record.title === "string" &&
+    (record.display_title === undefined || record.display_title === null || typeof record.display_title === "string")
+  );
+}
+
+function isDatasetRegistryResponse(value: unknown): value is DatasetRegistryResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Partial<DatasetRegistryResponse>;
+  return Array.isArray(record.datasets) && record.datasets.every(isDatasetRegistryEntry);
+}
+
+function promotionOutcomeMessage(entry: {
+  dataset_slug: string | null;
+  release_id: string | null;
+  registry_action: "created" | "updated" | null;
+}): string {
+  const datasetPart = entry.dataset_slug ? `dataset "${entry.dataset_slug}"` : "the dataset";
+  const releasePart = entry.release_id ? ` to release "${entry.release_id}"` : "";
+  const actionPart =
+    entry.registry_action === "created"
+      ? "created a new registry entry"
+      : entry.registry_action === "updated"
+        ? "updated the existing registry entry"
+        : "updated the dataset registry";
+
+  return `Promoted ${datasetPart}${releasePart} — ${actionPart}.`;
+}
+
 function canPromoteRun(run: AdminRunSummary): boolean {
   return run.status === "available" && run.validation_summary?.outcome === "accepted";
 }
@@ -428,7 +490,7 @@ function datasetDisplayName(value: string): string {
     .join(" ");
 }
 
-function buildDatasetDetailRows(runs: AdminRunSummary[]): DatasetDetailRow[] {
+function buildRunDerivedDatasetDetailRows(runs: AdminRunSummary[]): Map<string, DatasetDetailRow> {
   const rows = new Map<string, DatasetDetailRow>();
 
   for (const run of runs) {
@@ -452,7 +514,27 @@ function buildDatasetDetailRows(runs: AdminRunSummary[]): DatasetDetailRow[] {
     });
   }
 
-  return Array.from(rows.values()).sort((first, second) => first.displayName.localeCompare(second.displayName));
+  return rows;
+}
+
+function buildDatasetDetailRows(
+  runs: AdminRunSummary[],
+  registryDatasets: DatasetRegistryEntry[] | null,
+): DatasetDetailRow[] {
+  const runDerivedRows = buildRunDerivedDatasetDetailRows(runs);
+
+  if (registryDatasets) {
+    return registryDatasets
+      .map((dataset) => ({
+        displayName: dataset.display_title?.trim() || dataset.title.trim() || datasetDisplayName(dataset.dataset_slug),
+        slug: dataset.dataset_slug,
+        visibilityStatus: "unavailable" as const,
+        lastUpdated: runDerivedRows.get(dataset.dataset_slug)?.lastUpdated ?? null,
+      }))
+      .sort((first, second) => first.displayName.localeCompare(second.displayName));
+  }
+
+  return Array.from(runDerivedRows.values()).sort((first, second) => first.displayName.localeCompare(second.displayName));
 }
 
 function normalizeSearchText(value: string): string {
@@ -481,6 +563,7 @@ export default function DashboardPage() {
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
+  const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
 
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent) {
@@ -500,16 +583,17 @@ export default function DashboardPage() {
   }, []);
 
   const runs = state.status === "ready" ? state.data.runs : [];
-  const datasetRows = useMemo(() => buildDatasetDetailRows(runs), [runs]);
+  const registryDatasets = datasetRegistryState.status === "ready" ? datasetRegistryState.datasets : null;
+  const datasetRows = useMemo(() => buildDatasetDetailRows(runs, registryDatasets), [runs, registryDatasets]);
 
   const counters = useMemo(
     () => ({
       runsAvailable: runs.filter((run) => run.status === "available").length,
       promotedRuns: 0,
-      publishedDatasets: 0,
+      publishedDatasets: registryDatasets ? registryDatasets.length : 0,
       draftDatasets: 0,
     }),
-    [runs],
+    [runs, registryDatasets],
   );
 
   const normalizedQuery = normalizeSearchText(query.trim());
@@ -531,6 +615,35 @@ export default function DashboardPage() {
     () => datasetRows.filter((row) => datasetMatchesQuery(row, normalizedQuery)),
     [datasetRows, normalizedQuery],
   );
+
+  function loadDatasetRegistry() {
+    setDatasetRegistryState((previous) => (previous.status === "ready" ? previous : { status: "loading" }));
+
+    fetch(`${apiBaseUrl}/datasets`)
+      .then((res) => {
+        if (!res.ok) {
+          setDatasetRegistryState({ status: "unavailable" });
+          return null;
+        }
+
+        return res.json() as Promise<unknown>;
+      })
+      .then((data) => {
+        if (!data) {
+          return;
+        }
+
+        if (!isDatasetRegistryResponse(data)) {
+          setDatasetRegistryState({ status: "unavailable" });
+          return;
+        }
+
+        setDatasetRegistryState({ status: "ready", datasets: data.datasets });
+      })
+      .catch(() => {
+        setDatasetRegistryState({ status: "unavailable" });
+      });
+  }
 
   function loadRuns() {
     const controller = new AbortController();
@@ -572,6 +685,8 @@ export default function DashboardPage() {
           setState({ status: "error", message: "Run summaries could not be loaded. Check private admin API reachability." });
         }
       });
+
+    loadDatasetRegistry();
   }
 
   function openRemoveConfirmation(runId: string) {
@@ -624,8 +739,9 @@ export default function DashboardPage() {
       method: "POST",
     })
       .then(async (res) => {
+        const body = (await res.json().catch(() => null)) as AdminRunPromotionResponse | null;
+
         if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as AdminRunPromotionResponse | null;
           const detail = body?.errors?.[0]?.message;
           setPromotionState((previous) => ({
             ...previous,
@@ -637,11 +753,15 @@ export default function DashboardPage() {
           return;
         }
 
-        setPromotionState((previous) => {
-          const next = { ...previous };
-          delete next[runId];
-          return next;
-        });
+        setPromotionState((previous) => ({
+          ...previous,
+          [runId]: {
+            status: "success",
+            dataset_slug: body?.dataset_slug ?? null,
+            release_id: body?.release_id ?? null,
+            registry_action: body?.registry_action ?? null,
+          },
+        }));
         loadRuns();
       })
       .catch(() => {
@@ -743,13 +863,25 @@ export default function DashboardPage() {
               <strong style={counterValueStyle}>{counters.promotedRuns}</strong>
               <span style={mutedTextStyle}>Promotion source not owned</span>
             </Card>
-            <Card aria-label="Published datasets" data-summary-count={counters.publishedDatasets}>
+            <Card
+              aria-label="Published datasets"
+              data-registry-status={datasetRegistryState.status}
+              data-summary-count={counters.publishedDatasets}
+            >
               <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
                 <PublishedDatasetsIcon />
               </span>
-              <StatusPill tone="warning">Unavailable</StatusPill>
+              {datasetRegistryState.status === "ready" ? (
+                <StatusPill tone="success">Registry available</StatusPill>
+              ) : (
+                <StatusPill tone="warning">Unavailable</StatusPill>
+              )}
               <strong style={counterValueStyle}>{counters.publishedDatasets}</strong>
-              <span style={mutedTextStyle}>Publication source not owned</span>
+              <span style={mutedTextStyle}>
+                {datasetRegistryState.status === "ready"
+                  ? "From the safe dataset registry listing"
+                  : "Registry listing unavailable"}
+              </span>
             </Card>
             <Card aria-label="Draft datasets" data-summary-count={counters.draftDatasets}>
               <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--amber">
@@ -779,6 +911,12 @@ export default function DashboardPage() {
                   Dataset Details
                 </h2>
               </div>
+
+              {datasetRegistryState.status === "unavailable" && (
+                <span role="status" style={mutedTextStyle}>
+                  Dataset registry listing unavailable — showing run-derived placeholders instead.
+                </span>
+              )}
 
               {datasetRows.length === 0 ? (
                 <EmptyState
@@ -877,14 +1015,22 @@ export default function DashboardPage() {
                       const promotionEntry = promotionState[run.run_id];
                       const isPromoting = promotionEntry?.status === "promoting";
                       const promotionError = promotionEntry?.status === "error" ? promotionEntry.message : null;
+                      const promotionSuccessMessage =
+                        promotionEntry?.status === "success" ? promotionOutcomeMessage(promotionEntry) : null;
                       const promotionEligible = canPromoteRun(run);
                       const promoteDisabled = !promotionEligible || isPromoting;
-                      const metaMessage = promotionError ?? reasonLabel(run);
+                      const metaMessage = promotionSuccessMessage ?? promotionError ?? reasonLabel(run);
 
                       return (
                       <TableRow
                         key={run.run_id}
-                        meta={metaMessage && <span style={mutedTextStyle}>{metaMessage}</span>}
+                        meta={
+                          metaMessage && (
+                            <span role={promotionSuccessMessage ? "status" : undefined} style={mutedTextStyle}>
+                              {metaMessage}
+                            </span>
+                          )
+                        }
                       >
                         <div data-run-status={run.status} style={runRowContentStyle}>
                           <strong>{run.run_id}</strong>

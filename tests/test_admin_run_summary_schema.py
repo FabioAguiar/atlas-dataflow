@@ -66,6 +66,10 @@ def test_promoted_example_reflects_promoted_status_and_sanitized_promotion_field
     assert promotion_summary["dataset_slug"]
     assert promotion_summary["public_dataset_slug"]
     assert promotion_summary["registry_action"] == "reused"
+    assert promotion_summary["registry_bound"] is True
+    assert promotion_summary["can_promote"] is False
+    assert promotion_summary["can_remove"] is True
+    assert promotion_summary["reason"]
 
 
 def test_promoted_status_requires_promotion_summary():
@@ -81,10 +85,78 @@ def test_promoted_status_requires_promotion_summary():
 
 
 def test_promotion_summary_without_public_dataset_slug_or_registry_action_is_valid():
+    # Project Spec S0048: omitting public_dataset_slug/registry_action is only
+    # valid alongside registry_bound: false/can_promote: true -- a
+    # 'promotion_result_orphaned' (registry-missing, re-promotable) instance.
     schema = _load_json(SCHEMA_PATH)
     example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
     del example["promotion_summary"]["public_dataset_slug"]
     del example["promotion_summary"]["registry_action"]
+    example["promotion_summary"]["registry_bound"] = False
+    example["promotion_summary"]["can_promote"] = True
+
+    jsonschema.validate(example, schema)
+
+
+def test_promotion_summary_registry_bound_requires_public_dataset_slug_and_registry_action():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    del example["promotion_summary"]["public_dataset_slug"]
+    del example["promotion_summary"]["registry_action"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
+
+
+def test_promotion_summary_rejects_can_promote_true_when_registry_bound():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    example["promotion_summary"]["can_promote"] = True
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
+
+
+def test_promotion_summary_rejects_can_promote_false_when_registry_missing():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    del example["promotion_summary"]["public_dataset_slug"]
+    del example["promotion_summary"]["registry_action"]
+    example["promotion_summary"]["registry_bound"] = False
+    example["promotion_summary"]["can_promote"] = False
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
+
+
+def test_promotion_summary_rejects_can_remove_false():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    example["promotion_summary"]["can_remove"] = False
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
+
+
+def test_registry_missing_repromotable_promotion_summary_matches_schema():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    del example["promotion_summary"]["public_dataset_slug"]
+    del example["promotion_summary"]["registry_action"]
+    example["promotion_summary"]["registry_bound"] = False
+    example["promotion_summary"]["can_promote"] = True
+    example["promotion_summary"]["reason"] = (
+        "The Dataset Detail associated with this run's promoted release is "
+        "no longer in the registry, so this run can be promoted again."
+    )
 
     jsonschema.validate(example, schema)
 

@@ -947,6 +947,10 @@ describe("DashboardPage", () => {
                 dataset_slug: "synthetic-retail-forecast",
                 public_dataset_slug: "synthetic-retail-forecast",
                 registry_action: "reused",
+                registry_bound: true,
+                can_promote: false,
+                can_remove: true,
+                reason: "This run has already been promoted as a Dataset Detail.",
               },
             },
           ],
@@ -954,7 +958,7 @@ describe("DashboardPage", () => {
       );
     }
 
-    it("renders a promoted run visually distinct from an available run and disables/relabels its Promote button", async () => {
+    it("renders a promoted run visually distinct from an available run and keeps its Promoted button clickable", async () => {
       installPromotedRunFetchMock();
       render(<DashboardPage />);
 
@@ -965,12 +969,14 @@ describe("DashboardPage", () => {
       // Both the status badge and the relabeled Promote button read "Promoted".
       expect(within(table).getAllByText("Promoted")).toHaveLength(2);
 
+      // Project Spec S0048: a registry-bound promoted run's Promoted action
+      // remains clickable -- it is informational only, never disabled.
       const promoteButton = within(table).getByRole("button", { name: "Promoted" });
-      expect(promoteButton).toBeDisabled();
+      expect(promoteButton).not.toBeDisabled();
       expect(within(table).queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
     });
 
-    it("does not trigger any network request when the disabled Promoted button is clicked", async () => {
+    it("does not trigger any network request when the clickable Promoted button is clicked", async () => {
       const fetchMock = installPromotedRunFetchMock();
       render(<DashboardPage />);
       await loadRuns();
@@ -981,6 +987,29 @@ describe("DashboardPage", () => {
       fireEvent.click(within(table).getByRole("button", { name: "Promoted" }));
 
       expect(fetchMock).toHaveBeenCalledTimes(callCountAfterLoad);
+      // Clicking Promoted never calls the promotion endpoint specifically.
+      const promoteCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes("/promote"));
+      expect(promoteCalls).toHaveLength(0);
+    });
+
+    it("shows an informational already-promoted message for a registry-bound promoted run", async () => {
+      installPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(
+        within(table).getByText(/This run has already been promoted as a Dataset Detail\./),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the Remove button enabled for a registry-bound promoted run", async () => {
+      installPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByRole("button", { name: "Remove" })).not.toBeDisabled();
     });
 
     it("displays promoted release id and public dataset slug metadata when available", async () => {
@@ -1020,6 +1049,9 @@ describe("DashboardPage", () => {
                 dataset_slug: "telco-customer-churn",
                 public_dataset_slug: "telco-customer-churn1",
                 registry_action: "created",
+                registry_bound: true,
+                can_promote: false,
+                can_remove: true,
               },
             },
           ],
@@ -1058,6 +1090,9 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260702-001",
                 dataset_slug: "synthetic-energy-usage",
+                registry_bound: false,
+                can_promote: true,
+                can_remove: true,
               },
             },
           ],
@@ -1098,6 +1133,9 @@ describe("DashboardPage", () => {
                 promotion_outcome: "promoted",
                 release_id: "release-20260702-001",
                 dataset_slug: "synthetic-energy-usage",
+                registry_bound: false,
+                can_promote: true,
+                can_remove: true,
               },
             },
           ],
@@ -1114,6 +1152,115 @@ describe("DashboardPage", () => {
       expect(table).toHaveAttribute("data-filtered-run-count", "1");
       expect(within(table).getByText("run-promoted-002")).toBeInTheDocument();
       expect(within(table).queryByText("run-available-002")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Registry-missing re-promotable run reflection (Project Spec S0048)", () => {
+    function installOrphanedPromotedRunFetchMock() {
+      return installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-orphaned-promotion",
+              status: "promoted",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-orphaned-promotion",
+              validation_summary: { outcome: "accepted" },
+              promotion_summary: {
+                promotion_outcome: "promoted",
+                release_id: "release-20260701-001",
+                dataset_slug: "synthetic-retail-forecast",
+                registry_bound: false,
+                can_promote: true,
+                can_remove: true,
+                reason:
+                  "The Dataset Detail associated with this run's promoted release is no longer in the registry, so this run can be promoted again.",
+              },
+            },
+          ],
+        }),
+      );
+    }
+
+    it("renders a functional Promote action instead of an informational Promoted action when the Dataset Detail is no longer registry-bound", async () => {
+      installOrphanedPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const promoteButton = within(table).getByRole("button", { name: "Promote" });
+      expect(promoteButton).not.toBeDisabled();
+      expect(within(table).queryByRole("button", { name: "Promoted" })).not.toBeInTheDocument();
+    });
+
+    it("calls the promotion endpoint when Promote is clicked for a registry-missing re-promotable run", async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-orphaned-promotion/promote") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-orphaned-promotion",
+            promoted: true,
+            dataset_slug: "synthetic-retail-forecast",
+            release_id: "release-20260710t101438z",
+            registry_action: "created",
+            public_dataset_slug: "synthetic-retail-forecast",
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-orphaned-promotion",
+                status: "promoted",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-orphaned-promotion",
+                validation_summary: { outcome: "accepted" },
+                promotion_summary: {
+                  promotion_outcome: "promoted",
+                  release_id: "release-20260701-001",
+                  dataset_slug: "synthetic-retail-forecast",
+                  registry_bound: false,
+                  can_promote: true,
+                  can_remove: true,
+                },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const callCountAfterLoad = fetchMock.mock.calls.length;
+
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      await screen.findByText(/reused the already-promoted registry entry|created a new registry entry/i);
+
+      const promoteCalls = fetchMock.mock.calls
+        .slice(callCountAfterLoad)
+        .filter(([input]) => String(input).includes("/promote"));
+      expect(promoteCalls).toHaveLength(1);
+    });
+
+    it("keeps the Remove button enabled for a registry-missing re-promotable run", async () => {
+      installOrphanedPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByRole("button", { name: "Remove" })).not.toBeDisabled();
     });
   });
 

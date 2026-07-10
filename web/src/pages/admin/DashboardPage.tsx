@@ -15,6 +15,10 @@ type PromotionSummary = {
   dataset_slug: string;
   public_dataset_slug?: string;
   registry_action?: "created" | "updated" | "reused";
+  registry_bound: boolean;
+  can_promote: boolean;
+  can_remove: boolean;
+  reason?: string;
 };
 
 type AdminRunSummary = {
@@ -393,7 +397,11 @@ function isPromotionSummary(value: unknown): value is PromotionSummary {
     typeof record.dataset_slug === "string" &&
     record.dataset_slug.length > 0 &&
     (record.public_dataset_slug === undefined || typeof record.public_dataset_slug === "string") &&
-    validRegistryAction
+    validRegistryAction &&
+    typeof record.registry_bound === "boolean" &&
+    typeof record.can_promote === "boolean" &&
+    typeof record.can_remove === "boolean" &&
+    (record.reason === undefined || typeof record.reason === "string")
   );
 }
 
@@ -498,7 +506,38 @@ const PROMOTION_CONSEQUENCE =
   "Creates a new Dataset Detail entry with a deterministic unique public slug, leaving any existing entry untouched.";
 
 function canPromoteRun(run: AdminRunSummary): boolean {
-  return run.status === "available" && run.validation_summary?.outcome === "accepted";
+  if (run.status === "available") {
+    return run.validation_summary?.outcome === "accepted";
+  }
+
+  // Project Spec S0048: a promoted run whose Dataset Detail is no longer
+  // bound to the current registry (promotion_result_orphaned) is promotable
+  // again -- can_promote is the backend's own re-derived signal for this,
+  // never guessed from status alone.
+  if (run.status === "promoted") {
+    return run.promotion_summary?.can_promote === true;
+  }
+
+  return false;
+}
+
+function canRemoveRun(run: AdminRunSummary): boolean {
+  if (run.status === "available") {
+    return true;
+  }
+
+  // Project Spec S0048: Remove must remain available for promoted runs --
+  // it only ever deletes the run artifact/directory, never the registry
+  // entry, release, or Dataset Detail it may still be bound to.
+  if (run.status === "promoted") {
+    return run.promotion_summary?.can_remove === true;
+  }
+
+  return false;
+}
+
+function isRegistryBoundPromoted(run: AdminRunSummary): boolean {
+  return run.status === "promoted" && run.promotion_summary?.registry_bound === true;
 }
 
 function promotedStateMessage(run: AdminRunSummary): string | null {
@@ -506,14 +545,14 @@ function promotedStateMessage(run: AdminRunSummary): string | null {
     return null;
   }
 
-  const { release_id, dataset_slug, public_dataset_slug } = run.promotion_summary;
-  const releasePart = release_id ? ` to release "${release_id}"` : "";
+  const { release_id, dataset_slug, public_dataset_slug, reason } = run.promotion_summary;
   const slugPart =
     public_dataset_slug && public_dataset_slug !== dataset_slug
       ? ` Public Dataset Detail slug: "${public_dataset_slug}".`
       : "";
+  const detailPart = release_id ? ` Promoted to release "${release_id}".${slugPart}` : "";
 
-  return `Already promoted${releasePart}.${slugPart}`;
+  return `${reason ?? "Already promoted."}${detailPart}`;
 }
 
 function reasonLabel(run: AdminRunSummary): string | null {
@@ -1091,7 +1130,14 @@ export default function DashboardPage() {
                       const promotionSuccessMessage =
                         promotionEntry?.status === "success" ? promotionOutcomeMessage(promotionEntry) : null;
                       const promotionEligible = canPromoteRun(run);
-                      const promoteDisabled = !promotionEligible || isPromoting;
+                      const registryBoundPromoted = isRegistryBoundPromoted(run);
+                      // Project Spec S0048: a registry-bound promoted run's
+                      // Promote action remains clickable (never disabled) --
+                      // it is just informational and never calls the
+                      // promotion endpoint. Every other run's Promote action
+                      // is disabled unless it is currently promotion-eligible.
+                      const promoteDisabled = registryBoundPromoted ? false : !promotionEligible || isPromoting;
+                      const removeEligible = canRemoveRun(run);
                       const alreadyPromoted = run.status === "promoted";
                       const metaMessage =
                         promotionSuccessMessage ?? promotionError ?? promotedStateMessage(run) ?? reasonLabel(run);
@@ -1117,7 +1163,7 @@ export default function DashboardPage() {
                           <span style={actionGroupStyle}>
                             <Button
                               data-run-action={
-                                alreadyPromoted
+                                registryBoundPromoted
                                   ? "promoted"
                                   : !promotionEligible
                                     ? "promote-disabled"
@@ -1126,31 +1172,43 @@ export default function DashboardPage() {
                                       : "promote"
                               }
                               disabled={promoteDisabled}
-                              onClick={() => promoteRun(run.run_id)}
-                              style={promotionEligible ? actionButtonStyle : disabledIntentButtonStyle}
+                              onClick={() => {
+                                // Project Spec S0048: a registry-bound
+                                // promoted run's Promote action stays
+                                // clickable but is purely informational --
+                                // the current promoted state is already
+                                // shown via this row's meta message, and
+                                // clicking must never call the promotion
+                                // endpoint again.
+                                if (registryBoundPromoted) {
+                                  return;
+                                }
+                                promoteRun(run.run_id);
+                              }}
+                              style={promotionEligible || registryBoundPromoted ? actionButtonStyle : disabledIntentButtonStyle}
                               title={
-                                alreadyPromoted
-                                  ? "This run has already been promoted. Promote is disabled because repeating it would only re-apply the same, unchanged promotion result."
+                                registryBoundPromoted
+                                  ? "This run has already been promoted as a Dataset Detail. Clicking shows the current promotion status and does not trigger another promotion."
                                   : promotionEligible
                                     ? PROMOTION_CONSEQUENCE
-                                    : "Promote is only available for available runs with an accepted validation outcome."
+                                    : "Promote is only available for eligible runs."
                               }
                               variant="secondary"
                             >
                               <span aria-hidden="true" style={actionIconStyle}>
                                 <PromoteActionIcon />
                               </span>
-                              {isPromoting ? "Promoting..." : alreadyPromoted ? "Promoted" : "Promote"}
+                              {isPromoting ? "Promoting..." : registryBoundPromoted ? "Promoted" : "Promote"}
                             </Button>
                             <Button
-                              data-run-action={run.status === "available" ? "remove" : "remove-disabled"}
-                              disabled={run.status !== "available"}
+                              data-run-action={removeEligible ? "remove" : "remove-disabled"}
+                              disabled={!removeEligible}
                               onClick={() => openRemoveConfirmation(run.run_id)}
-                              style={run.status === "available" ? actionButtonStyle : disabledIntentButtonStyle}
+                              style={removeEligible ? actionButtonStyle : disabledIntentButtonStyle}
                               title={
-                                run.status === "available"
+                                removeEligible
                                   ? "Remove this run from the Admin Dashboard after confirmation."
-                                  : "Remove is only available for safe, available runs."
+                                  : "Remove is only available for safe, available or promoted runs."
                               }
                               variant="secondary"
                             >

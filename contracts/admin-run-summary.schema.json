@@ -73,7 +73,14 @@
     "promotion_summary": {
       "type": ["object", "null"],
       "additionalProperties": false,
-      "required": ["promotion_outcome", "release_id", "dataset_slug"],
+      "required": [
+        "promotion_outcome",
+        "release_id",
+        "dataset_slug",
+        "registry_bound",
+        "can_promote",
+        "can_remove"
+      ],
       "description": "Sanitized promoted-state projection derived from this run's promotion-result.json, re-checked against the live dataset registry for a safe idempotence/reuse signal. Required and non-null when status is 'promoted'; absent otherwise. Must never expose raw filesystem paths, raw registry dumps, or promotion-result.json's internal registry_update_record.",
       "properties": {
         "promotion_outcome": {
@@ -101,8 +108,48 @@
           "type": "string",
           "enum": ["created", "updated", "reused"],
           "description": "Safe idempotence indicator reusing the same vocabulary as the Promote action's own response. Present only alongside public_dataset_slug, when the live registry confirms this release is still the dataset's active_release."
+        },
+        "registry_bound": {
+          "type": "boolean",
+          "description": "True when the live dataset registry (registry/datasets.json) still has a Dataset Detail whose active_release matches release_id -- a 'registry_bound_promoted' run. False when no current registry entry points to this release -- a 'promotion_result_orphaned' run: historical promotion evidence exists, but the Dataset Detail is gone, so the run is promotable again."
+        },
+        "can_promote": {
+          "type": "boolean",
+          "description": "Whether the Dashboard's Promote action should call the promotion endpoint again for this run. False whenever registry_bound is true (repeating promotion would only re-apply an already-active state); true when registry_bound is false (the previously promoted Dataset Detail no longer exists, so this run is promotable again)."
+        },
+        "can_remove": {
+          "type": "boolean",
+          "const": true,
+          "description": "Whether the Dashboard's Remove action remains available for this promoted run. Always true: removing a run only ever deletes its run artifact/directory and never mutates the registry, releases, or Dataset Details."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional short, safe user-facing message describing the current promoted state -- for example that the run has already been promoted as a Dataset Detail, or that the Dataset Detail is no longer present and the run may be promoted again. Must not embed raw filesystem paths, stack traces, or raw registry dumps."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"registry_bound": {"const": true}},
+            "required": ["registry_bound"]
+          },
+          "then": {
+            "required": ["public_dataset_slug", "registry_action"],
+            "properties": {"can_promote": {"const": false}}
+          }
+        },
+        {
+          "if": {
+            "properties": {"registry_bound": {"const": false}},
+            "required": ["registry_bound"]
+          },
+          "then": {
+            "not": {"required": ["public_dataset_slug"]},
+            "properties": {"can_promote": {"const": true}}
+          }
+        }
+      ]
     },
     "unavailable_reason": {
       "type": "string",

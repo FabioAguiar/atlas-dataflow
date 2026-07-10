@@ -447,6 +447,10 @@ def test_run_with_valid_promoted_promotion_result_is_summarized_as_promoted(tmp_
         "dataset_slug": "example-dataset",
         "public_dataset_slug": "example-dataset",
         "registry_action": "reused",
+        "registry_bound": True,
+        "can_promote": False,
+        "can_remove": True,
+        "reason": admin_runs._REGISTRY_BOUND_REASON,
     }
     _assert_no_private_markers(entry)
 
@@ -475,6 +479,10 @@ def test_run_with_valid_promoted_promotion_result_but_no_registry_match_omits_re
         "promotion_outcome": "promoted",
         "release_id": "release-20260701-001",
         "dataset_slug": "example-dataset",
+        "registry_bound": False,
+        "can_promote": True,
+        "can_remove": True,
+        "reason": admin_runs._REGISTRY_ORPHANED_REASON,
     }
     assert "public_dataset_slug" not in entry["promotion_summary"]
     assert "registry_action" not in entry["promotion_summary"]
@@ -553,6 +561,132 @@ def test_run_with_missing_candidate_identity_in_promotion_result_remains_availab
     entry = result["runs"][0]
     assert entry["status"] == "available"
     assert "promotion_summary" not in entry
+
+
+# ---------------------------------------------------------------------------
+# list_admin_run_summaries / promote_admin_run / remove_admin_run: registry-
+# bound promoted vs. registry-missing re-promotable action semantics
+# (Project Spec S0048)
+# ---------------------------------------------------------------------------
+
+def test_fresh_promotion_ready_run_has_no_promotion_summary_and_stays_available(tmp_path):
+    # A newly created, not-yet-promoted eligible run: functional Promote and
+    # Remove actions are driven entirely by status == "available" plus
+    # validation_summary.outcome == "accepted", with no promotion_summary at
+    # all -- distinct from both S0048 promoted sub-states below.
+    root = tmp_path / "runs"
+    root.mkdir()
+    _write_run_dir(root, "fresh-eligible", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+
+    original = admin_runs._admin_runs_root
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original
+
+    entry = result["runs"][0]
+    assert entry["status"] == "available"
+    assert entry["validation_summary"] == {"outcome": "accepted"}
+    assert "promotion_summary" not in entry
+
+
+def test_remove_admin_run_on_registry_bound_promoted_run_only_deletes_run_directory(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "promoted-removable", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    _write_json(run_dir / "promotion-result.json", _PROMOTED_PROMOTION_RESULT)
+    _write_registry(
+        repo_root,
+        [
+            {
+                "dataset_slug": "example-dataset",
+                "active_release": "release-20260701-001",
+                "public_metadata": {
+                    "title": "Example Dataset",
+                    "summary": "Published dataset.",
+                    "domain": "general",
+                    "visibility": "public",
+                    "tags": [],
+                },
+            }
+        ],
+    )
+    release_dir = repo_root / "releases" / "release-20260701-001"
+    release_dir.mkdir(parents=True)
+    _write_json(release_dir / "manifest.json", _VALID_MANIFEST)
+    registry_before = (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        # Sanity-check this run really is registry-bound promoted before
+        # removing it, so the test actually exercises the intended state.
+        before = admin_runs.list_admin_run_summaries()
+        assert before["runs"][0]["promotion_summary"]["registry_bound"] is True
+
+        result = admin_runs.remove_admin_run("promoted-removable")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result == {"run_id": "promoted-removable", "removed": True, "errors": []}
+    assert not run_dir.exists()
+    # Removal must delete only the run artifact/directory -- the registry and
+    # the release directory/manifest it points at are untouched.
+    assert (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8") == registry_before
+    assert release_dir.exists()
+    assert (release_dir / "manifest.json").is_file()
+
+
+def test_promoted_run_becomes_repromotable_after_registry_entry_removed(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "promote-then-orphan", "orphan-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        first = admin_runs.promote_admin_run("promote-then-orphan")
+        assert first["promoted"] is True
+
+        bound = admin_runs.list_admin_run_summaries()
+        bound_entry = bound["runs"][0]
+        assert bound_entry["promotion_summary"]["registry_bound"] is True
+        assert bound_entry["promotion_summary"]["can_promote"] is False
+
+        # The Dataset Detail is removed from the registry independently of
+        # this run (Dataset Detail deletion itself is out of scope for this
+        # spec) -- simulate that by writing back an empty registry.
+        _write_registry(repo_root, [])
+
+        orphaned = admin_runs.list_admin_run_summaries()
+        orphaned_entry = orphaned["runs"][0]
+        assert orphaned_entry["status"] == "promoted"
+        assert orphaned_entry["promotion_summary"]["registry_bound"] is False
+        assert orphaned_entry["promotion_summary"]["can_promote"] is True
+        assert orphaned_entry["promotion_summary"]["can_remove"] is True
+        assert "public_dataset_slug" not in orphaned_entry["promotion_summary"]
+        assert "registry_action" not in orphaned_entry["promotion_summary"]
+
+        second = admin_runs.promote_admin_run("promote-then-orphan")
+        assert second["promoted"] is True
+        assert second["registry_action"] == "created"
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+        assert any(entry["dataset_slug"] == "orphan-dataset" for entry in registry["datasets"])
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
 
 
 # ---------------------------------------------------------------------------
@@ -1321,6 +1455,10 @@ def test_promote_then_list_reflects_promoted_state_end_to_end(tmp_path):
             "dataset_slug": "before-and-after-dataset",
             "public_dataset_slug": "before-and-after-dataset",
             "registry_action": "reused",
+            "registry_bound": True,
+            "can_promote": False,
+            "can_remove": True,
+            "reason": admin_runs._REGISTRY_BOUND_REASON,
         }
         _assert_no_private_markers(after_entry)
 

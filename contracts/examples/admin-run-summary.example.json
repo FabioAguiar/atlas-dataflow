@@ -1,5 +1,5 @@
 {
-  "_example_note": "Valid 'promoted' admin-run-summary instance (Project Spec S0045). Base field values are grounded in pipeline/examples/run-evidence.example.json's run-20260620-001 record, as with the prior 'available' revision of this example: created_at mirrors run_timestamps.started_at, trace_reference mirrors run_outputs.output_ref, and validation_summary.outcome mirrors run_status. promotion_summary mirrors publisher/promotion/promotion-result.schema.json's candidate_identity fields for a completed promotion; public_dataset_slug/registry_action are populated because the dataset registry's active_release for this dataset currently matches this release_id.",
+  "_example_note": "Valid 'promoted' admin-run-summary instance, registry-bound sub-state (Project Spec S0045, extended by S0048). Base field values are grounded in pipeline/examples/run-evidence.example.json's run-20260620-001 record, as with the prior 'available' revision of this example: created_at mirrors run_timestamps.started_at, trace_reference mirrors run_outputs.output_ref, and validation_summary.outcome mirrors run_status. promotion_summary mirrors publisher/promotion/promotion-result.schema.json's candidate_identity fields for a completed promotion; public_dataset_slug/registry_action are populated, and registry_bound is true/can_promote is false, because the dataset registry's active_release for this dataset currently matches this release_id. See tests/test_admin_run_summary_schema.py for an inline registry-missing/re-promotable (registry_bound: false) counterpart instance.",
   "schema_version": "admin-run-summary.v1",
   "run_id": "run-20260620-001",
   "status": "promoted",
@@ -14,6 +14,10 @@
     "release_id": "release-20260620-001",
     "dataset_slug": "telco-customer-churn",
     "public_dataset_slug": "telco-customer-churn",
-    "registry_action": "reused"
+    "registry_action": "reused",
+    "registry_bound": true,
+    "can_promote": false,
+    "can_remove": true,
+    "reason": "This run has already been promoted as a Dataset Detail."
   }
 }

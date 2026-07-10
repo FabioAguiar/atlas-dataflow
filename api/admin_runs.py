@@ -198,6 +198,13 @@ def _public_dataset_slug_for_release(release_id: str) -> str | None:
     return None
 
 
+_REGISTRY_BOUND_REASON = "This run has already been promoted as a Dataset Detail."
+_REGISTRY_ORPHANED_REASON = (
+    "The Dataset Detail associated with this run's promoted release is no "
+    "longer in the registry, so this run can be promoted again."
+)
+
+
 def _promotion_summary_from(run_dir: Path) -> dict | None:
     """Sanitized promoted-state projection from this run's promotion-result.json.
 
@@ -215,6 +222,18 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
     rather than a persisted claim, and required by S0045 to remain accurate
     across repeated Promote clicks regardless of what promotion-result.json
     itself says.
+
+    Project Spec S0048 adds registry_bound/can_promote/can_remove/reason so
+    the Dashboard no longer has to infer button behavior from the presence of
+    public_dataset_slug alone: registry_bound is true exactly when the live
+    registry still points at this promoted release (a "registry_bound_promoted"
+    run -- Promote stays clickable but only informational, Remove stays
+    active), and false when it no longer does (a "promotion_result_orphaned"
+    run -- historical promotion evidence exists but the Dataset Detail is
+    gone, so the run is promotable again). can_remove is always true here:
+    removing a run only ever deletes its run artifact/directory (see
+    remove_admin_run, which never inspects promotion state at all) and never
+    mutates the registry, releases, or Dataset Details.
     """
     promotion_result = _read_json_object(run_dir / _RUN_ARTIFACT_PROMOTION_RESULT)
     if promotion_result is None or promotion_result.get("promotion_outcome") != "promoted":
@@ -231,14 +250,20 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
     if not isinstance(release_id, str) or not RELEASE_ID_PATTERN.match(release_id):
         return None
 
+    public_dataset_slug = _public_dataset_slug_for_release(release_id)
+    registry_bound = public_dataset_slug is not None
+
     summary = {
         "promotion_outcome": "promoted",
         "release_id": release_id,
         "dataset_slug": dataset_slug,
+        "registry_bound": registry_bound,
+        "can_promote": not registry_bound,
+        "can_remove": True,
+        "reason": _REGISTRY_BOUND_REASON if registry_bound else _REGISTRY_ORPHANED_REASON,
     }
 
-    public_dataset_slug = _public_dataset_slug_for_release(release_id)
-    if public_dataset_slug is not None:
+    if registry_bound:
         summary["public_dataset_slug"] = public_dataset_slug
         summary["registry_action"] = "reused"
 

@@ -1,12 +1,19 @@
 {
-  "_example_note": "Valid 'available' admin-run-summary instance. Field values are grounded in pipeline/examples/run-evidence.example.json's run-20260620-001 record: created_at mirrors run_timestamps.started_at, trace_reference mirrors run_outputs.output_ref, and validation_summary.outcome mirrors run_status.",
+  "_example_note": "Valid 'promoted' admin-run-summary instance (Project Spec S0045). Base field values are grounded in pipeline/examples/run-evidence.example.json's run-20260620-001 record, as with the prior 'available' revision of this example: created_at mirrors run_timestamps.started_at, trace_reference mirrors run_outputs.output_ref, and validation_summary.outcome mirrors run_status. promotion_summary mirrors publisher/promotion/promotion-result.schema.json's candidate_identity fields for a completed promotion; public_dataset_slug/registry_action are populated because the dataset registry's active_release for this dataset currently matches this release_id.",
   "schema_version": "admin-run-summary.v1",
   "run_id": "run-20260620-001",
-  "status": "available",
+  "status": "promoted",
   "dataset_candidate": "telco-customer-churn",
   "created_at": "2026-06-20T14:00:00Z",
   "trace_reference": "releases/candidates/telco-customer-churn/release-20260620-001",
   "validation_summary": {
     "outcome": "accepted"
+  },
+  "promotion_summary": {
+    "promotion_outcome": "promoted",
+    "release_id": "release-20260620-001",
+    "dataset_slug": "telco-customer-churn",
+    "public_dataset_slug": "telco-customer-churn",
+    "registry_action": "reused"
   }
 }

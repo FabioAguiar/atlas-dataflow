@@ -11,6 +11,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from publisher import promote as publisher_promote  # noqa: E402
 from registry import update as registry_update  # noqa: E402
+from registry.validate import RELEASE_ID_PATTERN  # noqa: E402
 
 _RUN_ARTIFACT_MANIFEST = "manifest.json"
 _RUN_ARTIFACT_VALIDATION_RESULT = "validation-result.json"
@@ -179,6 +180,68 @@ def _validation_summary_from(run_dir: Path) -> dict | None:
     return summary
 
 
+def _registry_dataset_entries() -> list:
+    registry = _read_json_object(_REPO_ROOT / "registry" / "datasets.json")
+    if registry is None:
+        return []
+    datasets = registry.get("datasets")
+    return datasets if isinstance(datasets, list) else []
+
+
+def _public_dataset_slug_for_release(release_id: str) -> str | None:
+    for entry in _registry_dataset_entries():
+        if not isinstance(entry, dict) or entry.get("active_release") != release_id:
+            continue
+        slug = entry.get("dataset_slug")
+        if isinstance(slug, str) and _DATASET_SLUG_PATTERN.match(slug):
+            return slug
+    return None
+
+
+def _promotion_summary_from(run_dir: Path) -> dict | None:
+    """Sanitized promoted-state projection from this run's promotion-result.json.
+
+    Only candidate_identity/promotion_outcome are ever trusted from the
+    persisted file -- publisher/promote.py always writes
+    registry_update_record.update_applied as False (the real registry effect
+    happens later, in registry/update.py, which never rewrites
+    promotion-result.json -- see its module docstring), so that nested object
+    is never a safe source for "is this still the active release" here.
+    public_dataset_slug/registry_action are populated only when the live
+    registry (registry/datasets.json) confirms this release is still the
+    dataset's current active_release: a freshly re-derived idempotence signal
+    rather than a stale historical claim, and required by S0045 to remain
+    accurate across repeated Promote clicks.
+    """
+    promotion_result = _read_json_object(run_dir / _RUN_ARTIFACT_PROMOTION_RESULT)
+    if promotion_result is None or promotion_result.get("promotion_outcome") != "promoted":
+        return None
+
+    candidate_identity = promotion_result.get("candidate_identity")
+    if not isinstance(candidate_identity, dict):
+        return None
+
+    dataset_slug = candidate_identity.get("dataset_slug")
+    release_id = candidate_identity.get("release_id")
+    if not isinstance(dataset_slug, str) or not _DATASET_SLUG_PATTERN.match(dataset_slug):
+        return None
+    if not isinstance(release_id, str) or not RELEASE_ID_PATTERN.match(release_id):
+        return None
+
+    summary = {
+        "promotion_outcome": "promoted",
+        "release_id": release_id,
+        "dataset_slug": dataset_slug,
+    }
+
+    public_dataset_slug = _public_dataset_slug_for_release(release_id)
+    if public_dataset_slug is not None:
+        summary["public_dataset_slug"] = public_dataset_slug
+        summary["registry_action"] = "reused"
+
+    return summary
+
+
 def _derive_run_summary(run_dir: Path, runs_root: Path) -> dict:
     run_id = run_dir.name
 
@@ -209,7 +272,7 @@ def _derive_run_summary(run_dir: Path, runs_root: Path) -> dict:
     if not isinstance(created_at, str) or not created_at:
         created_at = None
 
-    return {
+    entry = {
         "schema_version": "admin-run-summary.v1",
         "run_id": run_id,
         "status": "available",
@@ -218,6 +281,16 @@ def _derive_run_summary(run_dir: Path, runs_root: Path) -> dict:
         "trace_reference": _trace_reference_for(run_dir),
         "validation_summary": validation_summary,
     }
+
+    # Project Spec S0045: a well-formed, promoted run must never continue to
+    # be reflected as an available/pending promotion target once
+    # promotion-result.json records promotion_outcome: promoted.
+    promotion_summary = _promotion_summary_from(run_dir)
+    if promotion_summary is not None:
+        entry["status"] = "promoted"
+        entry["promotion_summary"] = promotion_summary
+
+    return entry
 
 
 def list_admin_run_summaries() -> dict:
@@ -357,6 +430,16 @@ def promote_admin_run(
     invalid run id, missing run, ineligible run, invalid mode, or a downstream
     promotion/registry failure -- those are reported as a non-promoted result
     with a reduced error instead.
+
+    `registry_action` (Project Spec S0044) distinguishes three outcomes so the
+    Admin Dashboard can show an accurate message: "created" (a brand-new
+    registry entry was appended), "updated" (an existing entry's
+    active_release genuinely changed to a different release), or "reused"
+    (the entry already had this exact release active -- a repeated Promote
+    click for the same run/mode combination, safely idempotent and applying
+    no real change). This is derived from registry/update.py's own
+    `previous_active_release_id`/`dataset_entry_created` fields; no slug
+    allocation or registry-update internals are changed to support it.
     """
     if mode not in _VALID_PROMOTION_MODES:
         return _promotion_failure_result(run_id, _PROMOTION_MODE_INVALID_ERROR)
@@ -407,12 +490,19 @@ def promote_admin_run(
         return _promotion_failure_result(run_id, _REGISTRY_UPDATE_FAILED_ERROR)
 
     candidate_identity = promotion_result.get("candidate_identity") or {}
+    if registry_result.get("dataset_entry_created"):
+        registry_action = "created"
+    elif registry_result.get("previous_active_release_id") == registry_result.get("release_id"):
+        registry_action = "reused"
+    else:
+        registry_action = "updated"
+
     return {
         "run_id": run_id,
         "promoted": True,
         "dataset_slug": candidate_identity.get("dataset_slug"),
         "release_id": candidate_identity.get("release_id"),
-        "registry_action": "created" if registry_result.get("dataset_entry_created") else "updated",
+        "registry_action": registry_action,
         "public_dataset_slug": registry_result.get("allocated_dataset_slug"),
         "errors": [],
     }

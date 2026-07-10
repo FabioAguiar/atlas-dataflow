@@ -6,7 +6,10 @@ import jsonschema
 
 REPO_ROOT = Path(__file__).parent.parent
 SCHEMA_PATH = REPO_ROOT / "contracts" / "admin-run-summary.schema.json"
-VALID_AVAILABLE_EXAMPLE_PATH = (
+# Project Spec S0045 repurposed this file to demonstrate the 'promoted'
+# state (it was previously a plain 'available' example); basic 'available'
+# schema coverage now lives in _INLINE_AVAILABLE_INSTANCE below instead.
+VALID_PROMOTED_EXAMPLE_PATH = (
     REPO_ROOT / "contracts" / "examples" / "admin-run-summary.example.json"
 )
 VALID_UNAVAILABLE_EXAMPLE_PATH = (
@@ -19,6 +22,16 @@ INVALID_UNSAFE_FIELD_EXAMPLE_PATH = (
     / "invalid-admin-run-summary-unsafe-field.example.json"
 )
 
+_INLINE_AVAILABLE_INSTANCE = {
+    "schema_version": "admin-run-summary.v1",
+    "run_id": "run-20260701-010",
+    "status": "available",
+    "dataset_candidate": "example-dataset",
+    "created_at": "2026-07-01T00:00:00Z",
+    "trace_reference": "releases/candidates/example-dataset/release-20260701-001",
+    "validation_summary": {"outcome": "accepted"},
+}
+
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -30,11 +43,79 @@ def test_admin_run_summary_schema_is_valid_draft7():
     jsonschema.Draft7Validator.check_schema(schema)
 
 
-def test_valid_available_example_matches_schema():
+def test_inline_available_instance_without_promotion_summary_matches_schema():
     schema = _load_json(SCHEMA_PATH)
-    example = _load_json(VALID_AVAILABLE_EXAMPLE_PATH)
+
+    jsonschema.validate(_INLINE_AVAILABLE_INSTANCE, schema)
+
+
+def test_valid_promoted_example_matches_schema():
+    schema = _load_json(SCHEMA_PATH)
+    example = _load_json(VALID_PROMOTED_EXAMPLE_PATH)
 
     jsonschema.validate(example, schema)
+
+
+def test_promoted_example_reflects_promoted_status_and_sanitized_promotion_fields():
+    example = _load_json(VALID_PROMOTED_EXAMPLE_PATH)
+
+    assert example["status"] == "promoted"
+    promotion_summary = example["promotion_summary"]
+    assert promotion_summary["promotion_outcome"] == "promoted"
+    assert promotion_summary["release_id"]
+    assert promotion_summary["dataset_slug"]
+    assert promotion_summary["public_dataset_slug"]
+    assert promotion_summary["registry_action"] == "reused"
+
+
+def test_promoted_status_requires_promotion_summary():
+    schema = _load_json(SCHEMA_PATH)
+    example = dict(_load_json(VALID_PROMOTED_EXAMPLE_PATH))
+    del example["promotion_summary"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
+    assert any("promotion_summary" in error.message for error in errors)
+
+
+def test_promotion_summary_without_public_dataset_slug_or_registry_action_is_valid():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    del example["promotion_summary"]["public_dataset_slug"]
+    del example["promotion_summary"]["registry_action"]
+
+    jsonschema.validate(example, schema)
+
+
+def test_promotion_summary_rejects_unsafe_additional_field():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    example["promotion_summary"]["raw_release_directory"] = (
+        "/workspace/projects/atlas-dataflow/releases/release-20260620-001"
+    )
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
+    assert any(
+        "raw_release_directory" in error.message
+        or "Additional properties are not allowed" in error.message
+        for error in errors
+    )
+
+
+def test_promotion_summary_rejects_unrecognized_registry_action():
+    schema = _load_json(SCHEMA_PATH)
+    example = json.loads(json.dumps(_load_json(VALID_PROMOTED_EXAMPLE_PATH)))
+    example["promotion_summary"]["registry_action"] = "not_a_real_action"
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(example))
+
+    assert errors
 
 
 def test_valid_unavailable_example_matches_schema_and_nulls_projection_fields():

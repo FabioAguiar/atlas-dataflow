@@ -730,6 +730,393 @@ describe("DashboardPage", () => {
       expect(within(table).getByText("run-agnostic-solo")).toBeInTheDocument();
       expect(within(table).getByRole("button", { name: "Promote" })).not.toBeDisabled();
     });
+
+    it("defaults the promotion mode selector to Update existing Dataset Detail and offers Create new Dataset Detail", async () => {
+      installSoleEligibleRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const modeSelect = within(table).getByRole("combobox", { name: "run-agnostic-solo promotion mode" });
+
+      expect(modeSelect).toHaveValue("update_existing_or_create");
+      expect(within(modeSelect).getByRole("option", { name: "Update existing Dataset Detail" })).toBeInTheDocument();
+      expect(within(modeSelect).getByRole("option", { name: "Create new Dataset Detail" })).toBeInTheDocument();
+    });
+
+    it("sends the operator-selected promotion mode in the Promote request body", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-agnostic-solo",
+            promoted: true,
+            dataset_slug: "telco-customer-churn",
+            release_id: "release-20260710t101438z",
+            registry_action: "created",
+            public_dataset_slug: "telco-customer-churn1",
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+      const callCountAfterLoad = fetchMock.mock.calls.length;
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.change(within(table).getByRole("combobox", { name: "run-agnostic-solo promotion mode" }), {
+        target: { value: "create_new_dataset_detail" },
+      });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      await screen.findByRole("status");
+
+      const promoteCall = fetchMock.mock.calls[callCountAfterLoad];
+      expect(promoteCall[0]).toContain("/admin/runs/run-agnostic-solo/promote");
+      const requestInit = promoteCall[1] as RequestInit;
+      expect(JSON.parse(requestInit.body as string)).toEqual({ mode: "create_new_dataset_detail" });
+    });
+
+    it("displays the final public Dataset Detail slug when it differs from the candidate slug", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-agnostic-solo",
+            promoted: true,
+            dataset_slug: "telco-customer-churn",
+            release_id: "release-20260710t101438z",
+            registry_action: "created",
+            public_dataset_slug: "telco-customer-churn1",
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.change(within(table).getByRole("combobox", { name: "run-agnostic-solo promotion mode" }), {
+        target: { value: "create_new_dataset_detail" },
+      });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      const status = await within(table).findByRole("status");
+      expect(status).toHaveTextContent("telco-customer-churn1");
+    });
+
+    it("does not repeat the public slug in the success message when it matches the candidate slug", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-agnostic-solo",
+            promoted: true,
+            dataset_slug: "synthetic-retail-forecast",
+            release_id: "release-20260701-001",
+            registry_action: "updated",
+            public_dataset_slug: "synthetic-retail-forecast",
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      const status = await within(table).findByRole("status");
+      expect(status).toHaveTextContent(/updated the existing registry entry/i);
+      expect(status).not.toHaveTextContent("Public Dataset Detail slug");
+    });
+
+    it("renders a visible and accessible success status distinguishing a reused idempotent outcome", async () => {
+      const fetchMock = installSoleEligibleRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-agnostic-solo/promote") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-agnostic-solo",
+            promoted: true,
+            dataset_slug: "synthetic-retail-forecast",
+            release_id: "release-20260701-001",
+            registry_action: "reused",
+            public_dataset_slug: "synthetic-retail-forecast",
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-solo",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-solo",
+                validation_summary: { outcome: "accepted" },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Promote" }));
+
+      const status = await within(table).findByRole("status");
+      expect(status).toHaveTextContent(/reused the already-promoted registry entry/i);
+    });
+  });
+
+  describe("Promoted run reflection", () => {
+    function installPromotedRunFetchMock() {
+      return installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-already-promoted",
+              status: "promoted",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-already-promoted",
+              validation_summary: { outcome: "accepted" },
+              promotion_summary: {
+                promotion_outcome: "promoted",
+                release_id: "release-20260701-001",
+                dataset_slug: "synthetic-retail-forecast",
+                public_dataset_slug: "synthetic-retail-forecast",
+                registry_action: "reused",
+              },
+            },
+          ],
+        }),
+      );
+    }
+
+    it("renders a promoted run visually distinct from an available run and disables/relabels its Promote button", async () => {
+      installPromotedRunFetchMock();
+      render(<DashboardPage />);
+
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText("run-already-promoted")).toBeInTheDocument();
+      // Both the status badge and the relabeled Promote button read "Promoted".
+      expect(within(table).getAllByText("Promoted")).toHaveLength(2);
+
+      const promoteButton = within(table).getByRole("button", { name: "Promoted" });
+      expect(promoteButton).toBeDisabled();
+      expect(within(table).queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+    });
+
+    it("does not trigger any network request when the disabled Promoted button is clicked", async () => {
+      const fetchMock = installPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const callCountAfterLoad = fetchMock.mock.calls.length;
+
+      fireEvent.click(within(table).getByRole("button", { name: "Promoted" }));
+
+      expect(fetchMock).toHaveBeenCalledTimes(callCountAfterLoad);
+    });
+
+    it("displays promoted release id and public dataset slug metadata when available", async () => {
+      installPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText(/release-20260701-001/)).toBeInTheDocument();
+    });
+
+    it("does not repeat the public slug in the promoted metadata when it matches the dataset slug", async () => {
+      installPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).queryByText(/Public Dataset Detail slug/)).not.toBeInTheDocument();
+    });
+
+    it("shows the final public dataset slug when it differs from the candidate dataset slug", async () => {
+      installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-promoted-numbered-slug",
+              status: "promoted",
+              dataset_candidate: "telco-customer-churn",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-promoted-numbered-slug",
+              validation_summary: { outcome: "accepted" },
+              promotion_summary: {
+                promotion_outcome: "promoted",
+                release_id: "release-20260710t101438z",
+                dataset_slug: "telco-customer-churn",
+                public_dataset_slug: "telco-customer-churn1",
+                registry_action: "created",
+              },
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText(/telco-customer-churn1/)).toBeInTheDocument();
+    });
+
+    it("counts promoted runs in the Promoted runs summary card alongside available and other statuses", async () => {
+      installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-available-001",
+              status: "available",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-available-001",
+              validation_summary: { outcome: "accepted" },
+            },
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-promoted-001",
+              status: "promoted",
+              dataset_candidate: "synthetic-energy-usage",
+              created_at: "2026-06-02T12:00:00Z",
+              trace_reference: "trace/run-promoted-001",
+              validation_summary: { outcome: "accepted" },
+              promotion_summary: {
+                promotion_outcome: "promoted",
+                release_id: "release-20260702-001",
+                dataset_slug: "synthetic-energy-usage",
+              },
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+
+      await loadRuns();
+      await screen.findByRole("table", { name: "Run summaries" });
+
+      expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "1");
+      expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "1");
+    });
+
+    it("filters the runs table to only promoted runs when the Promoted status filter is selected", async () => {
+      installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-available-002",
+              status: "available",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-available-002",
+              validation_summary: { outcome: "accepted" },
+            },
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-promoted-002",
+              status: "promoted",
+              dataset_candidate: "synthetic-energy-usage",
+              created_at: "2026-06-02T12:00:00Z",
+              trace_reference: "trace/run-promoted-002",
+              validation_summary: { outcome: "accepted" },
+              promotion_summary: {
+                promotion_outcome: "promoted",
+                release_id: "release-20260702-001",
+                dataset_slug: "synthetic-energy-usage",
+              },
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+
+      await loadRuns();
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(table).toHaveAttribute("data-filtered-run-count", "2");
+
+      fireEvent.change(screen.getByLabelText("Run status"), { target: { value: "promoted" } });
+
+      expect(table).toHaveAttribute("data-filtered-run-count", "1");
+      expect(within(table).getByText("run-promoted-002")).toBeInTheDocument();
+      expect(within(table).queryByText("run-available-002")).not.toBeInTheDocument();
+    });
   });
 
   describe("Dataset registry reflection", () => {

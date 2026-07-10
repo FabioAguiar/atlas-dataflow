@@ -112,6 +112,69 @@ def _assert_no_private_markers(value: object) -> None:
         assert marker not in serialized
 
 
+def _write_registry(repo_root: Path, datasets: list) -> None:
+    registry_dir = repo_root / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        registry_dir / "datasets.json",
+        {
+            "schema_version": "atlas.dataflow.registry.v1",
+            "conventions": {
+                "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                "active_release": {"description": "x"},
+            },
+            "datasets": datasets,
+        },
+    )
+
+
+_PROMOTED_PROMOTION_RESULT = {
+    "schema_version": "promotion-result.v1",
+    "result_kind": "promotion_result",
+    "candidate_identity": {
+        "dataset_slug": "example-dataset",
+        "release_id": "release-20260701-001",
+        "release_version": "1.0.0-rc.1",
+    },
+    "promotion_outcome": "promoted",
+    "preconditions_verified": {
+        "completeness_validation_outcome": "accepted",
+        "manifest_valid": True,
+        "all_required_hashes_present": True,
+        "candidate_state_was_valid": True,
+        "all_preconditions_met": True,
+    },
+    "registry_update_record": {
+        "update_applied": False,
+        "new_active_release_id": None,
+        "previous_active_release_id": None,
+        "previous_release_preserved": True,
+    },
+    "evidence_safety": {
+        "reduced_evidence_only": True,
+        "raw_logs_persisted": False,
+        "raw_runtime_persisted": False,
+        "raw_api_payloads_persisted": False,
+        "secrets_persisted": False,
+        "sensitive_local_paths_persisted": False,
+        "raw_file_contents_persisted": False,
+        "raw_artifact_contents_embedded": False,
+    },
+    "promotion_boundaries": {
+        "registry_write_implemented": False,
+        "hash_calculation_implemented": False,
+        "signing_or_key_management_implemented": False,
+        "queue_required": False,
+        "worker_required": False,
+        "database_required": False,
+        "public_endpoint_exposed": False,
+        "web_administration_required": False,
+        "github_mutation_performed": False,
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # list_admin_run_summaries: happy path and boundary states
 # ---------------------------------------------------------------------------
@@ -335,6 +398,161 @@ def test_run_id_does_not_allow_path_traversal_to_private_details():
         assert "safe-run" in run_ids
         assert "private-run" not in run_ids
         _assert_no_private_markers(result)
+
+
+# ---------------------------------------------------------------------------
+# list_admin_run_summaries: promoted-state reflection (Project Spec S0045)
+# ---------------------------------------------------------------------------
+
+def test_run_with_valid_promoted_promotion_result_is_summarized_as_promoted(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "promoted-run", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    _write_json(run_dir / "promotion-result.json", _PROMOTED_PROMOTION_RESULT)
+    _write_registry(
+        repo_root,
+        [
+            {
+                "dataset_slug": "example-dataset",
+                "active_release": "release-20260701-001",
+                "public_metadata": {
+                    "title": "Example Dataset",
+                    "summary": "Published dataset.",
+                    "domain": "general",
+                    "visibility": "public",
+                    "tags": [],
+                },
+            }
+        ],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    entry = result["runs"][0]
+    assert entry["status"] == "promoted"
+    assert entry["dataset_candidate"] == "example-dataset"
+    assert entry["validation_summary"] == {"outcome": "accepted"}
+    assert entry["promotion_summary"] == {
+        "promotion_outcome": "promoted",
+        "release_id": "release-20260701-001",
+        "dataset_slug": "example-dataset",
+        "public_dataset_slug": "example-dataset",
+        "registry_action": "reused",
+    }
+    _assert_no_private_markers(entry)
+
+
+def test_run_with_valid_promoted_promotion_result_but_no_registry_match_omits_registry_fields(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "promoted-unmatched", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    _write_json(run_dir / "promotion-result.json", _PROMOTED_PROMOTION_RESULT)
+    _write_registry(repo_root, [])
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    entry = result["runs"][0]
+    assert entry["status"] == "promoted"
+    assert entry["promotion_summary"] == {
+        "promotion_outcome": "promoted",
+        "release_id": "release-20260701-001",
+        "dataset_slug": "example-dataset",
+    }
+    assert "public_dataset_slug" not in entry["promotion_summary"]
+    assert "registry_action" not in entry["promotion_summary"]
+
+
+def test_run_without_promotion_result_remains_available(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    _write_run_dir(root, "not-promoted", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+
+    original = admin_runs._admin_runs_root
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original
+
+    entry = result["runs"][0]
+    assert entry["status"] == "available"
+    assert "promotion_summary" not in entry
+
+
+def test_run_with_malformed_promotion_result_remains_available(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "malformed-promotion", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    (run_dir / "promotion-result.json").write_text("{not valid json", encoding="utf-8")
+
+    original = admin_runs._admin_runs_root
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original
+
+    entry = result["runs"][0]
+    assert entry["status"] == "available"
+    assert "promotion_summary" not in entry
+
+
+def test_run_with_rejected_promotion_result_remains_available(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "rejected-promotion", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    rejected_result = json.loads(json.dumps(_PROMOTED_PROMOTION_RESULT))
+    rejected_result["promotion_outcome"] = "rejected"
+    _write_json(run_dir / "promotion-result.json", rejected_result)
+
+    original = admin_runs._admin_runs_root
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original
+
+    entry = result["runs"][0]
+    assert entry["status"] == "available"
+    assert "promotion_summary" not in entry
+
+
+def test_run_with_missing_candidate_identity_in_promotion_result_remains_available(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "incomplete-promotion", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    incomplete_result = json.loads(json.dumps(_PROMOTED_PROMOTION_RESULT))
+    del incomplete_result["candidate_identity"]
+    _write_json(run_dir / "promotion-result.json", incomplete_result)
+
+    original = admin_runs._admin_runs_root
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original
+
+    entry = result["runs"][0]
+    assert entry["status"] == "available"
+    assert "promotion_summary" not in entry
 
 
 # ---------------------------------------------------------------------------
@@ -885,7 +1103,11 @@ def test_promote_admin_run_create_new_mode_is_idempotent_on_retry(tmp_path):
         admin_runs._REPO_ROOT = original_repo_root
 
     assert first["public_dataset_slug"] == "telco-customer-churn1"
+    assert first["registry_action"] == "created"
     assert second["public_dataset_slug"] == "telco-customer-churn1"
+    # Same S0044 no-op-versus-genuine-update distinction as the default-mode
+    # repeated-call test above, exercised here for MODE_CREATE_NEW_DATASET_DETAIL.
+    assert second["registry_action"] == "reused"
 
     registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
     matching = [e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn1"]
@@ -921,11 +1143,64 @@ def test_promote_admin_run_repeated_call_reuses_existing_promotion_safely(tmp_pa
         admin_runs._REPO_ROOT = original_repo_root
 
     assert first["promoted"] is True
+    assert first["registry_action"] == "created"
     assert second["promoted"] is True
     assert second["dataset_slug"] == "twice-dataset"
     assert second["release_id"] == "release-20260710t101438z"
-    assert second["registry_action"] == "updated"
+    # Project Spec S0044: a repeated Promote click for the same run (and
+    # mode) that ends up with the exact same active_release already set is a
+    # safe no-op, distinguishable from a genuine "updated" outcome where an
+    # existing entry's active_release actually changes to a different
+    # release (see test_promote_admin_run_updates_existing_registry_entry).
+    assert second["registry_action"] == "reused"
     assert promotion_result_after_first == promotion_result_after_second
+
+
+def test_promote_then_list_reflects_promoted_state_end_to_end(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "promote-then-list", "before-and-after-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        before = admin_runs.list_admin_run_summaries()
+        before_entry = before["runs"][0]
+        assert before_entry["status"] == "available"
+        assert "promotion_summary" not in before_entry
+
+        promotion = admin_runs.promote_admin_run("promote-then-list")
+        assert promotion["promoted"] is True
+
+        after = admin_runs.list_admin_run_summaries()
+        after_entry = after["runs"][0]
+        assert after_entry["status"] == "promoted"
+        assert after_entry["promotion_summary"] == {
+            "promotion_outcome": "promoted",
+            "release_id": "release-20260710t101438z",
+            "dataset_slug": "before-and-after-dataset",
+            "public_dataset_slug": "before-and-after-dataset",
+            "registry_action": "reused",
+        }
+        _assert_no_private_markers(after_entry)
+
+        # A repeated Promote click on an already-promoted run must remain a
+        # safe, idempotent no-op: no new release directory, no new slug.
+        repeated = admin_runs.promote_admin_run("promote-then-list")
+        assert repeated["promoted"] is True
+        assert repeated["registry_action"] == "reused"
+        assert repeated["public_dataset_slug"] == "before-and-after-dataset"
+        release_dirs = [entry for entry in (repo_root / "releases").iterdir() if entry.name.startswith("release-")]
+        assert len(release_dirs) == 1
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
 
 
 def test_promote_admin_run_rejects_removed_run_directory_between_check_and_promotion():
@@ -1222,6 +1497,102 @@ def test_promote_route_maps_filesystem_failure_to_structured_error(tmp_path, mon
         admin_runs._REPO_ROOT = original_repo_root
 
 
+def test_promote_route_forwards_create_new_dataset_detail_mode_from_request_body(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    existing_entry = {
+        "dataset_slug": "telco-customer-churn",
+        "active_release": "release-20260601-001",
+        "public_metadata": {
+            "title": "Telco Customer Churn",
+            "summary": "Already published.",
+            "domain": "telco",
+            "visibility": "public",
+            "tags": ["telco"],
+        },
+    }
+    _write_promotable_run(
+        root,
+        repo_root,
+        "route-promote-new-detail",
+        "telco-customer-churn",
+        "release-20260710t101438z",
+        registry_entries=[existing_entry],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        request = _make_promote_request("route-promote-new-detail", {})
+        response = api_main.promote_admin_run_route(
+            "route-promote-new-detail",
+            request,
+            {"mode": registry_update.MODE_CREATE_NEW_DATASET_DETAIL},
+        )
+
+        assert response["promoted"] is True
+        assert response["registry_action"] == "created"
+        assert response["public_dataset_slug"] == "telco-customer-churn1"
+
+        registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+        original_entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "telco-customer-churn")
+        assert original_entry["active_release"] == "release-20260601-001"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_promote_route_uses_historical_default_mode_when_request_body_omits_mode(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "route-promote-no-body", "route-no-body-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        request = _make_promote_request("route-promote-no-body", {})
+        response = api_main.promote_admin_run_route("route-promote-no-body", request)
+
+        assert response["promoted"] is True
+        assert response["registry_action"] == "created"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_promote_route_rejects_unknown_mode_with_structured_failure_not_generic_500():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    try:
+        request = _make_promote_request("any-run", {})
+        response = api_main.promote_admin_run_route("any-run", request, {"mode": "not_a_real_mode"})
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode("utf-8"))
+        assert body["error_code"] == "ADMIN_RUN_PROMOTION_FAILED"
+        assert body["errors"][0]["code"] == "PROMOTION_MODE_INVALID"
+        _assert_no_private_markers(body)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+
+
 def test_promote_route_returns_sanitized_422_for_rejected_run():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
@@ -1377,6 +1748,51 @@ def test_route_listing_is_sanitized_even_when_source_contains_private_fields():
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
         os.environ.pop("ADMIN_API_TOKEN", None)
         admin_runs._admin_runs_root = original_root
+
+
+def test_route_listing_reflects_promoted_run_state():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runs"
+            repo_root = Path(tmp) / "repo"
+            root.mkdir()
+            run_dir = _write_run_dir(root, "route-promoted", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+            _write_json(run_dir / "promotion-result.json", _PROMOTED_PROMOTION_RESULT)
+            _write_registry(
+                repo_root,
+                [
+                    {
+                        "dataset_slug": "example-dataset",
+                        "active_release": "release-20260701-001",
+                        "public_metadata": {
+                            "title": "Example Dataset",
+                            "summary": "Published dataset.",
+                            "domain": "general",
+                            "visibility": "public",
+                            "tags": [],
+                        },
+                    }
+                ],
+            )
+            admin_runs._admin_runs_root = lambda: root
+            admin_runs._REPO_ROOT = repo_root
+            request = _make_request({})
+            response = api_main.list_admin_runs(request)
+
+            assert response["runs_root_status"] == "available"
+            entry = response["runs"][0]
+            assert entry["status"] == "promoted"
+            assert entry["promotion_summary"]["release_id"] == "release-20260701-001"
+            _assert_no_private_markers(response)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
 
 
 # ---------------------------------------------------------------------------

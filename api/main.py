@@ -652,11 +652,22 @@ def delete_admin_run(run_id: str, request: Request):
 
 
 @app.post("/admin/runs/{run_id}/promote")
-def promote_admin_run_route(run_id: str, request: Request):
+def promote_admin_run_route(run_id: str, request: Request, payload: dict | None = Body(default=None)):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
-    result = promote_admin_run(run_id)
+    # Project Spec S0044: the promotion mode is an explicit, typed request
+    # field (payload.mode) rather than an implicit default, so a colliding
+    # dataset_slug never silently decides between updating the existing
+    # Dataset Detail and creating a new one. A caller that sends no body (or
+    # a body without a "mode" key) still gets the historical
+    # update_existing_or_create default for backward compatibility; any
+    # other value -- known or unknown -- is forwarded verbatim so
+    # promote_admin_run's own mode validation is the single source of truth
+    # and rejects it with the existing structured PROMOTION_MODE_INVALID
+    # failure instead of a generic 500.
+    mode_provided = isinstance(payload, dict) and "mode" in payload
+    result = promote_admin_run(run_id, mode=payload["mode"]) if mode_provided else promote_admin_run(run_id)
     if not result["promoted"]:
         return ADMIN_RUN_PROMOTION_FAILED.response(errors=result["errors"])
 

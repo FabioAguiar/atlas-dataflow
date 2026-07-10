@@ -30,8 +30,8 @@
     },
     "status": {
       "type": "string",
-      "enum": ["available", "unavailable", "invalid"],
-      "description": "Deterministic readiness/status of this summary. 'available' means the source run evidence was found and is well-formed. 'unavailable' means no source run evidence could be located. 'invalid' means source run evidence was located but is malformed or incomplete. This field is distinct from the underlying run_status (accepted/rejected/failed) carried inside validation_summary."
+      "enum": ["available", "unavailable", "invalid", "promoted"],
+      "description": "Deterministic readiness/status of this summary. 'available' means the source run evidence was found and is well-formed. 'unavailable' means no source run evidence could be located. 'invalid' means source run evidence was located but is malformed or incomplete. 'promoted' means the source run evidence is well-formed and its promotion-result.json records a valid promotion_outcome: promoted -- a promoted run must never continue to be reflected as 'available' (pending promotion). This field is distinct from the underlying run_status (accepted/rejected/failed) carried inside validation_summary."
     },
     "dataset_candidate": {
       "type": ["string", "null"],
@@ -67,6 +67,40 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional short reduced reason for a rejected or failed outcome, sourced from the run evidence's failure_info.failure_reason or failure_info.rejection_reason. Must not embed raw log output or raw exception details."
+        }
+      }
+    },
+    "promotion_summary": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["promotion_outcome", "release_id", "dataset_slug"],
+      "description": "Sanitized promoted-state projection derived from this run's promotion-result.json, re-checked against the live dataset registry for a safe idempotence/reuse signal. Required and non-null when status is 'promoted'; absent otherwise. Must never expose raw filesystem paths, raw registry dumps, or promotion-result.json's internal registry_update_record.",
+      "properties": {
+        "promotion_outcome": {
+          "type": "string",
+          "const": "promoted",
+          "description": "Carried verbatim from the source promotion-result.json's promotion_outcome. Always 'promoted' when this object is present."
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^release-(?:[0-9]{8}-[0-9]{3}|[0-9]{8}t[0-9]{6}z)$",
+          "description": "Stable release identifier, carried verbatim from promotion-result.json's candidate_identity.release_id. Accepts both registry-normalized release id conventions (registry/validate.py's RELEASE_ID_PATTERN)."
+        },
+        "dataset_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Candidate/base dataset slug, carried verbatim from promotion-result.json's candidate_identity.dataset_slug."
+        },
+        "public_dataset_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "The dataset registry's current public slug whose active_release matches release_id. Present only when the live registry confirms this exact release is still active; never a guessed or historical value."
+        },
+        "registry_action": {
+          "type": "string",
+          "enum": ["created", "updated", "reused"],
+          "description": "Safe idempotence indicator reusing the same vocabulary as the Promote action's own response. Present only alongside public_dataset_slug, when the live registry confirms this release is still the dataset's active_release."
         }
       }
     },
@@ -116,6 +150,18 @@
       },
       "then": {
         "required": ["invalid_reason"]
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "promoted"}},
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["promotion_summary"],
+        "properties": {
+          "promotion_summary": {"type": "object"}
+        }
       }
     }
   ]

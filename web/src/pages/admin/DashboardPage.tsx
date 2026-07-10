@@ -4,10 +4,18 @@ import { Badge, Button, Card, EmptyState, ErrorState, StatusPill, TableRow } fro
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
-type RunStatus = "available" | "unavailable" | "invalid";
+type RunStatus = "available" | "unavailable" | "invalid" | "promoted";
 type RunsRootStatus = "available" | "unavailable";
 type ValidationOutcome = "accepted" | "rejected" | "failed" | "unknown";
 type FilterStatus = "all" | RunStatus;
+
+type PromotionSummary = {
+  promotion_outcome: "promoted";
+  release_id: string;
+  dataset_slug: string;
+  public_dataset_slug?: string;
+  registry_action?: "created" | "updated" | "reused";
+};
 
 type AdminRunSummary = {
   schema_version: "admin-run-summary.v1";
@@ -19,6 +27,7 @@ type AdminRunSummary = {
   validation_summary: { outcome: ValidationOutcome; reason?: string } | null;
   unavailable_reason?: "source_run_evidence_missing" | "source_run_evidence_unreadable";
   invalid_reason?: "source_run_evidence_malformed" | "source_run_evidence_incomplete" | "source_run_evidence_schema_invalid";
+  promotion_summary?: PromotionSummary;
 };
 
 type AdminRunsResponse = {
@@ -58,13 +67,18 @@ type RunRemovalState =
   | { status: "removing"; runId: string }
   | { status: "error"; runId: string; message: string };
 
+type PromotionMode = "update_existing_or_create" | "create_new_dataset_detail";
+
+const DEFAULT_PROMOTION_MODE: PromotionMode = "update_existing_or_create";
+
 type RunPromotionEntry =
   | { status: "promoting" }
   | {
       status: "success";
       dataset_slug: string | null;
       release_id: string | null;
-      registry_action: "created" | "updated" | null;
+      registry_action: "created" | "updated" | "reused" | null;
+      public_dataset_slug: string | null;
     }
   | { status: "error"; message: string };
 
@@ -75,7 +89,8 @@ type AdminRunPromotionResponse = {
   promoted: boolean;
   dataset_slug: string | null;
   release_id: string | null;
-  registry_action: "created" | "updated" | null;
+  registry_action: "created" | "updated" | "reused" | null;
+  public_dataset_slug: string | null;
   errors: Array<{ code: string; field: string | null; message: string }>;
 };
 
@@ -363,19 +378,47 @@ function isValidationSummary(value: unknown): value is AdminRunSummary["validati
   );
 }
 
+const promotionRegistryActions: Array<NonNullable<PromotionSummary["registry_action"]>> = ["created", "updated", "reused"];
+
+function isPromotionSummary(value: unknown): value is PromotionSummary {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Partial<PromotionSummary>;
+  const validRegistryAction =
+    record.registry_action === undefined ||
+    promotionRegistryActions.includes(record.registry_action as NonNullable<PromotionSummary["registry_action"]>);
+
+  return (
+    record.promotion_outcome === "promoted" &&
+    typeof record.release_id === "string" &&
+    record.release_id.length > 0 &&
+    typeof record.dataset_slug === "string" &&
+    record.dataset_slug.length > 0 &&
+    (record.public_dataset_slug === undefined || typeof record.public_dataset_slug === "string") &&
+    validRegistryAction
+  );
+}
+
 function isAdminRunSummary(value: unknown): value is AdminRunSummary {
   if (!value || typeof value !== "object") {
     return false;
   }
 
   const record = value as Partial<AdminRunSummary>;
-  const validStatus = record.status === "available" || record.status === "unavailable" || record.status === "invalid";
+  const validStatus =
+    record.status === "available" ||
+    record.status === "unavailable" ||
+    record.status === "invalid" ||
+    record.status === "promoted";
   const validUnavailableReason =
     record.unavailable_reason === undefined ||
     unavailableReasons.includes(record.unavailable_reason as NonNullable<AdminRunSummary["unavailable_reason"]>);
   const validInvalidReason =
     record.invalid_reason === undefined ||
     invalidReasons.includes(record.invalid_reason as NonNullable<AdminRunSummary["invalid_reason"]>);
+  const validPromotionSummary = record.status !== "promoted" || isPromotionSummary(record.promotion_summary);
 
   return (
     record.schema_version === "admin-run-summary.v1" &&
@@ -388,7 +431,8 @@ function isAdminRunSummary(value: unknown): value is AdminRunSummary {
     isSafeTraceReference(record.trace_reference) &&
     isValidationSummary(record.validation_summary) &&
     validUnavailableReason &&
-    validInvalidReason
+    validInvalidReason &&
+    validPromotionSummary
   );
 }
 
@@ -432,22 +476,55 @@ function isDatasetRegistryResponse(value: unknown): value is DatasetRegistryResp
 function promotionOutcomeMessage(entry: {
   dataset_slug: string | null;
   release_id: string | null;
-  registry_action: "created" | "updated" | null;
+  registry_action: "created" | "updated" | "reused" | null;
+  public_dataset_slug: string | null;
 }): string {
   const datasetPart = entry.dataset_slug ? `dataset "${entry.dataset_slug}"` : "the dataset";
   const releasePart = entry.release_id ? ` to release "${entry.release_id}"` : "";
   const actionPart =
     entry.registry_action === "created"
       ? "created a new registry entry"
-      : entry.registry_action === "updated"
-        ? "updated the existing registry entry"
-        : "updated the dataset registry";
+      : entry.registry_action === "reused"
+        ? "reused the already-promoted registry entry (idempotent, no changes made)"
+        : entry.registry_action === "updated"
+          ? "updated the existing registry entry"
+          : "updated the dataset registry";
 
-  return `Promoted ${datasetPart}${releasePart} — ${actionPart}.`;
+  const slugPart =
+    entry.public_dataset_slug && entry.public_dataset_slug !== entry.dataset_slug
+      ? ` Public Dataset Detail slug: "${entry.public_dataset_slug}".`
+      : "";
+
+  return `Promoted ${datasetPart}${releasePart} — ${actionPart}.${slugPart}`;
+}
+
+function promotionModeLabel(mode: PromotionMode): string {
+  return mode === "create_new_dataset_detail" ? "Create new Dataset Detail" : "Update existing Dataset Detail";
+}
+
+function promotionModeConsequence(mode: PromotionMode): string {
+  return mode === "create_new_dataset_detail"
+    ? "Creates a new Dataset Detail entry with a deterministic unique public slug, leaving any existing entry untouched."
+    : "Updates the existing Dataset Detail entry for this dataset, or creates it if none exists yet.";
 }
 
 function canPromoteRun(run: AdminRunSummary): boolean {
   return run.status === "available" && run.validation_summary?.outcome === "accepted";
+}
+
+function promotedStateMessage(run: AdminRunSummary): string | null {
+  if (run.status !== "promoted" || !run.promotion_summary) {
+    return null;
+  }
+
+  const { release_id, dataset_slug, public_dataset_slug } = run.promotion_summary;
+  const releasePart = release_id ? ` to release "${release_id}"` : "";
+  const slugPart =
+    public_dataset_slug && public_dataset_slug !== dataset_slug
+      ? ` Public Dataset Detail slug: "${public_dataset_slug}".`
+      : "";
+
+  return `Already promoted${releasePart}.${slugPart}`;
 }
 
 function reasonLabel(run: AdminRunSummary): string | null {
@@ -563,6 +640,7 @@ export default function DashboardPage() {
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
+  const [promotionModeByRun, setPromotionModeByRun] = useState<Record<string, PromotionMode>>({});
   const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
 
   useEffect(() => {
@@ -589,7 +667,7 @@ export default function DashboardPage() {
   const counters = useMemo(
     () => ({
       runsAvailable: runs.filter((run) => run.status === "available").length,
-      promotedRuns: 0,
+      promotedRuns: runs.filter((run) => run.status === "promoted").length,
       publishedDatasets: registryDatasets ? registryDatasets.length : 0,
       draftDatasets: 0,
     }),
@@ -732,11 +810,21 @@ export default function DashboardPage() {
       });
   }
 
-  function promoteRun(runId: string) {
+  function runPromotionMode(runId: string): PromotionMode {
+    return promotionModeByRun[runId] ?? DEFAULT_PROMOTION_MODE;
+  }
+
+  function setRunPromotionMode(runId: string, mode: PromotionMode) {
+    setPromotionModeByRun((previous) => ({ ...previous, [runId]: mode }));
+  }
+
+  function promoteRun(runId: string, mode: PromotionMode) {
     setPromotionState((previous) => ({ ...previous, [runId]: { status: "promoting" } }));
 
     fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/promote`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
     })
       .then(async (res) => {
         const body = (await res.json().catch(() => null)) as AdminRunPromotionResponse | null;
@@ -760,6 +848,7 @@ export default function DashboardPage() {
             dataset_slug: body?.dataset_slug ?? null,
             release_id: body?.release_id ?? null,
             registry_action: body?.registry_action ?? null,
+            public_dataset_slug: body?.public_dataset_slug ?? null,
           },
         }));
         loadRuns();
@@ -840,6 +929,7 @@ export default function DashboardPage() {
               >
                 <option value="all">All statuses</option>
                 <option value="available">Available</option>
+                <option value="promoted">Promoted</option>
                 <option value="invalid">Invalid</option>
                 <option value="unavailable">Unavailable</option>
               </select>
@@ -859,9 +949,9 @@ export default function DashboardPage() {
               <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
                 <PromotedRunsIcon />
               </span>
-              <StatusPill tone="warning">Unavailable</StatusPill>
+              <StatusPill tone="success">Promoted</StatusPill>
               <strong style={counterValueStyle}>{counters.promotedRuns}</strong>
-              <span style={mutedTextStyle}>Promotion source not owned</span>
+              <span style={mutedTextStyle}>Runs already promoted</span>
             </Card>
             <Card
               aria-label="Published datasets"
@@ -1019,7 +1109,10 @@ export default function DashboardPage() {
                         promotionEntry?.status === "success" ? promotionOutcomeMessage(promotionEntry) : null;
                       const promotionEligible = canPromoteRun(run);
                       const promoteDisabled = !promotionEligible || isPromoting;
-                      const metaMessage = promotionSuccessMessage ?? promotionError ?? reasonLabel(run);
+                      const alreadyPromoted = run.status === "promoted";
+                      const metaMessage =
+                        promotionSuccessMessage ?? promotionError ?? promotedStateMessage(run) ?? reasonLabel(run);
+                      const selectedPromotionMode = runPromotionMode(run.run_id);
 
                       return (
                       <TableRow
@@ -1033,28 +1126,51 @@ export default function DashboardPage() {
                         }
                       >
                         <div data-run-status={run.status} style={runRowContentStyle}>
-                          <strong>{run.run_id}</strong>
+                          <span style={{ display: "flex", alignItems: "center", gap: "var(--atlas-space-2)" }}>
+                            <strong>{run.run_id}</strong>
+                            {alreadyPromoted && <StatusPill tone="success">Promoted</StatusPill>}
+                          </span>
                           <span>{run.dataset_candidate ?? "Not resolved"}</span>
                           <span>{formatCreatedAt(run.created_at)}</span>
                           <span style={actionGroupStyle}>
+                            <select
+                              aria-label={`${run.run_id} promotion mode`}
+                              data-run-promotion-mode={run.run_id}
+                              disabled={promoteDisabled}
+                              onChange={(event) => setRunPromotionMode(run.run_id, event.target.value as PromotionMode)}
+                              style={{ ...inputStyle, minWidth: 0, minHeight: "2.25rem", fontSize: "var(--atlas-text-sm)" }}
+                              title={promotionModeConsequence(selectedPromotionMode)}
+                              value={selectedPromotionMode}
+                            >
+                              <option value="update_existing_or_create">{promotionModeLabel("update_existing_or_create")}</option>
+                              <option value="create_new_dataset_detail">{promotionModeLabel("create_new_dataset_detail")}</option>
+                            </select>
                             <Button
                               data-run-action={
-                                !promotionEligible ? "promote-disabled" : isPromoting ? "promote-loading" : "promote"
+                                alreadyPromoted
+                                  ? "promoted"
+                                  : !promotionEligible
+                                    ? "promote-disabled"
+                                    : isPromoting
+                                      ? "promote-loading"
+                                      : "promote"
                               }
                               disabled={promoteDisabled}
-                              onClick={() => promoteRun(run.run_id)}
+                              onClick={() => promoteRun(run.run_id, selectedPromotionMode)}
                               style={promotionEligible ? actionButtonStyle : disabledIntentButtonStyle}
                               title={
-                                promotionEligible
-                                  ? "Promote this run into a public release."
-                                  : "Promote is only available for available runs with an accepted validation outcome."
+                                alreadyPromoted
+                                  ? "This run has already been promoted. Promote is disabled because repeating it would only re-apply the same, unchanged promotion result."
+                                  : promotionEligible
+                                    ? promotionModeConsequence(selectedPromotionMode)
+                                    : "Promote is only available for available runs with an accepted validation outcome."
                               }
                               variant="secondary"
                             >
                               <span aria-hidden="true" style={actionIconStyle}>
                                 <PromoteActionIcon />
                               </span>
-                              {isPromoting ? "Promoting..." : "Promote"}
+                              {isPromoting ? "Promoting..." : alreadyPromoted ? "Promoted" : "Promote"}
                             </Button>
                             <Button
                               data-run-action={run.status === "available" ? "remove" : "remove-disabled"}

@@ -6,52 +6,52 @@
     "dataset_title": "Telco Customer Churn"
   },
   "release_identity": {
-    "release_id": "release-20260619-001",
+    "release_id": "release-20260710t162511z",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-06-19T20:30:00Z"
+    "created_at": "2026-07-10T16:25:11Z"
   },
   "artifacts": [
     {
       "role": "contracts",
       "reference": "contracts/runtime-contract.json",
       "hash_algorithm": "sha256",
-      "hash_value": "d5c8214b35af9efbec712d7173c2f67e148541eeca84c9a8c5c8e9f361bc0e0a"
+      "hash_value": "e3284130d71d823e7c16ab7e86b00a9f0ddc0221ed778974971b4a797943a2d4"
     },
     {
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "6b80d0b7197a3d421d80795cd3a8f4b319a4297aeb6d4e666411bce7934e4fb4"
+      "hash_value": "1db3e9211718d6bdf728a1203b6f3b5f0bf53dc5c8ecfe38eac90b6ef36d7936"
     },
     {
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "e508d4aa676974cd330e0cea433d05913708b5d5c00b8341177e16b387e9f988"
+      "hash_value": "2012b01be8cca54c59a02228cd8692661d931910ab7536a2ceb212e1968c0982"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "083bf721de7e8a8e4722c79f1671576d91c7da2bdb44cc66fba633c58a174c06"
+      "hash_value": "9053ab43f8389a8d424f0d3c35c259719ff59b8a653641773e24afa6cde39daf"
     },
     {
       "role": "public_context",
       "reference": "public-context.json",
       "hash_algorithm": "sha256",
-      "hash_value": "a2f73b2a74a985b3b59b0f0e49bfd5feb203e5b7478b80cc7a46f0f4b7b02084"
+      "hash_value": "cf6eeb15c2741ca0b9e2e1919e92e00cc69e861bbcb3741b9390401970025d8a"
     },
     {
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "2beabe87f7132302ba0001173b2a3b72648c8434a24dd3f8c22ee81605bbe5db"
+      "hash_value": "c716b1c6681c864337110d30266e4d63261d962d70f0e6130f62d5840d5e944b"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "cda826b84b8cda51365a5205a0be0e1a7af9871352b9fb33b16ff3a9a79e3481"
+      "hash_value": "16a407348e5e6b29f3041ce4abdaceb29d4037de6f8f408829b9d123dce73e38"
     }
   ],
   "required_hash_coverage": {

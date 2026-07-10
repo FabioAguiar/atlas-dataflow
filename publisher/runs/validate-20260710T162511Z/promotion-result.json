@@ -3,7 +3,7 @@
   "result_kind": "promotion_result",
   "candidate_identity": {
     "dataset_slug": "telco-customer-churn",
-    "release_id": "release-20260709t234849z",
+    "release_id": "release-20260710t162511z",
     "release_version": "1.0.0-rc.1"
   },
   "promotion_outcome": "promoted",

@@ -309,7 +309,7 @@
     "seed": 0,
     "generator_version": "discovery-evidence.v1"
   },
-  "generated_at": "2026-07-10T15:16:17+00:00",
+  "generated_at": "2026-07-10T16:25:05+00:00",
   "discovery_boundary_confirmations": {
     "contract_promotion_occurred": false,
     "model_training_occurred": false,

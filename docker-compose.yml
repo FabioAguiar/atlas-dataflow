@@ -17,7 +17,9 @@ services:
       - "8000"
     volumes:
       - ./contracts:/app/contracts:ro
-      - ./publisher/runs:/app/publisher/runs:ro
+      - ./publisher/runs:/app/publisher/runs
+      - ./releases:/app/releases
+      - ./registry:/app/registry
     healthcheck:
       test:
         [

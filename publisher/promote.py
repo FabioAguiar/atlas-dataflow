@@ -10,9 +10,13 @@ manifest.json into releases/{release_id}/manifest.json, and writes a promotion
 result to publisher/runs/{validation_run_id}/promotion-result.json — written
 last, after all copies succeed.
 
-On any artifact copy failure after releases/{release_id}/ has been created,
-removes the entire releases/{release_id}/ directory with shutil.rmtree() before
-raising RuntimeError. Partial directories are never left on disk.
+On any failure in the critical section that spans from releases/{release_id}/
+being created through the final successful write of promotion-result.json
+(artifact copy, manifest copy, or the promotion-result.json write itself),
+removes the entire releases/{release_id}/ directory with shutil.rmtree()
+before re-raising. Partial or orphaned release directories are never left on
+disk, so a retry never collides with a stale releases/{release_id}/ from a
+previous failed attempt.
 
 Does NOT read, write, or import registry/datasets.json.
 Does NOT expose any HTTP endpoint. run() and main() are internal CLI only.
@@ -275,7 +279,10 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
         )
 
     # --- Copy artifacts preserving candidate-relative paths ---
-    # On any failure after releases/{release_id}/ is created, clean up with shutil.rmtree().
+    # On any failure from here through the final promotion-result.json write
+    # (copy, manifest copy, or the result write itself), clean up with
+    # shutil.rmtree() before re-raising, so no orphaned releases/{release_id}/
+    # is ever left on disk for a later retry to collide with.
     release_dir.mkdir(parents=True)
     try:
         for artifact in manifest.get("artifacts", []):
@@ -296,20 +303,20 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
         # --- Copy manifest.json into releases/{release_id}/ ---
         shutil.copy2(manifest_path, release_dir / "manifest.json")
 
+        # --- Build promotion result ---
+        result = _build_promotion_result(validation_result, manifest)
+
+        # --- Validate result against schema (informational; non-blocking for M11-04 boundary) ---
+        schema_path = repo_root / "publisher" / "promotion" / "promotion-result.schema.json"
+        _validate_result_schema(result, schema_path)
+
+        # --- Write promotion result last, after all copies have succeeded ---
+        result_path = run_dir / "promotion-result.json"
+        result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+
     except Exception:
         shutil.rmtree(release_dir, ignore_errors=True)
         raise
-
-    # --- Build promotion result ---
-    result = _build_promotion_result(validation_result, manifest)
-
-    # --- Validate result against schema (informational; non-blocking for M11-04 boundary) ---
-    schema_path = repo_root / "publisher" / "promotion" / "promotion-result.schema.json"
-    _validate_result_schema(result, schema_path)
-
-    # --- Write promotion result last, after all copies have succeeded ---
-    result_path = run_dir / "promotion-result.json"
-    result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 
     return result
 

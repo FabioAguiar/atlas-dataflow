@@ -367,7 +367,7 @@ def promote_admin_run(run_id: str) -> dict:
     if promotion_result is None:
         try:
             promotion_result = publisher_promote.run(str(run_dir), repo_root=_REPO_ROOT)
-        except (RuntimeError, ValueError):
+        except (RuntimeError, ValueError, OSError):
             return _promotion_failure_result(run_id, _PROMOTION_FAILED_ERROR)
 
     try:

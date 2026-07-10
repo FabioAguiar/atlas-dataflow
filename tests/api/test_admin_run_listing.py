@@ -518,6 +518,123 @@ def _write_promotable_run(
     return run_dir
 
 
+def test_publisher_promote_cleans_up_release_dir_after_result_write_failure(tmp_path, monkeypatch):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root, repo_root, "promote-write-fail", "write-fail-dataset", "release-20260710t101438z"
+    )
+    release_dir = repo_root / "releases" / "release-20260710t101438z"
+
+    original_write_text = Path.write_text
+
+    def flaky_write_text(self, *args, **kwargs):
+        if self.name == "promotion-result.json":
+            raise OSError("simulated disk failure")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", flaky_write_text)
+
+    raised = False
+    try:
+        admin_runs.publisher_promote.run(str(run_dir), repo_root=repo_root)
+    except OSError:
+        raised = True
+
+    assert raised
+    assert not release_dir.exists()
+
+
+def test_promote_admin_run_retry_succeeds_after_simulated_post_copy_failure(tmp_path, monkeypatch):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "promote-retry", "retry-dataset", "release-20260710t101438z"
+    )
+    release_dir = repo_root / "releases" / "release-20260710t101438z"
+
+    should_fail = {"value": True}
+    original_write_text = Path.write_text
+
+    def flaky_write_text(self, *args, **kwargs):
+        if self.name == "promotion-result.json" and should_fail["value"]:
+            raise OSError("simulated disk failure")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", flaky_write_text)
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        first = admin_runs.promote_admin_run("promote-retry")
+        assert first["promoted"] is False
+        assert first["errors"][0]["code"] == "PROMOTION_FAILED"
+        assert not release_dir.exists()
+
+        should_fail["value"] = False
+        second = admin_runs.promote_admin_run("promote-retry")
+        assert second["promoted"] is True
+        assert second["release_id"] == "release-20260710t101438z"
+        assert release_dir.exists()
+        assert (release_dir / "manifest.json").is_file()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_promote_admin_run_maps_filesystem_failure_to_structured_error(tmp_path, monkeypatch):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "promote-fs-fail", "fs-fail-dataset", "release-20260710t101438z"
+    )
+
+    def raising_run(*args, **kwargs):
+        raise OSError("simulated filesystem failure")
+
+    monkeypatch.setattr(admin_runs.publisher_promote, "run", raising_run)
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-fs-fail")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is False
+    assert result["errors"][0]["code"] == "PROMOTION_FAILED"
+
+
+def test_remove_admin_run_maps_filesystem_failure_to_structured_error(tmp_path, monkeypatch):
+    root = tmp_path
+    run_dir = _write_run_dir(root, "removal-fs-fail", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+
+    def raising_rmtree(*args, **kwargs):
+        raise OSError("simulated permission failure")
+
+    monkeypatch.setattr(admin_runs.shutil, "rmtree", raising_rmtree)
+
+    original_root = admin_runs._admin_runs_root
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        result = admin_runs.remove_admin_run("removal-fs-fail")
+    finally:
+        admin_runs._admin_runs_root = original_root
+
+    assert result["removed"] is False
+    assert result["errors"][0]["code"] == "RUN_REMOVAL_FAILED"
+    assert run_dir.exists()
+
+
 def test_promote_admin_run_rejects_invalid_run_id():
     result = admin_runs.promote_admin_run("../escape")
     assert result["promoted"] is False
@@ -855,6 +972,41 @@ def test_promote_route_returns_sanitized_422_when_run_not_found():
         admin_runs._admin_runs_root = original_root
 
 
+def test_promote_route_maps_filesystem_failure_to_structured_error(tmp_path, monkeypatch):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "route-promote-fs-fail", "route-fs-fail-dataset", "release-20260710t101438z"
+    )
+
+    def raising_run(*args, **kwargs):
+        raise OSError("simulated filesystem failure")
+
+    monkeypatch.setattr(admin_runs.publisher_promote, "run", raising_run)
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        request = _make_promote_request("route-promote-fs-fail", {})
+        response = api_main.promote_admin_run_route("route-promote-fs-fail", request)
+
+        assert response.status_code == 422
+        body = json.loads(response.body.decode("utf-8"))
+        assert body["error_code"] == "ADMIN_RUN_PROMOTION_FAILED"
+        assert body["errors"][0]["code"] == "PROMOTION_FAILED"
+        _assert_no_private_markers(body)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
 def test_promote_route_returns_sanitized_422_for_rejected_run():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
@@ -1074,6 +1226,38 @@ def test_delete_route_returns_sanitized_422_when_run_not_found():
             body = json.loads(response.body.decode("utf-8"))
             assert body["error_code"] == "ADMIN_RUN_REMOVAL_FAILED"
             assert body["errors"][0]["code"] == "RUN_NOT_FOUND"
+            _assert_no_private_markers(body)
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+        admin_runs._admin_runs_root = original_root
+
+
+def test_delete_route_maps_filesystem_removal_failure_to_structured_error(monkeypatch):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    original_root = admin_runs._admin_runs_root
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_run_dir(root, "removal-route-fs-fail", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+            admin_runs._admin_runs_root = lambda: root
+
+            def raising_rmtree(*args, **kwargs):
+                raise OSError("simulated permission failure")
+
+            # Scoped to a `with` block (rather than the outer monkeypatch
+            # fixture) so the patch is undone before tempfile.TemporaryDirectory's
+            # own __exit__ cleanup below tries to call the real shutil.rmtree.
+            with monkeypatch.context() as m:
+                m.setattr(admin_runs.shutil, "rmtree", raising_rmtree)
+                request = _make_delete_request("removal-route-fs-fail", {})
+                response = api_main.delete_admin_run("removal-route-fs-fail", request)
+
+            assert response.status_code == 422
+            body = json.loads(response.body.decode("utf-8"))
+            assert body["error_code"] == "ADMIN_RUN_REMOVAL_FAILED"
+            assert body["errors"][0]["code"] == "RUN_REMOVAL_FAILED"
             _assert_no_private_markers(body)
     finally:
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)

@@ -19,7 +19,7 @@ function jsonResponse(body: unknown, status = 200): MockResponse {
 }
 
 function installRunsFetchMock(response: MockResponse) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/admin/runs")) {
       return response;

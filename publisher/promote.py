@@ -21,11 +21,22 @@ previous failed attempt.
 Does NOT read, write, or import registry/datasets.json.
 Does NOT expose any HTTP endpoint. run() and main() are internal CLI only.
 Does NOT modify any candidate artifact.
+
+finalize_promotion_result_after_registry_update() below is the one
+exception to "does not read/write registry/datasets.json": it never reads
+or writes that file itself, but it does synchronize the already-written
+promotion-result.json with a registry outcome dict the caller obtained
+separately from registry/update.py.run() (Project Spec S0046). It takes no
+dependency on the registry package -- the caller (api/admin_runs.py)
+computes registry_action via registry.update.derive_registry_action() and
+passes it in, keeping this module's only coupling to the registry system
+at the orchestration layer, not the import layer.
 """
 
 import json
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -107,8 +118,15 @@ def _resolve_candidate_dir(validation_result: dict, repo_root: Path, note: dict)
 def _build_promotion_result(validation_result: dict, manifest: dict) -> dict:
     """Construct the promotion result conforming to promotion-result.schema.json.
 
-    M11-04 boundary: update_applied is always false (registry updates deferred to M11-05).
-    previous_active_release_id is null because registry/datasets.json is not read.
+    Initial write, immediately after the release artifact copy succeeds and
+    before any registry update has been attempted: update_applied is always
+    false and previous_active_release_id is null here, since this module
+    never reads registry/datasets.json. This is deliberately provisional --
+    finalize_promotion_result_after_registry_update() below rewrites
+    registry_update_record once the real registry outcome is known
+    (Project Spec S0046), so a promotion-result.json left at this initial
+    state (update_applied still false) honestly means "registry update not
+    yet confirmed," not "registry update failed."
     """
     candidate_identity = validation_result.get("candidate_identity") or {}
     validation_outcome = validation_result.get("validation_outcome", "accepted")
@@ -318,6 +336,98 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
         shutil.rmtree(release_dir, ignore_errors=True)
         raise
 
+    return result
+
+
+def finalize_promotion_result_after_registry_update(
+    result_path_or_run_dir: str,
+    registry_result: dict,
+    registry_action: str,
+    repo_root: Path | None = None,
+) -> dict:
+    """
+    Synchronize an already-promoted run's promotion-result.json with the
+    real outcome of a successful registry/update.py run (Project Spec
+    S0046).
+
+    Call only after registry/update.py.run() has returned successfully --
+    never after it raised. registry_result is that successful return value
+    verbatim; registry_action is the caller's own
+    registry.update.derive_registry_action(registry_result) classification
+    (this module takes no dependency on the registry package, per its
+    module docstring).
+
+    Idempotent by design: if registry_update_record already shows
+    update_applied=true with new_active_release_id equal to this
+    registry_result's release_id, the file is left untouched and returned
+    as-is. Without this check, a repeated finalize call for an
+    already-synchronized release would recompute previous_active_release_id
+    as equal to release_id itself (the registry's current state, not the
+    state before the original update) and overwrite a correct record with a
+    contradictory one -- exactly the "idempotent retry rewrites
+    contradictory registry metadata" failure this spec forbids.
+
+    Raises RuntimeError if promotion-result.json is missing, unreadable, or
+    does not show promotion_outcome == "promoted". Raises ValueError if
+    result_path_or_run_dir does not exist.
+    """
+    if repo_root is None:
+        repo_root = Path(__file__).parent.parent
+
+    input_path = Path(result_path_or_run_dir).resolve()
+    if input_path.is_file():
+        run_dir = input_path.parent
+    elif input_path.is_dir():
+        run_dir = input_path
+    else:
+        raise ValueError(f"Input path does not exist: {result_path_or_run_dir}")
+
+    result_path = run_dir / "promotion-result.json"
+    result, errors = _load_json_file(result_path, "promotion_result")
+    if errors:
+        raise RuntimeError(
+            "Cannot finalize registry update record: "
+            + "; ".join(e["message"] for e in errors)
+        )
+
+    if result.get("promotion_outcome") != "promoted":
+        raise RuntimeError(
+            "Cannot finalize registry update record: promotion_outcome is not 'promoted'."
+        )
+
+    release_id = registry_result.get("release_id")
+    existing_record = result.get("registry_update_record") or {}
+    if (
+        existing_record.get("update_applied") is True
+        and existing_record.get("new_active_release_id") == release_id
+    ):
+        return result
+
+    dataset_slug = registry_result.get("dataset_slug")
+    allocated_dataset_slug = registry_result.get("allocated_dataset_slug")
+    public_dataset_slug = (
+        allocated_dataset_slug
+        if allocated_dataset_slug and allocated_dataset_slug != dataset_slug
+        else None
+    )
+
+    registry_update_record = {
+        "update_applied": True,
+        "new_active_release_id": release_id,
+        "previous_active_release_id": registry_result.get("previous_active_release_id"),
+        "previous_release_preserved": True,
+        "promoted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "registry_action": registry_action,
+    }
+    if public_dataset_slug is not None:
+        registry_update_record["public_dataset_slug"] = public_dataset_slug
+
+    result["registry_update_record"] = registry_update_record
+
+    schema_path = repo_root / "publisher" / "promotion" / "promotion-result.schema.json"
+    _validate_result_schema(result, schema_path)
+
+    result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     return result
 
 

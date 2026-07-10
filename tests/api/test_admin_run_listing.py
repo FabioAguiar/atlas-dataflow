@@ -967,6 +967,140 @@ def test_promote_admin_run_creates_new_registry_entry_from_public_context(tmp_pa
     assert (run_dir / "promotion-result.json").is_file()
     _assert_no_private_markers(entry)
 
+    promotion_result = json.loads((run_dir / "promotion-result.json").read_text())
+    record = promotion_result["registry_update_record"]
+    assert record["update_applied"] is True
+    assert record["new_active_release_id"] == "release-20260710t101438z"
+    assert record["previous_active_release_id"] is None
+    assert record["registry_action"] == "created"
+    assert "public_dataset_slug" not in record
+
+
+# ---------------------------------------------------------------------------
+# promote_admin_run: promotion-result.json registry_update_record
+# synchronization (Project Spec S0046)
+# ---------------------------------------------------------------------------
+
+def test_promote_admin_run_finalizes_registry_update_record_for_updated_action(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    existing_entry = {
+        "dataset_slug": "sync-dataset",
+        "active_release": "release-20260601-001",
+        "public_metadata": {
+            "title": "Sync Dataset",
+            "summary": "Already published.",
+            "domain": "example",
+            "visibility": "public",
+            "tags": [],
+        },
+    }
+    run_dir = _write_promotable_run(
+        root,
+        repo_root,
+        "promote-sync-update",
+        "sync-dataset",
+        "release-20260710t101438z",
+        registry_entries=[existing_entry],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-sync-update")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["registry_action"] == "updated"
+
+    record = json.loads((run_dir / "promotion-result.json").read_text())["registry_update_record"]
+    assert record["update_applied"] is True
+    assert record["new_active_release_id"] == "release-20260710t101438z"
+    assert record["previous_active_release_id"] == "release-20260601-001"
+    assert record["registry_action"] == "updated"
+    assert "public_dataset_slug" not in record
+
+
+def test_promote_admin_run_repeated_call_does_not_rewrite_previous_active_release_id(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "promote-sync-retry", "sync-retry-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        run_dir = root / "promote-sync-retry"
+
+        first = admin_runs.promote_admin_run("promote-sync-retry")
+        first_record = json.loads((run_dir / "promotion-result.json").read_text())["registry_update_record"]
+
+        second = admin_runs.promote_admin_run("promote-sync-retry")
+        second_record = json.loads((run_dir / "promotion-result.json").read_text())["registry_update_record"]
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert first["registry_action"] == "created"
+    assert second["registry_action"] == "reused"
+
+    # The API response's own idempotence signal (re-derived fresh each call,
+    # per registry.update.derive_registry_action) correctly flips from
+    # "created" to "reused" -- but the persisted promotion-result.json must
+    # not be rewritten with previous_active_release_id re-derived as the
+    # release's own id (which a second raw registry_update.run() call would
+    # report), since that would read as a contradictory regression.
+    assert first_record == second_record
+    assert first_record["previous_active_release_id"] is None
+    assert first_record["registry_action"] == "created"
+
+
+def test_promote_admin_run_registry_update_failure_leaves_promotion_result_unsynchronized(tmp_path, monkeypatch):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root, repo_root, "promote-registry-fail", "registry-fail-dataset", "release-20260710t101438z"
+    )
+
+    def raising_run(*args, **kwargs):
+        raise RuntimeError("simulated registry update failure")
+
+    monkeypatch.setattr(admin_runs.registry_update, "run", raising_run)
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-registry-fail")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is False
+    assert result["errors"][0]["code"] == "REGISTRY_UPDATE_FAILED"
+
+    # The release copy itself already succeeded (publisher_promote.run() ran
+    # before the simulated registry failure), so promotion-result.json
+    # exists -- but it must never be finalized into a false "registry
+    # activated" claim when the registry update that would justify that
+    # claim never actually succeeded.
+    promotion_result = json.loads((run_dir / "promotion-result.json").read_text())
+    assert promotion_result["promotion_outcome"] == "promoted"
+    record = promotion_result["registry_update_record"]
+    assert record["update_applied"] is False
+    assert record["new_active_release_id"] is None
+    assert "registry_action" not in record
+
 
 def test_promote_admin_run_updates_existing_registry_entry(tmp_path):
     root = tmp_path / "runs"

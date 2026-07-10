@@ -17,7 +17,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from registry.update import allocate_unique_dataset_slug  # noqa: E402
+from registry.update import allocate_unique_dataset_slug, derive_registry_action  # noqa: E402
 from registry.validate import validate_registry, validate_registry_file  # noqa: E402
 
 VALID_DIR = Path(__file__).parent / "valid"
@@ -198,6 +198,46 @@ def test_allocate_unique_dataset_slug_ignores_absent_removed_entries():
 
 
 # ---------------------------------------------------------------------------
+# derive_registry_action (Project Spec S0046)
+# ---------------------------------------------------------------------------
+
+def test_derive_registry_action_created_when_dataset_entry_created():
+    assert derive_registry_action({
+        "dataset_entry_created": True,
+        "previous_active_release_id": None,
+        "release_id": "release-20260710t101438z",
+    }) == "created"
+
+
+def test_derive_registry_action_reused_when_previous_matches_release():
+    assert derive_registry_action({
+        "dataset_entry_created": False,
+        "previous_active_release_id": "release-20260710t101438z",
+        "release_id": "release-20260710t101438z",
+    }) == "reused"
+
+
+def test_derive_registry_action_updated_when_previous_differs_and_entry_not_created():
+    assert derive_registry_action({
+        "dataset_entry_created": False,
+        "previous_active_release_id": "release-20260601-001",
+        "release_id": "release-20260710t101438z",
+    }) == "updated"
+
+
+def test_derive_registry_action_updated_when_no_previous_active_release_and_entry_not_created():
+    # An entry that already existed in the registry (dataset_entry_created is
+    # False) but had no active_release yet (previous_active_release_id is
+    # None) is a genuine first activation, not a same-release no-op --
+    # "updated", not "reused".
+    assert derive_registry_action({
+        "dataset_entry_created": False,
+        "previous_active_release_id": None,
+        "release_id": "release-20260710t101438z",
+    }) == "updated"
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 
@@ -220,6 +260,10 @@ if __name__ == "__main__":
         test_allocate_unique_dataset_slug_uses_suffix_two_when_base_and_one_taken,
         test_allocate_unique_dataset_slug_reuses_gap_deterministically,
         test_allocate_unique_dataset_slug_ignores_absent_removed_entries,
+        test_derive_registry_action_created_when_dataset_entry_created,
+        test_derive_registry_action_reused_when_previous_matches_release,
+        test_derive_registry_action_updated_when_previous_differs_and_entry_not_created,
+        test_derive_registry_action_updated_when_no_previous_active_release_and_entry_not_created,
     ]
     passed = 0
     failed = 0

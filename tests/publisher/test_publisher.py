@@ -406,6 +406,208 @@ def test_create_new_dataset_detail_mode_reuses_slug_absent_from_current_registry
     assert slugs == {DATASET_SLUG, f"{DATASET_SLUG}2"}
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0046: promotion-result.json registry_update_record
+# synchronization, through the real validate -> manifest -> promote ->
+# registry_update -> finalize pipeline.
+# ---------------------------------------------------------------------------
+
+
+def _read_promotion_result(run_dir: Path) -> dict:
+    return json.loads((run_dir / "promotion-result.json").read_text(encoding="utf-8"))
+
+
+def test_finalize_syncs_registry_update_record_matching_fixture_registry_after_update_existing(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    run_dir = _validate_manifest_promote(tmp_repo)
+
+    before = _read_promotion_result(run_dir)
+    assert before["registry_update_record"]["update_applied"] is False
+
+    registry_result = registry_update.run(str(run_dir), repo_root=tmp_repo)
+    registry_action = registry_update.derive_registry_action(registry_result)
+    assert registry_action == "updated"
+
+    promote.finalize_promotion_result_after_registry_update(
+        str(run_dir), registry_result, registry_action, repo_root=tmp_repo
+    )
+
+    after = _read_promotion_result(run_dir)
+    record = after["registry_update_record"]
+
+    registry_after = json.loads((tmp_repo / "registry" / "datasets.json").read_text())
+    live_entry = next(e for e in registry_after["datasets"] if e["dataset_slug"] == DATASET_SLUG)
+
+    assert record["update_applied"] is True
+    assert record["new_active_release_id"] == RELEASE_ID == live_entry["active_release"]
+    assert record["previous_active_release_id"] == PREVIOUS_RELEASE_ID
+    assert record["registry_action"] == "updated"
+    assert "public_dataset_slug" not in record
+    assert "promoted_at" in record
+
+
+def test_finalize_is_idempotent_and_never_rewrites_previous_active_release_id_to_current(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    run_dir = _validate_manifest_promote(tmp_repo)
+
+    registry_result = registry_update.run(str(run_dir), repo_root=tmp_repo)
+    registry_action = registry_update.derive_registry_action(registry_result)
+    promote.finalize_promotion_result_after_registry_update(
+        str(run_dir), registry_result, registry_action, repo_root=tmp_repo
+    )
+    first = _read_promotion_result(run_dir)
+
+    # A second registry_update.run() call for the same already-promoted
+    # release reports previous_active_release_id == release_id (the
+    # registry's current, already-updated state) -- feeding that raw value
+    # into a second finalize() call must never overwrite the correct,
+    # already-recorded previous_active_release_id from the real prior
+    # release with this self-referential, contradictory value.
+    second_registry_result = registry_update.run(str(run_dir), repo_root=tmp_repo)
+    assert second_registry_result["previous_active_release_id"] == RELEASE_ID
+    second_registry_action = registry_update.derive_registry_action(second_registry_result)
+    assert second_registry_action == "reused"
+
+    promote.finalize_promotion_result_after_registry_update(
+        str(run_dir), second_registry_result, second_registry_action, repo_root=tmp_repo
+    )
+    second = _read_promotion_result(run_dir)
+
+    assert second == first
+    assert second["registry_update_record"]["previous_active_release_id"] == PREVIOUS_RELEASE_ID
+
+
+def test_finalize_records_public_dataset_slug_and_created_action_when_slug_is_allocated(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry_with_datasets(tmp_repo, [_dataset_entry(DATASET_SLUG, PREVIOUS_RELEASE_ID)])
+    _write_candidate(tmp_repo)
+
+    run_dir = _validate_manifest_promote(tmp_repo)
+    registry_result = registry_update.run(
+        str(run_dir), repo_root=tmp_repo, mode=registry_update.MODE_CREATE_NEW_DATASET_DETAIL
+    )
+    registry_action = registry_update.derive_registry_action(registry_result)
+    assert registry_action == "created"
+    assert registry_result["allocated_dataset_slug"] == f"{DATASET_SLUG}1"
+
+    promote.finalize_promotion_result_after_registry_update(
+        str(run_dir), registry_result, registry_action, repo_root=tmp_repo
+    )
+
+    record = _read_promotion_result(run_dir)["registry_update_record"]
+    assert record["registry_action"] == "created"
+    assert record["public_dataset_slug"] == f"{DATASET_SLUG}1"
+    assert record["previous_active_release_id"] is None
+    assert record["new_active_release_id"] == RELEASE_ID
+
+
+def test_finalize_leaves_registry_update_record_unsynchronized_when_registry_update_fails(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    run_dir = _validate_manifest_promote(tmp_repo)
+
+    # Corrupt the registry after promote.run() so registry_update.run()
+    # raises -- exactly the "release published, registry update failed"
+    # window this spec requires to never read as a misleading success.
+    (tmp_repo / "registry" / "datasets.json").write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        registry_update.run(str(run_dir), repo_root=tmp_repo)
+
+    result = _read_promotion_result(run_dir)
+    assert result["promotion_outcome"] == "promoted"
+    assert result["registry_update_record"]["update_applied"] is False
+    assert result["registry_update_record"]["new_active_release_id"] is None
+    assert "registry_action" not in result["registry_update_record"]
+
+
+def test_finalize_rejects_a_rejected_promotion_result(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo, missing_role="metrics")
+    validate.run(str(candidate_dir), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+    (run_dir / "promotion-result.json").write_text(
+        json.dumps({"promotion_outcome": "rejected"}), encoding="utf-8"
+    )
+
+    with pytest.raises(RuntimeError, match="promotion_outcome is not 'promoted'"):
+        promote.finalize_promotion_result_after_registry_update(
+            str(run_dir),
+            {"release_id": RELEASE_ID, "dataset_slug": DATASET_SLUG},
+            "updated",
+            repo_root=tmp_repo,
+        )
+
+
+def test_synchronized_promotion_result_validates_against_schema_for_both_release_id_formats(tmp_path):
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (REPO_ROOT / "publisher" / "promotion" / "promotion-result.schema.json").read_text()
+    )
+
+    for release_id in (RELEASE_ID, "release-20260710t101438z"):
+        tmp_repo = tmp_path / f"repo-{release_id}"
+        _copy_publisher_contracts(tmp_repo)
+        _write_registry(tmp_repo)
+        candidate_dir = _candidate_dir(tmp_repo, release_id=release_id)
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        for role in REQUIRED_ROLES:
+            artifact_path = candidate_dir / _role_path(role)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = _artifact_payload(role)
+            payload["release_identity"] = {"release_id": release_id}
+            artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        candidate = {
+            "schema_version": "release-candidate.v1",
+            "candidate_kind": "release_candidate",
+            "dataset_identity": {"dataset_slug": DATASET_SLUG, "dataset_title": "Example Dataset"},
+            "release_identity": {
+                "release_id": release_id,
+                "release_version": RELEASE_VERSION,
+                "created_at": "2026-06-19T00:00:00Z",
+            },
+            "source_run": {"run_id": "test-run", "producer": "pytest", "created_at": "2026-06-19T00:00:00Z"},
+            "artifact_roles": {
+                role: {"role": role, "path": _role_path(role), "required": True} for role in REQUIRED_ROLES
+            },
+            "candidate_metadata": {
+                "assembled_by": "pytest",
+                "assembled_at": "2026-06-19T00:00:00Z",
+                "intended_publisher_action": "validate_candidate",
+                "completeness_validation": {
+                    "required_artifact_roles": list(REQUIRED_ROLES),
+                    "hash_policy": "publisher_calculates_hashes",
+                    "manifest_policy": "publisher_generates_manifest",
+                },
+            },
+            "state_boundaries": {
+                "pipeline_run_is_publishable": False,
+                "candidate_is_published_release": False,
+                "promotion_required": True,
+                "registry_update_allowed_in_candidate": False,
+                "public_upload_required": False,
+                "web_administration_required": False,
+                "database_publication_management_required": False,
+                "runtime_consumes_temporary_pipeline_output": False,
+            },
+        }
+        (candidate_dir / "release-candidate.json").write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+
+        validate.run(str(candidate_dir), repo_root=tmp_repo)
+        run_dir = _latest_run_dir(tmp_repo)
+        manifest.run(str(run_dir), repo_root=tmp_repo)
+        promote.run(str(run_dir), repo_root=tmp_repo)
+        registry_result = registry_update.run(str(run_dir), repo_root=tmp_repo)
+        registry_action = registry_update.derive_registry_action(registry_result)
+        result = promote.finalize_promotion_result_after_registry_update(
+            str(run_dir), registry_result, registry_action, repo_root=tmp_repo
+        )
+
+        jsonschema.validate(result, schema)
+        assert result["registry_update_record"]["new_active_release_id"] == release_id
+
+
 def test_evidence_requires_schema_validation_before_write(tmp_path, monkeypatch):
     tmp_repo = _prepare_tmp_repo(tmp_path)
     validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)

@@ -22,7 +22,13 @@ two. `allocate_unique_dataset_slug()` is the reusable allocation boundary:
 smallest available `base`, `base1`, `base2`, ... considering only current
 registry entries, so removed/absent entries never reserve their old slug.
 
-Does NOT modify promotion-result.json.
+Does NOT modify promotion-result.json -- api/admin_runs.py orchestrates that
+separately, via publisher.promote.finalize_promotion_result_after_registry_update(),
+only after this module's run() has returned successfully (Project Spec
+S0046). derive_registry_action() below is a pure classification helper
+reused by both that finalize step and api/admin_runs.py's own operator-facing
+response, so the two never derive "created"/"updated"/"reused" differently
+from the same run() outcome.
 Does NOT produce a separate promotion-update document.
 Does NOT expose any HTTP endpoint. run() and main() are internal CLI only.
 """
@@ -158,6 +164,27 @@ def allocate_unique_dataset_slug(base_slug: str, registry: dict) -> str:
     while f"{base_slug}{suffix}" in existing_slugs:
         suffix += 1
     return f"{base_slug}{suffix}"
+
+
+def derive_registry_action(registry_result: dict) -> str:
+    """Classify a successful run() outcome as "created", "updated", or "reused".
+
+    "created" when a new dataset entry was appended (dataset_entry_created
+    is True). "reused" when the matched entry already had this exact
+    release active before this call (previous_active_release_id ==
+    release_id) -- a repeated promotion of the same run/mode is a safe
+    no-op. "updated" otherwise: an existing entry's active_release
+    genuinely changed to a different release.
+
+    Only meaningful for a run() result where update_applied is True; the
+    caller is responsible for not calling this after a failed/raised
+    registry update.
+    """
+    if registry_result.get("dataset_entry_created"):
+        return "created"
+    if registry_result.get("previous_active_release_id") == registry_result.get("release_id"):
+        return "reused"
+    return "updated"
 
 
 def _find_dataset_entry(registry: dict, dataset_slug: str) -> dict | None:

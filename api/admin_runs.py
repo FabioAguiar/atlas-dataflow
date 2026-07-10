@@ -202,16 +202,19 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
     """Sanitized promoted-state projection from this run's promotion-result.json.
 
     Only candidate_identity/promotion_outcome are ever trusted from the
-    persisted file -- publisher/promote.py always writes
-    registry_update_record.update_applied as False (the real registry effect
-    happens later, in registry/update.py, which never rewrites
-    promotion-result.json -- see its module docstring), so that nested object
-    is never a safe source for "is this still the active release" here.
+    persisted file. promote_admin_run() below does synchronize
+    registry_update_record onto promotion-result.json once a registry update
+    is confirmed (Project Spec S0046), but this function deliberately still
+    never reads that nested object: this projection must also stay accurate
+    when a run was promoted by some other path (a monkeypatched test fixture,
+    a hand-authored promotion-result.json, a future caller) that never went
+    through finalize_promotion_result_after_registry_update() at all.
     public_dataset_slug/registry_action are populated only when the live
     registry (registry/datasets.json) confirms this release is still the
     dataset's current active_release: a freshly re-derived idempotence signal
-    rather than a stale historical claim, and required by S0045 to remain
-    accurate across repeated Promote clicks.
+    rather than a persisted claim, and required by S0045 to remain accurate
+    across repeated Promote clicks regardless of what promotion-result.json
+    itself says.
     """
     promotion_result = _read_json_object(run_dir / _RUN_ARTIFACT_PROMOTION_RESULT)
     if promotion_result is None or promotion_result.get("promotion_outcome") != "promoted":
@@ -490,12 +493,25 @@ def promote_admin_run(
         return _promotion_failure_result(run_id, _REGISTRY_UPDATE_FAILED_ERROR)
 
     candidate_identity = promotion_result.get("candidate_identity") or {}
-    if registry_result.get("dataset_entry_created"):
-        registry_action = "created"
-    elif registry_result.get("previous_active_release_id") == registry_result.get("release_id"):
-        registry_action = "reused"
-    else:
-        registry_action = "updated"
+    registry_action = registry_update.derive_registry_action(registry_result)
+
+    # Project Spec S0046: persist the now-confirmed registry outcome back
+    # into promotion-result.json so it no longer contradicts the real
+    # registry state. Only reached after registry_update.run() above has
+    # already returned successfully -- never after it raised -- so this can
+    # only ever move registry_update_record from "not yet applied" to an
+    # accurate "applied" record, never fabricate a success. A failure to
+    # persist this synchronized evidence does not unwind or invalidate the
+    # registry mutation that already genuinely happened, and this function's
+    # own contract (like every other branch here) is to never raise for a
+    # downstream failure -- it is disclosed only by the on-disk evidence
+    # lagging, not by failing the whole promotion.
+    try:
+        publisher_promote.finalize_promotion_result_after_registry_update(
+            str(run_dir), registry_result, registry_action, repo_root=_REPO_ROOT
+        )
+    except (RuntimeError, ValueError, OSError):
+        pass
 
     return {
         "run_id": run_id,

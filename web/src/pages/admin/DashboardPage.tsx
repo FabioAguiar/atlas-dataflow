@@ -73,9 +73,13 @@ type DashboardState =
 
 type RunRemovalState =
   | { status: "idle" }
-  | { status: "confirming"; runId: string }
-  | { status: "removing"; runId: string }
-  | { status: "error"; runId: string; message: string };
+  | { status: "confirming"; runId: string; alreadyPromoted: boolean }
+  | { status: "removing"; runId: string; alreadyPromoted: boolean }
+  | { status: "error"; runId: string; alreadyPromoted: boolean; message: string };
+
+type PromotedInfoModalState =
+  | { status: "idle" }
+  | { status: "open"; runId: string; summary: PromotionSummary };
 
 type DatasetDetailRemovalState =
   | { status: "idle" }
@@ -259,6 +263,27 @@ const disabledIntentButtonStyle: CSSProperties = {
 
 const actionButtonStyle: CSSProperties = {
   width: "fit-content",
+};
+
+// Project Spec S0050: Promoted/Promote and Remove must occupy the same,
+// fixed width in the Runs card so the two actions stay visually aligned
+// regardless of label length or enabled/disabled state.
+const runActionButtonStyle: CSSProperties = {
+  width: "7rem",
+};
+
+const disabledRunActionButtonStyle: CSSProperties = {
+  ...disabledIntentButtonStyle,
+  width: "7rem",
+};
+
+const promotedRemovalNoticeStyle: CSSProperties = {
+  display: "grid",
+  gap: "var(--atlas-space-2)",
+  border: "1px solid var(--atlas-color-danger)",
+  borderRadius: "var(--atlas-radius-md)",
+  padding: "var(--atlas-space-3)",
+  background: "var(--atlas-color-danger-muted)",
 };
 
 const modalBackdropStyle: CSSProperties = {
@@ -552,19 +577,31 @@ function isRegistryBoundPromoted(run: AdminRunSummary): boolean {
   return run.status === "promoted" && run.promotion_summary?.registry_bound === true;
 }
 
-function promotedStateMessage(run: AdminRunSummary): string | null {
-  if (run.status !== "promoted" || !run.promotion_summary) {
-    return null;
-  }
+const ALREADY_PROMOTED_HEADLINE = "This run has already been promoted as a Dataset Detail.";
 
-  const { release_id, dataset_slug, public_dataset_slug, reason } = run.promotion_summary;
+// Project Spec S0050: this message is only ever shown on demand, inside the
+// informational modal opened by clicking Promoted -- never as a persistent
+// row-level legend.
+function promotedInfoMessage(summary: PromotionSummary): string {
+  const { release_id, dataset_slug, public_dataset_slug, reason } = summary;
   const slugPart =
     public_dataset_slug && public_dataset_slug !== dataset_slug
       ? ` Public Dataset Detail slug: "${public_dataset_slug}".`
       : "";
   const detailPart = release_id ? ` Promoted to release "${release_id}".${slugPart}` : "";
+  const reasonPart = reason && reason !== ALREADY_PROMOTED_HEADLINE ? ` ${reason}` : "";
 
-  return `${reason ?? "Already promoted."}${detailPart}`;
+  return `${ALREADY_PROMOTED_HEADLINE}${reasonPart}${detailPart}`;
+}
+
+const VALIDATE_RUN_ID_PATTERN = /^validate-(\d{8}T\d{6}Z)$/;
+
+// Project Spec S0050: the operator-facing Run ID strips the `validate-`
+// prefix for `validate-{timestamp}` run ids; the full run_id is preserved
+// internally for API calls, keys, and test selectors.
+function displayRunId(runId: string): string {
+  const match = runId.match(VALIDATE_RUN_ID_PATTERN);
+  return match ? match[1] : runId;
 }
 
 function reasonLabel(run: AdminRunSummary): string | null {
@@ -684,6 +721,7 @@ export default function DashboardPage() {
   const [datasetRemovalState, setDatasetRemovalState] = useState<DatasetDetailRemovalState>({ status: "idle" });
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
   const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
+  const [promotedInfoModalState, setPromotedInfoModalState] = useState<PromotedInfoModalState>({ status: "idle" });
 
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent) {
@@ -708,7 +746,9 @@ export default function DashboardPage() {
 
   const counters = useMemo(
     () => ({
-      runsAvailable: runs.filter((run) => run.status === "available").length,
+      // Project Spec S0050: counts every run currently presented in the
+      // Runs card, promoted or not -- not just runs with status "available".
+      runsAvailable: runs.length,
       promotedRuns: runs.filter((run) => run.status === "promoted").length,
       publishedDatasets: registryDatasets ? registryDatasets.length : 0,
       draftDatasets: 0,
@@ -809,17 +849,20 @@ export default function DashboardPage() {
     loadDatasetRegistry();
   }
 
-  function openRemoveConfirmation(runId: string) {
-    setRemovalState({ status: "confirming", runId });
+  function openRemoveConfirmation(runId: string, alreadyPromoted: boolean) {
+    setRemovalState({ status: "confirming", runId, alreadyPromoted });
   }
 
   function cancelRemoveConfirmation() {
     setRemovalState({ status: "idle" });
   }
 
-  function confirmRemoveRun(runId: string) {
-    setRemovalState({ status: "removing", runId });
+  function confirmRemoveRun(runId: string, alreadyPromoted: boolean) {
+    setRemovalState({ status: "removing", runId, alreadyPromoted });
 
+    // Project Spec S0050: removal always targets the original, full run id
+    // (never the stripped display id) and uses the existing removal
+    // endpoint/behavior unchanged, for promoted and non-promoted runs alike.
     fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}`, {
       method: "DELETE",
     })
@@ -828,6 +871,7 @@ export default function DashboardPage() {
           setRemovalState({
             status: "error",
             runId,
+            alreadyPromoted,
             message: "The run could not be removed. Confirm the run is still available and try again.",
           });
           return;
@@ -847,9 +891,18 @@ export default function DashboardPage() {
         setRemovalState({
           status: "error",
           runId,
+          alreadyPromoted,
           message: "The run could not be removed. Check private admin API reachability.",
         });
       });
+  }
+
+  function openPromotedInfoModal(runId: string, summary: PromotionSummary) {
+    setPromotedInfoModalState({ status: "open", runId, summary });
+  }
+
+  function closePromotedInfoModal() {
+    setPromotedInfoModalState({ status: "idle" });
   }
 
   function openRemoveDatasetConfirmation(slug: string) {
@@ -1197,8 +1250,11 @@ export default function DashboardPage() {
                       const promoteDisabled = registryBoundPromoted ? false : !promotionEligible || isPromoting;
                       const removeEligible = canRemoveRun(run);
                       const alreadyPromoted = run.status === "promoted";
-                      const metaMessage =
-                        promotionSuccessMessage ?? promotionError ?? promotedStateMessage(run) ?? reasonLabel(run);
+                      // Project Spec S0050: the already-promoted explanation
+                      // is intentionally excluded here -- it is shown only
+                      // on demand inside the informational modal opened by
+                      // clicking Promoted, never as a persistent row legend.
+                      const metaMessage = promotionSuccessMessage ?? promotionError ?? reasonLabel(run);
 
                       return (
                       <TableRow
@@ -1213,7 +1269,7 @@ export default function DashboardPage() {
                       >
                         <div data-run-status={run.status} style={runRowContentStyle}>
                           <span style={{ display: "flex", alignItems: "center", gap: "var(--atlas-space-2)" }}>
-                            <strong>{run.run_id}</strong>
+                            <strong>{displayRunId(run.run_id)}</strong>
                             {alreadyPromoted && <StatusPill tone="success">Promoted</StatusPill>}
                           </span>
                           <span>{run.dataset_candidate ?? "Not resolved"}</span>
@@ -1231,19 +1287,24 @@ export default function DashboardPage() {
                               }
                               disabled={promoteDisabled}
                               onClick={() => {
-                                // Project Spec S0048: a registry-bound
-                                // promoted run's Promote action stays
-                                // clickable but is purely informational --
-                                // the current promoted state is already
-                                // shown via this row's meta message, and
-                                // clicking must never call the promotion
-                                // endpoint again.
+                                // Project Spec S0050: a registry-bound
+                                // promoted run's Promoted action opens an
+                                // informational modal instead of a no-op --
+                                // it must never call the promotion endpoint
+                                // again.
                                 if (registryBoundPromoted) {
+                                  if (run.promotion_summary) {
+                                    openPromotedInfoModal(run.run_id, run.promotion_summary);
+                                  }
                                   return;
                                 }
                                 promoteRun(run.run_id);
                               }}
-                              style={promotionEligible || registryBoundPromoted ? actionButtonStyle : disabledIntentButtonStyle}
+                              style={
+                                promotionEligible || registryBoundPromoted
+                                  ? runActionButtonStyle
+                                  : disabledRunActionButtonStyle
+                              }
                               title={
                                 registryBoundPromoted
                                   ? "This run has already been promoted as a Dataset Detail. Clicking shows the current promotion status and does not trigger another promotion."
@@ -1261,8 +1322,8 @@ export default function DashboardPage() {
                             <Button
                               data-run-action={removeEligible ? "remove" : "remove-disabled"}
                               disabled={!removeEligible}
-                              onClick={() => openRemoveConfirmation(run.run_id)}
-                              style={removeEligible ? actionButtonStyle : disabledIntentButtonStyle}
+                              onClick={() => openRemoveConfirmation(run.run_id, alreadyPromoted)}
+                              style={removeEligible ? runActionButtonStyle : disabledRunActionButtonStyle}
                               title={
                                 removeEligible
                                   ? "Remove this run from the Admin Dashboard after confirmation."
@@ -1292,8 +1353,22 @@ export default function DashboardPage() {
         <div style={modalBackdropStyle}>
           <Card aria-labelledby="remove-run-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
             <h2 id="remove-run-modal-title" style={cardTitleStyle}>
-              Remove run {removalState.runId}?
+              {removalState.alreadyPromoted
+                ? `Remove promoted run ${removalState.runId}?`
+                : `Remove run ${removalState.runId}?`}
             </h2>
+
+            {removalState.alreadyPromoted && (
+              <div style={promotedRemovalNoticeStyle}>
+                <StatusPill tone="danger">Already promoted</StatusPill>
+                <p style={{ margin: 0, fontWeight: 700 }}>
+                  This run has already been promoted as a Dataset Detail. Removing this run does not remove the
+                  Dataset Detail, release, registry entry, model artifacts, notebooks, contracts, or public
+                  dataset state it produced.
+                </p>
+              </div>
+            )}
+
             <p style={{ margin: 0 }}>
               This removes the publisher validation run record for <strong>{removalState.runId}</strong> from the
               Admin Dashboard. This action cannot be undone.
@@ -1313,9 +1388,33 @@ export default function DashboardPage() {
               </Button>
               <Button
                 disabled={removalState.status === "removing"}
-                onClick={() => confirmRemoveRun(removalState.runId)}
+                onClick={() => confirmRemoveRun(removalState.runId, removalState.alreadyPromoted)}
               >
-                {removalState.status === "removing" ? "Removing..." : "Remove run"}
+                {removalState.status === "removing"
+                  ? removalState.alreadyPromoted
+                    ? "Removing promoted run..."
+                    : "Removing..."
+                  : removalState.alreadyPromoted
+                    ? "Remove promoted run"
+                    : "Remove run"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {promotedInfoModalState.status === "open" && (
+        <div style={modalBackdropStyle}>
+          <Card aria-labelledby="promoted-run-info-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
+            <h2 id="promoted-run-info-modal-title" style={cardTitleStyle}>
+              Run {displayRunId(promotedInfoModalState.runId)} promotion status
+            </h2>
+            <p role="status" style={{ margin: 0 }}>
+              {promotedInfoMessage(promotedInfoModalState.summary)}
+            </p>
+            <div style={modalActionsStyle}>
+              <Button onClick={closePromotedInfoModal} variant="secondary">
+                Close
               </Button>
             </div>
           </Card>

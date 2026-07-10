@@ -992,14 +992,28 @@ describe("DashboardPage", () => {
       expect(promoteCalls).toHaveLength(0);
     });
 
-    it("shows an informational already-promoted message for a registry-bound promoted run", async () => {
+    it("does not render a persistent promoted legend below the run row", async () => {
       installPromotedRunFetchMock();
       render(<DashboardPage />);
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
       expect(
-        within(table).getByText(/This run has already been promoted as a Dataset Detail\./),
+        within(table).queryByText(/This run has already been promoted as a Dataset Detail\./),
+      ).not.toBeInTheDocument();
+    });
+
+    it("opens an informational modal stating the run was already promoted when Promoted is clicked", async () => {
+      installPromotedRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Promoted" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /promotion status/i });
+      expect(
+        within(dialog).getByText(/This run has already been promoted as a Dataset Detail\./),
       ).toBeInTheDocument();
     });
 
@@ -1012,25 +1026,31 @@ describe("DashboardPage", () => {
       expect(within(table).getByRole("button", { name: "Remove" })).not.toBeDisabled();
     });
 
-    it("displays promoted release id and public dataset slug metadata when available", async () => {
+    it("includes the promoted release id in the informational modal when available", async () => {
       installPromotedRunFetchMock();
       render(<DashboardPage />);
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
-      expect(within(table).getByText(/release-20260701-001/)).toBeInTheDocument();
+      fireEvent.click(within(table).getByRole("button", { name: "Promoted" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /promotion status/i });
+      expect(within(dialog).getByText(/release-20260701-001/)).toBeInTheDocument();
     });
 
-    it("does not repeat the public slug in the promoted metadata when it matches the dataset slug", async () => {
+    it("does not repeat the public slug in the informational modal when it matches the dataset slug", async () => {
       installPromotedRunFetchMock();
       render(<DashboardPage />);
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
-      expect(within(table).queryByText(/Public Dataset Detail slug/)).not.toBeInTheDocument();
+      fireEvent.click(within(table).getByRole("button", { name: "Promoted" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /promotion status/i });
+      expect(within(dialog).queryByText(/Public Dataset Detail slug/)).not.toBeInTheDocument();
     });
 
-    it("shows the final public dataset slug when it differs from the candidate dataset slug", async () => {
+    it("shows the final public dataset slug in the informational modal when it differs from the candidate dataset slug", async () => {
       installRunsFetchMock(
         jsonResponse({
           runs_root_status: "available",
@@ -1061,7 +1081,10 @@ describe("DashboardPage", () => {
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Run summaries" });
-      expect(within(table).getByText(/telco-customer-churn1/)).toBeInTheDocument();
+      fireEvent.click(within(table).getByRole("button", { name: "Promoted" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /promotion status/i });
+      expect(within(dialog).getByText(/telco-customer-churn1/)).toBeInTheDocument();
     });
 
     it("counts promoted runs in the Promoted runs summary card alongside available and other statuses", async () => {
@@ -1103,7 +1126,9 @@ describe("DashboardPage", () => {
       await loadRuns();
       await screen.findByRole("table", { name: "Run summaries" });
 
-      expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "1");
+      // Project Spec S0050: Runs available counts every run presented in the
+      // Runs card, promoted or not -- not just runs with status "available".
+      expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "2");
       expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "1");
     });
 
@@ -1576,7 +1601,10 @@ describe("DashboardPage", () => {
     expect(within(table).getByText("run-agnostic-002")).toBeInTheDocument();
     expect(within(table).getByText("run-agnostic-003")).toBeInTheDocument();
 
-    expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "1");
+    // Project Spec S0050: Runs available counts every run presented in the
+    // Runs card (available, invalid, and unavailable alike), not just runs
+    // with status "available".
+    expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "3");
     expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "0");
     expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "0");
     expect(screen.getByLabelText("Draft datasets")).toHaveAttribute("data-summary-count", "0");
@@ -1621,5 +1649,153 @@ describe("DashboardPage", () => {
     expect(table).toHaveAttribute("data-filtered-run-count", "1");
     expect(within(table).queryByText("run-agnostic-001")).not.toBeInTheDocument();
     expect(within(table).getByText("run-agnostic-002")).toBeInTheDocument();
+  });
+
+  describe("Runs card promoted interaction and display refinement (Project Spec S0050)", () => {
+    function installPromotedRemovableRunFetchMock() {
+      return installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "validate-20260710T191735Z",
+              status: "promoted",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/validate-20260710T191735Z",
+              validation_summary: { outcome: "accepted" },
+              promotion_summary: {
+                promotion_outcome: "promoted",
+                release_id: "release-20260710t191735z",
+                dataset_slug: "synthetic-retail-forecast",
+                registry_bound: true,
+                can_promote: false,
+                can_remove: true,
+                reason: "This run has already been promoted as a Dataset Detail.",
+              },
+            },
+          ],
+        }),
+      );
+    }
+
+    it("displays the Run ID without the validate- prefix for a validate-{timestamp} run id", async () => {
+      installPromotedRemovableRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText("20260710T191735Z")).toBeInTheDocument();
+      expect(within(table).queryByText("validate-20260710T191735Z")).not.toBeInTheDocument();
+    });
+
+    it("shows a stronger confirmation modal distinguishing promoted-run removal from normal run removal", async () => {
+      installPromotedRemovableRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Remove" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /Remove promoted run/ });
+      expect(
+        within(dialog).getByText(
+          /does not remove the\s*Dataset Detail, release, registry entry, model artifacts, notebooks, contracts, or public\s*dataset state/i,
+        ),
+      ).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Remove promoted run" })).toBeInTheDocument();
+    });
+
+    it("confirms removal of a promoted run using the original full run id against the existing removal endpoint", async () => {
+      const fetchMock = installPromotedRemovableRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/validate-20260710T191735Z") && init?.method === "DELETE") {
+          return jsonResponse({ run_id: "validate-20260710T191735Z", removed: true, errors: [] });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "validate-20260710T191735Z",
+                status: "promoted",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/validate-20260710T191735Z",
+                validation_summary: { outcome: "accepted" },
+                promotion_summary: {
+                  promotion_outcome: "promoted",
+                  release_id: "release-20260710t191735z",
+                  dataset_slug: "synthetic-retail-forecast",
+                  registry_bound: true,
+                  can_promote: false,
+                  can_remove: true,
+                },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Remove" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /Remove promoted run/ });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Remove promoted run" }));
+
+      await screen.findByRole("heading", { name: "No runs found" });
+
+      const deleteCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input).endsWith("/admin/runs/validate-20260710T191735Z") &&
+          (init as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(deleteCall).toBeDefined();
+    });
+
+    it("gives the Promoted and Remove buttons the same width in the Runs card", async () => {
+      installPromotedRemovableRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const promotedButton = within(table).getByRole("button", { name: "Promoted" });
+      const removeButton = within(table).getByRole("button", { name: "Remove" });
+
+      expect(promotedButton.style.width).toBe(removeButton.style.width);
+    });
+
+    it("keeps the Promote and Remove buttons aligned for a non-promoted eligible run", async () => {
+      installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-agnostic-solo",
+              status: "available",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-agnostic-solo",
+              validation_summary: { outcome: "accepted" },
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const promoteButton = within(table).getByRole("button", { name: "Promote" });
+      const removeButton = within(table).getByRole("button", { name: "Remove" });
+
+      expect(promoteButton.style.width).toBe(removeButton.style.width);
+    });
   });
 });

@@ -699,6 +699,44 @@ const disabledButtonStyle: CSSProperties = {
   cursor: "not-allowed",
 };
 
+const iconActionButtonStyle: CSSProperties = {
+  ...secondaryButtonStyle,
+  width: "2.75rem",
+  minWidth: "2.75rem",
+  padding: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const iconActionButtonDisabledStyle: CSSProperties = {
+  ...disabledButtonStyle,
+  width: "2.75rem",
+  minWidth: "2.75rem",
+  padding: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const actionIconStyle: CSSProperties = {
+  width: "1.15rem",
+  height: "1.15rem",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.8,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+};
+
+const workspaceToolbarStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  justifyContent: "flex-start",
+  gap: "var(--atlas-space-3)",
+};
+
 const dragHandleStyle: CSSProperties = {
   ...secondaryButtonStyle,
   cursor: "grab",
@@ -783,42 +821,12 @@ function getDatasetSelectorValue(dataset?: DatasetLabelSource) {
   return dataset.dataset_slug;
 }
 
-function publicationStatusVariant(status: string): "published" | "pending" | "hidden" | "draft" | "not-published" {
-  switch (status) {
-    case "Published":
-      return "published";
-    case "Unpublished Changes":
-      return "pending";
-    case "Hidden":
-      return "hidden";
-    case "Draft":
-      return "draft";
-    case "Not Published":
-    default:
-      return "not-published";
-  }
-}
-
-function publicationStatusTone(status: string): "success" | "warning" | "neutral" {
-  switch (publicationStatusVariant(status)) {
-    case "published":
-      return "success";
-    case "pending":
-      return "warning";
-    case "hidden":
-    case "draft":
-    case "not-published":
-    default:
-      return "neutral";
-  }
-}
-
-// Distinct from publicationStatusVariant/Tone above, which classify the
-// *selected dataset's* in-session Publishing lifecycle (Draft, Unpublished
-// Changes, Hidden, ...). This classifies whether the currently selected
-// registry-backed Dataset Detail is actually reachable on the public site
-// right now, for the header's Dataset Detail selector -- a real per-dataset
-// fact, not a Publishing-tab session state.
+// The header renders exactly one publication/private tag for the selected
+// Dataset Detail (Project Spec S0058) -- whether it is actually reachable on
+// the public site right now, the same real per-dataset fact the public
+// /datasets listing itself uses. The Publishing tab's own in-session
+// Draft/Unpublished Changes/Hidden lifecycle labels remain inside that tab's
+// own status/current-state elements and are never duplicated in the header.
 function registryVisibilityVariant(isPublic: boolean): "published" | "hidden" {
   return isPublic ? "published" : "hidden";
 }
@@ -1138,6 +1146,43 @@ function sameProfile(left: ProfileDraft | null, right: ProfileDraft | null): boo
   const normalizedLeft = profileFromForm(formFromProfile(left, left.dataset_slug), left.dataset_slug);
   const normalizedRight = profileFromForm(formFromProfile(right, right.dataset_slug), right.dataset_slug);
   return stableJson(normalizedLeft) === stableJson(normalizedRight);
+}
+
+// The fields Public Content actually authors (contracts/dataset-public-profile
+// .schema.json's display.*). The workspace toolbar's Publish changes button
+// (Project Spec S0058) only tracks dirtiness against this subset -- the
+// initial dirty-state implementation is scoped to Public Content, not the
+// whole profile (Metadata & Card, Theme Preset, etc. keep using their own
+// Publishing-tab-wide comparison, unchanged).
+type PublicContentFields = Pick<
+  DraftForm,
+  | "display_title"
+  | "display_subtitle"
+  | "problem_summary_title"
+  | "problem_summary_body"
+  | "source_name"
+  | "source_url"
+  | "release_date_label"
+  | "date_format"
+  | "canonical_name_fallback"
+>;
+
+function publicContentFields(form: DraftForm): PublicContentFields {
+  return {
+    display_title: form.display_title,
+    display_subtitle: form.display_subtitle,
+    problem_summary_title: form.problem_summary_title,
+    problem_summary_body: form.problem_summary_body,
+    source_name: form.source_name,
+    source_url: form.source_url,
+    release_date_label: form.release_date_label,
+    date_format: form.date_format,
+    canonical_name_fallback: form.canonical_name_fallback,
+  };
+}
+
+function samePublicContent(left: DraftForm, right: DraftForm): boolean {
+  return stableJson(publicContentFields(left)) === stableJson(publicContentFields(right));
 }
 
 function backendDraftProfile(draftState: DraftState): ProfileDraft | null {
@@ -2792,10 +2837,7 @@ export default function DatasetAdminPage() {
     }
 
     setDraftForm((current) => ({ ...emptyDraftForm(selectedSlug), schema_version: current.schema_version || "1.0.0" }));
-    setDraftState({
-      status: "idle",
-      message: "No draft loaded for this dataset yet.",
-    });
+    setDraftState({ status: "loading" });
     setCustomizationEditorState(emptyCustomizationEditorState);
     setPublicationState(emptyPublicationState);
     setLastPublishedAt(undefined);
@@ -2836,88 +2878,13 @@ export default function DatasetAdminPage() {
 
     void loadReadOnlyAtlasValues();
 
-    return () => controller.abort();
-  }, [selectedSlug]);
-
-  const datasets = state.status === "ready" ? state.datasets : [];
-  const selectedDataset = useMemo(
-    () => datasets.find((dataset) => dataset.dataset_slug === selectedSlug),
-    [datasets, selectedSlug],
-  );
-  const adminDatasets = adminDatasetsState.status === "ready" ? adminDatasetsState.datasets : [];
-  const selectedAdminDataset = useMemo(
-    () => adminDatasets.find((dataset) => dataset.dataset_slug === selectedSlug),
-    [adminDatasets, selectedSlug],
-  );
-  // A Dataset Detail is genuinely public only when it is both reviewed
-  // ("ready", not "needs_review") and Visible Publicly -- exactly the two
-  // gates GET /datasets composes server-side (resolve_dataset_visibility +
-  // is_dataset_needs_review, api/main.py's list_datasets_endpoint). Rather
-  // than duplicating that boundary client-side, a dataset is treated as
-  // publicly reachable here iff its slug is present in the already-fetched
-  // public listing -- the same source of truth the public site itself uses.
-  const publicDatasetSlugsKnown = state.status === "ready";
-  const selectedDatasetIsPublic = Boolean(selectedSlug) && datasets.some((dataset) => dataset.dataset_slug === selectedSlug);
-  const registryVisibilityLabel = !selectedSlug
-    ? "No dataset selected"
-    : !publicDatasetSlugsKnown
-    ? "Checking..."
-    : selectedDatasetIsPublic
-    ? "Published"
-    : "Private";
-  const currentProfile = selectedSlug ? profileFromForm(draftForm, selectedSlug) : null;
-  const lastBackendDraft = backendDraftProfile(draftState);
-  const hasBackendDraftProfile = Boolean(lastBackendDraft);
-  // Dataset Detail title shown in Admin/Dashboard (registry/list.py's
-  // AdminListedDataset, falling back to the public DatasetListing title if
-  // the admin listing hasn't resolved yet) -- Project Spec S0056 requires
-  // seeding Display title from this value while the Public Content tab is
-  // still in its blank authoring state (no real backend draft profile
-  // tracked yet), without auto-filling any other public-content field.
-  const canonicalDisplayTitle = selectedAdminDataset?.title || selectedDataset?.title || "";
-  useEffect(() => {
-    if (!selectedSlug || !canonicalDisplayTitle || hasBackendDraftProfile) {
-      return;
-    }
-    setDraftForm((current) => (current.display_title ? current : { ...current, display_title: canonicalDisplayTitle }));
-  }, [selectedSlug, canonicalDisplayTitle, hasBackendDraftProfile, draftState.status]);
-  const hasUnsavedDraftChanges = Boolean(currentProfile && lastBackendDraft && !sameProfile(currentProfile, lastBackendDraft));
-  const publishedProfile = publicationState.publishedProfile;
-  const hasPublishedSnapshot = Boolean(publishedProfile);
-  const hasUnpublishedChanges = Boolean(currentProfile && publishedProfile && !sameProfile(currentProfile, publishedProfile));
-  const headerPublicationStatus = publishingStatusLabel({
-    draftState,
-    hasPublishedSnapshot,
-    hasUnpublishedChanges,
-    hasUnsavedDraftChanges,
-    visible: publicationState.visible,
-  });
-
-  function selectDatasetFromQuery(value: string) {
-    setDatasetQuery(value);
-    const match = adminDatasets.find(
-      (dataset) => dataset.dataset_slug === value || getDatasetSelectorValue(dataset).toLowerCase() === value.trim().toLowerCase(),
-    );
-    if (match && match.dataset_slug !== selectedSlug) {
-      setSelectedSlug(match.dataset_slug);
-    }
-  }
-
-  function normalizeDatasetQuery() {
-    setDatasetQuery(getDatasetSelectorValue(selectedAdminDataset));
-  }
-
-  function setField<K extends keyof DraftForm>(key: K, value: DraftForm[K]) {
-    setDraftForm((current) => ({ ...current, [key]: value }));
-  }
-
-  function loadDraft() {
-    if (!selectedSlug) {
-      return;
-    }
-
-    const controller = new AbortController();
-    setDraftState({ status: "loading" });
+    // Automatically load the private/admin profile draft for the selected
+    // Dataset Detail (Project Spec S0058 removes the manual "Load draft"
+    // action) so the workspace toolbar's Publish changes dirty-state
+    // comparison always has a real snapshot -- the existing backend draft if
+    // one exists, or (via the canonicalDisplayTitle seed effect below, once
+    // draftState resolves with draftExists: false) the established S0056
+    // blank-form-with-seeded-title baseline otherwise.
     fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/profile-draft`, {
       signal: controller.signal,
     })
@@ -2947,9 +2914,102 @@ export default function DatasetAdminPage() {
           setDraftState({ status: "unavailable", message: "Profile draft could not be loaded. Check private admin API reachability." });
         }
       });
+
+    return () => controller.abort();
+  }, [selectedSlug]);
+
+  const datasets = state.status === "ready" ? state.datasets : [];
+  const selectedDataset = useMemo(
+    () => datasets.find((dataset) => dataset.dataset_slug === selectedSlug),
+    [datasets, selectedSlug],
+  );
+  const adminDatasets = adminDatasetsState.status === "ready" ? adminDatasetsState.datasets : [];
+  const selectedAdminDataset = useMemo(
+    () => adminDatasets.find((dataset) => dataset.dataset_slug === selectedSlug),
+    [adminDatasets, selectedSlug],
+  );
+  // A Dataset Detail is genuinely public only when it is both reviewed
+  // ("ready", not "needs_review") and Visible Publicly -- exactly the two
+  // gates GET /datasets composes server-side (resolve_dataset_visibility +
+  // is_dataset_needs_review, api/main.py's list_datasets_endpoint). Rather
+  // than duplicating that boundary client-side, a dataset is treated as
+  // publicly reachable here iff its slug is present in the already-fetched
+  // public listing -- the same source of truth the public site itself uses.
+  const publicDatasetSlugsKnown = state.status === "ready";
+  const selectedDatasetIsPublic = Boolean(selectedSlug) && datasets.some((dataset) => dataset.dataset_slug === selectedSlug);
+  const registryVisibilityLabel = !selectedSlug
+    ? "No dataset selected"
+    : !publicDatasetSlugsKnown
+    ? "Checking..."
+    : selectedDatasetIsPublic
+    ? "Published"
+    : "Private";
+  const lastBackendDraft = backendDraftProfile(draftState);
+  const hasBackendDraftProfile = Boolean(lastBackendDraft);
+  // Dataset Detail title shown in Admin/Dashboard (registry/list.py's
+  // AdminListedDataset, falling back to the public DatasetListing title if
+  // the admin listing hasn't resolved yet) -- Project Spec S0056 requires
+  // seeding Display title from this value while the Public Content tab is
+  // still in its blank authoring state (no real backend draft profile
+  // tracked yet), without auto-filling any other public-content field.
+  const canonicalDisplayTitle = selectedAdminDataset?.title || selectedDataset?.title || "";
+  useEffect(() => {
+    if (!selectedSlug || !canonicalDisplayTitle || hasBackendDraftProfile) {
+      return;
+    }
+    setDraftForm((current) => (current.display_title ? current : { ...current, display_title: canonicalDisplayTitle }));
+  }, [selectedSlug, canonicalDisplayTitle, hasBackendDraftProfile, draftState.status]);
+  // The workspace toolbar's Publish changes snapshot (Project Spec S0058):
+  // the normalized current saved/published form state for the selected
+  // Dataset Detail's Public Content fields, or -- when no backend draft/
+  // profile exists yet -- the same blank-form-with-seeded-title baseline the
+  // canonicalDisplayTitle effect above establishes. Scoped to Public Content
+  // only; Metadata & Card/Theme Preset/etc. keep using the whole-profile
+  // comparison above for the Publishing tab's own (unchanged) lifecycle.
+  const publicContentSnapshotForm: DraftForm =
+    hasBackendDraftProfile && lastBackendDraft
+      ? formFromProfile(lastBackendDraft, selectedSlug)
+      : { ...emptyDraftForm(selectedSlug), display_title: canonicalDisplayTitle };
+  const hasUnpublishedPublicContentChanges =
+    Boolean(selectedSlug) && !samePublicContent(draftForm, publicContentSnapshotForm);
+  const toolbarPublishBusy =
+    draftState.status === "loading" ||
+    publicationState.status === "publishing" ||
+    publicationState.status === "saving_visibility";
+  const toolbarPublishDisabled = !selectedSlug || !hasUnpublishedPublicContentChanges || toolbarPublishBusy;
+  const toolbarPublishFeedback =
+    draftState.status === "invalid"
+      ? "Public Content changes could not be saved. Open the Publishing tab for details."
+      : publicationState.status === "invalid"
+      ? "Public Content changes could not be published. Open the Publishing tab for details."
+      : publicationState.status === "unavailable"
+      ? publicationState.message
+      : null;
+
+  function selectDatasetFromQuery(value: string) {
+    setDatasetQuery(value);
+    const match = adminDatasets.find(
+      (dataset) => dataset.dataset_slug === value || getDatasetSelectorValue(dataset).toLowerCase() === value.trim().toLowerCase(),
+    );
+    if (match && match.dataset_slug !== selectedSlug) {
+      setSelectedSlug(match.dataset_slug);
+    }
   }
 
-  function saveDraft() {
+  function normalizeDatasetQuery() {
+    setDatasetQuery(getDatasetSelectorValue(selectedAdminDataset));
+  }
+
+  function setField<K extends keyof DraftForm>(key: K, value: DraftForm[K]) {
+    setDraftForm((current) => ({ ...current, [key]: value }));
+  }
+
+  // Accepts an optional onSaved callback so the workspace toolbar's Publish
+  // changes action (Project Spec S0058) can chain straight into performPublish
+  // with the just-saved profile once the save actually succeeds, reusing the
+  // exact same save path the Publishing tab's own Save draft button calls
+  // with no callback.
+  function saveDraft(onSaved?: (profile: ProfileDraft) => void) {
     if (!selectedSlug) {
       return;
     }
@@ -2987,6 +3047,7 @@ export default function DatasetAdminPage() {
         const savedProfile = result.body.profile ?? profile;
         setDraftForm(formFromProfile(savedProfile, selectedSlug));
         setDraftState({ status: "saved", profile: savedProfile });
+        onSaved?.(savedProfile);
       })
       .catch(() => {
         setDraftState({ status: "unavailable", message: "Profile draft could not be saved. Check private admin API reachability." });
@@ -2995,23 +3056,12 @@ export default function DatasetAdminPage() {
 
   const boundPredictViewId = draftForm.bound_predict_view_id;
 
-  function publishChanges() {
-    if (!selectedSlug) {
-      return;
-    }
-
-    const lastBackendDraft = backendDraftProfile(draftState);
-    const currentProfile = profileFromForm(draftForm, selectedSlug);
-    if (!lastBackendDraft || !sameProfile(lastBackendDraft, currentProfile)) {
-      setPublicationState((current) => ({
-        status: "unavailable",
-        visible: current.visible,
-        publishedProfile: current.publishedProfile,
-        message: "Save Draft before publishing; Publish Changes uses the saved backend draft.",
-      }));
-      return;
-    }
-
+  // Shared by publishChanges (Publishing tab) and publishPublicContentChanges
+  // (workspace toolbar) below -- both end up calling the same PUT /publish
+  // endpoint once a matching saved draft is confirmed; only how they get
+  // there (an explicit Save Draft-then-Publish precondition check vs. an
+  // implicit save-then-publish chain) differs.
+  function performPublish(profileToPublish: ProfileDraft) {
     setPublicationState((current) => ({
       status: "publishing",
       visible: current.visible,
@@ -3048,7 +3098,7 @@ export default function DatasetAdminPage() {
           }));
           return;
         }
-        const publishedProfile = profileFromSnapshot(result.body.snapshot, selectedSlug) ?? currentProfile;
+        const publishedProfile = profileFromSnapshot(result.body.snapshot, selectedSlug) ?? profileToPublish;
         setPublicationState((current) => ({
           status: "published",
           visible: current.visible,
@@ -3065,6 +3115,35 @@ export default function DatasetAdminPage() {
           message: "Profile could not be published. Check private admin API reachability.",
         }));
       });
+  }
+
+  function publishChanges() {
+    if (!selectedSlug) {
+      return;
+    }
+
+    const lastBackendDraft = backendDraftProfile(draftState);
+    const currentProfile = profileFromForm(draftForm, selectedSlug);
+    if (!lastBackendDraft || !sameProfile(lastBackendDraft, currentProfile)) {
+      setPublicationState((current) => ({
+        status: "unavailable",
+        visible: current.visible,
+        publishedProfile: current.publishedProfile,
+        message: "Save Draft before publishing; Publish Changes uses the saved backend draft.",
+      }));
+      return;
+    }
+
+    performPublish(currentProfile);
+  }
+
+  // The workspace toolbar's Publish changes action (Project Spec S0058):
+  // saves the current Public Content form state and publishes it in one
+  // operator click, reusing the same profile-draft PUT and publish PUT
+  // endpoints the Publishing tab's own Save draft/Publish changes actions
+  // already call, instead of requiring a separate manual save-then-publish.
+  function publishPublicContentChanges() {
+    saveDraft(performPublish);
   }
 
   function setPublicVisibility(visible: boolean) {
@@ -3274,15 +3353,6 @@ export default function DatasetAdminPage() {
         </div>
 
         <div className="dataset-admin-header-actions">
-          <DatasetComboBox
-            datasets={adminDatasets}
-            disabled={adminDatasetsState.status !== "ready" || adminDatasets.length === 0}
-            onNormalize={normalizeDatasetQuery}
-            onQueryChange={selectDatasetFromQuery}
-            query={datasetQuery}
-            selectedDataset={selectedAdminDataset}
-            stateStatus={adminDatasetsState.status}
-          />
           <StatusPill
             aria-label="Dataset Detail visibility"
             className="dataset-admin-registry-visibility-pill"
@@ -3291,31 +3361,18 @@ export default function DatasetAdminPage() {
           >
             {registryVisibilityLabel}
           </StatusPill>
-          <StatusPill
-            aria-label="Publication status"
-            className="dataset-admin-status-pill"
-            tone={publicationStatusTone(headerPublicationStatus)}
-            variant={publicationStatusVariant(headerPublicationStatus)}
-          >
-            {headerPublicationStatus}
-          </StatusPill>
           <button
             aria-label="Open public Dataset Detail page"
             disabled={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic}
             onClick={() => window.open(`/dataset/${encodeURIComponent(selectedSlug)}`, "_blank", "noopener,noreferrer")}
-            style={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic ? disabledButtonStyle : secondaryButtonStyle}
+            style={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic ? iconActionButtonDisabledStyle : iconActionButtonStyle}
             type="button"
           >
-            Open public page
-          </button>
-
-          <button
-            disabled={!selectedSlug || draftState.status === "loading"}
-            onClick={loadDraft}
-            style={secondaryButtonStyle}
-            type="button"
-          >
-            Load draft
+            <svg aria-hidden="true" style={actionIconStyle} viewBox="0 0 24 24">
+              <path d="M14 4h6v6" />
+              <path d="M20 4 10 14" />
+              <path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
+            </svg>
           </button>
         </div>
       </header>
@@ -3335,6 +3392,30 @@ export default function DatasetAdminPage() {
       )}
 
       <section aria-label="Dataset profile workspace" style={panelStyle}>
+        <div aria-label="Dataset Detail workspace toolbar" role="toolbar" style={workspaceToolbarStyle}>
+          <DatasetComboBox
+            datasets={adminDatasets}
+            disabled={adminDatasetsState.status !== "ready" || adminDatasets.length === 0}
+            onNormalize={normalizeDatasetQuery}
+            onQueryChange={selectDatasetFromQuery}
+            query={datasetQuery}
+            selectedDataset={selectedAdminDataset}
+            stateStatus={adminDatasetsState.status}
+          />
+          <button
+            disabled={toolbarPublishDisabled}
+            onClick={publishPublicContentChanges}
+            style={toolbarPublishDisabled ? disabledButtonStyle : actionButtonStyle}
+            type="button"
+          >
+            Publish changes
+          </button>
+        </div>
+        {toolbarPublishFeedback ? (
+          <p role="status" style={mutedTextStyle}>
+            {toolbarPublishFeedback}
+          </p>
+        ) : null}
         <DraftStatusPanel draftState={draftState} />
         <Tabs ariaLabel="Dataset admin tabs" items={adminTabs} onSelect={setSelectedTab} selectedId={selectedTab} />
         <div
@@ -3354,7 +3435,12 @@ export default function DatasetAdminPage() {
             loadCustomization,
             () => setSelectedTab("live-preview"),
             publishChanges,
-            saveDraft,
+            // Publishing tab's own Save draft button passes its onClick
+            // SyntheticEvent straight through as this callback's first
+            // argument -- wrap so it never reaches saveDraft's optional
+            // onSaved parameter (added for the toolbar's save-then-publish
+            // chain below).
+            () => saveDraft(),
             setPublicVisibility,
             saveCustomization,
             updateCustomizationDraft,

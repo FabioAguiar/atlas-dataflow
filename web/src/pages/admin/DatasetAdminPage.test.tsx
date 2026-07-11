@@ -498,12 +498,16 @@ describe("DatasetAdminPage", () => {
     // now live in the workspace toolbar below (asserted separately).
     expect(screen.getByRole("heading", { name: "Dataset — Curated churn profile" })).toBeInTheDocument();
     expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published");
+    expect(screen.getByLabelText("Dataset Detail visibility")).toHaveClass(
+      "dataset-admin-registry-visibility-pill",
+    );
     // Only one publication/private status tag renders in the header -- the
     // old session-local "Publication status" pill (Draft/Unpublished
     // Changes/Hidden/Not Published) is gone.
     expect(screen.queryByLabelText("Publication status")).not.toBeInTheDocument();
     const publicPageButton = screen.getByRole("button", { name: "Open public Dataset Detail page" });
     expect(publicPageButton).toBeEnabled();
+    expect(publicPageButton).toHaveClass("dataset-admin-public-page-action");
     // The public-page action is icon-style: no visible "Open public page"
     // text remains, only an accessible label and a decorative icon.
     expect(publicPageButton).not.toHaveTextContent("Open public page");
@@ -1594,7 +1598,7 @@ describe("DatasetAdminPage", () => {
     expect(forbiddenDraftTermsPresent()).toEqual([]);
   });
 
-  it("shows publish-first, visibility-aware success feedback next to the workspace toolbar's Publish changes button and resets its dirty state after each successful publish (Project Spec S0060)", async () => {
+  it("shows compact success feedback beside Publish changes, removes the long success copy, and resets dirty state after each successful publish (Project Spec S0063)", async () => {
     installFetchMock();
     renderAdminPage();
 
@@ -1607,10 +1611,10 @@ describe("DatasetAdminPage", () => {
     expect(toolbarPublishButton).toBeEnabled();
     fireEvent.click(toolbarPublishButton);
 
-    // Publication state starts visible by default, so the first successful
-    // publish reports the public-page-ready variant of the publish-first
-    // feedback and the button disables again with no further operator action.
-    expect(await screen.findByText("Public content published. The public page is ready to view.")).toBeInTheDocument();
+    const firstSuccess = await within(toolbar).findByText("Changes saved.");
+    expect(firstSuccess).toHaveClass("dataset-admin-toolbar-success");
+    expect(firstSuccess.tagName).toBe("SPAN");
+    expect(screen.queryByText("Public content published. The public page is ready to view.")).not.toBeInTheDocument();
     await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
@@ -1622,9 +1626,8 @@ describe("DatasetAdminPage", () => {
     expect(toolbarPublishButton).toBeEnabled();
     fireEvent.click(toolbarPublishButton);
 
-    // With public visibility now off, a second successful publish reports
-    // the still-private variant instead of repeating the public-page copy.
-    expect(await screen.findByText("Changes published. Public visibility is currently off.")).toBeInTheDocument();
+    expect(await within(toolbar).findByText("Changes saved.")).toBeInTheDocument();
+    expect(screen.queryByText("Changes published. Public visibility is currently off.")).not.toBeInTheDocument();
     await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
   });
 

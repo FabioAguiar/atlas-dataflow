@@ -1002,9 +1002,41 @@ h1 {
 .dataset-admin-header-actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--atlas-space-3);
+}
+
+.dataset-admin-registry-visibility-pill,
+.dataset-admin-public-page-action {
+  height: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.dataset-admin-registry-visibility-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-inline: var(--atlas-space-4);
+}
+
+.dataset-admin-public-page-action {
+  flex: 0 0 2.75rem;
+}
+
+.dataset-admin-toolbar-success {
+  display: inline-flex;
+  min-height: 2.5rem;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid var(--atlas-color-success);
+  border-radius: var(--atlas-radius-pill);
+  padding: 0 var(--atlas-space-3);
+  color: var(--atlas-color-success);
+  background: var(--atlas-color-success-muted);
+  font-size: var(--atlas-text-xs);
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .sr-only {

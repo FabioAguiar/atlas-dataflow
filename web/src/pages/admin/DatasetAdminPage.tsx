@@ -2223,18 +2223,14 @@ function publicationMessage(publicationState: PublicationState): string {
   }
 }
 
-// Project Spec S0060: the workspace toolbar's own publish-first success
-// line, always visible next to the toolbar's Publish changes button
-// regardless of which tab is selected (unlike publicationMessage above,
-// which only renders inside the Publishing tab's own panel). Worded
-// distinctly from publicationMessage so both can safely render at once.
+// The workspace toolbar keeps successful publish feedback intentionally
+// compact. Visibility detail remains available in the Publishing tab, while
+// the toolbar only confirms that the requested changes were saved.
 function toolbarPublicationFeedback(publicationState: PublicationState): string | null {
   if (publicationState.status !== "published") {
     return null;
   }
-  return publicationState.visible
-    ? "Public content published. The public page is ready to view."
-    : "Changes published. Public visibility is currently off.";
+  return "Changes saved.";
 }
 
 function visibilityCopy(publicationState: PublicationState, hasPublishedSnapshot: boolean): string {
@@ -2975,14 +2971,15 @@ export default function DatasetAdminPage() {
     publicationState.status === "publishing" ||
     publicationState.status === "saving_visibility";
   const toolbarPublishDisabled = !selectedSlug || !hasUnpublishedPublicContentChanges || toolbarPublishBusy;
-  const toolbarPublishFeedback =
+  const toolbarPublishError =
     draftState.status === "invalid"
       ? "Public Content changes could not be saved. Open the Publishing tab for details."
       : publicationState.status === "invalid"
       ? "Public Content changes could not be published. Open the Publishing tab for details."
       : publicationState.status === "unavailable"
       ? publicationState.message
-      : toolbarPublicationFeedback(publicationState);
+      : null;
+  const toolbarPublishFeedback = toolbarPublicationFeedback(publicationState);
 
   function selectDatasetFromQuery(value: string) {
     setDatasetQuery(value);
@@ -3369,6 +3366,7 @@ export default function DatasetAdminPage() {
             {registryVisibilityLabel}
           </StatusPill>
           <button
+            className="dataset-admin-public-page-action"
             aria-label="Open public Dataset Detail page"
             disabled={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic}
             onClick={() => window.open(`/dataset/${encodeURIComponent(selectedSlug)}`, "_blank", "noopener,noreferrer")}
@@ -3417,10 +3415,15 @@ export default function DatasetAdminPage() {
           >
             Publish changes
           </button>
+          {toolbarPublishFeedback ? (
+            <span className="dataset-admin-toolbar-success" role="status">
+              {toolbarPublishFeedback}
+            </span>
+          ) : null}
         </div>
-        {toolbarPublishFeedback ? (
+        {toolbarPublishError ? (
           <p role="status" style={mutedTextStyle}>
-            {toolbarPublishFeedback}
+            {toolbarPublishError}
           </p>
         ) : null}
         <DraftStatusPanel draftState={draftState} />

@@ -131,6 +131,23 @@ function installFetchMock(
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
+    // Checked before the generic "/datasets" endsWith check below, since
+    // "/admin/datasets" also satisfies url.endsWith("/datasets").
+    if (url.endsWith("/admin/datasets")) {
+      return jsonResponse({
+        datasets: [
+          {
+            dataset_slug: datasetSlug,
+            title: "Telco Customer Churn",
+            summary: "Customer churn prediction dataset",
+            domain: "telecom",
+            tags: ["telecom"],
+            active_release: "release-20260619-001",
+            publication_status: "ready",
+          },
+        ],
+      });
+    }
     if (url.endsWith("/datasets")) {
       return jsonResponse({
         datasets: [
@@ -354,9 +371,8 @@ describe("DatasetAdminPage", () => {
     expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`))).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    // The Publishing tab's own "Save draft" action duplicates the persistent
-    // workspace-level "Save draft" button's accessible name, so scope to the
-    // tabpanel to disambiguate.
+    // Save draft only exists inside the Publishing tab's own panel now that
+    // the top-level workspace-shell button has been removed (S0055).
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("Draft saved through the profile draft model.")).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Draft");
@@ -415,13 +431,71 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("tab", { name: "Public Content", selected: false })).toBeInTheDocument();
   });
 
+  it("aligns the upper shell with the design reference: no Read-only Atlas context card, no obsolete instructional copy, no top-level Save draft button, and a design-aligned header", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+    });
+
+    // Obsolete scaffolding elements must be gone.
+    expect(screen.queryByRole("region", { name: "Read-only Atlas values" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Read-only Atlas context")).not.toBeInTheDocument();
+    expect(screen.queryByText("Load the private/admin draft before saving profile edits.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Saves only the schema-backed draft; publishing controls are in the Publishing tab."),
+    ).not.toBeInTheDocument();
+    // The top-level workspace-shell "Save draft" button is gone while
+    // Public Content (the default tab) is selected; only the Publishing
+    // tab's own Save draft action remains, and it is not rendered here.
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+
+    // Design-aligned header: title/subtitle on the left, selector,
+    // publication/private indicator, and public-open action on the right.
+    expect(screen.getByRole("heading", { name: "Dataset — Telco Customer Churn" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dataset" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published");
+    expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeEnabled();
+
+    // Existing tab navigation remains available.
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Public Content",
+      "Metadata & Card",
+      "Theme Preset",
+      "Inference Form",
+      "Result Card",
+      "Publishing",
+      "Live Preview",
+    ]);
+
+    // The Publishing tab's own Save draft action is preserved.
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" })).toBeInTheDocument();
+  });
+
+  it("opens the public Dataset Detail page in a new tab only while the selected dataset is publicly reachable", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
+
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    fireEvent.click(screen.getByRole("button", { name: "Open public Dataset Detail page" }));
+    expect(openSpy).toHaveBeenCalledWith(`/dataset/${datasetSlug}`, "_blank", "noopener,noreferrer");
+    openSpy.mockRestore();
+  });
+
   it("surfaces backend profile validation feedback without publishing side effects", async () => {
     installFetchMock({ rejectProfileSave: true });
     renderAdminPage();
 
     await loadDraftAndCustomization();
 
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    // Save draft only exists inside the Publishing tab's own panel now that
+    // the top-level workspace-shell button has been removed (S0055).
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
 
     expect(await screen.findByText("Profile draft rejected by backend validation")).toBeInTheDocument();
     expect(screen.getByText(/display.title - TITLE_REQUIRED - Title is required./)).toBeInTheDocument();
@@ -478,7 +552,6 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
     expect(screen.getByRole("button", { name: "Publish changes" })).toBeDisabled();
 
-    // Same Publishing-tab-vs-workspace-level "Save draft" disambiguation as above.
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("Draft saved through the profile draft model.")).toBeInTheDocument();
     expect(screen.getByLabelText("Publication status")).toHaveTextContent("Unpublished Changes");
@@ -530,8 +603,11 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Badge preset"), { target: { value: "risk" } });
     fireEvent.change(screen.getByLabelText("High badge label"), { target: { value: "Severe risk" } });
 
+    // Save draft only exists inside the Publishing tab's own panel now that
+    // the top-level workspace-shell button has been removed (S0055).
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     const callsBeforeSave = fetchMock.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
     await screen.findByText("Draft saved through the profile draft model.");
 
     const saveCall = fetchMock.mock.calls
@@ -973,9 +1049,12 @@ describe("DatasetAdminPage", () => {
     expect(dragOrder.map((entry) => entry.field_name)).toEqual(["MonthlyCharges", "tenure"]);
   });
 
-  it("shows a disabled selector and a blank read-only panel when no datasets are registered", async () => {
+  it("shows a disabled selector, no selected dataset, and a disabled public-open action when no datasets are registered", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({ datasets: [] });
+      }
       if (url.endsWith("/datasets")) {
         return jsonResponse({ datasets: [] });
       }
@@ -989,49 +1068,66 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => expect(selector).toBeDisabled());
     expect(selector).toHaveTextContent("No datasets available");
 
-    const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
-    expect(within(panel).getAllByText("Not provided")).toHaveLength(6);
+    expect(screen.getByRole("heading", { name: "Dataset — No dataset selected" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Read-only Atlas values" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("No dataset selected");
+    expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeDisabled();
   });
 
-  it("populates the filterable selector for a multi-dataset listing including a synthetic non-Telco/Bank dataset and updates the read-only panel on selection change", async () => {
-    const datasetOne = {
+  it("populates the filterable Admin dataset selector for a multi-dataset listing including a synthetic non-Telco/Bank dataset and updates the header on selection change", async () => {
+    // AdminDatasetListing shape (GET /admin/datasets, registry/list.py's
+    // list_admin_datasets) -- distinct from the public DatasetListing shape
+    // (visibility, no active_release/publication_status) used by the
+    // separate GET /datasets fetch below.
+    const adminDatasetOne = {
       dataset_slug: "synthetic-retail-forecast",
       title: "Synthetic Retail Forecast",
       summary: "Synthetic retail demand forecasting dataset",
       domain: "retail",
-      visibility: "public",
       tags: ["retail"],
+      active_release: "release-20260701-001",
+      publication_status: "ready",
     };
-    const datasetTwo = {
+    const adminDatasetTwo = {
       dataset_slug: "synthetic-energy-usage",
       title: "Synthetic Energy Usage",
       summary: "Synthetic household energy usage dataset",
       domain: "energy",
-      visibility: "public",
       tags: ["energy"],
+      active_release: "release-20260701-002",
+      publication_status: "needs_review",
     };
-    const datasetThree = {
+    const adminDatasetThree = {
       dataset_slug: "synthetic-agri-yield",
       title: "Synthetic Agricultural Yield",
       summary: "Synthetic crop yield dataset",
       domain: "agriculture",
-      visibility: "internal",
       tags: ["agriculture"],
+      active_release: "release-20260701-003",
+      publication_status: "ready",
     };
+    // Only datasetOne and datasetThree are publicly reachable (present in
+    // GET /datasets); datasetTwo is Admin-visible only (needs_review),
+    // exercising the header's Published/Private distinction.
+    const publicDatasetOne = { ...adminDatasetOne, visibility: "public" };
+    const publicDatasetThree = { ...adminDatasetThree, visibility: "public" };
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({ datasets: [adminDatasetOne, adminDatasetTwo, adminDatasetThree] });
+      }
       if (url.endsWith("/datasets")) {
-        return jsonResponse({ datasets: [datasetOne, datasetTwo, datasetThree] });
+        return jsonResponse({ datasets: [publicDatasetOne, publicDatasetThree] });
       }
-      if (url.endsWith(`/datasets/${datasetOne.dataset_slug}`)) {
-        return jsonResponse(datasetOne);
+      if (url.endsWith(`/datasets/${adminDatasetOne.dataset_slug}`)) {
+        return jsonResponse(publicDatasetOne);
       }
-      if (url.endsWith(`/datasets/${datasetTwo.dataset_slug}`)) {
-        return jsonResponse(datasetTwo);
+      if (url.endsWith(`/datasets/${adminDatasetTwo.dataset_slug}`)) {
+        return jsonResponse({}, 404);
       }
-      if (url.endsWith(`/datasets/${datasetThree.dataset_slug}`)) {
-        return jsonResponse(datasetThree);
+      if (url.endsWith(`/datasets/${adminDatasetThree.dataset_slug}`)) {
+        return jsonResponse(publicDatasetThree);
       }
       return jsonResponse({}, 404);
     });
@@ -1040,95 +1136,99 @@ describe("DatasetAdminPage", () => {
     renderAdminPage();
 
     const selector = await screen.findByRole("button", { name: "Dataset" });
-    await waitFor(() => expect(selector).toHaveTextContent(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
+    await waitFor(() =>
+      expect(selector).toHaveTextContent(`${adminDatasetOne.title} -- ${adminDatasetOne.dataset_slug}`),
+    );
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
 
     fireEvent.click(selector);
     const listbox = screen.getByRole("listbox", { name: "Available datasets" });
     expect(within(listbox).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      `${datasetOne.title} -- ${datasetOne.dataset_slug}`,
-      `${datasetTwo.title} -- ${datasetTwo.dataset_slug}`,
-      `${datasetThree.title} -- ${datasetThree.dataset_slug}`,
+      `${adminDatasetOne.title} -- ${adminDatasetOne.dataset_slug}`,
+      `${adminDatasetTwo.title} -- ${adminDatasetTwo.dataset_slug}`,
+      `${adminDatasetThree.title} -- ${adminDatasetThree.dataset_slug}`,
     ]);
 
-    const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
-    await waitFor(() => {
-      expect(within(panel).getByText(datasetOne.dataset_slug)).toBeInTheDocument();
-    });
-    expect(within(panel).getByText(datasetOne.title)).toBeInTheDocument();
-    // datasetOne's domain and its only tag are both literally "retail", so
-    // the Domain read-only field's <p> value must be disambiguated from the
-    // <li> tag chip rendering the same string.
-    const domainValue = within(panel)
-      .getAllByText(datasetOne.domain)
-      .find((el) => el.tagName === "P");
-    expect(domainValue).toBeInTheDocument();
-
     const filter = screen.getByLabelText("Filter datasets");
-    fireEvent.change(filter, { target: { value: datasetTwo.dataset_slug } });
-    fireEvent.click(within(listbox).getByRole("option", { name: `${datasetTwo.title} -- ${datasetTwo.dataset_slug}` }));
+    fireEvent.change(filter, { target: { value: adminDatasetTwo.dataset_slug } });
+    fireEvent.click(
+      within(listbox).getByRole("option", { name: `${adminDatasetTwo.title} -- ${adminDatasetTwo.dataset_slug}` }),
+    );
 
-    await waitFor(() => {
-      expect(within(panel).getByText(datasetTwo.dataset_slug)).toBeInTheDocument();
-    });
-    expect(screen.getByRole("heading", { name: `Dataset — ${datasetTwo.title}` })).toBeInTheDocument();
-    expect(within(panel).getByText(datasetTwo.title)).toBeInTheDocument();
-    // datasetTwo's domain and its only tag are both literally "energy"; see
-    // the same disambiguation above for datasetOne's domain/tag collision.
-    expect(
-      within(panel)
-        .getAllByText(datasetTwo.domain)
-        .find((el) => el.tagName === "P"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetTwo.title}` })).toBeInTheDocument(),
+    );
+    // datasetTwo is needs_review and absent from the public listing, so the
+    // header must show it as Private and keep the public-open action disabled.
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+    expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeDisabled();
+
+    fireEvent.click(selector);
+    fireEvent.click(
+      within(screen.getByRole("listbox", { name: "Available datasets" })).getByRole("option", {
+        name: `${adminDatasetThree.title} -- ${adminDatasetThree.dataset_slug}`,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetThree.title}` })).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
+    expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeEnabled();
   });
 
   it("moves an ARIA active-option indicator through the filtered listbox with ArrowDown/ArrowUp and selects it on Enter", async () => {
-    const datasetOne = {
+    const adminDatasetOne = {
       dataset_slug: "synthetic-retail-forecast",
       title: "Synthetic Retail Forecast",
       summary: "Synthetic retail demand forecasting dataset",
       domain: "retail",
-      visibility: "public",
       tags: ["retail"],
+      active_release: "release-20260701-001",
+      publication_status: "ready",
     };
-    const datasetTwo = {
+    const adminDatasetTwo = {
       dataset_slug: "synthetic-energy-usage",
       title: "Synthetic Energy Usage",
       summary: "Synthetic household energy usage dataset",
       domain: "energy",
-      visibility: "public",
       tags: ["energy"],
+      active_release: "release-20260701-002",
+      publication_status: "ready",
     };
-    const datasetThree = {
+    const adminDatasetThree = {
       dataset_slug: "synthetic-agri-yield",
       title: "Synthetic Agricultural Yield",
       summary: "Synthetic crop yield dataset",
       domain: "agriculture",
-      visibility: "internal",
       tags: ["agriculture"],
+      active_release: "release-20260701-003",
+      publication_status: "ready",
     };
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({ datasets: [adminDatasetOne, adminDatasetTwo, adminDatasetThree] });
+      }
       if (url.endsWith("/datasets")) {
-        return jsonResponse({ datasets: [datasetOne, datasetTwo, datasetThree] });
+        return jsonResponse({
+          datasets: [adminDatasetOne, adminDatasetTwo, adminDatasetThree].map((dataset) => ({
+            ...dataset,
+            visibility: "public",
+          })),
+        });
       }
-      if (url.endsWith(`/datasets/${datasetOne.dataset_slug}`)) {
-        return jsonResponse(datasetOne);
-      }
-      if (url.endsWith(`/datasets/${datasetTwo.dataset_slug}`)) {
-        return jsonResponse(datasetTwo);
-      }
-      if (url.endsWith(`/datasets/${datasetThree.dataset_slug}`)) {
-        return jsonResponse(datasetThree);
-      }
-      return jsonResponse({}, 404);
+      return jsonResponse({ ...adminDatasetOne, visibility: "public" });
     });
     vi.stubGlobal("fetch", fetchMock);
 
     renderAdminPage();
 
     const selector = await screen.findByRole("button", { name: "Dataset" });
-    await waitFor(() => expect(selector).toHaveTextContent(`${datasetOne.title} -- ${datasetOne.dataset_slug}`));
+    await waitFor(() =>
+      expect(selector).toHaveTextContent(`${adminDatasetOne.title} -- ${adminDatasetOne.dataset_slug}`),
+    );
 
     fireEvent.click(selector);
     const filter = screen.getByLabelText("Filter datasets");
@@ -1136,36 +1236,89 @@ describe("DatasetAdminPage", () => {
     expect(filter).not.toHaveAttribute("aria-activedescendant");
 
     fireEvent.keyDown(filter, { key: "ArrowDown" });
-    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetOne.dataset_slug}`);
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${adminDatasetOne.dataset_slug}`);
 
     fireEvent.keyDown(filter, { key: "ArrowDown" });
-    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetTwo.dataset_slug}`);
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${adminDatasetTwo.dataset_slug}`);
 
     fireEvent.keyDown(filter, { key: "ArrowUp" });
-    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetOne.dataset_slug}`);
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${adminDatasetOne.dataset_slug}`);
 
     fireEvent.keyDown(filter, { key: "ArrowUp" });
-    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${datasetThree.dataset_slug}`);
-
-    const panel = screen.getByRole("region", { name: "Read-only Atlas values" });
-    await waitFor(() => {
-      expect(within(panel).getByText(datasetOne.dataset_slug)).toBeInTheDocument();
-    });
+    expect(filter).toHaveAttribute("aria-activedescendant", `dataset-admin-option-${adminDatasetThree.dataset_slug}`);
 
     fireEvent.keyDown(filter, { key: "Enter" });
 
-    await waitFor(() => {
-      expect(within(panel).getByText(datasetThree.dataset_slug)).toBeInTheDocument();
-    });
-    expect(screen.getByRole("heading", { name: `Dataset — ${datasetThree.title}` })).toBeInTheDocument();
-    expect(within(panel).getByText(datasetThree.title)).toBeInTheDocument();
-    // datasetThree's domain and its only tag are both literally "agriculture";
-    // same disambiguation as datasetOne/datasetTwo above.
-    expect(
-      within(panel)
-        .getAllByText(datasetThree.domain)
-        .find((el) => el.tagName === "P"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetThree.title}` })).toBeInTheDocument(),
+    );
     expect(screen.queryByRole("listbox", { name: "Available datasets" })).not.toBeInTheDocument();
+  });
+
+  it("recomposes the Public Content tab as a blank authoring form seeded only with the Dataset Detail title (Project Spec S0056)", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    // Wait for the Admin/Dashboard dataset listing to resolve -- Display
+    // title is seeded from that title, not typed by the operator, and not
+    // loaded from any draft/profile endpoint (Load draft is never clicked
+    // in this test). The seed itself lands one effect-flush after the
+    // listing resolves, so it is awaited separately from the header text.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+    });
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Telco Customer Churn"));
+
+    // Every other Public Content authoring field starts genuinely blank --
+    // none of them auto-fill from the dataset's technical context/summary
+    // fallback content, even though that data is already fetched and
+    // available (GET /datasets/{slug}/context, seeded above).
+    expect(screen.getByLabelText("Subtitle")).toHaveValue("");
+    expect(screen.getByLabelText("Problem summary title")).toHaveValue("");
+    expect(screen.getByLabelText("Problem summary body")).toHaveValue("");
+    expect(screen.getByLabelText("Source name")).toHaveValue("");
+    expect(screen.getByLabelText("Source URL")).toHaveValue("");
+    expect(screen.getByLabelText("Release date label")).toHaveValue("");
+    expect(screen.getByLabelText("Date format")).toHaveValue("");
+
+    // Required markers render inline beside each field's own label rather
+    // than on a separate row.
+    for (const label of [
+      "Display title",
+      "Subtitle",
+      "Problem summary title",
+      "Problem summary body",
+      "Source name",
+      "Source URL",
+      "Release date label",
+      "Date format",
+    ]) {
+      expect(screen.getByLabelText(label).closest("label")?.textContent).toContain("*");
+    }
+  });
+
+  it("renders Public Content character counters that reflect the correct schema/field-contract maximums and update live as the operator types", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+    });
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Telco Customer Churn"));
+
+    // "Telco Customer Churn" (the seeded Display title) is 20 characters.
+    expect(screen.getByText("20 / 80")).toBeInTheDocument();
+    expect(screen.getByText("0 / 120")).toBeInTheDocument();
+    expect(screen.getByText("0 / 60")).toBeInTheDocument();
+    expect(screen.getByText("0 / 300")).toBeInTheDocument();
+
+    const subtitleValue = "Predicao de churn";
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: subtitleValue } });
+    expect(screen.getByText(`${subtitleValue.length} / 120`)).toBeInTheDocument();
+    expect(screen.queryByText("0 / 120")).not.toBeInTheDocument();
+
+    const summaryBodyValue = "Explains churn.";
+    fireEvent.change(screen.getByLabelText("Problem summary body"), { target: { value: summaryBodyValue } });
+    expect(screen.getByText(`${summaryBodyValue.length} / 300`)).toBeInTheDocument();
   });
 });

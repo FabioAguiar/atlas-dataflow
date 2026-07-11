@@ -114,6 +114,31 @@ type DatasetState =
   | { status: "ready"; datasets: DatasetListing[] }
   | { status: "error"; message: string };
 
+// GET /admin/datasets's AdminListedDataset shape (registry/list.py, Project
+// Spec S0052): every registry-backed Dataset Detail regardless of public
+// "Visible Publicly" state or review status -- distinct from DatasetListing
+// above, which only ever reflects the public, already-filtered /datasets
+// listing. Used to power the header's Dataset Detail selector so Admin can
+// pick any registry-backed dataset, not only the ones already public.
+type AdminDatasetListing = {
+  dataset_slug: string;
+  title: string;
+  summary: string;
+  domain: string;
+  tags: string[];
+  active_release: string | null;
+  publication_status: string;
+};
+
+type AdminDatasetListingResponse = {
+  datasets: AdminDatasetListing[];
+};
+
+type AdminDatasetState =
+  | { status: "loading" }
+  | { status: "ready"; datasets: AdminDatasetListing[] }
+  | { status: "error"; message: string };
+
 type SectionState<T> =
   | { status: "idle" | "loading" }
   | { status: "ready"; data: T }
@@ -564,6 +589,41 @@ const textareaStyle: CSSProperties = {
   resize: "vertical",
 };
 
+const fieldStyleWithCounter: CSSProperties = {
+  ...fieldStyle,
+  position: "relative",
+};
+
+const fieldLabelRowStyle: CSSProperties = {
+  ...labelStyle,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--atlas-space-1)",
+};
+
+const requiredMarkerStyle: CSSProperties = {
+  color: "var(--atlas-color-danger)",
+};
+
+const counterPaddingStyle: CSSProperties = {
+  paddingRight: "3.75rem",
+};
+
+const fieldCounterStyle: CSSProperties = {
+  position: "absolute",
+  right: "var(--atlas-space-3)",
+  bottom: "var(--atlas-space-2)",
+  color: "var(--atlas-color-text-muted)",
+  fontSize: "var(--atlas-text-xs)",
+  fontWeight: 700,
+  pointerEvents: "none",
+};
+
+const narrowFieldRowStyle: CSSProperties = {
+  display: "grid",
+  maxWidth: "32rem",
+};
+
 const panelStyle: CSSProperties = {
   display: "grid",
   gap: "var(--atlas-space-3)",
@@ -578,12 +638,6 @@ const tabPanelStyle: CSSProperties = {
   ...panelStyle,
   minHeight: "24rem",
   alignContent: "start",
-};
-
-const sectionGridStyle: CSSProperties = {
-  display: "grid",
-  gap: "var(--atlas-space-4)",
-  gridTemplateColumns: "repeat(auto-fit, minmax(14rem, 1fr))",
 };
 
 const twoColumnGridStyle: CSSProperties = {
@@ -677,15 +731,6 @@ const dragGhostStyle: CSSProperties = {
   fontWeight: 800,
 };
 
-const tagListStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "var(--atlas-space-2)",
-  margin: 0,
-  padding: 0,
-  listStyle: "none",
-};
-
 const tagStyle: CSSProperties = {
   border: "1px solid var(--atlas-color-border)",
   borderRadius: "999px",
@@ -718,11 +763,17 @@ function TabWorkspace({ children, eyebrow, helper }: { children: ReactNode; eyeb
   );
 }
 
-function getDatasetLabel(dataset?: DatasetListing) {
+// Shared by both DatasetListing (the public /datasets listing) and
+// AdminDatasetListing (the Admin-only /admin/datasets listing) -- both
+// structurally satisfy this, and these two helpers only ever need the
+// slug/title pair for label/selector-value rendering.
+type DatasetLabelSource = { dataset_slug: string; title: string };
+
+function getDatasetLabel(dataset?: DatasetLabelSource) {
   return dataset?.title || dataset?.dataset_slug || "No dataset selected";
 }
 
-function getDatasetSelectorValue(dataset?: DatasetListing) {
+function getDatasetSelectorValue(dataset?: DatasetLabelSource) {
   if (!dataset) {
     return "";
   }
@@ -762,12 +813,26 @@ function publicationStatusTone(status: string): "success" | "warning" | "neutral
   }
 }
 
+// Distinct from publicationStatusVariant/Tone above, which classify the
+// *selected dataset's* in-session Publishing lifecycle (Draft, Unpublished
+// Changes, Hidden, ...). This classifies whether the currently selected
+// registry-backed Dataset Detail is actually reachable on the public site
+// right now, for the header's Dataset Detail selector -- a real per-dataset
+// fact, not a Publishing-tab session state.
+function registryVisibilityVariant(isPublic: boolean): "published" | "hidden" {
+  return isPublic ? "published" : "hidden";
+}
+
+function registryVisibilityTone(isPublic: boolean): "success" | "neutral" {
+  return isPublic ? "success" : "neutral";
+}
+
 type DatasetComboBoxProps = {
-  datasets: DatasetListing[];
+  datasets: AdminDatasetListing[];
   disabled: boolean;
   query: string;
-  selectedDataset?: DatasetListing;
-  stateStatus: DatasetState["status"];
+  selectedDataset?: AdminDatasetListing;
+  stateStatus: AdminDatasetState["status"];
   onNormalize: () => void;
   onQueryChange: (value: string) => void;
 };
@@ -807,7 +872,7 @@ function DatasetComboBox({
     onNormalize();
   }
 
-  function selectDataset(dataset: DatasetListing) {
+  function selectDataset(dataset: AdminDatasetListing) {
     onQueryChange(getDatasetSelectorValue(dataset));
     setOpen(false);
     setActiveSlug(null);
@@ -1111,37 +1176,56 @@ function TextField({
   value,
   onChange,
   multiline = false,
+  required = false,
+  maxLength,
+  type = "text",
+  rows,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   multiline?: boolean;
+  required?: boolean;
+  maxLength?: number;
+  type?: "text" | "url";
+  rows?: number;
 }) {
+  const hasCounter = typeof maxLength === "number";
   return (
-    <label style={fieldStyle}>
-      <span style={labelStyle}>{label}</span>
+    <label style={hasCounter ? fieldStyleWithCounter : fieldStyle}>
+      <span style={fieldLabelRowStyle}>
+        {label}
+        {required ? (
+          <span aria-hidden="true" style={requiredMarkerStyle}>
+            *
+          </span>
+        ) : null}
+      </span>
       {multiline ? (
-        <textarea onChange={(event) => onChange(event.target.value)} style={textareaStyle} value={value} />
+        <textarea
+          aria-label={label}
+          maxLength={maxLength}
+          onChange={(event) => onChange(event.target.value)}
+          rows={rows}
+          style={hasCounter ? { ...textareaStyle, ...counterPaddingStyle } : textareaStyle}
+          value={value}
+        />
       ) : (
-        <input onChange={(event) => onChange(event.target.value)} style={inputStyle} type="text" value={value} />
+        <input
+          aria-label={label}
+          maxLength={maxLength}
+          onChange={(event) => onChange(event.target.value)}
+          style={hasCounter ? { ...inputStyle, ...counterPaddingStyle } : inputStyle}
+          type={type}
+          value={value}
+        />
       )}
+      {hasCounter ? (
+        <small aria-hidden="true" style={fieldCounterStyle}>
+          {value.length} / {maxLength}
+        </small>
+      ) : null}
     </label>
-  );
-}
-
-function DatasetTags({ tags }: { tags: string[] }) {
-  if (tags.length === 0) {
-    return <p style={mutedTextStyle}>No tags available.</p>;
-  }
-
-  return (
-    <ul style={tagListStyle}>
-      {tags.map((tag) => (
-        <li key={tag} style={tagStyle}>
-          {tag}
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -1165,21 +1249,6 @@ function contractFields(contract: ContractPayload | null): ContractField[] {
   return contract?.features ?? [];
 }
 
-function extractModelCardText(modelCard: ModelCardPayload | null): string {
-  if (!modelCard?.content) {
-    return "";
-  }
-  try {
-    const parsed = JSON.parse(modelCard.content) as Record<string, unknown>;
-    const problemType = typeof parsed.problem_type === "string" ? parsed.problem_type : "";
-    const target = typeof parsed.prediction_target === "string" ? parsed.prediction_target : "";
-    const summary = typeof parsed.model_summary === "string" ? parsed.model_summary : "";
-    return [problemType, target, summary].filter(Boolean).join(" | ");
-  } catch {
-    return modelCard.content.slice(0, 220);
-  }
-}
-
 async function fetchJson<T>(path: string, signal: AbortSignal): Promise<SectionState<T>> {
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, { signal });
@@ -1194,46 +1263,6 @@ async function fetchJson<T>(path: string, signal: AbortSignal): Promise<SectionS
     }
     return { status: "unavailable", message: "Request failed. Check API reachability." };
   }
-}
-
-function ReadOnlyAtlasPanel({ readOnlyData }: { readOnlyData: ReadOnlyData }) {
-  const dataset = stateValue(readOnlyData.dataset);
-  const context = stateValue(readOnlyData.context);
-  const metrics = stateValue(readOnlyData.metrics);
-  const contract = stateValue(readOnlyData.contract);
-  const modelCard = stateValue(readOnlyData.modelCard);
-  const views = stateValue(readOnlyData.views) ?? [];
-  const fields = contractFields(contract);
-  const metricsList = metricKeys(metrics);
-
-  return (
-    <section aria-label="Read-only Atlas values" style={panelStyle}>
-      <div>
-        <h2 style={{ marginTop: 0 }}>Read-only Atlas context</h2>
-        <p style={mutedTextStyle}>
-          These values come from existing public endpoints and are not editable profile draft fields.
-        </p>
-      </div>
-      <div style={sectionGridStyle}>
-        <ReadOnlyField label="Dataset slug" value={dataset?.dataset_slug ?? ""} />
-        <ReadOnlyField label="Canonical title" value={context?.title || dataset?.title || ""} />
-        <ReadOnlyField label="Domain" value={context?.domain || dataset?.domain || ""} />
-        <ReadOnlyField label="Visibility" value={dataset?.visibility ?? ""} />
-        <ReadOnlyField label="Problem type" value={context?.problem_type ?? ""} />
-        <ReadOnlyField label="Prediction target" value={context?.prediction_target_description ?? ""} />
-      </div>
-      <div style={sectionGridStyle}>
-        <ReadOnlyField label="Contract fields" value={fields.length ? String(fields.length) : "Unavailable"} />
-        <ReadOnlyField label="Metric keys" value={metricsList.length ? metricsList.join(", ") : "Unavailable"} />
-        <ReadOnlyField label="Predict views" value={views.length ? views.map((view) => view.view_id).join(", ") : "Unavailable"} />
-      </div>
-      <ReadOnlyField label="Model card" value={extractModelCardText(modelCard) || "Unavailable"} />
-      <div>
-        <span style={labelStyle}>Tags</span>
-        <DatasetTags tags={context?.tags ?? dataset?.tags ?? []} />
-      </div>
-    </section>
-  );
 }
 
 function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
@@ -1317,14 +1346,37 @@ function PublicContentTab({
             <p>Title, summary, and public explanation shown on Home and Dataset Detail.</p>
           </div>
           <div className="dataset-admin-form-grid">
-            <TextField label="Display title" onChange={(value) => setField("display_title", value)} value={form.display_title} />
-            <TextField label="Subtitle" onChange={(value) => setField("display_subtitle", value)} value={form.display_subtitle} />
-            <TextField label="Problem summary title" onChange={(value) => setField("problem_summary_title", value)} value={form.problem_summary_title} />
+            <TextField
+              label="Display title"
+              maxLength={80}
+              onChange={(value) => setField("display_title", value)}
+              required
+              value={form.display_title}
+            />
+            <TextField
+              label="Subtitle"
+              maxLength={120}
+              onChange={(value) => setField("display_subtitle", value)}
+              required
+              value={form.display_subtitle}
+            />
+          </div>
+          <div style={narrowFieldRowStyle}>
+            <TextField
+              label="Problem summary title"
+              maxLength={60}
+              onChange={(value) => setField("problem_summary_title", value)}
+              required
+              value={form.problem_summary_title}
+            />
           </div>
           <TextField
             label="Problem summary body"
+            maxLength={300}
             multiline
             onChange={(value) => setField("problem_summary_body", value)}
+            required
+            rows={5}
             value={form.problem_summary_body}
           />
         </Card>
@@ -1335,23 +1387,42 @@ function PublicContentTab({
             <p>Public provenance labels without changing Atlas technical metadata.</p>
           </div>
           <div className="dataset-admin-form-grid">
-            <TextField label="Source name" onChange={(value) => setField("source_name", value)} value={form.source_name} />
-            <TextField label="Source URL" onChange={(value) => setField("source_url", value)} value={form.source_url} />
-            <TextField label="Release date label" onChange={(value) => setField("release_date_label", value)} value={form.release_date_label} />
+            <TextField label="Source name" onChange={(value) => setField("source_name", value)} required value={form.source_name} />
+            <TextField
+              label="Source URL"
+              onChange={(value) => setField("source_url", value)}
+              required
+              type="url"
+              value={form.source_url}
+            />
+            <TextField
+              label="Release date label"
+              onChange={(value) => setField("release_date_label", value)}
+              required
+              value={form.release_date_label}
+            />
+            <label style={fieldStyle}>
+              <span style={fieldLabelRowStyle}>
+                Date format
+                <span aria-hidden="true" style={requiredMarkerStyle}>
+                  *
+                </span>
+              </span>
+              <select
+                aria-label="Date format"
+                id="date-format"
+                onChange={(event) => setField("date_format", event.target.value as DraftForm["date_format"])}
+                style={inputStyle}
+                value={form.date_format}
+              >
+                <option value="">No curated format</option>
+                <option value="dd/mm/yyyy">dd/mm/yyyy</option>
+                <option value="mm/dd/yyyy">mm/dd/yyyy</option>
+                <option value="yyyy-mm-dd">yyyy-mm-dd</option>
+              </select>
+              <small style={mutedTextStyle}>Controls public date label rendering only.</small>
+            </label>
           </div>
-          <FormRow helpText="Controls public date label rendering only." htmlFor="date-format" label="Date format">
-            <select
-              id="date-format"
-              onChange={(event) => setField("date_format", event.target.value as DraftForm["date_format"])}
-              style={inputStyle}
-              value={form.date_format}
-            >
-              <option value="">No curated format</option>
-              <option value="dd/mm/yyyy">dd/mm/yyyy</option>
-              <option value="mm/dd/yyyy">mm/dd/yyyy</option>
-              <option value="yyyy-mm-dd">yyyy-mm-dd</option>
-            </select>
-          </FormRow>
           <label className="dataset-admin-toggle-row">
             <span className="dataset-admin-toggle-row__copy">
               <span>Canonical fallback</span>
@@ -2618,6 +2689,7 @@ function renderSelectedTab(
 
 export default function DatasetAdminPage() {
   const [state, setState] = useState<DatasetState>({ status: "loading" });
+  const [adminDatasetsState, setAdminDatasetsState] = useState<AdminDatasetState>({ status: "loading" });
   const [selectedSlug, setSelectedSlug] = useState("");
   const [datasetQuery, setDatasetQuery] = useState("");
   const [selectedTab, setSelectedTab] = useState(adminTabs[0].id);
@@ -2668,6 +2740,47 @@ export default function DatasetAdminPage() {
     return () => controller.abort();
   }, []);
 
+  // GET /admin/datasets (registry/list.py's list_admin_datasets, Project Spec
+  // S0052): every registry-backed Dataset Detail Admin can see, including
+  // drafts never publicly listed above. Powers the header Dataset Detail
+  // selector so an operator can pick any registry-backed dataset, not only
+  // ones already public; kept independent from the public listing effect
+  // above so the rest of the page's data-loading (Live Preview projection,
+  // Public Content tab) keeps relying on the real public DatasetListing shape
+  // unchanged.
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/admin/datasets`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) {
+          setAdminDatasetsState({ status: "error", message: "Admin dataset listing unavailable." });
+          return null;
+        }
+
+        return res.json() as Promise<AdminDatasetListingResponse>;
+      })
+      .then((data) => {
+        if (!data) {
+          return;
+        }
+
+        if (!Array.isArray(data.datasets)) {
+          setAdminDatasetsState({ status: "error", message: "Admin dataset listing returned an unexpected shape." });
+          return;
+        }
+
+        setAdminDatasetsState({ status: "ready", datasets: data.datasets });
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setAdminDatasetsState({ status: "error", message: "Admin dataset listing could not be loaded." });
+        }
+      });
+
+    return () => controller.abort();
+  }, []);
+
   useEffect(() => {
     if (!selectedSlug) {
       setReadOnlyData(emptyReadOnlyData);
@@ -2681,7 +2794,7 @@ export default function DatasetAdminPage() {
     setDraftForm((current) => ({ ...emptyDraftForm(selectedSlug), schema_version: current.schema_version || "1.0.0" }));
     setDraftState({
       status: "idle",
-      message: "Load the private/admin draft before saving profile edits.",
+      message: "No draft loaded for this dataset yet.",
     });
     setCustomizationEditorState(emptyCustomizationEditorState);
     setPublicationState(emptyPublicationState);
@@ -2731,8 +2844,43 @@ export default function DatasetAdminPage() {
     () => datasets.find((dataset) => dataset.dataset_slug === selectedSlug),
     [datasets, selectedSlug],
   );
+  const adminDatasets = adminDatasetsState.status === "ready" ? adminDatasetsState.datasets : [];
+  const selectedAdminDataset = useMemo(
+    () => adminDatasets.find((dataset) => dataset.dataset_slug === selectedSlug),
+    [adminDatasets, selectedSlug],
+  );
+  // A Dataset Detail is genuinely public only when it is both reviewed
+  // ("ready", not "needs_review") and Visible Publicly -- exactly the two
+  // gates GET /datasets composes server-side (resolve_dataset_visibility +
+  // is_dataset_needs_review, api/main.py's list_datasets_endpoint). Rather
+  // than duplicating that boundary client-side, a dataset is treated as
+  // publicly reachable here iff its slug is present in the already-fetched
+  // public listing -- the same source of truth the public site itself uses.
+  const publicDatasetSlugsKnown = state.status === "ready";
+  const selectedDatasetIsPublic = Boolean(selectedSlug) && datasets.some((dataset) => dataset.dataset_slug === selectedSlug);
+  const registryVisibilityLabel = !selectedSlug
+    ? "No dataset selected"
+    : !publicDatasetSlugsKnown
+    ? "Checking..."
+    : selectedDatasetIsPublic
+    ? "Published"
+    : "Private";
   const currentProfile = selectedSlug ? profileFromForm(draftForm, selectedSlug) : null;
   const lastBackendDraft = backendDraftProfile(draftState);
+  const hasBackendDraftProfile = Boolean(lastBackendDraft);
+  // Dataset Detail title shown in Admin/Dashboard (registry/list.py's
+  // AdminListedDataset, falling back to the public DatasetListing title if
+  // the admin listing hasn't resolved yet) -- Project Spec S0056 requires
+  // seeding Display title from this value while the Public Content tab is
+  // still in its blank authoring state (no real backend draft profile
+  // tracked yet), without auto-filling any other public-content field.
+  const canonicalDisplayTitle = selectedAdminDataset?.title || selectedDataset?.title || "";
+  useEffect(() => {
+    if (!selectedSlug || !canonicalDisplayTitle || hasBackendDraftProfile) {
+      return;
+    }
+    setDraftForm((current) => (current.display_title ? current : { ...current, display_title: canonicalDisplayTitle }));
+  }, [selectedSlug, canonicalDisplayTitle, hasBackendDraftProfile, draftState.status]);
   const hasUnsavedDraftChanges = Boolean(currentProfile && lastBackendDraft && !sameProfile(currentProfile, lastBackendDraft));
   const publishedProfile = publicationState.publishedProfile;
   const hasPublishedSnapshot = Boolean(publishedProfile);
@@ -2747,7 +2895,7 @@ export default function DatasetAdminPage() {
 
   function selectDatasetFromQuery(value: string) {
     setDatasetQuery(value);
-    const match = datasets.find(
+    const match = adminDatasets.find(
       (dataset) => dataset.dataset_slug === value || getDatasetSelectorValue(dataset).toLowerCase() === value.trim().toLowerCase(),
     );
     if (match && match.dataset_slug !== selectedSlug) {
@@ -2756,7 +2904,7 @@ export default function DatasetAdminPage() {
   }
 
   function normalizeDatasetQuery() {
-    setDatasetQuery(getDatasetSelectorValue(selectedDataset));
+    setDatasetQuery(getDatasetSelectorValue(selectedAdminDataset));
   }
 
   function setField<K extends keyof DraftForm>(key: K, value: DraftForm[K]) {
@@ -3119,7 +3267,7 @@ export default function DatasetAdminPage() {
     <section aria-labelledby="dataset-admin-title" className="dataset-admin-page" style={pageStyle}>
       <header style={headerStyle}>
         <div>
-          <h1 id="dataset-admin-title">Dataset — {getDatasetLabel(selectedDataset)}</h1>
+          <h1 id="dataset-admin-title">Dataset — {getDatasetLabel(selectedAdminDataset)}</h1>
           <p className="summary">
             Curate the selected dataset's public presentation profile while Atlas technical values stay read-only.
           </p>
@@ -3127,14 +3275,22 @@ export default function DatasetAdminPage() {
 
         <div className="dataset-admin-header-actions">
           <DatasetComboBox
-            datasets={datasets}
-            disabled={state.status !== "ready" || datasets.length === 0}
+            datasets={adminDatasets}
+            disabled={adminDatasetsState.status !== "ready" || adminDatasets.length === 0}
             onNormalize={normalizeDatasetQuery}
             onQueryChange={selectDatasetFromQuery}
             query={datasetQuery}
-            selectedDataset={selectedDataset}
-            stateStatus={state.status}
+            selectedDataset={selectedAdminDataset}
+            stateStatus={adminDatasetsState.status}
           />
+          <StatusPill
+            aria-label="Dataset Detail visibility"
+            className="dataset-admin-registry-visibility-pill"
+            tone={registryVisibilityTone(selectedDatasetIsPublic)}
+            variant={registryVisibilityVariant(selectedDatasetIsPublic)}
+          >
+            {registryVisibilityLabel}
+          </StatusPill>
           <StatusPill
             aria-label="Publication status"
             className="dataset-admin-status-pill"
@@ -3143,6 +3299,15 @@ export default function DatasetAdminPage() {
           >
             {headerPublicationStatus}
           </StatusPill>
+          <button
+            aria-label="Open public Dataset Detail page"
+            disabled={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic}
+            onClick={() => window.open(`/dataset/${encodeURIComponent(selectedSlug)}`, "_blank", "noopener,noreferrer")}
+            style={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic ? disabledButtonStyle : secondaryButtonStyle}
+            type="button"
+          >
+            Open public page
+          </button>
 
           <button
             disabled={!selectedSlug || draftState.status === "loading"}
@@ -3162,21 +3327,15 @@ export default function DatasetAdminPage() {
         </article>
       )}
 
-      <ReadOnlyAtlasPanel readOnlyData={readOnlyData} />
+      {adminDatasetsState.status === "error" && (
+        <article role="status" style={alertStyle}>
+          <strong>Admin dataset listing unavailable</strong>
+          <p style={mutedTextStyle}>{adminDatasetsState.message}</p>
+        </article>
+      )}
 
       <section aria-label="Dataset profile workspace" style={panelStyle}>
         <DraftStatusPanel draftState={draftState} />
-        <div style={buttonRowStyle}>
-          <button
-            disabled={!selectedSlug || draftState.status === "loading"}
-            onClick={saveDraft}
-            style={!selectedSlug || draftState.status === "loading" ? disabledButtonStyle : actionButtonStyle}
-            type="button"
-          >
-            Save draft
-          </button>
-          <span style={mutedTextStyle}>Saves only the schema-backed draft; publishing controls are in the Publishing tab.</span>
-        </div>
         <Tabs ariaLabel="Dataset admin tabs" items={adminTabs} onSelect={setSelectedTab} selectedId={selectedTab} />
         <div
           aria-label={`${adminTabs.find((tab) => tab.id === selectedTab)?.label ?? "Selected"} tab panel`}

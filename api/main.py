@@ -218,7 +218,7 @@ PREDICT_VIEW_CUSTOMIZATION_INVALID = PublicError(
     error_code="PREDICT_VIEW_CUSTOMIZATION_INVALID",
     message="The predict view customization failed validation.",
 )
-from registry.list import list_datasets  # noqa: E402
+from registry.list import list_datasets, list_admin_datasets, is_dataset_needs_review  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
     RegistryInvalidError,
@@ -356,7 +356,11 @@ def list_datasets_endpoint():
         datasets = list_datasets()
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
-    visible_datasets = [d for d in datasets if resolve_dataset_visibility(d.dataset_slug)]
+    visible_datasets = [
+        d
+        for d in datasets
+        if resolve_dataset_visibility(d.dataset_slug) and not is_dataset_needs_review(d.dataset_slug)
+    ]
     return {
         "datasets": [
             {**d._asdict(), "problem_type": _resolve_problem_type(d.dataset_slug)}
@@ -375,7 +379,7 @@ def get_dataset(dataset_slug: str):
         return public_error_response(RELEASE_UNAVAILABLE)
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
-    if not resolve_dataset_visibility(dataset_slug):
+    if not resolve_dataset_visibility(dataset_slug) or is_dataset_needs_review(dataset_slug):
         return public_error_response(DATASET_NOT_FOUND)
     try:
         all_listed = list_datasets()
@@ -708,6 +712,23 @@ def put_admin_settings_route(request: Request, settings: dict = Body(...)):
         return ADMIN_SETTINGS_INVALID.response(errors=result["errors"])
 
     return result
+
+
+@app.get("/admin/datasets")
+def list_admin_datasets_route(request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    # Project Spec S0052: Admin-only projection that includes both draft and
+    # published registry-backed Dataset Details, regardless of public
+    # "Visible Publicly" state -- distinct from GET /datasets above, which
+    # only ever returns published, publicly visible Dataset Details.
+    try:
+        datasets = list_admin_datasets()
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    return {"datasets": [dataset._asdict() for dataset in datasets]}
 
 
 @app.delete("/admin/datasets/{dataset_slug}")

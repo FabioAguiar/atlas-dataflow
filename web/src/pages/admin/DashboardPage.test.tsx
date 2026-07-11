@@ -591,6 +591,7 @@ describe("DashboardPage", () => {
                 dataset_slug: "synthetic-retail-forecast",
                 title: "Synthetic Retail Forecast",
                 display_title: "Synthetic Retail Forecast",
+                publication_status: "ready",
               },
             ],
           });
@@ -1327,11 +1328,13 @@ describe("DashboardPage", () => {
               dataset_slug: "synthetic-retail-forecast",
               title: "Synthetic Retail Forecast",
               display_title: "Synthetic Retail Forecast",
+              publication_status: "ready",
             },
             {
               dataset_slug: "synthetic-energy-usage",
               title: "Synthetic Energy Usage",
               display_title: null,
+              publication_status: "ready",
             },
           ],
         }),
@@ -1350,6 +1353,50 @@ describe("DashboardPage", () => {
       expect(
         within(datasetTable).getByRole("textbox", { name: "Synthetic Energy Usage display name" }),
       ).toBeInTheDocument();
+    });
+
+    it("shows Needs review (yellow) and Ready (green) status labels and derives the Published/Draft counts from them (Project Spec S0052)", async () => {
+      installRunsAndRegistryFetchMock(
+        jsonResponse({
+          datasets: [
+            {
+              dataset_slug: "synthetic-retail-forecast",
+              title: "Synthetic Retail Forecast",
+              display_title: "Synthetic Retail Forecast",
+              publication_status: "ready",
+            },
+            {
+              dataset_slug: "synthetic-energy-usage",
+              title: "Synthetic Energy Usage",
+              display_title: null,
+              publication_status: "needs_review",
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+      await loadRuns();
+
+      expect(await screen.findByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "1");
+      expect(await screen.findByLabelText("Draft datasets")).toHaveAttribute("data-summary-count", "1");
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      const readyRow = within(datasetTable)
+        .getByRole("textbox", { name: "Synthetic Retail Forecast display name" })
+        .closest('[data-dataset-publication-status]');
+      const draftRow = within(datasetTable)
+        .getByRole("textbox", { name: "Synthetic Energy Usage display name" })
+        .closest('[data-dataset-publication-status]');
+
+      expect(readyRow).toHaveAttribute("data-dataset-publication-status", "ready");
+      expect(draftRow).toHaveAttribute("data-dataset-publication-status", "needs_review");
+
+      const readyPill = within(readyRow as HTMLElement).getByText("Ready");
+      const draftPill = within(draftRow as HTMLElement).getByText("Needs review");
+      expect(readyPill).toHaveClass("atlas-status-pill--success");
+      expect(draftPill).toHaveClass("atlas-status-pill--warning");
+      // Distinct status treatments: Ready and Needs review must never share a tone class.
+      expect(readyPill.className).not.toBe(draftPill.className);
     });
 
     it("shows a non-blocking reduced state and keeps promotion feedback and run actions working when the dataset listing is unavailable", async () => {
@@ -1381,9 +1428,9 @@ describe("DashboardPage", () => {
 
   describe("Dataset Detail safe removal lifecycle (Project Spec S0049)", () => {
     function installDatasetRemovalFetchMock(options: {
-      initialDatasets: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+      initialDatasets: Array<{ dataset_slug: string; title: string; display_title?: string | null; publication_status: "needs_review" | "ready" }>;
       deleteResponse: MockResponse;
-      datasetsAfterRemoval?: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+      datasetsAfterRemoval?: Array<{ dataset_slug: string; title: string; display_title?: string | null; publication_status: "needs_review" | "ready" }>;
     }) {
       let datasets = options.initialDatasets;
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1457,7 +1504,7 @@ describe("DashboardPage", () => {
     it("enables Remove for a registry-backed Dataset Detail row", async () => {
       installDatasetRemovalFetchMock({
         initialDatasets: [
-          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast", publication_status: "ready" },
         ],
         deleteResponse: jsonResponse({}),
       });
@@ -1471,7 +1518,7 @@ describe("DashboardPage", () => {
     it("uses copy that distinguishes Dataset Detail removal from run removal and requires explicit confirmation", async () => {
       installDatasetRemovalFetchMock({
         initialDatasets: [
-          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast", publication_status: "ready" },
         ],
         deleteResponse: jsonResponse({}),
       });
@@ -1491,7 +1538,7 @@ describe("DashboardPage", () => {
     it("calls the owned Dataset Detail removal route only after confirmation and refreshes the registry listing afterward", async () => {
       const fetchMock = installDatasetRemovalFetchMock({
         initialDatasets: [
-          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast", publication_status: "ready" },
         ],
         deleteResponse: jsonResponse({
           dataset_slug: "synthetic-retail-forecast",
@@ -1535,7 +1582,7 @@ describe("DashboardPage", () => {
     it("shows an accessible error and keeps the confirmation open when Dataset Detail removal fails", async () => {
       installDatasetRemovalFetchMock({
         initialDatasets: [
-          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast" },
+          { dataset_slug: "synthetic-retail-forecast", title: "Synthetic Retail Forecast", display_title: "Synthetic Retail Forecast", publication_status: "ready" },
         ],
         deleteResponse: jsonResponse({ error_code: "ADMIN_DATASET_DETAIL_REMOVAL_FAILED", errors: [] }, 422),
       });
@@ -1556,9 +1603,9 @@ describe("DashboardPage", () => {
 
   describe("Dataset Detail slug editing and validation lifecycle (Project Spec S0051)", () => {
     function installDatasetSlugFetchMock(options: {
-      initialDatasets: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+      initialDatasets: Array<{ dataset_slug: string; title: string; display_title?: string | null; publication_status: "needs_review" | "ready" }>;
       putResponse: MockResponse;
-      datasetsAfterSave?: Array<{ dataset_slug: string; title: string; display_title?: string | null }>;
+      datasetsAfterSave?: Array<{ dataset_slug: string; title: string; display_title?: string | null; publication_status: "needs_review" | "ready" }>;
     }) {
       let datasets = options.initialDatasets;
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1595,8 +1642,8 @@ describe("DashboardPage", () => {
       return fetchMock;
     }
 
-    const TELCO_DATASET = { dataset_slug: "telco-customer-churn", title: "Telco Customer Churn", display_title: "Telco Customer Churn" };
-    const BANK_DATASET = { dataset_slug: "bank-marketing", title: "Bank Marketing", display_title: "Bank Marketing" };
+    const TELCO_DATASET = { dataset_slug: "telco-customer-churn", title: "Telco Customer Churn", display_title: "Telco Customer Churn", publication_status: "ready" as const };
+    const BANK_DATASET = { dataset_slug: "bank-marketing", title: "Bank Marketing", display_title: "Bank Marketing", publication_status: "ready" as const };
 
     function rowFor(input: HTMLElement) {
       return within(input.closest('[role="row"]') as HTMLElement);
@@ -1720,7 +1767,7 @@ describe("DashboardPage", () => {
           errors: [],
         }),
         datasetsAfterSave: [
-          { dataset_slug: "telco-churn-renamed", title: "Telco Customer Churn", display_title: "Telco Customer Churn" },
+          { dataset_slug: "telco-churn-renamed", title: "Telco Customer Churn", display_title: "Telco Customer Churn", publication_status: "ready" as const },
         ],
       });
       render(<DashboardPage />);

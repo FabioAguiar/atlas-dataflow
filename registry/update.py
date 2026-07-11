@@ -282,10 +282,19 @@ def _append_dataset_entry(registry: dict, dataset_slug: str, release_dir: Path) 
     if not isinstance(datasets, list):
         raise RuntimeError("Registry is missing required list field 'datasets'.")
 
+    # Project Spec S0052: a brand-new Dataset Detail created through Admin
+    # run promotion defaults to draft/needs_review rather than being treated
+    # as published -- review_status lives as a top-level entry field (never
+    # inside public_metadata, which registry/validate.py's
+    # UNSAFE_METADATA_FIELDS check rejects extra keys on) and is read by
+    # registry/list.py's is_dataset_needs_review()/list_admin_datasets(). An
+    # entry that already exists (the update path in run(), not this
+    # creation path) never has its review_status touched here.
     new_entry = {
         "dataset_slug": dataset_slug,
         "active_release": None,
         "public_metadata": _derive_public_metadata(dataset_slug, release_dir),
+        "review_status": "needs_review",
     }
     datasets.append(new_entry)
     return new_entry

@@ -39,13 +39,19 @@ type AdminRunsResponse = {
   runs: AdminRunSummary[];
 };
 
+type PublicationStatus = "needs_review" | "ready";
+
 type DatasetDetailRow = {
   displayName: string;
   slug: string;
-  visibilityStatus: "unavailable";
+  // Project Spec S0052: the Admin-owned draft/published projection for this
+  // row -- "unavailable" only for a run-derived placeholder row shown while
+  // the Admin dataset listing itself is unavailable, never a real
+  // publication state.
+  publicationStatus: PublicationStatus | "unavailable";
   lastUpdated: string | null;
   // Project Spec S0049: true only when this row was sourced from the real
-  // dataset registry listing (GET /datasets), never for a run-derived
+  // dataset registry listing (GET /admin/datasets), never for a run-derived
   // placeholder row shown while the registry listing is unavailable --
   // removal must only ever be offered for a row backed by a real
   // registry/datasets.json entry.
@@ -130,6 +136,7 @@ type DatasetRegistryEntry = {
   dataset_slug: string;
   title: string;
   display_title?: string | null;
+  publication_status: PublicationStatus;
 };
 
 type DatasetRegistryResponse = {
@@ -524,7 +531,8 @@ function isDatasetRegistryEntry(value: unknown): value is DatasetRegistryEntry {
     typeof record.dataset_slug === "string" &&
     record.dataset_slug.length > 0 &&
     typeof record.title === "string" &&
-    (record.display_title === undefined || record.display_title === null || typeof record.display_title === "string")
+    (record.display_title === undefined || record.display_title === null || typeof record.display_title === "string") &&
+    (record.publication_status === "needs_review" || record.publication_status === "ready")
   );
 }
 
@@ -686,7 +694,7 @@ function buildRunDerivedDatasetDetailRows(runs: AdminRunSummary[]): Map<string, 
     rows.set(run.dataset_candidate, {
       displayName: datasetDisplayName(run.dataset_candidate),
       slug: run.dataset_candidate,
-      visibilityStatus: "unavailable",
+      publicationStatus: "unavailable",
       lastUpdated: nextLastUpdated ?? null,
       isRegistryBacked: false,
     });
@@ -706,7 +714,7 @@ function buildDatasetDetailRows(
       .map((dataset) => ({
         displayName: dataset.display_title?.trim() || dataset.title.trim() || datasetDisplayName(dataset.dataset_slug),
         slug: dataset.dataset_slug,
-        visibilityStatus: "unavailable" as const,
+        publicationStatus: dataset.publication_status,
         lastUpdated: runDerivedRows.get(dataset.dataset_slug)?.lastUpdated ?? null,
         isRegistryBacked: true,
       }))
@@ -731,7 +739,7 @@ function datasetMatchesQuery(row: DatasetDetailRow, query: string): boolean {
   return (
     normalizeSearchText(row.displayName).includes(query) ||
     normalizeSearchText(row.slug).includes(query) ||
-    normalizeSearchText(row.visibilityStatus).includes(query)
+    normalizeSearchText(row.publicationStatus).includes(query)
   );
 }
 
@@ -775,8 +783,15 @@ export default function DashboardPage() {
       // Runs card, promoted or not -- not just runs with status "available".
       runsAvailable: runs.length,
       promotedRuns: runs.filter((run) => run.status === "promoted").length,
-      publishedDatasets: registryDatasets ? registryDatasets.length : 0,
-      draftDatasets: 0,
+      // Project Spec S0052: derived from the Admin-projected publication
+      // status (Ready / Needs review) rather than from registry membership
+      // alone -- a registry-backed Dataset Detail can be either.
+      publishedDatasets: registryDatasets
+        ? registryDatasets.filter((dataset) => dataset.publication_status === "ready").length
+        : 0,
+      draftDatasets: registryDatasets
+        ? registryDatasets.filter((dataset) => dataset.publication_status === "needs_review").length
+        : 0,
     }),
     [runs, registryDatasets],
   );
@@ -804,7 +819,11 @@ export default function DashboardPage() {
   function loadDatasetRegistry() {
     setDatasetRegistryState((previous) => (previous.status === "ready" ? previous : { status: "loading" }));
 
-    fetch(`${apiBaseUrl}/datasets`)
+    // Project Spec S0052: the Admin Dashboard uses the private Admin
+    // projection (draft and published Dataset Details alike) instead of the
+    // public GET /datasets route, which only ever returns published,
+    // publicly visible Dataset Details.
+    fetch(`${apiBaseUrl}/admin/datasets`)
       .then((res) => {
         if (!res.ok) {
           setDatasetRegistryState({ status: "unavailable" });
@@ -1204,13 +1223,25 @@ export default function DashboardPage() {
                   : "Registry listing unavailable"}
               </span>
             </Card>
-            <Card aria-label="Draft datasets" data-summary-count={counters.draftDatasets}>
+            <Card
+              aria-label="Draft datasets"
+              data-registry-status={datasetRegistryState.status}
+              data-summary-count={counters.draftDatasets}
+            >
               <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--amber">
                 <DraftDatasetsIcon />
               </span>
-              <StatusPill tone="warning">Unavailable</StatusPill>
+              {datasetRegistryState.status === "ready" ? (
+                <StatusPill tone="warning">Needs review</StatusPill>
+              ) : (
+                <StatusPill tone="warning">Unavailable</StatusPill>
+              )}
               <strong style={counterValueStyle}>{counters.draftDatasets}</strong>
-              <span style={mutedTextStyle}>Draft source not owned</span>
+              <span style={mutedTextStyle}>
+                {datasetRegistryState.status === "ready"
+                  ? "From the safe dataset registry listing"
+                  : "Registry listing unavailable"}
+              </span>
             </Card>
           </div>
 
@@ -1299,7 +1330,7 @@ export default function DashboardPage() {
                             )
                           }
                         >
-                          <div data-dataset-visibility={row.visibilityStatus} style={datasetRowContentStyle}>
+                          <div data-dataset-publication-status={row.publicationStatus} style={datasetRowContentStyle}>
                             <input
                               aria-label={`${row.displayName} display name`}
                               defaultValue={row.displayName}
@@ -1317,7 +1348,13 @@ export default function DashboardPage() {
                               type="text"
                               value={editedSlug}
                             />
-                            <StatusPill tone="warning">Unavailable</StatusPill>
+                            {row.publicationStatus === "ready" ? (
+                              <StatusPill tone="success">Ready</StatusPill>
+                            ) : row.publicationStatus === "needs_review" ? (
+                              <StatusPill tone="warning">Needs review</StatusPill>
+                            ) : (
+                              <StatusPill tone="warning">Unavailable</StatusPill>
+                            )}
                             <span>{formatCreatedAt(row.lastUpdated)}</span>
                             <span style={stackedActionGroupStyle}>
                               <Button

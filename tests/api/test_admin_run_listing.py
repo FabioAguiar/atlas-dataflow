@@ -2484,6 +2484,232 @@ def test_admin_dataset_slug_route_registered():
 
 
 # ---------------------------------------------------------------------------
+# list_admin_datasets / GET /admin/datasets / promotion draft default
+# (Project Spec S0052)
+# ---------------------------------------------------------------------------
+
+_DRAFT_PROMOTED_ENTRY = {
+    "dataset_slug": "fresh-promoted-dataset",
+    "active_release": "release-20260710t101438z",
+    "public_metadata": {
+        "title": "Fresh Promoted Dataset",
+        "summary": "Just promoted.",
+        "domain": "general",
+        "visibility": "public",
+        "tags": [],
+    },
+    "review_status": "needs_review",
+}
+
+_LEGACY_SEEDED_ENTRY = {
+    "dataset_slug": "legacy-seeded-dataset",
+    "active_release": "release-20260601-001",
+    "public_metadata": {
+        "title": "Legacy Seeded Dataset",
+        "summary": "Seeded before this issue, no review_status field.",
+        "domain": "general",
+        "visibility": "public",
+        "tags": [],
+    },
+}
+
+_EXPLICITLY_READY_ENTRY = {
+    "dataset_slug": "explicitly-ready-dataset",
+    "active_release": "release-20260601-002",
+    "public_metadata": {
+        "title": "Explicitly Ready Dataset",
+        "summary": "Already reviewed and marked ready.",
+        "domain": "general",
+        "visibility": "public",
+        "tags": [],
+    },
+    "review_status": "ready",
+}
+
+
+def test_list_admin_datasets_includes_both_draft_and_published_entries(tmp_path):
+    registry_path = tmp_path / "datasets.json"
+    _write_json(
+        registry_path,
+        {
+            "schema_version": "atlas.dataflow.registry.v1",
+            "conventions": {
+                "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                "active_release": {"description": "x"},
+            },
+            "datasets": [_DRAFT_PROMOTED_ENTRY, _LEGACY_SEEDED_ENTRY, _EXPLICITLY_READY_ENTRY],
+        },
+    )
+
+    from registry.list import list_admin_datasets
+
+    result = list_admin_datasets(registry_path=registry_path)
+    by_slug = {entry.dataset_slug: entry for entry in result}
+
+    assert len(result) == 3
+    assert by_slug["fresh-promoted-dataset"].publication_status == "needs_review"
+    # No review_status field at all (every dataset seeded before this issue)
+    # defaults to "ready", preserving existing public listing behavior.
+    assert by_slug["legacy-seeded-dataset"].publication_status == "ready"
+    assert by_slug["explicitly-ready-dataset"].publication_status == "ready"
+
+
+def test_is_dataset_needs_review_reflects_registry_entry_state(tmp_path):
+    registry_path = tmp_path / "datasets.json"
+    _write_json(
+        registry_path,
+        {
+            "schema_version": "atlas.dataflow.registry.v1",
+            "conventions": {
+                "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                "active_release": {"description": "x"},
+            },
+            "datasets": [_DRAFT_PROMOTED_ENTRY, _LEGACY_SEEDED_ENTRY],
+        },
+    )
+
+    from registry.list import is_dataset_needs_review
+
+    assert is_dataset_needs_review("fresh-promoted-dataset", registry_path=registry_path) is True
+    assert is_dataset_needs_review("legacy-seeded-dataset", registry_path=registry_path) is False
+    # A dataset_slug absent from the registry entirely is not "needs_review"
+    # -- not-found handling is the caller's own responsibility.
+    assert is_dataset_needs_review("does-not-exist", registry_path=registry_path) is False
+
+
+def test_promote_admin_run_new_dataset_detail_defaults_to_needs_review(tmp_path):
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "promote-draft-default", "draft-default-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-draft-default")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is True
+
+    registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+    entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "draft-default-dataset")
+    assert entry["review_status"] == "needs_review"
+
+    from registry.list import is_dataset_needs_review
+
+    assert is_dataset_needs_review(
+        "draft-default-dataset", registry_path=repo_root / "registry" / "datasets.json"
+    ) is True
+
+
+def test_promote_admin_run_updating_existing_entry_never_touches_its_review_status(tmp_path):
+    # An update to an already-existing entry (MODE_UPDATE_EXISTING_OR_CREATE
+    # against a colliding base dataset_slug) must never retroactively mark
+    # that pre-existing entry as needs_review -- only brand-new entry
+    # creation defaults to draft.
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    existing_entry = {
+        "dataset_slug": "already-ready-dataset",
+        "active_release": "release-20260601-001",
+        "public_metadata": {
+            "title": "Already Ready Dataset",
+            "summary": "Already published.",
+            "domain": "general",
+            "visibility": "public",
+            "tags": [],
+        },
+        "review_status": "ready",
+    }
+    _write_promotable_run(
+        root,
+        repo_root,
+        "promote-update-keeps-ready",
+        "already-ready-dataset",
+        "release-20260710t101438z",
+        registry_entries=[existing_entry],
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("promote-update-keeps-ready")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is True
+    assert result["registry_action"] == "updated"
+
+    registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
+    entry = next(e for e in registry["datasets"] if e["dataset_slug"] == "already-ready-dataset")
+    assert entry["review_status"] == "ready"
+
+
+def test_admin_datasets_route_returns_generic_not_found_when_admin_runtime_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    request = _make_request({})
+    response = api_main.list_admin_datasets_route(request)
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_admin_datasets_route_returns_draft_and_published_entries_in_private_runtime(tmp_path):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    registry_path = tmp_path / "datasets.json"
+    _write_json(
+        registry_path,
+        {
+            "schema_version": "atlas.dataflow.registry.v1",
+            "conventions": {
+                "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                "active_release": {"description": "x"},
+            },
+            "datasets": [_DRAFT_PROMOTED_ENTRY, _LEGACY_SEEDED_ENTRY],
+        },
+    )
+
+    from registry import list as registry_list
+
+    original_registry_path = registry_list.REGISTRY_PATH
+    try:
+        registry_list.REGISTRY_PATH = registry_path
+        request = _make_request({})
+        response = api_main.list_admin_datasets_route(request)
+    finally:
+        registry_list.REGISTRY_PATH = original_registry_path
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+        os.environ.pop("ADMIN_API_TOKEN", None)
+
+    by_slug = {entry["dataset_slug"]: entry for entry in response["datasets"]}
+    assert by_slug["fresh-promoted-dataset"]["publication_status"] == "needs_review"
+    assert by_slug["legacy-seeded-dataset"]["publication_status"] == "ready"
+    _assert_no_private_markers(response)
+
+
+def test_admin_datasets_route_registered_and_distinct_from_public_datasets_route():
+    paths = {route.path for route in api_main.app.routes}
+    assert "/admin/datasets" in paths
+    assert "/datasets" in paths
+    public_paths = {path for path in paths if not path.startswith("/admin")}
+    assert "/admin/datasets" not in public_paths
+
+
+# ---------------------------------------------------------------------------
 # Public surface non-exposure
 # ---------------------------------------------------------------------------
 

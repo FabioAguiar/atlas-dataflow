@@ -53,7 +53,7 @@ from registry.dataset_public_profile_publication_store import (  # noqa: E402
     get_visibility,
     set_visibility,
 )
-from registry.list import _snapshot_overlay_fields  # noqa: E402
+from registry.list import _snapshot_overlay_fields, is_dataset_needs_review  # noqa: E402
 from registry.resolve import ReleaseUnavailableError  # noqa: E402
 
 _SEEDED_DATASET_SLUGS = ["telco-customer-churn", "bank-marketing"]
@@ -677,6 +677,143 @@ def test_get_dataset_includes_problem_type_when_available():
         api_main.load_public_context = original_load_public_context
 
     assert response["problem_type"] == "regression"
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0052: promoted Dataset Details default to draft/Needs review
+# and must never be publicly reachable through GET /datasets or
+# GET /datasets/{dataset_slug} until explicitly published/reviewed. This is a
+# distinct gate from Visible Publicly above -- a dataset can be
+# resolve_dataset_visibility() == True (no snapshot yet, default-visible)
+# and still be excluded here because it is_dataset_needs_review() == True.
+# ---------------------------------------------------------------------------
+
+
+def _write_registry_with_review_status(fake_repo: Path, dataset_slug: str, review_status: str | None) -> None:
+    registry_dir = fake_repo / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "dataset_slug": dataset_slug,
+        "active_release": "release-20260701-001",
+        "public_metadata": {
+            "title": "Fixture Dataset",
+            "summary": "Fixture.",
+            "domain": "general",
+            "visibility": "public",
+            "tags": [],
+        },
+    }
+    if review_status is not None:
+        entry["review_status"] = review_status
+    (registry_dir / "datasets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "atlas.dataflow.registry.v1",
+                "conventions": {
+                    "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                    "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                    "active_release": {"description": "x"},
+                },
+                "datasets": [entry],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_is_dataset_needs_review_true_when_entry_marked_needs_review():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        _write_registry_with_review_status(fake_repo, _TARGET_SLUG, "needs_review")
+        registry_path = fake_repo / "registry" / "datasets.json"
+        assert is_dataset_needs_review(_TARGET_SLUG, registry_path=registry_path) is True
+
+
+def test_is_dataset_needs_review_false_when_entry_has_no_review_status_field():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        _write_registry_with_review_status(fake_repo, _TARGET_SLUG, None)
+        registry_path = fake_repo / "registry" / "datasets.json"
+        assert is_dataset_needs_review(_TARGET_SLUG, registry_path=registry_path) is False
+
+
+def test_is_dataset_needs_review_false_when_entry_explicitly_ready():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        _write_registry_with_review_status(fake_repo, _TARGET_SLUG, "ready")
+        registry_path = fake_repo / "registry" / "datasets.json"
+        assert is_dataset_needs_review(_TARGET_SLUG, registry_path=registry_path) is False
+
+
+def test_list_datasets_endpoint_excludes_needs_review_dataset_even_when_visible():
+    original_visibility = api_main.resolve_dataset_visibility
+    original_needs_review = api_main.is_dataset_needs_review
+
+    # Visible Publicly is True for every dataset (the pre-existing
+    # default-visible-when-no-snapshot behavior); the needs_review gate must
+    # independently exclude the target regardless.
+    api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.is_dataset_needs_review = lambda dataset_slug: dataset_slug == _TARGET_SLUG
+    try:
+        response = api_main.list_datasets_endpoint()
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.is_dataset_needs_review = original_needs_review
+
+    slugs = {entry["dataset_slug"] for entry in response["datasets"]}
+    assert _TARGET_SLUG not in slugs
+
+
+def test_list_datasets_endpoint_includes_dataset_when_not_needs_review():
+    original_visibility = api_main.resolve_dataset_visibility
+    original_needs_review = api_main.is_dataset_needs_review
+
+    api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.is_dataset_needs_review = lambda dataset_slug: False
+    try:
+        response = api_main.list_datasets_endpoint()
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.is_dataset_needs_review = original_needs_review
+
+    slugs = {entry["dataset_slug"] for entry in response["datasets"]}
+    assert _TARGET_SLUG in slugs
+
+
+def test_get_dataset_returns_dataset_not_found_shape_when_needs_review():
+    original_visibility = api_main.resolve_dataset_visibility
+    original_needs_review = api_main.is_dataset_needs_review
+
+    api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.is_dataset_needs_review = lambda dataset_slug: True
+    try:
+        needs_review_response = api_main.get_dataset(_TARGET_SLUG)
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.is_dataset_needs_review = original_needs_review
+
+    nonexistent_response = api_main.get_dataset("dataset-that-does-not-exist")
+
+    assert needs_review_response.status_code == nonexistent_response.status_code
+    assert (
+        json.loads(needs_review_response.body.decode("utf-8"))
+        == json.loads(nonexistent_response.body.decode("utf-8"))
+    )
+
+
+def test_get_dataset_returns_data_when_visible_and_not_needs_review():
+    original_visibility = api_main.resolve_dataset_visibility
+    original_needs_review = api_main.is_dataset_needs_review
+
+    api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.is_dataset_needs_review = lambda dataset_slug: False
+    try:
+        response = api_main.get_dataset(_TARGET_SLUG)
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.is_dataset_needs_review = original_needs_review
+
+    assert response["dataset_slug"] == _TARGET_SLUG
 
 
 if __name__ == "__main__":

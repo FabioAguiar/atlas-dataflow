@@ -29,22 +29,6 @@
           "classification"
         ]
       }
-    },
-    {
-      "dataset_slug": "bank-marketing",
-      "active_release": "release-20260620-002",
-      "public_metadata": {
-        "title": "Bank Marketing",
-        "summary": "A binary classification dataset for predicting client subscription to a term deposit in a bank marketing campaign. Used to validate Atlas DataFlow multi-dataset publication mechanics.",
-        "domain": "banking-marketing",
-        "visibility": "public",
-        "tags": [
-          "banking",
-          "binary-classification",
-          "marketing-campaign",
-          "subscription-prediction"
-        ]
-      }
     }
   ]
 }

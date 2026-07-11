@@ -159,6 +159,7 @@ function installFetchMock(
           {
             dataset_slug: datasetSlug,
             title: "Telco Customer Churn",
+            display_title: options.noExistingDraft ? null : publicProfile.display.title,
             summary: "Customer churn prediction dataset",
             domain: "telecom",
             tags: ["telecom"],
@@ -260,6 +261,7 @@ function installFetchMock(
           published_at: "2026-07-03T17:30:00Z",
           profile,
         },
+        display_title: profile.display.title,
         errors: [],
       });
     }
@@ -372,9 +374,9 @@ describe("DatasetAdminPage", () => {
     renderAdminPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
     });
-    expect(screen.getByRole("heading", { name: "Dataset — Telco Customer Churn" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dataset — Curated churn profile" })).toBeInTheDocument();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Public Content",
       "Metadata & Card",
@@ -455,7 +457,7 @@ describe("DatasetAdminPage", () => {
     renderAdminPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
     });
 
     expect(screen.getByRole("tab", { name: "Public Content", selected: true })).toBeInTheDocument();
@@ -472,7 +474,7 @@ describe("DatasetAdminPage", () => {
     renderAdminPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
     });
 
     // Obsolete scaffolding elements must be gone.
@@ -494,7 +496,7 @@ describe("DatasetAdminPage", () => {
     // publication/private status tag, and an icon-style public-open action
     // on the right. The Dataset Detail selector and Publish changes button
     // now live in the workspace toolbar below (asserted separately).
-    expect(screen.getByRole("heading", { name: "Dataset — Telco Customer Churn" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dataset — Curated churn profile" })).toBeInTheDocument();
     expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published");
     // Only one publication/private status tag renders in the header -- the
     // old session-local "Publication status" pill (Draft/Unpublished
@@ -548,7 +550,7 @@ describe("DatasetAdminPage", () => {
       renderAdminPage();
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+        expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
       });
 
       expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
@@ -1282,6 +1284,7 @@ describe("DatasetAdminPage", () => {
     const adminDatasetOne = {
       dataset_slug: "synthetic-retail-forecast",
       title: "Synthetic Retail Forecast",
+      display_title: "Retail Demand Display",
       summary: "Synthetic retail demand forecasting dataset",
       domain: "retail",
       tags: ["retail"],
@@ -1291,6 +1294,7 @@ describe("DatasetAdminPage", () => {
     const adminDatasetTwo = {
       dataset_slug: "synthetic-energy-usage",
       title: "Synthetic Energy Usage",
+      display_title: "Energy Usage Display",
       summary: "Synthetic household energy usage dataset",
       domain: "energy",
       tags: ["energy"],
@@ -1300,6 +1304,7 @@ describe("DatasetAdminPage", () => {
     const adminDatasetThree = {
       dataset_slug: "synthetic-agri-yield",
       title: "Synthetic Agricultural Yield",
+      display_title: "Agricultural Yield Display",
       summary: "Synthetic crop yield dataset",
       domain: "agriculture",
       tags: ["agriculture"],
@@ -1337,26 +1342,28 @@ describe("DatasetAdminPage", () => {
 
     const selector = await screen.findByRole("button", { name: "Dataset" });
     await waitFor(() =>
-      expect(selector).toHaveTextContent(`${adminDatasetOne.title} -- ${adminDatasetOne.dataset_slug}`),
+      expect(selector).toHaveTextContent(adminDatasetOne.display_title),
     );
+    expect(selector).not.toHaveTextContent(adminDatasetOne.dataset_slug);
     await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
 
     fireEvent.click(selector);
     const listbox = screen.getByRole("listbox", { name: "Available datasets" });
     expect(within(listbox).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      `${adminDatasetOne.title} -- ${adminDatasetOne.dataset_slug}`,
-      `${adminDatasetTwo.title} -- ${adminDatasetTwo.dataset_slug}`,
-      `${adminDatasetThree.title} -- ${adminDatasetThree.dataset_slug}`,
+      adminDatasetOne.display_title,
+      adminDatasetTwo.display_title,
+      adminDatasetThree.display_title,
     ]);
+    expect(listbox).not.toHaveTextContent(adminDatasetOne.dataset_slug);
 
     const filter = screen.getByLabelText("Filter datasets");
     fireEvent.change(filter, { target: { value: adminDatasetTwo.dataset_slug } });
     fireEvent.click(
-      within(listbox).getByRole("option", { name: `${adminDatasetTwo.title} -- ${adminDatasetTwo.dataset_slug}` }),
+      within(listbox).getByRole("option", { name: adminDatasetTwo.display_title }),
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetTwo.title}` })).toBeInTheDocument(),
+      expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetTwo.display_title}` })).toBeInTheDocument(),
     );
     // datasetTwo is needs_review and absent from the public listing, so the
     // header must show it as Private and keep the public-open action disabled.
@@ -1366,12 +1373,12 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(selector);
     fireEvent.click(
       within(screen.getByRole("listbox", { name: "Available datasets" })).getByRole("option", {
-        name: `${adminDatasetThree.title} -- ${adminDatasetThree.dataset_slug}`,
+        name: adminDatasetThree.display_title,
       }),
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetThree.title}` })).toBeInTheDocument(),
+      expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetThree.display_title}` })).toBeInTheDocument(),
     );
     await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
     expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeEnabled();
@@ -1427,8 +1434,9 @@ describe("DatasetAdminPage", () => {
 
     const selector = await screen.findByRole("button", { name: "Dataset" });
     await waitFor(() =>
-      expect(selector).toHaveTextContent(`${adminDatasetOne.title} -- ${adminDatasetOne.dataset_slug}`),
+      expect(selector).toHaveTextContent(adminDatasetOne.title),
     );
+    expect(selector).not.toHaveTextContent(adminDatasetOne.dataset_slug);
 
     fireEvent.click(selector);
     const filter = screen.getByLabelText("Filter datasets");
@@ -1470,8 +1478,9 @@ describe("DatasetAdminPage", () => {
     // seed itself lands one effect-flush after the listing resolves, so it
     // is awaited separately from the header text.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Telco Customer Churn");
     });
+    expect(screen.getByRole("button", { name: "Dataset" })).not.toHaveTextContent(datasetSlug);
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Telco Customer Churn"));
 
     // Every other Public Content authoring field starts genuinely blank --
@@ -1509,8 +1518,9 @@ describe("DatasetAdminPage", () => {
     renderAdminPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Telco Customer Churn");
     });
+    expect(screen.getByRole("button", { name: "Dataset" })).not.toHaveTextContent(datasetSlug);
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Telco Customer Churn"));
 
     // "Telco Customer Churn" (the seeded Display title) is 20 characters.
@@ -1616,6 +1626,25 @@ describe("DatasetAdminPage", () => {
     // the still-private variant instead of repeating the public-page copy.
     expect(await screen.findByText("Changes published. Public visibility is currently off.")).toBeInTheDocument();
     await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
+  });
+
+  it("updates the selected Dataset Admin title and selector label after publishing a changed Display title", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+    const selector = screen.getByRole("button", { name: "Dataset" });
+    expect(selector).toHaveTextContent("Curated churn profile");
+
+    fireEvent.change(screen.getByLabelText("Display title"), { target: { value: "Published renamed profile" } });
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Dataset — Published renamed profile" })).toBeInTheDocument(),
+    );
+    expect(selector).toHaveTextContent("Published renamed profile");
+    expect(selector).not.toHaveTextContent(datasetSlug);
   });
 
   it("keeps Publish changes failure feedback safe and free of internal draft/endpoint terminology (Project Spec S0060)", async () => {

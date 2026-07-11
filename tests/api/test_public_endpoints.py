@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
-from registry.list import ListedDataset, list_datasets  # noqa: E402
+from registry.list import ListedDataset, list_admin_datasets, list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
     RegistryInvalidError,
@@ -88,6 +88,14 @@ def _write_registry(tmp_dir: Path, content: dict) -> Path:
     return path
 
 
+def _write_repo_registry(tmp_dir: Path, content: dict) -> Path:
+    registry_dir = tmp_dir / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    path = registry_dir / "datasets.json"
+    path.write_text(json.dumps(content), encoding="utf-8")
+    return path
+
+
 # ---------------------------------------------------------------------------
 # list_datasets: safe field projection
 # ---------------------------------------------------------------------------
@@ -144,6 +152,42 @@ def test_list_datasets_asdict_safe_fields_only():
         result = list_datasets(registry_path=path)
         as_dict = result[0]._asdict()
         assert set(as_dict.keys()) == _PUBLIC_LISTING_KEYS
+
+
+def test_admin_dataset_listing_prefers_latest_snapshot_display_title_over_registry_title():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo_root = Path(tmp)
+        path = _write_repo_registry(repo_root, _BASE_REGISTRY)
+        snapshots_root = repo_root / "registry" / "profile-snapshots"
+        snapshots_root.mkdir(parents=True)
+        snapshots_root.joinpath("example-dataset.json").write_text(
+            json.dumps({
+                "schema_version": "1.0.0",
+                "dataset_slug": "example-dataset",
+                "published_at": "2026-07-11T00:00:00Z",
+                "active_release_at_publish_time": "release-20260616-001",
+                "profile": {"display": {"title": "Published Admin Title"}},
+            }),
+            encoding="utf-8",
+        )
+
+        result = list_admin_datasets(registry_path=path)
+
+        assert len(result) == 1
+        assert result[0].dataset_slug == "example-dataset"
+        assert result[0].title == "Example Dataset"
+        assert result[0].display_title == "Published Admin Title"
+
+
+def test_admin_dataset_listing_falls_back_to_registry_title_without_snapshot_title():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_repo_registry(Path(tmp), _BASE_REGISTRY)
+
+        result = list_admin_datasets(registry_path=path)
+
+        assert len(result) == 1
+        assert result[0].dataset_slug == "example-dataset"
+        assert result[0].display_title == "Example Dataset"
 
 
 # ---------------------------------------------------------------------------

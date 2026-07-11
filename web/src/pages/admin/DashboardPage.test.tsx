@@ -171,10 +171,12 @@ describe("DashboardPage", () => {
 
     const table = await screen.findByRole("table", { name: "Dataset details" });
     expect(table).toHaveAttribute("data-filtered-dataset-count", "1");
+    expect(within(table).getByRole("columnheader", { name: "Display title" })).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "Display name" })).not.toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Slug" })).toBeInTheDocument();
     expect(within(table).queryByRole("columnheader", { name: "Problem type" })).not.toBeInTheDocument();
     expect(within(table).queryByText(/problem type/i)).not.toBeInTheDocument();
-    expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast display name" })).toHaveValue(
+    expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast display title" })).toHaveValue(
       "Synthetic Retail Forecast",
     );
     expect(within(table).getByRole("textbox", { name: "Synthetic Retail Forecast slug" })).toHaveValue(
@@ -229,10 +231,10 @@ describe("DashboardPage", () => {
     expect(within(runsTable).queryByText("run-agnostic-001")).not.toBeInTheDocument();
     expect(within(runsTable).getByText("run-agnostic-002")).toBeInTheDocument();
     expect(
-      within(datasetsTable).queryByRole("textbox", { name: "Synthetic Retail Forecast display name" }),
+      within(datasetsTable).queryByRole("textbox", { name: "Synthetic Retail Forecast display title" }),
     ).not.toBeInTheDocument();
     expect(
-      within(datasetsTable).getByRole("textbox", { name: "Synthetic Energy Usage display name" }),
+      within(datasetsTable).getByRole("textbox", { name: "Synthetic Energy Usage display title" }),
     ).toHaveValue("Synthetic Energy Usage");
   });
 
@@ -290,7 +292,7 @@ describe("DashboardPage", () => {
     expect(runsTable).toHaveAttribute("data-filtered-run-count", "1");
     expect(datasetsTable).toHaveAttribute("data-filtered-dataset-count", "1");
     expect(within(runsTable).getByText("run-café-010")).toBeInTheDocument();
-    expect(within(datasetsTable).getByRole("textbox", { name: "Café Forecast display name" })).toHaveValue(
+    expect(within(datasetsTable).getByRole("textbox", { name: "Café Forecast display title" })).toHaveValue(
       "Café Forecast",
     );
   });
@@ -1369,7 +1371,7 @@ describe("DashboardPage", () => {
             {
               dataset_slug: "synthetic-retail-forecast",
               title: "Synthetic Retail Forecast",
-              display_title: "Synthetic Retail Forecast",
+              display_title: "Retail Demand Display",
               publication_status: "ready",
             },
             {
@@ -1390,10 +1392,10 @@ describe("DashboardPage", () => {
       const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
       expect(datasetTable).toHaveAttribute("data-filtered-dataset-count", "2");
       expect(
-        within(datasetTable).getByRole("textbox", { name: "Synthetic Retail Forecast display name" }),
-      ).toBeInTheDocument();
+        within(datasetTable).getByRole("textbox", { name: "Retail Demand Display display title" }),
+      ).toHaveValue("Retail Demand Display");
       expect(
-        within(datasetTable).getByRole("textbox", { name: "Synthetic Energy Usage display name" }),
+        within(datasetTable).getByRole("textbox", { name: "Synthetic Energy Usage display title" }),
       ).toBeInTheDocument();
     });
 
@@ -1424,10 +1426,10 @@ describe("DashboardPage", () => {
 
       const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
       const readyRow = within(datasetTable)
-        .getByRole("textbox", { name: "Synthetic Retail Forecast display name" })
+        .getByRole("textbox", { name: "Synthetic Retail Forecast display title" })
         .closest('[data-dataset-publication-status]');
       const draftRow = within(datasetTable)
-        .getByRole("textbox", { name: "Synthetic Energy Usage display name" })
+        .getByRole("textbox", { name: "Synthetic Energy Usage display title" })
         .closest('[data-dataset-publication-status]');
 
       expect(readyRow).toHaveAttribute("data-dataset-publication-status", "ready");
@@ -1700,7 +1702,7 @@ describe("DashboardPage", () => {
       await loadRuns();
 
       const table = await screen.findByRole("table", { name: "Dataset details" });
-      expect(within(table).getByRole("textbox", { name: "Telco Customer Churn display name" })).toBeDisabled();
+      expect(within(table).getByRole("textbox", { name: "Telco Customer Churn display title" })).toBeDisabled();
       expect(within(table).getByRole("textbox", { name: "Telco Customer Churn slug" })).not.toBeDisabled();
     });
 

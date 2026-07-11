@@ -261,6 +261,7 @@ def test_publish_route_with_body_publishes_payload_directly_without_a_draft():
             response = api_main.put_admin_profile_publish("example-dataset", request, payload)
 
             assert response["published"] is True
+            assert response["display_title"] == "Directly published title"
             assert response["snapshot"]["dataset_slug"] == "example-dataset"
             assert response["snapshot"]["profile"]["display"]["title"] == "Directly published title"
             # No draft was ever created for example-dataset in this fake

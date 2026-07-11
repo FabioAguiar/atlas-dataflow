@@ -123,6 +123,7 @@ type DatasetState =
 type AdminDatasetListing = {
   dataset_slug: string;
   title: string;
+  display_title?: string | null;
   summary: string;
   domain: string;
   tags: string[];
@@ -803,22 +804,16 @@ function TabWorkspace({ children, eyebrow, helper }: { children: ReactNode; eyeb
 
 // Shared by both DatasetListing (the public /datasets listing) and
 // AdminDatasetListing (the Admin-only /admin/datasets listing) -- both
-// structurally satisfy this, and these two helpers only ever need the
-// slug/title pair for label/selector-value rendering.
-type DatasetLabelSource = { dataset_slug: string; title: string };
+// structurally satisfy this, and these helpers keep dataset_slug as identity
+// while resolving the Admin-visible display title for label rendering.
+type DatasetLabelSource = { dataset_slug: string; title: string; display_title?: string | null };
 
 function getDatasetLabel(dataset?: DatasetLabelSource) {
-  return dataset?.title || dataset?.dataset_slug || "No dataset selected";
+  return dataset?.display_title?.trim() || dataset?.title || dataset?.dataset_slug || "No dataset selected";
 }
 
 function getDatasetSelectorValue(dataset?: DatasetLabelSource) {
-  if (!dataset) {
-    return "";
-  }
-  if (dataset.title && dataset.title !== dataset.dataset_slug) {
-    return `${dataset.title} -- ${dataset.dataset_slug}`;
-  }
-  return dataset.dataset_slug;
+  return dataset ? getDatasetLabel(dataset) : "";
 }
 
 // The header renders exactly one publication/private tag for the selected
@@ -2949,13 +2944,13 @@ export default function DatasetAdminPage() {
     : "Private";
   const lastBackendDraft = backendDraftProfile(draftState);
   const hasBackendDraftProfile = Boolean(lastBackendDraft);
-  // Dataset Detail title shown in Admin/Dashboard (registry/list.py's
-  // AdminListedDataset, falling back to the public DatasetListing title if
-  // the admin listing hasn't resolved yet) -- Project Spec S0056 requires
+  // Dataset Detail display title shown in Admin/Dashboard (registry/list.py's
+  // AdminListedDataset, falling back to the registry/public title if the
+  // display-title projection is not available) -- Project Spec S0056 requires
   // seeding Display title from this value while the Public Content tab is
   // still in its blank authoring state (no real backend draft profile
   // tracked yet), without auto-filling any other public-content field.
-  const canonicalDisplayTitle = selectedAdminDataset?.title || selectedDataset?.title || "";
+  const canonicalDisplayTitle = selectedAdminDataset?.display_title?.trim() || selectedAdminDataset?.title || selectedDataset?.title || "";
   useEffect(() => {
     if (!selectedSlug || !canonicalDisplayTitle || hasBackendDraftProfile) {
       return;
@@ -3086,7 +3081,7 @@ export default function DatasetAdminPage() {
           }));
           return null;
         }
-        return response.json().then((body: { published?: boolean; snapshot?: PublishSnapshot | null; errors?: DraftError[] }) => ({
+        return response.json().then((body: { published?: boolean; display_title?: string | null; snapshot?: PublishSnapshot | null; errors?: DraftError[] }) => ({
           ok: response.ok,
           body,
         }));
@@ -3120,6 +3115,20 @@ export default function DatasetAdminPage() {
           publishedProfile,
           publishedAt: result.body.snapshot?.published_at,
         }));
+        const nextDisplayTitle = result.body.display_title?.trim() || publishedProfile.display?.title?.trim() || "";
+        if (nextDisplayTitle) {
+          setAdminDatasetsState((current) =>
+            current.status === "ready"
+              ? {
+                  ...current,
+                  datasets: current.datasets.map((dataset) =>
+                    dataset.dataset_slug === selectedSlug ? { ...dataset, display_title: nextDisplayTitle } : dataset,
+                  ),
+                }
+              : current,
+          );
+          setDatasetQuery((current) => (current === getDatasetSelectorValue(selectedAdminDataset) ? nextDisplayTitle : current));
+        }
         setLastPublishedAt(result.body.snapshot?.published_at);
       })
       .catch(() => {

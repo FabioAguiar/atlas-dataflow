@@ -1284,7 +1284,7 @@ export default function DashboardPage() {
                     style={tableStyle}
                   >
                     <div role="row" style={datasetTableHeaderStyle}>
-                      <span role="columnheader">Display name</span>
+                      <span role="columnheader">Display title</span>
                       <span role="columnheader">Slug</span>
                       <span role="columnheader">Status</span>
                       <span role="columnheader">Last updated</span>
@@ -1330,7 +1330,7 @@ export default function DashboardPage() {
                         >
                           <div data-dataset-publication-status={row.publicationStatus} style={datasetRowContentStyle}>
                             <input
-                              aria-label={`${row.displayName} display name`}
+                              aria-label={`${row.displayName} display title`}
                               defaultValue={row.displayName}
                               disabled
                               style={slugInputStyle}

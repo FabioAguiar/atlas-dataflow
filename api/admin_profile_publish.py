@@ -19,6 +19,18 @@ from registry.dataset_public_profile_snapshot_store import (
 )
 
 
+def _display_title_from_snapshot(snapshot: dict | None) -> str | None:
+    if not isinstance(snapshot, dict):
+        return None
+    profile = snapshot.get("profile")
+    display = profile.get("display") if isinstance(profile, dict) else None
+    title = display.get("title") if isinstance(display, dict) else None
+    if not isinstance(title, str):
+        return None
+    normalized = title.strip()
+    return normalized or None
+
+
 def publish_profile(dataset_slug: str) -> dict:
     """
     Publish the current private draft profile as a published profile snapshot.
@@ -34,6 +46,7 @@ def publish_profile(dataset_slug: str) -> dict:
 
     return {
         "dataset_slug": dataset_slug,
+        "display_title": _display_title_from_snapshot(result["snapshot"]),
         "published": result["published"],
         "snapshot": result["snapshot"],
         "errors": result["errors"],
@@ -53,6 +66,7 @@ def publish_profile_payload(dataset_slug: str, profile: dict) -> dict:
 
     return {
         "dataset_slug": dataset_slug,
+        "display_title": _display_title_from_snapshot(result["snapshot"]),
         "published": result["published"],
         "snapshot": result["snapshot"],
         "errors": result["errors"],

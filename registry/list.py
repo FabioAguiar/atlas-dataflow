@@ -73,6 +73,7 @@ class ListedDataset(NamedTuple):
 class AdminListedDataset(NamedTuple):
     dataset_slug: str
     title: str
+    display_title: str | None
     summary: str
     domain: str
     tags: list
@@ -171,6 +172,13 @@ def _entry_review_status(entry: dict) -> str:
     return value if value in _VALID_REVIEW_STATUSES else REVIEW_STATUS_READY
 
 
+def _safe_display_title(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 def is_dataset_needs_review(dataset_slug: str, registry_path: Path | None = None) -> bool:
     """
     Return True when dataset_slug's registry entry is in the needs_review
@@ -208,14 +216,16 @@ def list_admin_datasets(registry_path: Path | None = None) -> list[AdminListedDa
     like list_datasets(). Raises RegistryInvalidError if validation fails or
     the registry is unreadable.
 
-    Unlike list_datasets(), this never overlays the published profile
-    snapshot (Admin already has dedicated profile-draft/publish routes for
-    that) and never filters by public visibility -- both draft
+    The Admin projection uses the same current display-title precedence as
+    Dataset Admin and Dashboard: latest published profile snapshot title
+    first, then the registry public metadata title when no snapshot title is
+    available. It never filters by public visibility -- both draft
     ("needs_review") and published ("ready") Dataset Details are always
     included, so Admin operators can review, edit slug, remove, and later
     publish a draft.
     """
     path = registry_path if registry_path is not None else REGISTRY_PATH
+    repo_root = path.parent.parent
 
     validation = validate_registry_file(path)
     if not validation["valid"]:
@@ -233,9 +243,13 @@ def list_admin_datasets(registry_path: Path | None = None) -> list[AdminListedDa
             continue
         metadata = entry.get("public_metadata", {})
         active_release = entry.get("active_release")
+        dataset_slug = entry.get("dataset_slug", "")
+        registry_title = _safe_display_title(metadata.get("title"))
+        overlay = _snapshot_overlay_fields(dataset_slug, repo_root)
         result.append(AdminListedDataset(
-            dataset_slug=entry.get("dataset_slug", ""),
+            dataset_slug=dataset_slug,
             title=metadata.get("title", ""),
+            display_title=_safe_display_title(overlay["display_title"]) or registry_title,
             summary=metadata.get("summary", ""),
             domain=metadata.get("domain", ""),
             tags=metadata.get("tags", []),

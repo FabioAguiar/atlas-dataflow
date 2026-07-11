@@ -54,7 +54,7 @@ result. No evidence file is created or replaced on a rejected publish.
 import json
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from registry.dataset_public_profile_snapshot_evidence import write_snapshot_evidence
@@ -261,6 +261,24 @@ def _publish_profile(dataset_slug: str, profile: dict, repo_root: Path) -> dict:
                 "Profile dataset_slug does not match the requested dataset_slug.",
             )],
         }
+
+    display = profile.get("display")
+    release_date = display.get("release_date_label") if isinstance(display, dict) else None
+    if release_date is not None:
+        try:
+            if not isinstance(release_date, str) or date.fromisoformat(release_date).isoformat() != release_date:
+                raise ValueError
+        except ValueError:
+            return {
+                "published": False,
+                "path": None,
+                "snapshot": None,
+                "errors": [_err(
+                    "RELEASE_DATE_INVALID",
+                    "display.release_date_label",
+                    "Release date must be a valid calendar date in YYYY-MM-DD format.",
+                )],
+            }
 
     draft_validation = validate_profile_draft(profile, repo_root)
     if not draft_validation["valid"]:

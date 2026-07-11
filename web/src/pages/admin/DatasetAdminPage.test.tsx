@@ -52,6 +52,8 @@ const publicProfile = {
     subtitle: "Operator-authored public subtitle",
     problem_summary_title: "Churn context",
     problem_summary_body: "Explains customer churn for a public audience.",
+    release_date_label: "2026-06-19",
+    release_date_mode: "auto",
   },
   home_card: {
     icon: "telecom",
@@ -144,6 +146,9 @@ function installFetchMock(
     // test's default publicProfile fixture is now what the operator sees
     // immediately rather than only after an explicit load.
     noExistingDraft?: boolean;
+    lastUpdated?: string;
+    releaseDate?: string;
+    releaseDateMode?: "auto" | "manual";
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -165,6 +170,7 @@ function installFetchMock(
             tags: ["telecom"],
             active_release: "release-20260619-001",
             publication_status: "ready",
+            last_updated: options.lastUpdated ?? "2026-06-19T12:00:00Z",
           },
         ],
       });
@@ -303,9 +309,15 @@ function installFetchMock(
       if (options.noExistingDraft) {
         return jsonResponse({ draft_exists: false, profile: null });
       }
-      const profile = options.themePresetOverride
-        ? { ...publicProfile, theme: { preset: options.themePresetOverride } }
-        : publicProfile;
+      const profile = {
+        ...publicProfile,
+        display: {
+          ...publicProfile.display,
+          release_date_label: options.releaseDate ?? publicProfile.display.release_date_label,
+          release_date_mode: options.releaseDateMode ?? publicProfile.display.release_date_mode,
+        },
+        ...(options.themePresetOverride ? { theme: { preset: options.themePresetOverride } } : {}),
+      };
       if (options.trackProfileDraftSaves) {
         savedProfileDraft = profile;
       }
@@ -614,6 +626,47 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: originalSubtitle } });
     expect(toolbarPublishButton).toBeDisabled();
+  });
+
+  it("renders Release date label as a normalized date input seeded from Dashboard Last updated (Project Spec S0064)", async () => {
+    installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "auto", lastUpdated: "2026-06-21T23:15:00Z" });
+    renderAdminPage();
+
+    const input = await screen.findByLabelText("Release date label");
+    await waitFor(() => expect(input).toHaveValue("2026-06-21"));
+    expect(input).toHaveAttribute("type", "date");
+    expect(within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+  });
+
+  it("preserves a manual release date and publishes its override metadata with normal dirty-state reset (Project Spec S0064)", async () => {
+    const fetchMock = installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "manual", lastUpdated: "2026-06-21T23:15:00Z" });
+    renderAdminPage();
+
+    const input = await screen.findByLabelText("Release date label");
+    await waitFor(() => expect(input).toHaveValue("2026-05-01"));
+    const publishButton = within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "2026-05-12" } });
+    expect(publishButton).toBeEnabled();
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(publishButton).toBeDisabled());
+
+    const publishCall = fetchMock.mock.calls.find((call: unknown[]) =>
+      String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`),
+    );
+    const body = JSON.parse(String((publishCall?.[1] as RequestInit).body));
+    expect(body.display).toMatchObject({ release_date_label: "2026-05-12", release_date_mode: "manual" });
+  });
+
+  it("treats clearing the release date as a reset to automatic Last updated seeding (Project Spec S0064)", async () => {
+    installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "manual", lastUpdated: "2026-06-21T23:15:00Z" });
+    renderAdminPage();
+
+    const input = await screen.findByLabelText("Release date label");
+    await waitFor(() => expect(input).toHaveValue("2026-05-01"));
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => expect(input).toHaveValue("2026-06-21"));
   });
 
   it("keeps the workspace toolbar's Publish changes button disabled for a Dataset Detail with no saved draft until the seeded Display title is actually edited (Project Spec S0058)", async () => {
@@ -1496,7 +1549,8 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Problem summary body")).toHaveValue("");
     expect(screen.getByLabelText("Source name")).toHaveValue("");
     expect(screen.getByLabelText("Source URL")).toHaveValue("");
-    expect(screen.getByLabelText("Release date label")).toHaveValue("");
+    // S0064 adds the sole second deterministic seed: Dashboard Last updated.
+    expect(screen.getByLabelText("Release date label")).toHaveValue("2026-06-19");
     expect(screen.getByLabelText("Date format")).toHaveValue("");
 
     // Required markers render inline beside each field's own label rather

@@ -95,8 +95,16 @@
         },
         "release_date_label": {
           "type": "string",
-          "minLength": 1,
-          "description": "Optional presentation label for a release date, formatted for display only. This is a curated label, never the technical release timestamp itself."
+          "anyOf": [
+            {"format": "date", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+            {"pattern": "^\\d{2}/\\d{2}/\\d{4}$"}
+          ],
+          "description": "Public release date. New Dataset Admin writes are normalized to YYYY-MM-DD; the legacy display form remains readable for existing drafts."
+        },
+        "release_date_mode": {
+          "type": "string",
+          "enum": ["auto", "manual"],
+          "description": "Whether the release date follows Dataset Detail Last updated automatically or is an explicit operator override."
         },
         "date_format": {
           "type": "string",

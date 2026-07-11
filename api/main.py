@@ -3,6 +3,7 @@ import os
 import pickle
 import sys
 import tarfile
+from datetime import datetime
 from pathlib import Path
 
 import uvicorn
@@ -728,7 +729,31 @@ def list_admin_datasets_route(request: Request):
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
 
-    return {"datasets": [dataset._asdict() for dataset in datasets]}
+    # Use the same run-derived value and comparison as Dashboard's Dataset
+    # Details table: latest created_at grouped by dataset_candidate.
+    last_updated_by_slug: dict[str, str] = {}
+    run_listing = list_admin_run_summaries()
+    runs = run_listing.get("runs", []) if isinstance(run_listing, dict) else []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        slug = run.get("dataset_candidate")
+        created_at = run.get("created_at")
+        if not isinstance(slug, str) or not isinstance(created_at, str):
+            continue
+        current = last_updated_by_slug.get(slug)
+        try:
+            if current is None or datetime.fromisoformat(created_at.replace("Z", "+00:00")) > datetime.fromisoformat(current.replace("Z", "+00:00")):
+                last_updated_by_slug[slug] = created_at
+        except (TypeError, ValueError):
+            continue
+
+    projected = []
+    for dataset in datasets:
+        item = dataset._asdict()
+        item["last_updated"] = last_updated_by_slug.get(dataset.dataset_slug)
+        projected.append(item)
+    return {"datasets": projected}
 
 
 @app.delete("/admin/datasets/{dataset_slug}")

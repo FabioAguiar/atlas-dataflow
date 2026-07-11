@@ -129,6 +129,7 @@ type AdminDatasetListing = {
   tags: string[];
   active_release: string | null;
   publication_status: string;
+  last_updated: string | null;
 };
 
 type AdminDatasetListingResponse = {
@@ -156,6 +157,7 @@ type ProfileDraft = {
     source_name?: string;
     source_url?: string;
     release_date_label?: string;
+    release_date_mode?: "auto" | "manual";
     date_format?: "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd";
     canonical_name_fallback?: boolean;
   };
@@ -193,6 +195,7 @@ type DraftForm = {
   source_name: string;
   source_url: string;
   release_date_label: string;
+  release_date_mode: "auto" | "manual";
   date_format: "" | "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd";
   canonical_name_fallback: boolean;
   home_card_icon: "" | DatasetIconName;
@@ -1005,6 +1008,7 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     source_name: "",
     source_url: "",
     release_date_label: "",
+    release_date_mode: "auto",
     date_format: "",
     canonical_name_fallback: true,
     home_card_icon: "",
@@ -1038,7 +1042,8 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     problem_summary_body: profile.display?.problem_summary_body ?? "",
     source_name: profile.display?.source_name ?? "",
     source_url: profile.display?.source_url ?? "",
-    release_date_label: profile.display?.release_date_label ?? "",
+    release_date_label: normalizeDate(profile.display?.release_date_label),
+    release_date_mode: profile.display?.release_date_mode === "manual" ? "manual" : "auto",
     date_format: profile.display?.date_format ?? "",
     canonical_name_fallback: profile.display?.canonical_name_fallback ?? true,
     home_card_icon: profile.home_card?.icon ?? "",
@@ -1062,6 +1067,22 @@ function textValue(value: string): string | undefined {
   return trimmed || undefined;
 }
 
+function normalizeDate(value: string | null | undefined): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return "";
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? "" : value;
+}
+
+function dateFromLastUpdated(value: string | null | undefined): string {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+}
+
 function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   const profile: ProfileDraft = {
     schema_version: form.schema_version.trim() || "1.0.0",
@@ -1076,6 +1097,7 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   display.source_name = textValue(form.source_name);
   display.source_url = textValue(form.source_url);
   display.release_date_label = textValue(form.release_date_label);
+  display.release_date_mode = form.release_date_mode;
   if (form.date_format) {
     display.date_format = form.date_format;
   }
@@ -1158,6 +1180,7 @@ type PublicContentFields = Pick<
   | "source_name"
   | "source_url"
   | "release_date_label"
+  | "release_date_mode"
   | "date_format"
   | "canonical_name_fallback"
 >;
@@ -1171,6 +1194,7 @@ function publicContentFields(form: DraftForm): PublicContentFields {
     source_name: form.source_name,
     source_url: form.source_url,
     release_date_label: form.release_date_label,
+    release_date_mode: form.release_date_mode,
     date_format: form.date_format,
     canonical_name_fallback: form.canonical_name_fallback,
   };
@@ -1227,7 +1251,7 @@ function TextField({
   multiline?: boolean;
   required?: boolean;
   maxLength?: number;
-  type?: "text" | "url";
+  type?: "text" | "url" | "date";
   rows?: number;
 }) {
   const hasCounter = typeof maxLength === "number";
@@ -1425,8 +1449,13 @@ function PublicContentTab({
           />
           <TextField
             label="Release date label"
-            onChange={(value) => setField("release_date_label", value)}
+            onChange={(value) => {
+              const normalized = normalizeDate(value);
+              setField("release_date_label", normalized);
+              setField("release_date_mode", normalized ? "manual" : "auto");
+            }}
             required
+            type="date"
             value={form.release_date_label}
           />
           <label style={fieldStyle}>
@@ -2947,12 +2976,27 @@ export default function DatasetAdminPage() {
   // still in its blank authoring state (no real backend draft profile
   // tracked yet), without auto-filling any other public-content field.
   const canonicalDisplayTitle = selectedAdminDataset?.display_title?.trim() || selectedAdminDataset?.title || selectedDataset?.title || "";
+  const lastUpdatedDate = dateFromLastUpdated(selectedAdminDataset?.last_updated);
   useEffect(() => {
     if (!selectedSlug || !canonicalDisplayTitle || hasBackendDraftProfile) {
       return;
     }
     setDraftForm((current) => (current.display_title ? current : { ...current, display_title: canonicalDisplayTitle }));
   }, [selectedSlug, canonicalDisplayTitle, hasBackendDraftProfile, draftState.status]);
+  useEffect(() => {
+    if (!selectedSlug || !lastUpdatedDate || draftState.status === "loading") {
+      return;
+    }
+    setDraftForm((current) => {
+      if (current.release_date_mode === "manual") {
+        return current;
+      }
+      if (current.release_date_label && current.release_date_label >= lastUpdatedDate) {
+        return current;
+      }
+      return { ...current, release_date_label: lastUpdatedDate, release_date_mode: "auto" };
+    });
+  }, [selectedSlug, lastUpdatedDate, draftState.status, draftForm.release_date_label, draftForm.release_date_mode]);
   // The workspace toolbar's Publish changes snapshot (Project Spec S0058):
   // the normalized current saved/published form state for the selected
   // Dataset Detail's Public Content fields, or -- when no backend draft/
@@ -2963,7 +3007,12 @@ export default function DatasetAdminPage() {
   const publicContentSnapshotForm: DraftForm =
     hasBackendDraftProfile && lastBackendDraft
       ? formFromProfile(lastBackendDraft, selectedSlug)
-      : { ...emptyDraftForm(selectedSlug), display_title: canonicalDisplayTitle };
+      : {
+          ...emptyDraftForm(selectedSlug),
+          display_title: canonicalDisplayTitle,
+          release_date_label: lastUpdatedDate,
+          release_date_mode: "auto",
+        };
   const hasUnpublishedPublicContentChanges =
     Boolean(selectedSlug) && !samePublicContent(draftForm, publicContentSnapshotForm);
   const toolbarPublishBusy =

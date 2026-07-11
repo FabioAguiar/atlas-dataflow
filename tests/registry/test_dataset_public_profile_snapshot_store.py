@@ -33,6 +33,7 @@ from registry.dataset_public_profile_snapshot_store import (  # noqa: E402
     SnapshotNotFoundError,
     get_snapshot,
     publish_snapshot,
+    publish_snapshot_from_payload,
 )
 
 
@@ -167,6 +168,41 @@ def test_publish_creates_deterministic_snapshot_file(fake_repo):
     assert persisted["profile"]["home_card"]["primary_metric_key"] == "auc_roc"
     assert "contract" not in persisted
     assert "metrics" not in persisted
+
+
+def test_direct_publish_preserves_release_date_override_metadata(fake_repo):
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-05-12", "release_date_mode": "manual"}),
+        repo_root=fake_repo,
+    )
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["display"] == {
+        "release_date_label": "2026-05-12",
+        "release_date_mode": "manual",
+    }
+
+
+def test_invalid_release_date_cannot_replace_snapshot(fake_repo):
+    valid = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-05-12", "release_date_mode": "auto"}),
+        repo_root=fake_repo,
+    )
+    snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
+    original = snapshot_path.read_text(encoding="utf-8")
+
+    rejected = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-02-30", "release_date_mode": "manual"}),
+        repo_root=fake_repo,
+    )
+
+    assert valid["published"] is True
+    assert rejected["published"] is False
+    assert "RELEASE_DATE_INVALID" in _codes(rejected)
+    assert snapshot_path.read_text(encoding="utf-8") == original
 
 
 def test_publish_writes_traceability_evidence_alongside_snapshot(fake_repo):

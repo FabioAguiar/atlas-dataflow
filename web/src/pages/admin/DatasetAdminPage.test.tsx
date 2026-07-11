@@ -691,7 +691,9 @@ describe("DatasetAdminPage", () => {
     renderAdminPage();
 
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
-    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Toolbar-edited subtitle" } });
+    const subtitleInput = screen.getByLabelText("Subtitle");
+    fireEvent.change(subtitleInput, { target: { value: "Toolbar-edited subtitle" } });
+    subtitleInput.focus();
 
     const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
     const toolbarPublishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
@@ -702,6 +704,8 @@ describe("DatasetAdminPage", () => {
     // A successful publish updates the snapshot, so the button disables
     // again without any further operator action.
     await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
+    expect(screen.getByLabelText("Subtitle")).toBe(subtitleInput);
+    expect(subtitleInput).toHaveFocus();
 
     // No profile-draft save happens as part of this click -- Publish changes
     // sends the current form payload directly.
@@ -738,7 +742,31 @@ describe("DatasetAdminPage", () => {
     expect(
       await screen.findByText("Public Content changes could not be published. Open the Publishing tab for details."),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText("Subtitle")).toHaveValue("Toolbar-edited subtitle");
     expect(screen.queryByText(/PROFILE_PUBLISH_FAILED/)).not.toBeInTheDocument();
+  });
+
+  it("keeps dirty Public Content fields mounted and unchanged during a same-dataset refresh (Project Spec S0065)", async () => {
+    const fetchMock = installFetchMock();
+    renderAdminPage();
+
+    const subtitleInput = await screen.findByLabelText("Subtitle");
+    await waitFor(() => expect(subtitleInput).toHaveValue("Operator-authored public subtitle"));
+    fireEvent.change(subtitleInput, { target: { value: "Unsaved refresh-safe subtitle" } });
+
+    const profileLoadsBefore = fetchMock.mock.calls.filter(([input, init]) =>
+      String(input).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) && !init?.method,
+    ).length;
+    fireEvent.click(within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Refresh" }));
+
+    await waitFor(() => {
+      const profileLoadsAfter = fetchMock.mock.calls.filter(([input, init]) =>
+        String(input).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) && !init?.method,
+      ).length;
+      expect(profileLoadsAfter).toBeGreaterThan(profileLoadsBefore);
+    });
+    expect(screen.getByLabelText("Subtitle")).toBe(subtitleInput);
+    expect(subtitleInput).toHaveValue("Unsaved refresh-safe subtitle");
   });
 
   it("surfaces backend profile validation feedback without publishing side effects", async () => {

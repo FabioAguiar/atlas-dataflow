@@ -778,6 +778,7 @@ export default function DashboardPage() {
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
   const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
   const [promotedInfoModalState, setPromotedInfoModalState] = useState<PromotedInfoModalState>({ status: "idle" });
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent) {
@@ -879,7 +880,8 @@ export default function DashboardPage() {
 
   function loadRuns() {
     const controller = new AbortController();
-    setState({ status: "loading" });
+    setState((previous) => (previous.status === "ready" ? previous : { status: "loading" }));
+    setIsRefreshing(true);
 
     fetch(`${apiBaseUrl}/admin/runs`, {
       signal: controller.signal,
@@ -914,9 +916,14 @@ export default function DashboardPage() {
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
-          setState({ status: "error", message: "Run summaries could not be loaded. Check private admin API reachability." });
+          setState((previous) =>
+            previous.status === "ready"
+              ? previous
+              : { status: "error", message: "Run summaries could not be loaded. Check private admin API reachability." },
+          );
         }
-      });
+      })
+      .finally(() => setIsRefreshing(false));
 
     loadDatasetRegistry();
   }
@@ -1170,8 +1177,8 @@ export default function DashboardPage() {
             </label>
           </span>
 
-          <Button disabled={state.status === "loading"} onClick={loadRuns} type="button">
-            {state.status === "loading" ? "Loading..." : "Load runs"}
+          <Button disabled={isRefreshing} onClick={loadRuns} type="button">
+            {isRefreshing ? "Loading..." : "Load runs"}
           </Button>
         </div>
       </div>

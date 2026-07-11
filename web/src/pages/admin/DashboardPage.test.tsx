@@ -2041,6 +2041,10 @@ describe("DashboardPage", () => {
       const callCountAfterAutoLoad = fetchMock.mock.calls.length;
 
       fireEvent.click(screen.getByRole("button", { name: "Load runs" }));
+      // A refresh keeps the already-rendered rows mounted while the new GET
+      // is in flight instead of replacing the Dashboard with a loading card.
+      expect(screen.getByRole("table", { name: "Run summaries" })).toBeInTheDocument();
+      expect(screen.getByText("run-agnostic-001")).toBeInTheDocument();
       await loadRuns();
 
       const runsCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/admin/runs"));

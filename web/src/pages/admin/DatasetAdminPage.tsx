@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent,
@@ -2772,6 +2773,12 @@ export default function DatasetAdminPage() {
   );
   const [publicationState, setPublicationState] = useState<PublicationState>(emptyPublicationState);
   const [lastPublishedAt, setLastPublishedAt] = useState<string | undefined>(undefined);
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const loadedDatasetSlugRef = useRef("");
+  const draftFormRef = useRef(draftForm);
+  const draftStateRef = useRef(draftState);
+  draftFormRef.current = draftForm;
+  draftStateRef.current = draftState;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2859,22 +2866,28 @@ export default function DatasetAdminPage() {
       return;
     }
 
-    setDraftForm((current) => ({ ...emptyDraftForm(selectedSlug), schema_version: current.schema_version || "1.0.0" }));
-    setDraftState({ status: "loading" });
-    setCustomizationEditorState(emptyCustomizationEditorState);
-    setPublicationState(emptyPublicationState);
-    setLastPublishedAt(undefined);
+    const isBackgroundRefresh = loadedDatasetSlugRef.current === selectedSlug;
+    if (!isBackgroundRefresh) {
+      setDraftForm((current) => ({ ...emptyDraftForm(selectedSlug), schema_version: current.schema_version || "1.0.0" }));
+      setDraftState({ status: "loading" });
+      setCustomizationEditorState(emptyCustomizationEditorState);
+      setPublicationState(emptyPublicationState);
+      setLastPublishedAt(undefined);
+    }
+    loadedDatasetSlugRef.current = selectedSlug;
 
     const controller = new AbortController();
-    setReadOnlyData({
-      dataset: { status: "loading" },
-      context: { status: "loading" },
-      contract: { status: "loading" },
-      metrics: { status: "loading" },
-      modelCard: { status: "loading" },
-      visualizations: { status: "loading" },
-      views: { status: "loading" },
-    });
+    if (!isBackgroundRefresh) {
+      setReadOnlyData({
+        dataset: { status: "loading" },
+        context: { status: "loading" },
+        contract: { status: "loading" },
+        metrics: { status: "loading" },
+        modelCard: { status: "loading" },
+        visualizations: { status: "loading" },
+        views: { status: "loading" },
+      });
+    }
 
     async function loadReadOnlyAtlasValues() {
       const encoded = encodeURIComponent(selectedSlug);
@@ -2929,7 +2942,12 @@ export default function DatasetAdminPage() {
         if (!data) {
           return;
         }
-        setDraftForm(formFromProfile(data.profile, selectedSlug));
+        const previousProfile = backendDraftProfile(draftStateRef.current);
+        const currentProfile = profileFromForm(draftFormRef.current, selectedSlug);
+        const hasDirtyFields = Boolean(previousProfile && !sameProfile(currentProfile, previousProfile));
+        if (!isBackgroundRefresh || !hasDirtyFields) {
+          setDraftForm(formFromProfile(data.profile, selectedSlug));
+        }
         setDraftState({ status: "ready", draftExists: data.draft_exists, profile: data.profile });
       })
       .catch((err: Error) => {
@@ -2939,7 +2957,7 @@ export default function DatasetAdminPage() {
       });
 
     return () => controller.abort();
-  }, [selectedSlug]);
+  }, [selectedSlug, refreshRevision]);
 
   const datasets = state.status === "ready" ? state.datasets : [];
   const selectedDataset = useMemo(
@@ -3456,6 +3474,14 @@ export default function DatasetAdminPage() {
             selectedDataset={selectedAdminDataset}
             stateStatus={adminDatasetsState.status}
           />
+          <button
+            disabled={!selectedSlug || draftState.status === "loading"}
+            onClick={() => setRefreshRevision((current) => current + 1)}
+            style={!selectedSlug || draftState.status === "loading" ? disabledButtonStyle : secondaryButtonStyle}
+            type="button"
+          >
+            Refresh
+          </button>
           <button
             disabled={toolbarPublishDisabled}
             onClick={publishChanges}

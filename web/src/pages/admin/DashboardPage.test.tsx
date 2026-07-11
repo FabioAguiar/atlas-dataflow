@@ -70,6 +70,35 @@ describe("DashboardPage", () => {
     expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
   });
 
+  it("keeps the desktop metrics strip and header controls present at the compact 1360x768 desktop viewport baseline (Project Spec S0057)", async () => {
+    // jsdom has no CSS layout engine, so this cannot assert pixel-level
+    // overflow -- it asserts the acceptance criterion that matters at the
+    // DOM level: at the compact desktop baseline the same desktop metrics
+    // strip and search controls still render (no mobile fallback markup),
+    // matching how the compact-desktop CSS in App.css narrows spacing
+    // without changing structure.
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    window.innerWidth = 1360;
+    window.innerHeight = 768;
+
+    try {
+      installRunsFetchMock(jsonResponse({ runs_root_status: "available", runs: [] }));
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const controls = screen.getByLabelText("Dashboard controls");
+      expect(within(controls).getByLabelText("Search runs and datasets")).toBeInTheDocument();
+      expect(await screen.findByLabelText("Runs available")).toBeInTheDocument();
+      expect(screen.getByLabelText("Promoted runs")).toBeInTheDocument();
+      expect(screen.getByLabelText("Published datasets")).toBeInTheDocument();
+      expect(screen.getByLabelText("Draft datasets")).toBeInTheDocument();
+    } finally {
+      window.innerWidth = originalWidth;
+      window.innerHeight = originalHeight;
+    }
+  });
+
   it("renders the runs-root-unavailable state distinctly from an empty runs list", async () => {
     installRunsFetchMock(jsonResponse({ runs_root_status: "unavailable", runs: [] }));
     render(<DashboardPage />);

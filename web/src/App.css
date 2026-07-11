@@ -1769,10 +1769,29 @@ h1 {
     padding: var(--atlas-space-5);
   }
 
+  .dataset-admin-page .atlas-tabs:has(.atlas-tab__icon) {
+    /* Compact desktop (<=1400px, e.g. the 1360x768 baseline) is narrow
+       enough that seven max-content-sized tab columns can add up wider than
+       the available shell width. Letting columns shrink to 0 -- with the
+       tab itself allowed to shrink below its content and the label
+       ellipsis-truncated below -- keeps this a fixed seven-column desktop
+       grid (not a mobile/scrolling tab pattern) while making horizontal
+       overflow structurally impossible instead of relying on label-width
+       arithmetic. */
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
   .dataset-admin-page .atlas-tab:has(.atlas-tab__icon) {
+    min-width: 0;
     min-height: 3.8rem;
     padding-inline: var(--atlas-space-2);
     font-size: var(--atlas-text-xs);
+  }
+
+  .dataset-admin-page .atlas-tab:has(.atlas-tab__icon) .atlas-tab__label {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .dataset-admin-card-grid--split,

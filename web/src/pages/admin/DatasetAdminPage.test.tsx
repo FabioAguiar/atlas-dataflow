@@ -474,6 +474,47 @@ describe("DatasetAdminPage", () => {
     expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" })).toBeInTheDocument();
   });
 
+  it("keeps the full desktop tab bar, dataset selector, and status/action controls present and interactive at the compact 1360x768 desktop viewport baseline (Project Spec S0057)", async () => {
+    // jsdom has no CSS layout engine, so this cannot assert pixel-level
+    // overflow -- it asserts the acceptance criterion that matters at the
+    // DOM level: at the compact desktop baseline the page still renders as
+    // the same seven-tab desktop structure (no mobile/tablet fallback
+    // markup, no collapsed overflow menu), matching how the compact-desktop
+    // CSS in App.css narrows spacing without changing structure.
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    window.innerWidth = 1360;
+    window.innerHeight = 768;
+
+    try {
+      installFetchMock();
+      renderAdminPage();
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent(`Telco Customer Churn -- ${datasetSlug}`);
+      });
+
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+        "Public Content",
+        "Metadata & Card",
+        "Theme Preset",
+        "Inference Form",
+        "Result Card",
+        "Publishing",
+        "Live Preview",
+      ]);
+      expect(screen.getByLabelText("Dataset Detail visibility")).toBeInTheDocument();
+      expect(screen.getByLabelText("Publication status")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+      expect(screen.getByRole("tab", { name: "Result Card", selected: true })).toBeInTheDocument();
+    } finally {
+      window.innerWidth = originalWidth;
+      window.innerHeight = originalHeight;
+    }
+  });
+
   it("opens the public Dataset Detail page in a new tab only while the selected dataset is publicly reachable", async () => {
     installFetchMock();
     renderAdminPage();

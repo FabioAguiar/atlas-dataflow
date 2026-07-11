@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Badge, Button, Card, EmptyState, ErrorState, StatusPill, TableRow } from "../../components/ui";
+import { Button, Card, EmptyState, ErrorState, StatusPill, TableRow } from "../../components/ui";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
 type RunStatus = "available" | "unavailable" | "invalid" | "promoted";
 type RunsRootStatus = "available" | "unavailable";
 type ValidationOutcome = "accepted" | "rejected" | "failed" | "unknown";
-type FilterStatus = "all" | RunStatus;
 
 type PromotionSummary = {
   promotion_outcome: "promoted";
@@ -184,16 +183,51 @@ const inputStyle: CSSProperties = {
   background: "var(--atlas-color-surface)",
 };
 
-const statusGridStyle: CSSProperties = {
+// Project Spec S0053: a compact indicator strip replaces the previous
+// vertically-stacked metric cards -- each card is a single horizontal row
+// (icon + value + label) with reduced padding/gap instead of the shared
+// atlas-card grid defaults.
+const compactMetricsStripStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(4, minmax(9.5rem, 1fr))",
-  gap: "var(--atlas-space-3)",
+  gridTemplateColumns: "repeat(4, minmax(8rem, 1fr))",
+  gap: "var(--atlas-space-2)",
 };
 
-const counterValueStyle: CSSProperties = {
+const compactMetricCardStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "row",
+  alignItems: "center",
+  gap: "var(--atlas-space-2)",
+  padding: "var(--atlas-space-2) var(--atlas-space-3)",
+};
+
+// Sized so the icon nearly fills the card's vertical padding box (close to
+// the top/bottom border) instead of floating small next to the value/label.
+const compactMetricIconStyle: CSSProperties = {
+  display: "inline-flex",
+  flexShrink: 0,
+  width: "2.25rem",
+  height: "2.25rem",
+};
+
+const compactMetricBodyStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 0,
+  minWidth: 0,
+};
+
+const compactMetricValueStyle: CSSProperties = {
   color: "var(--atlas-color-text)",
-  fontSize: "var(--atlas-text-2xl)",
+  fontSize: "var(--atlas-text-lg)",
   lineHeight: "var(--atlas-line-tight)",
+  fontWeight: 800,
+};
+
+const compactMetricLabelStyle: CSSProperties = {
+  color: "var(--atlas-color-text-muted)",
+  fontSize: "var(--atlas-text-xs)",
+  whiteSpace: "nowrap",
 };
 
 const tableStyle: CSSProperties = {
@@ -208,10 +242,12 @@ const stickyTableHeaderStyle: CSSProperties = {
   background: "var(--atlas-color-surface)",
 };
 
+// Project Spec S0053: the Actions column is narrower than before -- Promote
+// and Remove are now stacked vertically instead of laid out side by side.
 const runsTableHeaderStyle: CSSProperties = {
   ...stickyTableHeaderStyle,
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1.2fr) minmax(9rem, 0.9fr) minmax(9rem, 0.9fr) minmax(14rem, 1.1fr)",
+  gridTemplateColumns: "minmax(0, 1.2fr) minmax(9rem, 0.9fr) minmax(9rem, 0.9fr) minmax(8rem, 0.7fr)",
   gap: "var(--atlas-space-3)",
   borderBottom: "1px solid var(--atlas-color-border-strong)",
   paddingBottom: "var(--atlas-space-3)",
@@ -223,7 +259,7 @@ const runsTableHeaderStyle: CSSProperties = {
 
 const runRowContentStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 1.2fr) minmax(9rem, 0.9fr) minmax(9rem, 0.9fr) minmax(14rem, 1.1fr)",
+  gridTemplateColumns: "minmax(0, 1.2fr) minmax(9rem, 0.9fr) minmax(9rem, 0.9fr) minmax(8rem, 0.7fr)",
   gap: "var(--atlas-space-3)",
   alignItems: "center",
 };
@@ -337,12 +373,6 @@ const modalActionsStyle: CSSProperties = {
   display: "flex",
   justifyContent: "flex-end",
   gap: "var(--atlas-space-3)",
-};
-
-const actionGroupStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "var(--atlas-space-2)",
 };
 
 const stackedActionGroupStyle: CSSProperties = {
@@ -661,12 +691,6 @@ function formatCreatedAt(value: string | null): string {
   });
 }
 
-function rootStatusMessage(status: RunsRootStatus): string {
-  return status === "available"
-    ? "Runs root available"
-    : "Runs root unavailable";
-}
-
 function datasetDisplayName(value: string): string {
   return value
     .split(/[-_\s]+/)
@@ -746,7 +770,6 @@ function datasetMatchesQuery(row: DatasetDetailRow, query: string): boolean {
 export default function DashboardPage() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [removalState, setRemovalState] = useState<RunRemovalState>({ status: "idle" });
   const [datasetRemovalState, setDatasetRemovalState] = useState<DatasetDetailRemovalState>({ status: "idle" });
@@ -773,47 +796,52 @@ export default function DashboardPage() {
     return () => document.removeEventListener("keydown", handleSearchShortcut);
   }, []);
 
+  // Project Spec S0053: load Dashboard data automatically on mount, using the
+  // existing Admin data loading boundary (loadRuns, which also triggers
+  // loadDatasetRegistry) -- the Load runs button remains available afterward
+  // purely as a refresh action that re-fetches the same data.
+  useEffect(() => {
+    loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const runs = state.status === "ready" ? state.data.runs : [];
   const registryDatasets = datasetRegistryState.status === "ready" ? datasetRegistryState.datasets : null;
   const datasetRows = useMemo(() => buildDatasetDetailRows(runs, registryDatasets), [runs, registryDatasets]);
-
-  const counters = useMemo(
-    () => ({
-      // Project Spec S0050: counts every run currently presented in the
-      // Runs card, promoted or not -- not just runs with status "available".
-      runsAvailable: runs.length,
-      promotedRuns: runs.filter((run) => run.status === "promoted").length,
-      // Project Spec S0052: derived from the Admin-projected publication
-      // status (Ready / Needs review) rather than from registry membership
-      // alone -- a registry-backed Dataset Detail can be either.
-      publishedDatasets: registryDatasets
-        ? registryDatasets.filter((dataset) => dataset.publication_status === "ready").length
-        : 0,
-      draftDatasets: registryDatasets
-        ? registryDatasets.filter((dataset) => dataset.publication_status === "needs_review").length
-        : 0,
-    }),
-    [runs, registryDatasets],
-  );
 
   const normalizedQuery = normalizeSearchText(query.trim());
 
   const filteredRuns = useMemo(() => {
     return runs.filter((run) => {
-      const matchesStatus = statusFilter === "all" || run.status === statusFilter;
-      const matchesQuery =
+      return (
         normalizedQuery.length === 0 ||
         normalizeSearchText(run.run_id).includes(normalizedQuery) ||
         normalizeSearchText(run.dataset_candidate ?? "").includes(normalizedQuery) ||
-        normalizeSearchText(run.validation_summary?.outcome ?? "").includes(normalizedQuery);
-
-      return matchesStatus && matchesQuery;
+        normalizeSearchText(run.validation_summary?.outcome ?? "").includes(normalizedQuery)
+      );
     });
-  }, [normalizedQuery, runs, statusFilter]);
+  }, [normalizedQuery, runs]);
 
   const filteredDatasetRows = useMemo(
     () => datasetRows.filter((row) => datasetMatchesQuery(row, normalizedQuery)),
     [datasetRows, normalizedQuery],
+  );
+
+  // Project Spec S0053: every metric is derived from the currently
+  // search-filtered Runs/Dataset Details sets, not the unfiltered full sets
+  // -- so the top indicators always agree with what is visible on screen.
+  const counters = useMemo(
+    () => ({
+      // Counts every run currently presented in the Runs card after
+      // filtering, promoted or not -- not just runs with status "available".
+      runsAvailable: filteredRuns.length,
+      promotedRuns: filteredRuns.filter((run) => run.status === "promoted").length,
+      // Derived from the Admin-projected publication status (Ready / Needs
+      // review) of the currently presented Dataset Details rows.
+      publishedDatasets: filteredDatasetRows.filter((row) => row.publicationStatus === "ready").length,
+      draftDatasets: filteredDatasetRows.filter((row) => row.publicationStatus === "needs_review").length,
+    }),
+    [filteredRuns, filteredDatasetRows],
   );
 
   function loadDatasetRegistry() {
@@ -1140,9 +1168,6 @@ export default function DashboardPage() {
                 value={query}
               />
             </label>
-            <span aria-hidden="true" className="admin-dashboard__search-hint">
-              ⌘K
-            </span>
           </span>
 
           <Button disabled={state.status === "loading"} onClick={loadRuns} type="button">
@@ -1169,78 +1194,51 @@ export default function DashboardPage() {
 
       {state.status === "ready" && (
         <>
-          <Card aria-label="Run status filter" muted>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>Run status</span>
-              <select
-                onChange={(event) => setStatusFilter(event.target.value as FilterStatus)}
-                style={{ ...inputStyle, width: "min(18rem, 100%)" }}
-                value={statusFilter}
-              >
-                <option value="all">All statuses</option>
-                <option value="available">Available</option>
-                <option value="promoted">Promoted</option>
-                <option value="invalid">Invalid</option>
-                <option value="unavailable">Unavailable</option>
-              </select>
-            </label>
-          </Card>
-
-          <div data-runs-root-status={state.data.runs_root_status} style={statusGridStyle}>
-            <Card aria-label="Runs available" data-summary-count={counters.runsAvailable}>
-              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
+          <div data-runs-root-status={state.data.runs_root_status} style={compactMetricsStripStyle}>
+            <Card aria-label="Runs available" data-summary-count={counters.runsAvailable} style={compactMetricCardStyle}>
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green" style={compactMetricIconStyle}>
                 <RunsAvailableIcon />
               </span>
-              <Badge>{rootStatusMessage(state.data.runs_root_status)}</Badge>
-              <strong style={counterValueStyle}>{counters.runsAvailable}</strong>
-              <span style={mutedTextStyle}>Runs available</span>
+              <span style={compactMetricBodyStyle}>
+                <strong style={compactMetricValueStyle}>{counters.runsAvailable}</strong>
+                <span style={compactMetricLabelStyle}>Runs available</span>
+              </span>
             </Card>
-            <Card aria-label="Promoted runs" data-summary-count={counters.promotedRuns}>
-              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
+            <Card aria-label="Promoted runs" data-summary-count={counters.promotedRuns} style={compactMetricCardStyle}>
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green" style={compactMetricIconStyle}>
                 <PromotedRunsIcon />
               </span>
-              <StatusPill tone="success">Promoted</StatusPill>
-              <strong style={counterValueStyle}>{counters.promotedRuns}</strong>
-              <span style={mutedTextStyle}>Runs already promoted</span>
+              <span style={compactMetricBodyStyle}>
+                <strong style={compactMetricValueStyle}>{counters.promotedRuns}</strong>
+                <span style={compactMetricLabelStyle}>Promoted runs</span>
+              </span>
             </Card>
             <Card
               aria-label="Published datasets"
               data-registry-status={datasetRegistryState.status}
               data-summary-count={counters.publishedDatasets}
+              style={compactMetricCardStyle}
             >
-              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green">
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--green" style={compactMetricIconStyle}>
                 <PublishedDatasetsIcon />
               </span>
-              {datasetRegistryState.status === "ready" ? (
-                <StatusPill tone="success">Registry available</StatusPill>
-              ) : (
-                <StatusPill tone="warning">Unavailable</StatusPill>
-              )}
-              <strong style={counterValueStyle}>{counters.publishedDatasets}</strong>
-              <span style={mutedTextStyle}>
-                {datasetRegistryState.status === "ready"
-                  ? "From the safe dataset registry listing"
-                  : "Registry listing unavailable"}
+              <span style={compactMetricBodyStyle}>
+                <strong style={compactMetricValueStyle}>{counters.publishedDatasets}</strong>
+                <span style={compactMetricLabelStyle}>Published datasets</span>
               </span>
             </Card>
             <Card
               aria-label="Draft datasets"
               data-registry-status={datasetRegistryState.status}
               data-summary-count={counters.draftDatasets}
+              style={compactMetricCardStyle}
             >
-              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--amber">
+              <span aria-hidden="true" className="admin-dashboard__summary-icon admin-dashboard__summary-icon--amber" style={compactMetricIconStyle}>
                 <DraftDatasetsIcon />
               </span>
-              {datasetRegistryState.status === "ready" ? (
-                <StatusPill tone="warning">Needs review</StatusPill>
-              ) : (
-                <StatusPill tone="warning">Unavailable</StatusPill>
-              )}
-              <strong style={counterValueStyle}>{counters.draftDatasets}</strong>
-              <span style={mutedTextStyle}>
-                {datasetRegistryState.status === "ready"
-                  ? "From the safe dataset registry listing"
-                  : "Registry listing unavailable"}
+              <span style={compactMetricBodyStyle}>
+                <strong style={compactMetricValueStyle}>{counters.draftDatasets}</strong>
+                <span style={compactMetricLabelStyle}>Draft datasets</span>
               </span>
             </Card>
           </div>
@@ -1466,7 +1464,8 @@ export default function DashboardPage() {
                           </span>
                           <span>{run.dataset_candidate ?? "Not resolved"}</span>
                           <span>{formatCreatedAt(run.created_at)}</span>
-                          <span style={actionGroupStyle}>
+                          {/* Project Spec S0053: Promote/Promoted stacks above Remove. */}
+                          <span style={stackedActionGroupStyle}>
                             <Button
                               data-run-action={
                                 registryBoundPromoted

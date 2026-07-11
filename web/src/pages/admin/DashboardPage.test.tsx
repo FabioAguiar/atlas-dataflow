@@ -31,8 +31,13 @@ function installRunsFetchMock(response: MockResponse) {
   return fetchMock;
 }
 
+// Project Spec S0053: the Dashboard now loads its data automatically on
+// mount, so this helper waits for that in-flight auto-load to settle instead
+// of triggering it by clicking -- the Load runs button only functions as an
+// explicit refresh trigger from this point onward (see the dedicated auto-load
+// and refresh tests below for that distinction).
 async function loadRuns() {
-  fireEvent.click(screen.getByRole("button", { name: "Load runs" }));
+  await screen.findByRole("button", { name: "Load runs" });
 }
 
 describe("DashboardPage", () => {
@@ -42,6 +47,10 @@ describe("DashboardPage", () => {
   });
 
   it("renders the design-aligned Dashboard identity before private data is loaded", () => {
+    // Project Spec S0053: the Dashboard now auto-loads on mount, so a fetch
+    // mock is installed even though this test only asserts on markup that is
+    // always rendered regardless of load state.
+    installRunsFetchMock(jsonResponse({ runs_root_status: "available", runs: [] }));
     render(<DashboardPage />);
 
     expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
@@ -49,11 +58,14 @@ describe("DashboardPage", () => {
   });
 
   it("renders tokenless private Dashboard controls before data loads", () => {
+    installRunsFetchMock(jsonResponse({ runs_root_status: "available", runs: [] }));
     render(<DashboardPage />);
 
     const controls = screen.getByLabelText("Dashboard controls");
     expect(within(controls).getByLabelText("Search runs and datasets")).toBeInTheDocument();
-    expect(within(controls).getByRole("button", { name: "Load runs" })).toBeInTheDocument();
+    // Project Spec S0053: auto-load means the button may already read
+    // "Loading..." by the time this synchronous assertion runs.
+    expect(within(controls).getByRole("button", { name: /^(Load runs|Loading\.\.\.)$/ })).toBeInTheDocument();
     expect(within(controls).queryByLabelText("Operator token")).not.toBeInTheDocument();
     expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
   });
@@ -213,13 +225,11 @@ describe("DashboardPage", () => {
     expect(searchInput).toHaveFocus();
   });
 
-  it("renders a decorative ⌘K keyboard hint next to the search input without changing its accessible name", () => {
+  it("does not render a decorative ⌘K keyboard hint next to the search input", () => {
     render(<DashboardPage />);
 
     const controls = screen.getByLabelText("Dashboard controls");
-    const hint = within(controls).getByText("⌘K");
-
-    expect(hint).toHaveAttribute("aria-hidden", "true");
+    expect(within(controls).queryByText("⌘K")).not.toBeInTheDocument();
     expect(within(controls).getByLabelText("Search runs and datasets")).toBeInTheDocument();
   });
 
@@ -1133,7 +1143,7 @@ describe("DashboardPage", () => {
       expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "1");
     });
 
-    it("filters the runs table to only promoted runs when the Promoted status filter is selected", async () => {
+    it("uses the shared search instead of a Run status filter to isolate promoted runs (Project Spec S0053)", async () => {
       installRunsFetchMock(
         jsonResponse({
           runs_root_status: "available",
@@ -1173,7 +1183,10 @@ describe("DashboardPage", () => {
       const table = await screen.findByRole("table", { name: "Run summaries" });
       expect(table).toHaveAttribute("data-filtered-run-count", "2");
 
-      fireEvent.change(screen.getByLabelText("Run status"), { target: { value: "promoted" } });
+      // No Run status select exists anymore -- isolating a run relies on the
+      // shared search input instead.
+      expect(screen.queryByLabelText("Run status")).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "promoted-002" } });
 
       expect(table).toHaveAttribute("data-filtered-run-count", "1");
       expect(within(table).getByText("run-promoted-002")).toBeInTheDocument();
@@ -1919,45 +1932,171 @@ describe("DashboardPage", () => {
     expect(screen.getByLabelText("Draft datasets")).toHaveAttribute("data-summary-count", "0");
   });
 
-  it("filters the runs table by Run status when a specific status is selected", async () => {
-    installRunsFetchMock(
-      jsonResponse({
-        runs_root_status: "available",
-        runs: [
-          {
-            schema_version: "admin-run-summary.v1",
-            run_id: "run-agnostic-001",
-            status: "available",
-            dataset_candidate: "synthetic-retail-forecast",
-            created_at: "2026-06-01T12:00:00Z",
-            trace_reference: "trace/run-agnostic-001",
-            validation_summary: { outcome: "accepted" },
-          },
-          {
-            schema_version: "admin-run-summary.v1",
-            run_id: "run-agnostic-002",
-            status: "invalid",
-            dataset_candidate: "synthetic-energy-usage",
-            created_at: "2026-06-02T12:00:00Z",
-            trace_reference: "trace/run-agnostic-002",
-            validation_summary: null,
-            invalid_reason: "source_run_evidence_malformed",
-          },
-        ],
-      }),
-    );
-    render(<DashboardPage />);
+  describe("Compact metrics, search-synchronized counts, auto-load, refresh, and stacked run actions (Project Spec S0053)", () => {
+    function installMixedFetchMock() {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: "synthetic-retail-forecast",
+                title: "Synthetic Retail Forecast",
+                display_title: "Synthetic Retail Forecast",
+                publication_status: "ready",
+              },
+              {
+                dataset_slug: "synthetic-energy-usage",
+                title: "Synthetic Energy Usage",
+                display_title: "Synthetic Energy Usage",
+                publication_status: "needs_review",
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({
+            runs_root_status: "available",
+            runs: [
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-001",
+                status: "available",
+                dataset_candidate: "synthetic-retail-forecast",
+                created_at: "2026-06-01T12:00:00Z",
+                trace_reference: "trace/run-agnostic-001",
+                validation_summary: { outcome: "accepted" },
+              },
+              {
+                schema_version: "admin-run-summary.v1",
+                run_id: "run-agnostic-002",
+                status: "promoted",
+                dataset_candidate: "synthetic-energy-usage",
+                created_at: "2026-06-02T12:00:00Z",
+                trace_reference: "trace/run-agnostic-002",
+                validation_summary: { outcome: "accepted" },
+                promotion_summary: {
+                  promotion_outcome: "promoted",
+                  release_id: "release-20260702-001",
+                  dataset_slug: "synthetic-energy-usage",
+                  registry_bound: false,
+                  can_promote: true,
+                  can_remove: true,
+                },
+              },
+            ],
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
 
-    await loadRuns();
+    it("loads Dashboard data automatically when the page mounts, without needing to click Load runs", async () => {
+      installMixedFetchMock();
+      render(<DashboardPage />);
 
-    const table = await screen.findByRole("table", { name: "Run summaries" });
-    expect(table).toHaveAttribute("data-filtered-run-count", "2");
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getByText("run-agnostic-001")).toBeInTheDocument();
+      expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "2");
+    });
 
-    fireEvent.change(screen.getByLabelText("Run status"), { target: { value: "invalid" } });
+    it("refreshes Dashboard data via Load runs after the initial auto-load, re-fetching without mutating state", async () => {
+      const fetchMock = installMixedFetchMock();
+      render(<DashboardPage />);
 
-    expect(table).toHaveAttribute("data-filtered-run-count", "1");
-    expect(within(table).queryByText("run-agnostic-001")).not.toBeInTheDocument();
-    expect(within(table).getByText("run-agnostic-002")).toBeInTheDocument();
+      await loadRuns();
+      const callCountAfterAutoLoad = fetchMock.mock.calls.length;
+
+      fireEvent.click(screen.getByRole("button", { name: "Load runs" }));
+      await loadRuns();
+
+      const runsCalls = fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/admin/runs"));
+      expect(runsCalls.length).toBeGreaterThan(0);
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(callCountAfterAutoLoad);
+      // Refresh only ever issues GET requests -- never a mutating method.
+      for (const call of fetchMock.mock.calls.slice(callCountAfterAutoLoad)) {
+        const init = call[1] as RequestInit | undefined;
+        expect(init?.method ?? "GET").toBe("GET");
+      }
+    });
+
+    it("removes the Run status filter card and select entirely", async () => {
+      installMixedFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      expect(screen.queryByLabelText("Run status")).not.toBeInTheDocument();
+      expect(screen.queryByText("Run status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    });
+
+    it("renders the four metric cards as a compact horizontal strip instead of the prior stacked layout", async () => {
+      installMixedFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      for (const label of ["Runs available", "Promoted runs", "Published datasets", "Draft datasets"]) {
+        const card = screen.getByLabelText(label);
+        expect(card.style.flexDirection).toBe("row");
+        expect(card.style.padding).not.toBe("");
+        expect(card.style.padding).not.toContain("var(--atlas-space-5)");
+      }
+    });
+
+    it("synchronizes all four metric counts with the shared search filter, and restores them when the search is cleared", async () => {
+      installMixedFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "2");
+      expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "1");
+      expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "1");
+      expect(screen.getByLabelText("Draft datasets")).toHaveAttribute("data-summary-count", "1");
+
+      fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "energy" } });
+
+      expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "1");
+      expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "1");
+      expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "0");
+      expect(screen.getByLabelText("Draft datasets")).toHaveAttribute("data-summary-count", "1");
+
+      fireEvent.change(screen.getByLabelText("Search runs and datasets"), { target: { value: "" } });
+
+      expect(screen.getByLabelText("Runs available")).toHaveAttribute("data-summary-count", "2");
+      expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "1");
+      expect(screen.getByLabelText("Published datasets")).toHaveAttribute("data-summary-count", "1");
+      expect(screen.getByLabelText("Draft datasets")).toHaveAttribute("data-summary-count", "1");
+    });
+
+    it("stacks Promote/Promoted above Remove in the Runs card", async () => {
+      installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-agnostic-solo",
+              status: "available",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-agnostic-solo",
+              validation_summary: { outcome: "accepted" },
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const promoteButton = within(table).getByRole("button", { name: "Promote" });
+      const actionsContainer = promoteButton.parentElement as HTMLElement;
+
+      expect(actionsContainer.style.flexDirection).toBe("column");
+      expect(within(actionsContainer).getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    });
   });
 
   describe("Runs card promoted interaction and display refinement (Project Spec S0050)", () => {

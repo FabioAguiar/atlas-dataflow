@@ -1515,4 +1515,37 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Problem summary body"), { target: { value: summaryBodyValue } });
     expect(screen.getByText(`${summaryBodyValue.length} / 300`)).toBeInTheDocument();
   });
+
+  it("cleans up the Public Content tab body by removing the duplicate internal heading, helper copy, and Canonical fallback control while keeping the field layout and counters intact (Project Spec S0059)", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await loadDraftOnly();
+
+    // Public Content is the default tab; scope every assertion to its own
+    // tabpanel so the "Public Content" tab-navigation button itself (which
+    // legitimately keeps that label) can't make a removed-heading assertion
+    // pass by accident.
+    const panel = screen.getByRole("tabpanel", { name: "Public Content tab panel" });
+
+    expect(within(panel).queryByText("Public Content")).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByText(
+        "Edit only schema-backed presentation copy. Canonical dataset values remain read-only.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(within(panel).queryByText("Canonical fallback")).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByText("Use Telco Customer Churn when no curated title is set."),
+    ).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("checkbox")).not.toBeInTheDocument();
+
+    // The Public copy / Source and release subgroup concepts, field order,
+    // counters, and required markers all remain in place.
+    expect(within(panel).getByRole("heading", { level: 2, name: "Public copy" })).toBeInTheDocument();
+    expect(within(panel).getByRole("heading", { level: 2, name: "Source and release" })).toBeInTheDocument();
+    const displayTitleField = within(panel).getByLabelText("Display title") as HTMLInputElement;
+    expect(within(panel).getByText(`${displayTitleField.value.length} / 80`)).toBeInTheDocument();
+    expect(within(panel).getByLabelText("Source URL")).toBeInTheDocument();
+  });
 });

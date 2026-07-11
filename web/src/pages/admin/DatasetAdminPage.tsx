@@ -1373,117 +1373,91 @@ function ErrorList({ errors }: { errors: DraftError[] }) {
 function PublicContentTab({
   form,
   setField,
-  dataset,
 }: {
   form: DraftForm;
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
-  dataset?: DatasetListing;
 }) {
   return (
-    <TabWorkspace
-      eyebrow="Public Content"
-      helper="Edit only schema-backed presentation copy. Canonical dataset values remain read-only."
-    >
-      <div className="dataset-admin-card-grid dataset-admin-card-grid--two">
-        <Card className="dataset-admin-config-card">
-          <div className="dataset-admin-card-heading">
-            <h2>Public copy</h2>
-            <p>Title, summary, and public explanation shown on Home and Dataset Detail.</p>
-          </div>
-          <div className="dataset-admin-form-grid">
-            <TextField
-              label="Display title"
-              maxLength={80}
-              onChange={(value) => setField("display_title", value)}
-              required
-              value={form.display_title}
-            />
-            <TextField
-              label="Subtitle"
-              maxLength={120}
-              onChange={(value) => setField("display_subtitle", value)}
-              required
-              value={form.display_subtitle}
-            />
-          </div>
-          <div style={narrowFieldRowStyle}>
-            <TextField
-              label="Problem summary title"
-              maxLength={60}
-              onChange={(value) => setField("problem_summary_title", value)}
-              required
-              value={form.problem_summary_title}
-            />
-          </div>
+    <div className="dataset-admin-public-content-form">
+      <section className="dataset-admin-public-content-group">
+        <h2 className="dataset-admin-public-content-group__title">Public copy</h2>
+        <div className="dataset-admin-form-grid">
           <TextField
-            label="Problem summary body"
-            maxLength={300}
-            multiline
-            onChange={(value) => setField("problem_summary_body", value)}
+            label="Display title"
+            maxLength={80}
+            onChange={(value) => setField("display_title", value)}
             required
-            rows={5}
-            value={form.problem_summary_body}
+            value={form.display_title}
           />
-        </Card>
+          <TextField
+            label="Subtitle"
+            maxLength={120}
+            onChange={(value) => setField("display_subtitle", value)}
+            required
+            value={form.display_subtitle}
+          />
+        </div>
+        <div style={narrowFieldRowStyle}>
+          <TextField
+            label="Problem summary title"
+            maxLength={60}
+            onChange={(value) => setField("problem_summary_title", value)}
+            required
+            value={form.problem_summary_title}
+          />
+        </div>
+        <TextField
+          label="Problem summary body"
+          maxLength={300}
+          multiline
+          onChange={(value) => setField("problem_summary_body", value)}
+          required
+          rows={5}
+          value={form.problem_summary_body}
+        />
+      </section>
 
-        <Card className="dataset-admin-config-card">
-          <div className="dataset-admin-card-heading">
-            <h2>Source and release</h2>
-            <p>Public provenance labels without changing Atlas technical metadata.</p>
-          </div>
-          <div className="dataset-admin-form-grid">
-            <TextField label="Source name" onChange={(value) => setField("source_name", value)} required value={form.source_name} />
-            <TextField
-              label="Source URL"
-              onChange={(value) => setField("source_url", value)}
-              required
-              type="url"
-              value={form.source_url}
-            />
-            <TextField
-              label="Release date label"
-              onChange={(value) => setField("release_date_label", value)}
-              required
-              value={form.release_date_label}
-            />
-            <label style={fieldStyle}>
-              <span style={fieldLabelRowStyle}>
-                Date format
-                <span aria-hidden="true" style={requiredMarkerStyle}>
-                  *
-                </span>
+      <section className="dataset-admin-public-content-group">
+        <h2 className="dataset-admin-public-content-group__title">Source and release</h2>
+        <div className="dataset-admin-form-grid">
+          <TextField label="Source name" onChange={(value) => setField("source_name", value)} required value={form.source_name} />
+          <TextField
+            label="Source URL"
+            onChange={(value) => setField("source_url", value)}
+            required
+            type="url"
+            value={form.source_url}
+          />
+          <TextField
+            label="Release date label"
+            onChange={(value) => setField("release_date_label", value)}
+            required
+            value={form.release_date_label}
+          />
+          <label style={fieldStyle}>
+            <span style={fieldLabelRowStyle}>
+              Date format
+              <span aria-hidden="true" style={requiredMarkerStyle}>
+                *
               </span>
-              <select
-                aria-label="Date format"
-                id="date-format"
-                onChange={(event) => setField("date_format", event.target.value as DraftForm["date_format"])}
-                style={inputStyle}
-                value={form.date_format}
-              >
-                <option value="">No curated format</option>
-                <option value="dd/mm/yyyy">dd/mm/yyyy</option>
-                <option value="mm/dd/yyyy">mm/dd/yyyy</option>
-                <option value="yyyy-mm-dd">yyyy-mm-dd</option>
-              </select>
-              <small style={mutedTextStyle}>Controls public date label rendering only.</small>
-            </label>
-          </div>
-          <label className="dataset-admin-toggle-row">
-            <span className="dataset-admin-toggle-row__copy">
-              <span>Canonical fallback</span>
-              <small>Use {getDatasetLabel(dataset)} when no curated title is set.</small>
             </span>
-            <span style={buttonRowStyle}>
-              <input
-                checked={form.canonical_name_fallback}
-                onChange={(event) => setField("canonical_name_fallback", event.target.checked)}
-                type="checkbox"
-              />
-            </span>
+            <select
+              aria-label="Date format"
+              id="date-format"
+              onChange={(event) => setField("date_format", event.target.value as DraftForm["date_format"])}
+              style={inputStyle}
+              value={form.date_format}
+            >
+              <option value="">No curated format</option>
+              <option value="dd/mm/yyyy">dd/mm/yyyy</option>
+              <option value="mm/dd/yyyy">mm/dd/yyyy</option>
+              <option value="yyyy-mm-dd">yyyy-mm-dd</option>
+            </select>
+            <small style={mutedTextStyle}>Controls public date label rendering only.</small>
           </label>
-        </Card>
-      </div>
-    </TabWorkspace>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2728,7 +2702,7 @@ function renderSelectedTab(
       );
     case "public-content":
     default:
-      return <PublicContentTab dataset={dataset} form={form} setField={setField} />;
+      return <PublicContentTab form={form} setField={setField} />;
   }
 }
 

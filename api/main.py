@@ -71,7 +71,7 @@ from public_profile_visibility import (  # noqa: E402
 )
 from admin_runs import list_admin_run_summaries, promote_admin_run, remove_admin_run  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
-from admin_profile_publish import publish_profile  # noqa: E402
+from admin_profile_publish import publish_profile, publish_profile_payload  # noqa: E402
 from admin_profile_visibility import set_dataset_visibility  # noqa: E402
 from admin_settings import read_admin_settings, write_admin_settings  # noqa: E402
 from admin_predict_view_customizations import (  # noqa: E402
@@ -798,11 +798,26 @@ def put_admin_profile_draft(
 
 
 @app.put("/admin/datasets/{dataset_slug}/publish")
-def put_admin_profile_publish(dataset_slug: str, request: Request):
+def put_admin_profile_publish(
+    dataset_slug: str, request: Request, profile: dict | None = Body(default=None)
+):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
     try:
-        result = publish_profile(dataset_slug)
+        # Project Spec S0061: Dataset Admin's normal Publish Changes flow
+        # sends the current form payload directly (no persisted profile-draft
+        # required); a request with no body falls back to the legacy
+        # publish-the-stored-draft behavior, kept only for backward
+        # compatibility with any caller that still relies on it. Checked with
+        # isinstance rather than "is not None" so direct (non-FastAPI-routed)
+        # calls that omit the profile argument entirely -- which receive the
+        # Body(default=None) marker object itself as the Python default, not
+        # a real None -- still take the legacy branch, matching what FastAPI
+        # itself passes (a real None) when an HTTP request omits the body.
+        if isinstance(profile, dict):
+            result = publish_profile_payload(dataset_slug, profile)
+        else:
+            result = publish_profile(dataset_slug)
     except ValueError:
         return public_error_response(PROFILE_PUBLISH_DATASET_SLUG_INVALID)
 

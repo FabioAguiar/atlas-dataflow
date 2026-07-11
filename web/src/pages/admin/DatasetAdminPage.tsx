@@ -2663,6 +2663,15 @@ function renderSelectedTab(
   const publishedProfile = publicationState.publishedProfile;
   const hasPublishedSnapshot = Boolean(publishedProfile);
   const hasUnpublishedChanges = Boolean(currentProfile && publishedProfile && !sameProfile(currentProfile, publishedProfile));
+  // Project Spec S0061: Publish changes no longer requires a prior saved
+  // profile-draft, so its own enablement is judged only against the last
+  // successfully published snapshot (or "nothing published yet this
+  // session", which is always publishable) -- distinct from
+  // hasUnpublishedChanges above, which stays gated on a real published
+  // snapshot existing so the "Unpublished Changes" status label (and
+  // draftStateSummary's "Loaded private draft."/"Saved and matches public
+  // snapshot." wording) are unaffected by this change.
+  const hasPublishableChanges = Boolean(currentProfile) && (!publishedProfile || !sameProfile(currentProfile, publishedProfile));
 
   switch (selectedTab) {
     case "metadata-card":
@@ -2687,10 +2696,8 @@ function renderSelectedTab(
       {
         const publishDisabledReason = !selectedSlug
           ? "Select a dataset before publishing."
-          : !lastBackendDraft
-          ? "Load or save a private draft before publishing changes."
-          : hasUnsavedDraftChanges
-          ? "Save Draft before publishing; Publish Changes uses the saved backend draft, not unsaved form edits."
+          : !hasPublishableChanges
+          ? "No changes to publish."
           : null;
 
         return (
@@ -3000,12 +3007,11 @@ export default function DatasetAdminPage() {
     setDraftForm((current) => ({ ...current, [key]: value }));
   }
 
-  // Accepts an optional onSaved callback so the workspace toolbar's Publish
-  // changes action (Project Spec S0058) can chain straight into performPublish
-  // with the just-saved profile once the save actually succeeds, reusing the
-  // exact same save path the Publishing tab's own Save draft button calls
-  // with no callback.
-  function saveDraft(onSaved?: (profile: ProfileDraft) => void) {
+  // Save draft remains available for operators who still want to persist an
+  // in-progress edit privately without publishing it (Project Spec S0061
+  // keeps legacy draft endpoint behavior for compatibility), but is no
+  // longer a precondition of Publish changes below.
+  function saveDraft() {
     if (!selectedSlug) {
       return;
     }
@@ -3043,7 +3049,6 @@ export default function DatasetAdminPage() {
         const savedProfile = result.body.profile ?? profile;
         setDraftForm(formFromProfile(savedProfile, selectedSlug));
         setDraftState({ status: "saved", profile: savedProfile });
-        onSaved?.(savedProfile);
       })
       .catch(() => {
         setDraftState({ status: "unavailable", message: "Content could not be saved. Check API reachability." });
@@ -3052,11 +3057,12 @@ export default function DatasetAdminPage() {
 
   const boundPredictViewId = draftForm.bound_predict_view_id;
 
-  // Shared by publishChanges (Publishing tab) and publishPublicContentChanges
-  // (workspace toolbar) below -- both end up calling the same PUT /publish
-  // endpoint once a matching saved draft is confirmed; only how they get
-  // there (an explicit Save Draft-then-Publish precondition check vs. an
-  // implicit save-then-publish chain) differs.
+  // Project Spec S0061: Publish changes sends the current form payload
+  // directly to the direct publish boundary -- no persisted profile-draft is
+  // read or required by the backend along this path. Shared by publishChanges
+  // (Publishing tab) and the workspace toolbar's own Publish changes button,
+  // both of which call this with profileFromForm(draftForm, selectedSlug)
+  // and nothing else.
   function performPublish(profileToPublish: ProfileDraft) {
     setPublicationState((current) => ({
       status: "publishing",
@@ -3065,6 +3071,10 @@ export default function DatasetAdminPage() {
     }));
     fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/publish`, {
       method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(profileToPublish),
     })
       .then((response) => {
         if (response.status === 404) {
@@ -3095,6 +3105,15 @@ export default function DatasetAdminPage() {
           return;
         }
         const publishedProfile = profileFromSnapshot(result.body.snapshot, selectedSlug) ?? profileToPublish;
+        // A successful publish also becomes the new local dirty-state
+        // baseline (Project Spec S0061 acceptance criteria), reusing the
+        // same draftState/lastBackendDraft plumbing draftStateSummary and
+        // the workspace toolbar's own Public-Content-scoped comparison
+        // already key off, so Publish changes disables again immediately
+        // until the form changes further -- without requiring an explicit
+        // Save draft call.
+        setDraftForm(formFromProfile(publishedProfile, selectedSlug));
+        setDraftState({ status: "saved", profile: publishedProfile });
         setPublicationState((current) => ({
           status: "published",
           visible: current.visible,
@@ -3113,33 +3132,16 @@ export default function DatasetAdminPage() {
       });
   }
 
+  // Shared by the Publishing tab's own Publish changes button and the
+  // workspace toolbar's Publish changes button (Project Spec S0061): both
+  // publish the current form payload directly, with no save-profile-draft
+  // precondition.
   function publishChanges() {
     if (!selectedSlug) {
       return;
     }
 
-    const lastBackendDraft = backendDraftProfile(draftState);
-    const currentProfile = profileFromForm(draftForm, selectedSlug);
-    if (!lastBackendDraft || !sameProfile(lastBackendDraft, currentProfile)) {
-      setPublicationState((current) => ({
-        status: "unavailable",
-        visible: current.visible,
-        publishedProfile: current.publishedProfile,
-        message: "Save Draft before publishing; Publish Changes uses the saved backend draft.",
-      }));
-      return;
-    }
-
-    performPublish(currentProfile);
-  }
-
-  // The workspace toolbar's Publish changes action (Project Spec S0058):
-  // saves the current Public Content form state and publishes it in one
-  // operator click, reusing the same profile-draft PUT and publish PUT
-  // endpoints the Publishing tab's own Save draft/Publish changes actions
-  // already call, instead of requiring a separate manual save-then-publish.
-  function publishPublicContentChanges() {
-    saveDraft(performPublish);
+    performPublish(profileFromForm(draftForm, selectedSlug));
   }
 
   function setPublicVisibility(visible: boolean) {
@@ -3400,7 +3402,7 @@ export default function DatasetAdminPage() {
           />
           <button
             disabled={toolbarPublishDisabled}
-            onClick={publishPublicContentChanges}
+            onClick={publishChanges}
             style={toolbarPublishDisabled ? disabledButtonStyle : actionButtonStyle}
             type="button"
           >
@@ -3433,9 +3435,7 @@ export default function DatasetAdminPage() {
             publishChanges,
             // Publishing tab's own Save draft button passes its onClick
             // SyntheticEvent straight through as this callback's first
-            // argument -- wrap so it never reaches saveDraft's optional
-            // onSaved parameter (added for the toolbar's save-then-publish
-            // chain below).
+            // argument -- wrap so it never reaches saveDraft.
             () => saveDraft(),
             setPublicVisibility,
             saveCustomization,

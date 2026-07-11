@@ -242,7 +242,17 @@ function installFetchMock(
           422,
         );
       }
-      const profile = options.trackProfileDraftSaves ? savedProfileDraft ?? publicProfile : publicProfile;
+      // Project Spec S0061: the direct publish boundary echoes back exactly
+      // the payload it received in the request body, matching the real
+      // backend's publish_snapshot_from_payload behavior -- the published
+      // snapshot must reflect exactly the current form payload submitted by
+      // Publish changes, not a stale stored draft.
+      const profile =
+        typeof init.body === "string"
+          ? (JSON.parse(init.body) as typeof publicProfile)
+          : options.trackProfileDraftSaves
+          ? savedProfileDraft ?? publicProfile
+          : publicProfile;
       return jsonResponse({
         published: true,
         snapshot: {
@@ -404,10 +414,14 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByText("2026-07-03T17:30:00Z (this session)")).toBeInTheDocument();
 
     const publishCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`));
+    // Project Spec S0061: Publish changes sends the current form payload
+    // directly in the request body -- no persisted profile-draft is read by
+    // the backend along this path.
     expect(publishCall?.[1]).toMatchObject({
       method: "PUT",
+      headers: { "Content-Type": "application/json" },
     });
-    expect((publishCall?.[1] as RequestInit | undefined)?.headers).toBeUndefined();
+    expect(JSON.parse(String((publishCall?.[1] as RequestInit).body)).dataset_slug).toBe(datasetSlug);
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
     await waitFor(() => expect(screen.getByText("Latest published snapshot is hidden publicly.")).toBeInTheDocument());
@@ -428,12 +442,12 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
     fireEvent.change(screen.getByLabelText("Display title"), { target: { value: "Edited churn profile" } });
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    // The edit is unsaved relative to the last saved backend draft (not just
-    // unpublished relative to the last published snapshot), so draftStateSummary
-    // reports the unsaved-changes case, which takes precedence.
+    // The edit differs from the last saved backend draft (still tracked for
+    // status-line wording), but Project Spec S0061 no longer requires that
+    // draft to be saved before Publish changes is available again.
     expect(within(screen.getByRole("tabpanel")).getByText("Unsaved local changes.")).toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled();
-    expect(screen.getByText(/Save Draft before publishing/)).toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    expect(screen.queryByText(/Save Draft before publishing/)).not.toBeInTheDocument();
   });
 
   it("marks the active workspace tab as selected via aria-selected and updates it when switching tabs", async () => {
@@ -613,7 +627,7 @@ describe("DatasetAdminPage", () => {
     expect(toolbarPublishButton).toBeDisabled();
   });
 
-  it("publishes Public Content changes from the workspace toolbar in one click (save then publish), resetting the dirty state on success (Project Spec S0058)", async () => {
+  it("publishes Public Content changes from the workspace toolbar directly, with no profile-draft save required, resetting the dirty state on success (Project Spec S0061)", async () => {
     const fetchMock = installFetchMock();
     renderAdminPage();
 
@@ -630,18 +644,21 @@ describe("DatasetAdminPage", () => {
     // again without any further operator action.
     await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
 
+    // No profile-draft save happens as part of this click -- Publish changes
+    // sends the current form payload directly.
     const saveCall = fetchMock.mock.calls.find(
       (call: unknown[]) =>
         String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) &&
         (call[1] as RequestInit | undefined)?.method === "PUT",
     );
-    expect(saveCall).toBeDefined();
-    expect(JSON.parse(String((saveCall?.[1] as RequestInit).body)).display?.subtitle).toBe("Toolbar-edited subtitle");
+    expect(saveCall).toBeUndefined();
+
     const publishCall = fetchMock.mock.calls.find((call: unknown[]) =>
       String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`),
     );
     expect(publishCall).toBeDefined();
-    expect(publishCall?.[1]).toMatchObject({ method: "PUT" });
+    expect(publishCall?.[1]).toMatchObject({ method: "PUT", headers: { "Content-Type": "application/json" } });
+    expect(JSON.parse(String((publishCall?.[1] as RequestInit).body)).display?.subtitle).toBe("Toolbar-edited subtitle");
 
     // The Publishing tab's own status reflects the same successful publish,
     // using the existing frontend/backend boundary rather than a new one.
@@ -649,26 +666,7 @@ describe("DatasetAdminPage", () => {
     expect(await screen.findByText(/^Published at /)).toBeInTheDocument();
   });
 
-  it("surfaces a safe error message from the workspace toolbar when saving Public Content changes fails, without exposing raw internals (Project Spec S0058)", async () => {
-    installFetchMock({ rejectProfileSave: true });
-    renderAdminPage();
-
-    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
-    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Toolbar-edited subtitle" } });
-
-    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
-    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
-
-    // The toolbar's own feedback line stays a safe, generic message -- no
-    // raw filesystem paths, stack traces, or internal identifiers, matching
-    // this repository's existing DraftStatusPanel disclosure pattern for the
-    // structured (schema-defined) validation code/field detail itself.
-    expect(
-      await screen.findByText("Public Content changes could not be saved. Open the Publishing tab for details."),
-    ).toBeInTheDocument();
-  });
-
-  it("surfaces a safe error message from the workspace toolbar when publishing Public Content changes fails after a successful save, without exposing raw internals (Project Spec S0058)", async () => {
+  it("surfaces a safe error message from the workspace toolbar when publishing Public Content changes fails, without exposing raw internals (Project Spec S0061)", async () => {
     installFetchMock({ rejectPublish: true });
     renderAdminPage();
 
@@ -735,7 +733,7 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeChecked();
   });
 
-  it("observes a saved Theme Preset edit in Publishing's derived status", async () => {
+  it("observes a Theme Preset edit in Publishing's derived status and re-enables Publish changes without requiring a save (Project Spec S0061)", async () => {
     installFetchMock({ themePresetOverride: "ocean-blue", trackProfileDraftSaves: true });
     renderAdminPage();
 
@@ -744,22 +742,24 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
     await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z. Public content is live.")).toBeInTheDocument());
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    // A successful publish becomes the new baseline, so with nothing changed
+    // since, Publish changes disables again immediately.
+    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
     fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    // Unsaved relative to the last saved backend draft (ocean-blue), which
-    // takes precedence over the also-true unpublished-relative-to-published
-    // comparison in draftStateSummary.
+    // Differs from the last saved backend draft (ocean-blue), which takes
+    // precedence over the also-true unpublished-relative-to-published
+    // comparison in draftStateSummary -- but Project Spec S0061 no longer
+    // requires a Save draft click before Publish changes is available again.
     expect(within(screen.getByRole("tabpanel")).getByText("Unsaved local changes.")).toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled();
-
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByText("Saved with unpublished changes.")).toBeInTheDocument();
     expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled());
+    expect(within(screen.getByRole("tabpanel")).getByText("Saved and matches public snapshot.")).toBeInTheDocument();
   });
 
   it("saves a schema-valid profile-draft payload for supported icon, primary metric, theme preset, and result-card values", async () => {
@@ -1619,7 +1619,7 @@ describe("DatasetAdminPage", () => {
   });
 
   it("keeps Publish changes failure feedback safe and free of internal draft/endpoint terminology (Project Spec S0060)", async () => {
-    installFetchMock({ rejectProfileSave: true });
+    installFetchMock({ rejectPublish: true });
     renderAdminPage();
 
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
@@ -1629,7 +1629,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
 
     expect(
-      await screen.findByText("Public Content changes could not be saved. Open the Publishing tab for details."),
+      await screen.findByText("Public Content changes could not be published. Open the Publishing tab for details."),
     ).toBeInTheDocument();
     expect(forbiddenDraftTermsPresent()).toEqual([]);
   });

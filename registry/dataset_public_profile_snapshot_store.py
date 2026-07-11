@@ -1,21 +1,33 @@
 """
 Dataset published profile snapshot persistence for M36-03.
 
-Provides publish_snapshot and get_snapshot for the Publish Changes backend
-behavior: creating or replacing a single deterministic published profile
-snapshot per dataset_slug, persisted at
+Provides publish_snapshot, publish_snapshot_from_payload, and get_snapshot
+for the Publish Changes backend behavior: creating or replacing a single
+deterministic published profile snapshot per dataset_slug, persisted at
 registry/profile-snapshots/<dataset_slug>.json
-(contracts/dataset-public-profile-snapshot.schema.json), from the current
-private draft profile (registry/dataset_public_profile_store.py).
+(contracts/dataset-public-profile-snapshot.schema.json).
 
-publish_snapshot validates the current draft against the active release's
-data (contracts/dataset-public-profile-snapshot.schema.json plus
-registry/dataset_public_profile_validate.py's validate_profile_references,
-resolved against the dataset's current active_release) before writing
-anything. A candidate that fails validation, has no draft to publish, or
-has no resolvable active_release is never persisted. This mirrors
-dataset_public_profile_store.py's validate-before-write convention and
-publisher/promote.py's gate-then-write convention.
+publish_snapshot reads the current private draft profile
+(registry/dataset_public_profile_store.py) as its candidate, mirroring the
+original M36-03 behavior. publish_snapshot_from_payload (Project Spec
+S0061) instead publishes an admin-submitted profile payload directly,
+without reading or requiring a persisted draft, for Dataset Admin's normal
+Publish Changes flow; the legacy draft-based publish_snapshot remains only
+for backward compatibility (e.g. any caller that still wants "publish
+whatever the stored draft currently is").
+
+Both entry points funnel into _publish_profile, which validates the
+candidate profile against contracts/dataset-public-profile.schema.json
+(dataset_public_profile_store.validate_profile_draft) and then against the
+active release's data (contracts/dataset-public-profile-snapshot.schema.json
+plus registry/dataset_public_profile_validate.py's
+validate_profile_references, resolved against the dataset's current
+active_release) before writing anything. A candidate that fails validation,
+has no resolvable active_release, or (publish_snapshot only) has no draft to
+publish, is never persisted -- the previous published snapshot, if any, is
+left untouched. This mirrors dataset_public_profile_store.py's
+validate-before-write convention and publisher/promote.py's
+gate-then-write convention.
 
 Storage is a single current file per dataset_slug, replaced deterministically
 on each publish; the previous snapshot content, if any, is backed up to
@@ -46,7 +58,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from registry.dataset_public_profile_snapshot_evidence import write_snapshot_evidence
-from registry.dataset_public_profile_store import ProfileDraftNotFoundError, get_draft
+from registry.dataset_public_profile_store import (
+    ProfileDraftNotFoundError,
+    get_draft,
+    validate_profile_draft,
+)
 from registry.dataset_public_profile_validate import validate_profile_references
 
 DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -219,39 +235,36 @@ def _validate_snapshot_candidate(candidate: dict, repo_root: Path) -> list:
     return errors
 
 
-def publish_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:
+def _publish_profile(dataset_slug: str, profile: dict, repo_root: Path) -> dict:
     """
-    Validate the current draft profile and publish it as a deterministic
-    published profile snapshot.
-
-    Returns {"published": bool, "path": str|None, "snapshot": dict|None,
-    "errors": [...]}. Raises ValueError if dataset_slug is missing or does
-    not match the required pattern. Rejects deterministically (no snapshot
-    created or replaced) if no draft currently exists for this dataset_slug,
-    if no active_release is resolvable for this dataset_slug, or if the
-    candidate snapshot fails schema/reference validation.
-
-    On a successful publish, also writes a reduced traceability evidence
-    file alongside the snapshot (see
-    registry.dataset_public_profile_snapshot_evidence.write_snapshot_evidence).
-    No evidence file is created or replaced on a rejected publish.
+    Shared validate-then-write flow for a candidate profile (either the
+    persisted draft, via publish_snapshot, or an admin-submitted payload,
+    via publish_snapshot_from_payload). Never writes anything on a rejected
+    candidate, leaving any previously published snapshot untouched.
     """
-    repo_root = _resolve_repo_root(repo_root)
-    path = _snapshot_path(dataset_slug, repo_root)
+    if not isinstance(profile, dict):
+        return {
+            "published": False,
+            "path": None,
+            "snapshot": None,
+            "errors": [_err("PROFILE_NOT_AN_OBJECT", None, "Profile must be a JSON object.")],
+        }
 
-    try:
-        draft = get_draft(dataset_slug, repo_root=repo_root)
-    except ProfileDraftNotFoundError:
+    if profile.get("dataset_slug") != dataset_slug:
         return {
             "published": False,
             "path": None,
             "snapshot": None,
             "errors": [_err(
-                "NO_DRAFT_TO_PUBLISH",
-                None,
-                "No draft exists for this dataset_slug; there is nothing to publish.",
+                "DATASET_SLUG_MISMATCH",
+                "dataset_slug",
+                "Profile dataset_slug does not match the requested dataset_slug.",
             )],
         }
+
+    draft_validation = validate_profile_draft(profile, repo_root)
+    if not draft_validation["valid"]:
+        return {"published": False, "path": None, "snapshot": None, "errors": draft_validation["errors"]}
 
     active_release = _resolve_active_release(dataset_slug, repo_root)
     if active_release is None:
@@ -267,12 +280,13 @@ def publish_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:
         }
 
     published_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    candidate = _build_snapshot_candidate(draft, dataset_slug, active_release, published_at)
+    candidate = _build_snapshot_candidate(profile, dataset_slug, active_release, published_at)
 
     errors = _validate_snapshot_candidate(candidate, repo_root)
     if errors:
         return {"published": False, "path": None, "snapshot": None, "errors": errors}
 
+    path = _snapshot_path(dataset_slug, repo_root)
     if path.is_file():
         backup_path = path.parent / f"{path.name}.previous"
         shutil.copy2(path, backup_path)
@@ -289,6 +303,75 @@ def publish_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:
         "snapshot": candidate,
         "errors": [],
     }
+
+
+def publish_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:
+    """
+    Validate the current draft profile and publish it as a deterministic
+    published profile snapshot.
+
+    Returns {"published": bool, "path": str|None, "snapshot": dict|None,
+    "errors": [...]}. Raises ValueError if dataset_slug is missing or does
+    not match the required pattern. Rejects deterministically (no snapshot
+    created or replaced) if no draft currently exists for this dataset_slug,
+    if no active_release is resolvable for this dataset_slug, or if the
+    candidate snapshot fails schema/reference validation.
+
+    Retained for backward compatibility with callers that still want to
+    publish whatever profile is currently persisted as the draft; Dataset
+    Admin's normal Publish Changes flow uses publish_snapshot_from_payload
+    instead (Project Spec S0061).
+
+    On a successful publish, also writes a reduced traceability evidence
+    file alongside the snapshot (see
+    registry.dataset_public_profile_snapshot_evidence.write_snapshot_evidence).
+    No evidence file is created or replaced on a rejected publish.
+    """
+    repo_root = _resolve_repo_root(repo_root)
+    _snapshot_path(dataset_slug, repo_root)
+
+    try:
+        draft = get_draft(dataset_slug, repo_root=repo_root)
+    except ProfileDraftNotFoundError:
+        return {
+            "published": False,
+            "path": None,
+            "snapshot": None,
+            "errors": [_err(
+                "NO_DRAFT_TO_PUBLISH",
+                None,
+                "No draft exists for this dataset_slug; there is nothing to publish.",
+            )],
+        }
+
+    return _publish_profile(dataset_slug, draft, repo_root)
+
+
+def publish_snapshot_from_payload(dataset_slug: str, profile: dict, repo_root: Path | None = None) -> dict:
+    """
+    Validate an admin-submitted profile payload and publish it directly as
+    a deterministic published profile snapshot, without reading or
+    requiring a persisted draft (Project Spec S0061). This is the entry
+    point Dataset Admin's normal Publish Changes flow uses.
+
+    Returns {"published": bool, "path": str|None, "snapshot": dict|None,
+    "errors": [...]}. Raises ValueError if dataset_slug is missing or does
+    not match the required pattern. Rejects deterministically (no snapshot
+    created or replaced, previous snapshot left untouched) if profile is
+    not a JSON object, if profile["dataset_slug"] does not match
+    dataset_slug, if profile fails contracts/dataset-public-profile.schema.json
+    or reference validation, if no active_release is resolvable for this
+    dataset_slug, or if the derived candidate snapshot fails schema/reference
+    validation.
+
+    On a successful publish, also writes a reduced traceability evidence
+    file alongside the snapshot, exactly like publish_snapshot. No evidence
+    file is created or replaced on a rejected publish.
+    """
+    repo_root = _resolve_repo_root(repo_root)
+    _snapshot_path(dataset_slug, repo_root)
+
+    return _publish_profile(dataset_slug, profile, repo_root)
 
 
 def get_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:

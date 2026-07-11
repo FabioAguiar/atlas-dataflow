@@ -45,6 +45,7 @@ from fastapi import Request  # noqa: E402
 from registry.dataset_public_profile_store import create_draft as _real_create_draft  # noqa: E402
 from registry.dataset_public_profile_snapshot_store import (  # noqa: E402
     publish_snapshot as _real_publish_snapshot,
+    publish_snapshot_from_payload as _real_publish_snapshot_from_payload,
 )
 
 
@@ -117,15 +118,21 @@ def _build_fake_repo(tmp_root: Path) -> Path:
 
 
 def _install_isolated_publish(fake_repo: Path) -> object:
-    original = admin_profile_publish.publish_snapshot
+    original_publish_snapshot = admin_profile_publish.publish_snapshot
+    original_publish_snapshot_from_payload = admin_profile_publish.publish_snapshot_from_payload
     admin_profile_publish.publish_snapshot = functools.partial(
         _real_publish_snapshot, repo_root=fake_repo
     )
-    return original
+    admin_profile_publish.publish_snapshot_from_payload = functools.partial(
+        _real_publish_snapshot_from_payload, repo_root=fake_repo
+    )
+    return (original_publish_snapshot, original_publish_snapshot_from_payload)
 
 
 def _restore_publish(original: object) -> None:
-    admin_profile_publish.publish_snapshot = original
+    original_publish_snapshot, original_publish_snapshot_from_payload = original
+    admin_profile_publish.publish_snapshot = original_publish_snapshot
+    admin_profile_publish.publish_snapshot_from_payload = original_publish_snapshot_from_payload
 
 
 _VALID_PROFILE = {
@@ -233,6 +240,116 @@ def test_publish_route_succeeds_after_draft_saved_in_private_runtime_without_tok
 
     assert response["published"] is True
     assert response["dataset_slug"] == "example-dataset"
+    assert response["snapshot"]["dataset_slug"] == "example-dataset"
+
+
+def test_publish_route_with_body_publishes_payload_directly_without_a_draft():
+    # Project Spec S0061: Dataset Admin's Publish changes flow no longer
+    # requires a persisted profile-draft as part of the normal publish path.
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        original = _install_isolated_publish(fake_repo)
+        try:
+            request = _make_request({})
+            payload = {
+                "schema_version": "0.1.0",
+                "dataset_slug": "example-dataset",
+                "display": {"title": "Directly published title"},
+            }
+            response = api_main.put_admin_profile_publish("example-dataset", request, payload)
+
+            assert response["published"] is True
+            assert response["snapshot"]["dataset_slug"] == "example-dataset"
+            assert response["snapshot"]["profile"]["display"]["title"] == "Directly published title"
+            # No draft was ever created for example-dataset in this fake
+            # repo, so a successful direct publish proves the persisted
+            # draft store was never read along this path.
+            assert not (fake_repo / "registry" / "profile-drafts" / "example-dataset.json").exists()
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+
+def test_publish_route_with_invalid_body_returns_422_and_preserves_previous_snapshot():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        original = _install_isolated_publish(fake_repo)
+        try:
+            first_request = _make_request({})
+            first_response = api_main.put_admin_profile_publish(
+                "example-dataset", first_request, dict(_VALID_PROFILE)
+            )
+            assert first_response["published"] is True
+            previous_snapshot = first_response["snapshot"]
+
+            second_request = _make_request({})
+            invalid_payload = {**_VALID_PROFILE, "unexpected_field": "not allowed by the schema"}
+            second_response = api_main.put_admin_profile_publish(
+                "example-dataset", second_request, invalid_payload
+            )
+
+            assert second_response.status_code == 422
+            body = json.loads(second_response.body.decode("utf-8"))
+            assert body["error_code"] == "PROFILE_PUBLISH_FAILED"
+            assert body["errors"], "expected passthrough validation errors"
+
+            snapshot_path = fake_repo / "registry" / "profile-snapshots" / "example-dataset.json"
+            on_disk_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            assert on_disk_snapshot == previous_snapshot
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+
+def test_publish_route_with_body_rejects_dataset_slug_mismatch():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        original = _install_isolated_publish(fake_repo)
+        try:
+            request = _make_request({})
+            mismatched_payload = {"schema_version": "0.1.0", "dataset_slug": "other-dataset"}
+            response = api_main.put_admin_profile_publish("example-dataset", request, mismatched_payload)
+
+            assert response.status_code == 422
+            body = json.loads(response.body.decode("utf-8"))
+            assert any(error["code"] == "DATASET_SLUG_MISMATCH" for error in body["errors"])
+            assert not (fake_repo / "registry" / "profile-snapshots" / "example-dataset.json").exists()
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+
+def test_publish_route_with_body_succeeds_while_visibility_is_off():
+    # Preserves visibility as a separate concern from snapshot publication:
+    # a direct publish must not require Public visibility to be on.
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        registry_path = fake_repo / "registry" / "datasets.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["datasets"][0]["public_metadata"]["visibility"] = "private"
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+        original = _install_isolated_publish(fake_repo)
+        try:
+            request = _make_request({})
+            response = api_main.put_admin_profile_publish("example-dataset", request, dict(_VALID_PROFILE))
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+    assert response["published"] is True
     assert response["snapshot"]["dataset_slug"] == "example-dataset"
 
 

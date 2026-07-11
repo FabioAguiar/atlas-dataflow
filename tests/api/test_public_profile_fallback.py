@@ -50,14 +50,77 @@ def test_telco_fallback_is_schema_valid_and_deterministic():
     assert first["profile"]["home_card"]["icon"] == "telecom"
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0054: bank-marketing is no longer a required real-registry
+# entry. Its release-20260620-002 artifacts (metrics/model-card) are
+# preserved as historical release data (out of scope to delete), so the
+# fallback-generator regression coverage below is rebuilt on a fixture-local
+# repo carrying copies of those real artifacts, rather than depending on
+# registry/datasets.json containing bank-marketing.
+# ---------------------------------------------------------------------------
+
+_BANK_MARKETING_FIXTURE_RELEASE_ID = "release-20260620-002"
+
+
+def _build_bank_marketing_fixture_repo(tmp_root: Path) -> Path:
+    (tmp_root / "registry").mkdir(parents=True)
+    (tmp_root / "registry" / "datasets.json").write_text(
+        json.dumps({
+            "schema_version": "atlas.dataflow.registry.v1",
+            "datasets": [
+                {
+                    "dataset_slug": "bank-marketing",
+                    "active_release": _BANK_MARKETING_FIXTURE_RELEASE_ID,
+                    "public_metadata": {
+                        "title": "Bank Marketing",
+                        "summary": "Fixture bank marketing dataset for fallback regression.",
+                        "domain": "banking-marketing",
+                        "visibility": "public",
+                        "tags": ["banking"],
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    contracts_dir = tmp_root / "contracts"
+    contracts_dir.mkdir()
+    shutil.copy2(
+        REPO_ROOT / "contracts" / "dataset-public-profile.schema.json",
+        contracts_dir / "dataset-public-profile.schema.json",
+    )
+
+    real_release_dir = REPO_ROOT / "releases" / _BANK_MARKETING_FIXTURE_RELEASE_ID
+    release_dir = tmp_root / "releases" / _BANK_MARKETING_FIXTURE_RELEASE_ID
+    release_dir.mkdir(parents=True)
+    (release_dir / "manifest.json").write_text(
+        json.dumps({
+            "artifacts": [
+                {"role": "metrics", "reference": "metrics/metrics.json"},
+                {"role": "model_card", "reference": "model-card.json"},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    metrics_dir = release_dir / "metrics"
+    metrics_dir.mkdir()
+    shutil.copy2(real_release_dir / "metrics" / "metrics.json", metrics_dir / "metrics.json")
+    shutil.copy2(real_release_dir / "model-card.json", release_dir / "model-card.json")
+
+    return tmp_root
+
+
 def test_bank_marketing_fallback_is_schema_valid_and_deterministic():
     """Deliberately reconciled for M37-02 decision-03: bank-marketing's
     registry domain ("banking-marketing") and tags (including "banking")
     still substring-match the "bank" keyword family under the generalized
     _DOMAIN_ICON_RULES, so this fixture-scoped assertion is intentionally
     kept unchanged rather than rewritten."""
-    first = generate_fallback_profile("bank-marketing")
-    second = generate_fallback_profile("bank-marketing")
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_bank_marketing_fixture_repo(Path(tmp))
+        first = generate_fallback_profile("bank-marketing", repo_root=fake_repo)
+        second = generate_fallback_profile("bank-marketing", repo_root=fake_repo)
 
     assert first == second
     assert first["profile"]["dataset_slug"] == "bank-marketing"
@@ -71,7 +134,9 @@ def test_telco_fallback_selects_f1_score_as_primary_metric():
 
 
 def test_bank_marketing_fallback_selects_f1_score_as_primary_metric():
-    result = generate_fallback_profile("bank-marketing")
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_bank_marketing_fixture_repo(Path(tmp))
+        result = generate_fallback_profile("bank-marketing", repo_root=fake_repo)
     assert result["profile"]["home_card"]["primary_metric_key"] == "f1_score"
     assert result["sources_used"]["metrics"] is True
 
@@ -85,27 +150,44 @@ def test_telco_fallback_derives_model_label_from_model_card():
 
 
 def test_bank_marketing_fallback_derives_model_label_from_model_card():
-    result = generate_fallback_profile("bank-marketing")
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_bank_marketing_fixture_repo(Path(tmp))
+        result = generate_fallback_profile("bank-marketing", repo_root=fake_repo)
     assert result["sources_used"]["model_card"] is True
     assert result["profile"]["result_card"]["model_label"] == (
         "Binary Classification: subscribed"
     )
 
 
-def test_load_dataset_profile_returns_generated_fallback_for_real_seeded_datasets():
-    for dataset_slug in ("telco-customer-churn", "bank-marketing"):
-        envelope = load_dataset_profile(dataset_slug)
-        assert envelope["profile_source"] == "generated_fallback"
-        assert envelope["dataset_slug"] == dataset_slug
-        assert envelope["sources_used"]["metrics"] is True
-        assert envelope["sources_used"]["model_card"] is True
+def test_load_dataset_profile_returns_generated_fallback_for_real_telco_dataset():
+    envelope = load_dataset_profile("telco-customer-churn")
+    assert envelope["profile_source"] == "generated_fallback"
+    assert envelope["dataset_slug"] == "telco-customer-churn"
+    assert envelope["sources_used"]["metrics"] is True
+    assert envelope["sources_used"]["model_card"] is True
 
 
-def test_fallback_never_persists_a_draft_for_real_seeded_datasets():
+def test_load_dataset_profile_returns_generated_fallback_for_bank_marketing_fixture():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_bank_marketing_fixture_repo(Path(tmp))
+        envelope = load_dataset_profile("bank-marketing", repo_root=fake_repo)
+    assert envelope["profile_source"] == "generated_fallback"
+    assert envelope["dataset_slug"] == "bank-marketing"
+    assert envelope["sources_used"]["metrics"] is True
+    assert envelope["sources_used"]["model_card"] is True
+
+
+def test_fallback_never_persists_a_draft_for_real_telco_dataset():
     drafts_dir = REPO_ROOT / "registry" / "profile-drafts"
     generate_fallback_profile("telco-customer-churn")
-    generate_fallback_profile("bank-marketing")
     assert not drafts_dir.exists()
+
+
+def test_fallback_never_persists_a_draft_for_bank_marketing_fixture():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_bank_marketing_fixture_repo(Path(tmp))
+        generate_fallback_profile("bank-marketing", repo_root=fake_repo)
+        assert not (fake_repo / "registry" / "profile-drafts").exists()
 
 
 def test_unknown_dataset_slug_propagates_dataset_unavailable_error():

@@ -27,33 +27,6 @@
         "view_metadata_defines_runtime_validation": false,
         "view_metadata_duplicates_contract": false
       }
-    },
-    {
-      "schema_version": "1.0.0",
-      "view_id": "bank-subscription-predictor",
-      "dataset_slug": "bank-marketing",
-      "display": {
-        "title": "Bank Subscription Predictor",
-        "summary": "Predict whether a bank client will subscribe to a term deposit.",
-        "description": "A public prediction experience for bank marketing subscription outcomes.",
-        "tags": ["banking", "subscription", "classification"]
-      },
-      "intent": {
-        "prediction_goal": "Predict client subscription to a term deposit from canonical dataset contract inputs.",
-        "audience": "Public visitors evaluating bank marketing campaign outcomes.",
-        "usage_notes": "Use the canonical dataset contracts for required fields, accepted values, and runtime validation."
-      },
-      "binding": {
-        "dataset_slug": "bank-marketing",
-        "release": {
-          "mode": "active"
-        }
-      },
-      "contract_precedence": {
-        "canonical_contracts_are_source_of_truth": true,
-        "view_metadata_defines_runtime_validation": false,
-        "view_metadata_duplicates_contract": false
-      }
     }
   ]
 }

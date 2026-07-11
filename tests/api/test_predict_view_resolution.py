@@ -337,14 +337,56 @@ def test_loader_result_keys_are_public_only():
     assert set(result.keys()) == {"view_id", "dataset_slug", "display", "intent", "release_mode"}
 
 
+_BANK_MARKETING_FIXTURE_PREDICT_VIEWS_REGISTRY = {
+    "schema_version": "atlas.dataflow.predict-views.v1",
+    "predict_views": [
+        {
+            "schema_version": "1.0.0",
+            "view_id": "bank-subscription-predictor",
+            "dataset_slug": "bank-marketing",
+            "display": {
+                "title": "Bank Subscription Predictor",
+                "summary": "Predict whether a bank client will subscribe to a term deposit.",
+            },
+            "intent": {
+                "prediction_goal": "Predict client subscription to a term deposit from canonical dataset contract inputs.",
+                "audience": "Public visitors evaluating bank marketing campaign outcomes.",
+                "usage_notes": "Use the canonical dataset contracts for required fields, accepted values, and runtime validation.",
+            },
+            "binding": {
+                "dataset_slug": "bank-marketing",
+                "release": {"mode": "active"},
+            },
+            "contract_precedence": {
+                "canonical_contracts_are_source_of_truth": True,
+                "view_metadata_defines_runtime_validation": False,
+                "view_metadata_duplicates_contract": False,
+            },
+        }
+    ],
+}
+
+
 def test_loader_resolves_bank_marketing_view():
+    """
+    Project Spec S0054: bank-marketing is no longer a required real-registry
+    entry, so this coverage moved to an isolated fixture predict-views.json
+    (tempfile.TemporaryDirectory), mirroring the M37-03 synthetic-dataset
+    fixture convention below rather than depending on the real
+    registry/predict-views.json still carrying this binding.
+    """
     from public_predict_view_loader import load_public_predict_view
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
-    result = load_public_predict_view(
-        "bank-marketing",
-        "bank-subscription-predictor",
-        predict_views_path=registry_path,
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        registry_path = Path(tmp) / "predict-views.json"
+        registry_path.write_text(
+            json.dumps(_BANK_MARKETING_FIXTURE_PREDICT_VIEWS_REGISTRY),
+            encoding="utf-8",
+        )
+        result = load_public_predict_view(
+            "bank-marketing",
+            "bank-subscription-predictor",
+            predict_views_path=registry_path,
+        )
     assert result["view_id"] == "bank-subscription-predictor"
     assert result["dataset_slug"] == "bank-marketing"
     assert result["release_mode"] == "active"

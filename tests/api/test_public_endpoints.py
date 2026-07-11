@@ -511,19 +511,40 @@ def test_real_registry_listing_telco_customer_churn_safe_fields_non_empty():
     assert entry.visibility
 
 
-def test_real_registry_listing_contains_bank_marketing():
-    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
-    slugs = [d.dataset_slug for d in result]
-    assert "bank-marketing" in slugs
+# Project Spec S0054: bank-marketing is no longer required to exist in the
+# real versioned registry/datasets.json. Multi-dataset listing coverage is
+# proven with a fixture-local registry instead of depending on a second real
+# entry.
+_TWO_DATASET_FIXTURE_REGISTRY = {
+    **_BASE_REGISTRY,
+    "datasets": [
+        _VALID_ENTRY,
+        {
+            "dataset_slug": "second-example-dataset",
+            "active_release": "release-20260617-002",
+            "public_metadata": {
+                "title": "Second Example Dataset",
+                "summary": "Second fixture dataset for multi-dataset listing coverage.",
+                "domain": "example",
+                "visibility": "public",
+                "tags": ["example", "second"],
+            },
+        },
+    ],
+}
 
 
-def test_real_registry_listing_bank_marketing_safe_fields_non_empty():
-    result = list_datasets(registry_path=_REAL_REGISTRY_PATH)
-    entry = next(d for d in result if d.dataset_slug == "bank-marketing")
-    assert entry.title
-    assert entry.summary
-    assert entry.domain
-    assert entry.visibility
+def test_fixture_multi_dataset_registry_listing_includes_both_datasets():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_registry(Path(tmp), _TWO_DATASET_FIXTURE_REGISTRY)
+        result = list_datasets(registry_path=path)
+        slugs = {d.dataset_slug for d in result}
+        assert slugs == {"example-dataset", "second-example-dataset"}
+        second = next(d for d in result if d.dataset_slug == "second-example-dataset")
+        assert second.title
+        assert second.summary
+        assert second.domain
+        assert second.visibility
 
 
 def test_real_registry_listing_no_active_release_in_any_item():
@@ -546,11 +567,12 @@ def test_real_registry_resolve_telco_customer_churn_succeeds():
     assert isinstance(resolved.active_release, str)
 
 
-def test_real_registry_resolve_bank_marketing_succeeds():
-    resolved = resolve_dataset("bank-marketing", registry_path=_REAL_REGISTRY_PATH)
-    assert resolved.dataset_slug == "bank-marketing"
-    assert resolved.active_release
-    assert isinstance(resolved.active_release, str)
+def test_fixture_multi_dataset_registry_resolve_second_dataset_succeeds():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_registry(Path(tmp), _TWO_DATASET_FIXTURE_REGISTRY)
+        resolved = resolve_dataset("second-example-dataset", registry_path=path)
+        assert resolved.dataset_slug == "second-example-dataset"
+        assert resolved.active_release == "release-20260617-002"
 
 
 def test_real_registry_listing_envelope_shape():
@@ -574,9 +596,16 @@ def test_real_registry_listing_envelope_shape():
 # ---------------------------------------------------------------------------
 
 def _real_release_dataset_pairs():
+    """
+    Fixed (dataset_slug, active_release) pairs read directly against
+    releases/, decoupled from the live registry/datasets.json (Project Spec
+    S0054): bank-marketing's release-20260620-002 is preserved as a
+    historical release artifact for this payload-shape regression even
+    though the dataset itself is no longer a required real-registry entry.
+    """
     return [
-        resolve_dataset("telco-customer-churn", registry_path=_REAL_REGISTRY_PATH),
-        resolve_dataset("bank-marketing", registry_path=_REAL_REGISTRY_PATH),
+        SimpleNamespace(dataset_slug="telco-customer-churn", active_release="release-20260619-001"),
+        SimpleNamespace(dataset_slug="bank-marketing", active_release="release-20260620-002"),
     ]
 
 
@@ -726,7 +755,12 @@ def test_real_release_valid_prediction_flow_uses_public_route_and_bundle():
     original_load_contract = api_main.load_contract
     original_releases_root = api_main._inference_releases_root
     try:
-        resolved = resolve_dataset("bank-marketing", registry_path=_REAL_REGISTRY_PATH)
+        # Project Spec S0054: bank-marketing's release is read directly by
+        # release_id, decoupled from the live registry (see
+        # _real_release_dataset_pairs above).
+        resolved = SimpleNamespace(
+            dataset_slug="bank-marketing", active_release="release-20260620-002"
+        )
         public_contract = api_main.load_public_contract(
             resolved.active_release,
             releases_root=_REAL_RELEASES_ROOT,
@@ -1069,12 +1103,11 @@ if __name__ == "__main__":
         test_real_registry_listing_returns_non_empty_list,
         test_real_registry_listing_contains_telco_customer_churn,
         test_real_registry_listing_telco_customer_churn_safe_fields_non_empty,
-        test_real_registry_listing_contains_bank_marketing,
-        test_real_registry_listing_bank_marketing_safe_fields_non_empty,
+        test_fixture_multi_dataset_registry_listing_includes_both_datasets,
         test_real_registry_listing_no_active_release_in_any_item,
         test_real_registry_listing_safe_fields_only_on_all_items,
         test_real_registry_resolve_telco_customer_churn_succeeds,
-        test_real_registry_resolve_bank_marketing_succeeds,
+        test_fixture_multi_dataset_registry_resolve_second_dataset_succeeds,
         test_real_registry_listing_envelope_shape,
         test_real_release_dataset_home_context_payload_shape,
         test_real_release_dataset_home_metrics_payload_shape,

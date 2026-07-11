@@ -275,9 +275,47 @@ def test_loader_returns_views_for_telco_dataset():
     assert results[0]["release_mode"] == "active"
 
 
-def test_loader_returns_views_for_bank_dataset():
+def test_loader_returns_views_for_bank_dataset(tmp_path):
+    """
+    Project Spec S0054: bank-marketing is no longer a required real-registry
+    entry, so this coverage moved to a fixture-local predict-views.json
+    (tmp_path) instead of registry/predict-views.json. The fixture record
+    mirrors the removed real bank-subscription-predictor binding exactly, so
+    the loader's multi-dataset behavior stays covered without depending on
+    bank-marketing existing in the real registry.
+    """
     from public_predict_view_loader import load_public_predict_view_list
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
+    registry_data = {
+        "schema_version": "atlas.dataflow.predict-views.v1",
+        "predict_views": [
+            {
+                "schema_version": "1.0.0",
+                "view_id": "bank-subscription-predictor",
+                "dataset_slug": "bank-marketing",
+                "display": {
+                    "title": "Bank Subscription Predictor",
+                    "summary": "Predict whether a bank client will subscribe to a term deposit.",
+                },
+                "intent": {
+                    "prediction_goal": "Predict client subscription to a term deposit from canonical dataset contract inputs.",
+                    "audience": "Public visitors evaluating bank marketing campaign outcomes.",
+                    "usage_notes": "Use the canonical dataset contracts for required fields, accepted values, and runtime validation.",
+                },
+                "binding": {
+                    "dataset_slug": "bank-marketing",
+                    "release": {"mode": "active"},
+                },
+                "contract_precedence": {
+                    "canonical_contracts_are_source_of_truth": True,
+                    "view_metadata_defines_runtime_validation": False,
+                    "view_metadata_duplicates_contract": False,
+                },
+            }
+        ],
+    }
+    registry_path = tmp_path / "predict-views.json"
+    registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
+
     results = load_public_predict_view_list("bank-marketing", predict_views_path=registry_path)
     assert isinstance(results, list)
     assert len(results) == 1
@@ -374,7 +412,6 @@ if __name__ == "__main__":
         test_registry_unavailable_returns_registry_unavailable,
         test_loader_raises_view_not_found_returns_registry_unavailable,
         test_loader_returns_views_for_telco_dataset,
-        test_loader_returns_views_for_bank_dataset,
         test_loader_returns_empty_list_for_unknown_dataset,
         test_loader_result_items_exclude_binding_internals,
         test_loader_result_items_have_only_public_keys,
@@ -400,6 +437,15 @@ if __name__ == "__main__":
             passed += 1
         except Exception as exc:
             print(f"FAIL  test_loader_excludes_binding_inconsistent_views: {exc}")
+            failed += 1
+
+    with _tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            test_loader_returns_views_for_bank_dataset(_pathlib.Path(tmpdir))
+            print("PASS  test_loader_returns_views_for_bank_dataset")
+            passed += 1
+        except Exception as exc:
+            print(f"FAIL  test_loader_returns_views_for_bank_dataset: {exc}")
             failed += 1
 
     print(f"\n{passed} passed, {failed} failed")

@@ -53,11 +53,42 @@ from registry.dataset_public_profile_publication_store import (  # noqa: E402
     get_visibility,
     set_visibility,
 )
-from registry.list import _snapshot_overlay_fields, is_dataset_needs_review  # noqa: E402
+from registry.list import ListedDataset, _snapshot_overlay_fields, is_dataset_needs_review  # noqa: E402
 from registry.resolve import ReleaseUnavailableError  # noqa: E402
 
 _SEEDED_DATASET_SLUGS = ["telco-customer-churn", "bank-marketing"]
 _TARGET_SLUG = "telco-customer-churn"
+
+# Project Spec S0054: bank-marketing is no longer a required real-registry
+# entry. Multi-dataset listing coverage for the /datasets endpoint is proven
+# with a fixture-local list_datasets() override instead of depending on the
+# live registry/datasets.json containing a second seeded dataset.
+_FIXTURE_LISTED_DATASETS = [
+    ListedDataset(
+        dataset_slug="telco-customer-churn",
+        title="Telco Customer Churn",
+        summary="Customer churn prediction dataset.",
+        domain="telco",
+        visibility="public",
+        tags=["telco"],
+    ),
+    ListedDataset(
+        dataset_slug="bank-marketing",
+        title="Bank Marketing",
+        summary="Fixture bank marketing dataset for multi-dataset listing coverage.",
+        domain="banking-marketing",
+        visibility="public",
+        tags=["banking"],
+    ),
+]
+
+
+def _fixture_two_dataset_listing():
+    return list(_FIXTURE_LISTED_DATASETS)
+
+
+def _fixture_resolve_dataset(dataset_slug):
+    return SimpleNamespace(dataset_slug=dataset_slug, active_release="release-fixture-001")
 
 
 def _make_request(
@@ -169,12 +200,15 @@ def test_resolve_visibility_true_when_snapshot_exists_and_explicitly_visible():
 
 
 def test_list_datasets_endpoint_excludes_hidden_dataset():
-    original = api_main.resolve_dataset_visibility
+    original_visibility = api_main.resolve_dataset_visibility
+    original_list_datasets = api_main.list_datasets
     api_main.resolve_dataset_visibility = lambda dataset_slug: dataset_slug != _TARGET_SLUG
+    api_main.list_datasets = _fixture_two_dataset_listing
     try:
         response = api_main.list_datasets_endpoint()
     finally:
-        api_main.resolve_dataset_visibility = original
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.list_datasets = original_list_datasets
 
     slugs = {entry["dataset_slug"] for entry in response["datasets"]}
     assert _TARGET_SLUG not in slugs
@@ -182,12 +216,15 @@ def test_list_datasets_endpoint_excludes_hidden_dataset():
 
 
 def test_list_datasets_endpoint_includes_all_when_all_visible():
-    original = api_main.resolve_dataset_visibility
+    original_visibility = api_main.resolve_dataset_visibility
+    original_list_datasets = api_main.list_datasets
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.list_datasets = _fixture_two_dataset_listing
     try:
         response = api_main.list_datasets_endpoint()
     finally:
-        api_main.resolve_dataset_visibility = original
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.list_datasets = original_list_datasets
 
     slugs = {entry["dataset_slug"] for entry in response["datasets"]}
     assert set(_SEEDED_DATASET_SLUGS) <= slugs
@@ -618,14 +655,20 @@ def test_resolve_problem_type_none_when_value_not_a_string():
 def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset():
     original_visibility = api_main.resolve_dataset_visibility
     original_load_public_context = api_main.load_public_context
+    original_list_datasets = api_main.list_datasets
+    original_resolve_dataset = api_main.resolve_dataset
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.load_public_context = lambda active_release: {"problem_type": "binary_classification"}
+    api_main.list_datasets = _fixture_two_dataset_listing
+    api_main.resolve_dataset = _fixture_resolve_dataset
     try:
         response = api_main.list_datasets_endpoint()
     finally:
         api_main.resolve_dataset_visibility = original_visibility
         api_main.load_public_context = original_load_public_context
+        api_main.list_datasets = original_list_datasets
+        api_main.resolve_dataset = original_resolve_dataset
 
     assert set(_SEEDED_DATASET_SLUGS) <= {entry["dataset_slug"] for entry in response["datasets"]}
     for entry in response["datasets"]:
@@ -641,6 +684,7 @@ def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excl
     original_visibility = api_main.resolve_dataset_visibility
     original_resolve_dataset = api_main.resolve_dataset
     original_load_public_context = api_main.load_public_context
+    original_list_datasets = api_main.list_datasets
 
     def fake_resolve_dataset(dataset_slug):
         return SimpleNamespace(dataset_slug=dataset_slug, active_release="release-fake-001")
@@ -651,12 +695,14 @@ def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excl
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.resolve_dataset = fake_resolve_dataset
     api_main.load_public_context = fake_load_public_context
+    api_main.list_datasets = _fixture_two_dataset_listing
     try:
         response = api_main.list_datasets_endpoint()
     finally:
         api_main.resolve_dataset_visibility = original_visibility
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_public_context = original_load_public_context
+        api_main.list_datasets = original_list_datasets
 
     slugs = {entry["dataset_slug"] for entry in response["datasets"]}
     assert set(_SEEDED_DATASET_SLUGS) <= slugs

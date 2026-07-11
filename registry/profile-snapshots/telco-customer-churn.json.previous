@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-11T15:49:24Z",
+  "published_at": "2026-07-11T16:22:15Z",
   "active_release_at_publish_time": "release-20260619-001",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
-      "problem_summary_body": "teste",
+      "problem_summary_body": "teste25",
       "canonical_name_fallback": true
     },
     "home_card": {

@@ -30,6 +30,17 @@ function jsonResponse(body: unknown, status = 200): MockResponse {
   };
 }
 
+// Project Spec S0060: the exact internal-implementation phrases the spec
+// forbids from normal operator-facing load/save/publish feedback. A
+// case-insensitive full-document scan catches these regardless of which
+// panel/status line they might otherwise have leaked into.
+const FORBIDDEN_DRAFT_TERMS = ["draft endpoint", "profile draft model", "private/admin draft endpoint"];
+
+function forbiddenDraftTermsPresent(): string[] {
+  const text = document.body.textContent?.toLowerCase() ?? "";
+  return FORBIDDEN_DRAFT_TERMS.filter((term) => text.includes(term));
+}
+
 const datasetSlug = "telco-customer-churn";
 const viewId = "churn-risk-overview";
 
@@ -314,9 +325,11 @@ async function loadDraftOnly() {
   expect(screen.queryByLabelText(["Operator", "token"].join(" "))).not.toBeInTheDocument();
   // Project Spec S0058 removes the manual "Load draft" action -- the
   // private/admin profile draft now loads automatically as soon as a
-  // Dataset Detail is selected. DraftStatusPanel's "ready" branch renders the
-  // bare string "Draft loaded" (no trailing period) once that resolves.
-  expect(await screen.findByText("Draft loaded")).toBeInTheDocument();
+  // Dataset Detail is selected. Project Spec S0060 renames DraftStatusPanel's
+  // "ready" branch heading from the internal-implementation-flavored "Draft
+  // loaded" to the operator-facing "Content loaded" (no trailing period)
+  // once that resolves.
+  expect(await screen.findByText("Content loaded")).toBeInTheDocument();
 }
 
 async function loadDraftAndCustomization() {
@@ -382,11 +395,11 @@ describe("DatasetAdminPage", () => {
     // lives in the workspace toolbar (S0058) -- scope to the tabpanel so
     // these queries never collide with the toolbar's own button.
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText("Draft saved through the profile draft model.")).toBeInTheDocument();
+    expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
     expect(within(screen.getByRole("tabpanel")).getByText("Saved and matches public snapshot.")).toBeInTheDocument();
 
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z. Public content is live.")).toBeInTheDocument());
     expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).not.toBeDisabled();
     expect(screen.getByText("2026-07-03T17:30:00Z (this session)")).toBeInTheDocument();
 
@@ -708,7 +721,7 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z. Public content is live.")).toBeInTheDocument());
     expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeChecked();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
@@ -730,7 +743,7 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z. Public content is live.")).toBeInTheDocument());
     expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
@@ -744,7 +757,7 @@ describe("DatasetAdminPage", () => {
     expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled();
 
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText("Draft saved through the profile draft model.")).toBeInTheDocument();
+    expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
     expect(within(screen.getByRole("tabpanel")).getByText("Saved with unpublished changes.")).toBeInTheDocument();
     expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
   });
@@ -797,7 +810,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     const callsBeforeSave = fetchMock.mock.calls.length;
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    await screen.findByText("Draft saved through the profile draft model.");
+    await screen.findByText("Changes saved.");
 
     const saveCall = fetchMock.mock.calls
       .slice(callsBeforeSave)
@@ -1547,5 +1560,77 @@ describe("DatasetAdminPage", () => {
     const displayTitleField = within(panel).getByLabelText("Display title") as HTMLInputElement;
     expect(within(panel).getByText(`${displayTitleField.value.length} / 80`)).toBeInTheDocument();
     expect(within(panel).getByLabelText("Source URL")).toBeInTheDocument();
+  });
+
+  it("removes internal draft terminology from Dataset Admin's operator-facing load, save, and publish feedback (Project Spec S0060)", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await loadDraftOnly();
+    expect(screen.queryByText("Draft loaded")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Editable fields were populated from the private/admin draft endpoint."),
+    ).not.toBeInTheDocument();
+    expect(forbiddenDraftTermsPresent()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
+    expect(screen.queryByText("Draft saved through the profile draft model.")).not.toBeInTheDocument();
+    expect(forbiddenDraftTermsPresent()).toEqual([]);
+
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(screen.getByText(/^Published at /)).toBeInTheDocument());
+    expect(forbiddenDraftTermsPresent()).toEqual([]);
+  });
+
+  it("shows publish-first, visibility-aware success feedback next to the workspace toolbar's Publish changes button and resets its dirty state after each successful publish (Project Spec S0060)", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const toolbarPublishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "First publish-first edit" } });
+    expect(toolbarPublishButton).toBeEnabled();
+    fireEvent.click(toolbarPublishButton);
+
+    // Publication state starts visible by default, so the first successful
+    // publish reports the public-page-ready variant of the publish-first
+    // feedback and the button disables again with no further operator action.
+    expect(await screen.findByText("Public content published. The public page is ready to view.")).toBeInTheDocument();
+    await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
+    await waitFor(() => expect(screen.getByText("Latest published snapshot is hidden publicly.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Second publish-first edit" } });
+    expect(toolbarPublishButton).toBeEnabled();
+    fireEvent.click(toolbarPublishButton);
+
+    // With public visibility now off, a second successful publish reports
+    // the still-private variant instead of repeating the public-page copy.
+    expect(await screen.findByText("Changes published. Public visibility is currently off.")).toBeInTheDocument();
+    await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
+  });
+
+  it("keeps Publish changes failure feedback safe and free of internal draft/endpoint terminology (Project Spec S0060)", async () => {
+    installFetchMock({ rejectProfileSave: true });
+    renderAdminPage();
+
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Edited subtitle" } });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+
+    expect(
+      await screen.findByText("Public Content changes could not be saved. Open the Publishing tab for details."),
+    ).toBeInTheDocument();
+    expect(forbiddenDraftTermsPresent()).toEqual([]);
   });
 });

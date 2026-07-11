@@ -1314,11 +1314,11 @@ function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
   if (draftState.status === "ready") {
     return (
       <article style={readOnlyFieldStyle}>
-        <strong>{draftState.draftExists ? "Draft loaded" : "No draft yet"}</strong>
+        <strong>{draftState.draftExists ? "Content loaded" : "No saved content yet"}</strong>
         <p style={mutedTextStyle}>
           {draftState.draftExists
-            ? "Editable fields were populated from the private/admin draft endpoint."
-            : "Saving will create a draft through the private/admin endpoint."}
+            ? "Editable fields were populated from your last saved content."
+            : "Saving will create the first saved content for this Dataset Detail."}
         </p>
       </article>
     );
@@ -1326,7 +1326,7 @@ function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
   if (draftState.status === "saved") {
     return (
       <article className="atlas-status-pill atlas-status-pill--success" role="status">
-        Draft saved through the profile draft model.
+        Changes saved.
       </article>
     );
   }
@@ -1347,13 +1347,13 @@ function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
   if (draftState.status === "unavailable") {
     return (
       <article role="status" style={alertStyle}>
-        <strong>Draft unavailable</strong>
+        <strong>Content unavailable</strong>
         <p style={mutedTextStyle}>{draftState.message}</p>
       </article>
     );
   }
   if (draftState.status === "loading") {
-    return <p style={mutedTextStyle}>Loading draft profile...</p>;
+    return <p style={mutedTextStyle}>Loading content...</p>;
   }
   return <p style={mutedTextStyle}>{draftState.message}</p>;
 }
@@ -2200,14 +2200,22 @@ function publishingStatusLabel({
   return "Not Published";
 }
 
+// Project Spec S0060: publish-first, visibility-aware feedback for a
+// successful Publish changes. Phrased distinctly from
+// toolbarPublicationFeedback below (which reuses the same publicationState)
+// so the two can render at the same time -- this tab panel and the
+// always-visible workspace toolbar line -- without colliding on identical
+// text when the Publishing tab happens to be selected.
 function publicationMessage(publicationState: PublicationState): string {
   switch (publicationState.status) {
-    case "published":
-      return publicationState.publishedAt ? `Published at ${publicationState.publishedAt}.` : "Published snapshot updated.";
+    case "published": {
+      const timestamp = publicationState.publishedAt ? `Published at ${publicationState.publishedAt}. ` : "Published. ";
+      return publicationState.visible ? `${timestamp}Public content is live.` : `${timestamp}Public visibility is currently off.`;
+    }
     case "visibility_saved":
       return publicationState.visible ? "Latest published snapshot is visible publicly." : "Latest published snapshot is hidden publicly.";
     case "publishing":
-      return "Publishing saved draft snapshot...";
+      return "Publishing changes...";
     case "saving_visibility":
       return "Saving public exposure setting...";
     case "invalid":
@@ -2218,6 +2226,20 @@ function publicationMessage(publicationState: PublicationState): string {
     default:
       return publicationState.message;
   }
+}
+
+// Project Spec S0060: the workspace toolbar's own publish-first success
+// line, always visible next to the toolbar's Publish changes button
+// regardless of which tab is selected (unlike publicationMessage above,
+// which only renders inside the Publishing tab's own panel). Worded
+// distinctly from publicationMessage so both can safely render at once.
+function toolbarPublicationFeedback(publicationState: PublicationState): string | null {
+  if (publicationState.status !== "published") {
+    return null;
+  }
+  return publicationState.visible
+    ? "Public content published. The public page is ready to view."
+    : "Changes published. Public visibility is currently off.";
 }
 
 function visibilityCopy(publicationState: PublicationState, hasPublishedSnapshot: boolean): string {
@@ -2714,7 +2736,7 @@ export default function DatasetAdminPage() {
   const [selectedTab, setSelectedTab] = useState(adminTabs[0].id);
   const [draftState, setDraftState] = useState<DraftState>({
     status: "idle",
-    message: "Load the private/admin draft to edit profile fields.",
+    message: "Select a Dataset Detail to load its content for editing.",
   });
   const [draftForm, setDraftForm] = useState<DraftForm>(emptyDraftForm());
   const [readOnlyData, setReadOnlyData] = useState<ReadOnlyData>(emptyReadOnlyData);
@@ -2866,12 +2888,12 @@ export default function DatasetAdminPage() {
         if (response.status === 404) {
           setDraftState({
             status: "unavailable",
-            message: "Draft endpoint unavailable for this private admin session. Confirm API configuration.",
+            message: "Content is unavailable for this admin session. Confirm API configuration.",
           });
           return null;
         }
         if (!response.ok) {
-          setDraftState({ status: "unavailable", message: "Profile draft could not be loaded from the private admin API." });
+          setDraftState({ status: "unavailable", message: "Content could not be loaded from the admin API." });
           return null;
         }
         return response.json() as Promise<{ draft_exists: boolean; profile: ProfileDraft | null }>;
@@ -2885,7 +2907,7 @@ export default function DatasetAdminPage() {
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
-          setDraftState({ status: "unavailable", message: "Profile draft could not be loaded. Check private admin API reachability." });
+          setDraftState({ status: "unavailable", message: "Content could not be loaded. Check API reachability." });
         }
       });
 
@@ -2958,7 +2980,7 @@ export default function DatasetAdminPage() {
       ? "Public Content changes could not be published. Open the Publishing tab for details."
       : publicationState.status === "unavailable"
       ? publicationState.message
-      : null;
+      : toolbarPublicationFeedback(publicationState);
 
   function selectDatasetFromQuery(value: string) {
     setDatasetQuery(value);
@@ -3001,7 +3023,7 @@ export default function DatasetAdminPage() {
         if (response.status === 404) {
           setDraftState({
             status: "unavailable",
-            message: "Draft endpoint unavailable for this private admin session. Confirm API configuration.",
+            message: "Content saving is unavailable for this admin session. Confirm API configuration.",
           });
           return null;
         }
@@ -3015,7 +3037,7 @@ export default function DatasetAdminPage() {
           return;
         }
         if (!result.ok || !result.body.saved) {
-          setDraftState({ status: "invalid", errors: result.body.errors ?? [{ message: "Profile draft failed validation." }] });
+          setDraftState({ status: "invalid", errors: result.body.errors ?? [{ message: "Content failed validation." }] });
           return;
         }
         const savedProfile = result.body.profile ?? profile;
@@ -3024,7 +3046,7 @@ export default function DatasetAdminPage() {
         onSaved?.(savedProfile);
       })
       .catch(() => {
-        setDraftState({ status: "unavailable", message: "Profile draft could not be saved. Check private admin API reachability." });
+        setDraftState({ status: "unavailable", message: "Content could not be saved. Check API reachability." });
       });
   }
 

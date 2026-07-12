@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-12T11:16:34Z",
+  "published_at": "2026-07-12T14:51:48Z",
   "active_release_at_publish_time": "release-20260619-001",
   "profile": {
     "display": {
@@ -12,7 +12,7 @@
       "canonical_name_fallback": true
     },
     "home_card": {
-      "icon": "database",
+      "icon": "logistics-truck",
       "background_image_ref": null,
       "primary_metric_key": null
     },

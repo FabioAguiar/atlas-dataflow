@@ -29,6 +29,7 @@ type DatasetListingFixture = {
   problem_type?: string | null;
   home_card_icon?: string | null;
   home_card_media_ref?: string | null;
+  short_description?: string | null;
 };
 
 // Mirrors the real GET /datasets response envelope confirmed at
@@ -293,8 +294,8 @@ describe("HomePage Telco-like ready dataset listing (S0017)", () => {
 
     expect(await screen.findByText("Telco Customer Churn")).toBeInTheDocument();
     expect(
-      screen.getByText("Customer churn prediction dataset for a telecommunications provider."),
-    ).toBeInTheDocument();
+      screen.queryByText("Customer churn prediction dataset for a telecommunications provider."),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Binary Classification")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Explore dataset/ })).toHaveAttribute(
       "href",
@@ -308,5 +309,33 @@ describe("HomePage Telco-like ready dataset listing (S0017)", () => {
     // fallback, not an invented per-dataset value.
     const iconPath = container.querySelector(".dataset-card__icon path");
     expect(iconPath?.getAttribute("d")).toBe(TELECOM_ICON_PATH_D);
+  });
+
+  it("renders a published Home card description but not the legacy long fallback", async () => {
+    const legacyFallback = "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.";
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "telco-customer-churn",
+        title: "Telco Customer Churn",
+        summary: legacyFallback,
+        domain: "telco",
+        visibility: "public",
+        tags: ["telco"],
+      },
+      {
+        dataset_slug: "curated-description",
+        title: "Curated description",
+        summary: "Canonical summary that must not replace curated copy",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        short_description: "Explicitly published Home card description",
+      },
+    ]);
+
+    renderHomePage();
+
+    expect(await screen.findByText("Explicitly published Home card description")).toBeInTheDocument();
+    expect(screen.queryByText(legacyFallback)).not.toBeInTheDocument();
   });
 });

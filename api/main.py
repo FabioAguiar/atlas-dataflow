@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import re
 import sys
 import tarfile
 from datetime import datetime
@@ -873,12 +874,12 @@ async def post_admin_home_card_image(dataset_slug: str, request: Request):
         return public_error_response(PROFILE_PUBLISH_DATASET_SLUG_INVALID)
     declared_length = request.headers.get("content-length")
     if declared_length and declared_length.isdigit() and int(declared_length) > HOME_CARD_IMAGE_MAX_BYTES:
-        return HOME_CARD_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 5 MB."}])
+        return HOME_CARD_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 10 MB."}])
     chunks = bytearray()
     async for chunk in request.stream():
         chunks.extend(chunk)
         if len(chunks) > HOME_CARD_IMAGE_MAX_BYTES:
-            return HOME_CARD_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 5 MB."}])
+            return HOME_CARD_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 10 MB."}])
     result = store_home_card_image(
         request.headers.get("x-file-name"), request.headers.get("content-type"), bytes(chunks), _REPO_ROOT
     )

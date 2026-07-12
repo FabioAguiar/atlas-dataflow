@@ -38,6 +38,16 @@ const PROBLEM_TYPE_LABELS: Record<string, string> = {
 
 const DEFAULT_PROBLEM_TYPE_LABEL = "Predictive Analysis";
 
+const LEGACY_HOME_CARD_DESCRIPTION_FALLBACKS = new Set([
+  "Customer churn prediction dataset for a telecommunications provider.",
+  "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
+]);
+
+export function presentHomeCardDescription(description?: string | null): string {
+  const trimmed = description?.trim() ?? "";
+  return LEGACY_HOME_CARD_DESCRIPTION_FALLBACKS.has(trimmed) ? "" : trimmed;
+}
+
 /**
  * GET /datasets (registry/list.py ListedDataset) returns only dataset_slug,
  * title, summary, domain, visibility and tags today, never problem_type. This

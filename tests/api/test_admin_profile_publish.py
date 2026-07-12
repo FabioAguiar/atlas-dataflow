@@ -406,23 +406,41 @@ def test_publish_route_registered_only_under_admin_and_public_datasets_unchanged
     assert not any("publish" in path for path in public_paths)
 
 
-def test_home_card_image_store_generates_bounded_reference_and_ignores_original_name(tmp_path):
-    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
-    result = admin_profile_publish.store_home_card_image("operator-card.png", "image/png", png, tmp_path)
+def test_home_card_image_store_accepts_ordinary_names_and_generates_safe_references(tmp_path):
+    cases = [
+        ("Home card final.png", "image/png", b"\x89PNG\r\n\x1a\n" + b"png", ".png"),
+        ("Customer churn (final).jpeg", "image/jpeg", b"\xff\xd8\xff" + b"jpeg", ".jpg"),
+        ("home_card-v2.webp", "image/webp", b"RIFF\x04\x00\x00\x00WEBPdata", ".webp"),
+        ("visão geral.avif", "image/avif", b"\x00\x00\x00\x18ftypavifdata", ".avif"),
+    ]
+    for filename, content_type, content, expected_extension in cases:
+        result = admin_profile_publish.store_home_card_image(filename, content_type, content, tmp_path)
 
-    assert result["uploaded"] is True
-    assert result["media_ref"].startswith("/media/home-cards/")
-    assert "operator-card" not in result["media_ref"]
-    stored_name = result["media_ref"].rsplit("/", 1)[-1]
-    assert admin_profile_publish.resolve_home_card_media_path(stored_name, tmp_path).read_bytes() == png
+        assert result["uploaded"] is True
+        assert result["media_ref"].startswith("/media/home-cards/")
+        assert filename not in result["media_ref"]
+        stored_name = result["media_ref"].rsplit("/", 1)[-1]
+        assert stored_name.endswith(expected_extension)
+        assert admin_profile_publish.resolve_home_card_media_path(stored_name, tmp_path).read_bytes() == content
+
+
+def test_home_card_image_store_uses_signature_with_generic_or_missing_mime(tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
+    for content_type in (None, "", "application/octet-stream"):
+        result = admin_profile_publish.store_home_card_image("imagem verão.jpg", content_type, png, tmp_path)
+        assert result["uploaded"] is True
+        assert result["media_ref"].endswith(".png")
 
 
 def test_home_card_image_store_rejects_traversal_svg_oversize_and_invalid_content(tmp_path):
     valid_png = b"\x89PNG\r\n\x1a\n" + b"payload"
     cases = [
         ("../card.png", "image/png", valid_png),
+        ("..%2Fcard.png", "application/octet-stream", valid_png),
+        ("folder\\card.png", "image/png", valid_png),
         ("card.svg", "image/svg+xml", b"<svg><script/></svg>"),
         ("card.png", "image/png", b"not a png"),
+        ("card.jpg", "image/jpeg", valid_png),
         ("card.png", "image/png", valid_png + b"x" * admin_profile_publish.HOME_CARD_IMAGE_MAX_BYTES),
     ]
     for filename, content_type, content in cases:

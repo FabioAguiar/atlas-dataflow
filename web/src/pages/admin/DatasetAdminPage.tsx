@@ -1569,27 +1569,20 @@ function MetadataCardTab({
   const context = stateValue(readOnlyData.context);
   const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
   const [imageUploadError, setImageUploadError] = useState("");
-  const supportedImageTypes = ["image/png", "image/jpeg", "image/webp", "image/avif"];
 
   function uploadHomeCardImage(file: File | undefined) {
     if (!file) return;
     setImageUploadError("");
-    if (!supportedImageTypes.includes(file.type)) {
-      setImageUploadError("Choose a PNG, JPEG, WebP, or AVIF image.");
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setImageUploadError("Choose an image smaller than 5 MB.");
-      return;
-    }
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(file.name)) {
-      setImageUploadError("Choose an image with a safe filename.");
+    if (file.size > 10 * 1024 * 1024) {
+      setImageUploadError("Choose an image smaller than 10 MB.");
       return;
     }
     setImageUploadState("uploading");
+    const headers: Record<string, string> = { "X-File-Name": encodeURIComponent(file.name) };
+    if (file.type) headers["Content-Type"] = file.type;
     fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/home-card-image`, {
       method: "POST",
-      headers: { "Content-Type": file.type, "X-File-Name": file.name },
+      headers,
       body: file,
     })
       .then(async (response) => {
@@ -1677,8 +1670,9 @@ function MetadataCardTab({
                 context,
               )}
               mediaRef={form.background_image_ref}
+              summary={form.short_description}
             />
-            <TextField label="Short Home card description" multiline onChange={(value) => setField("short_description", value)} rows={3} value={form.short_description} />
+            <TextField label="Home card description" multiline onChange={(value) => setField("short_description", value)} rows={3} value={form.short_description} />
           </Card>
 
           <Card className="dataset-admin-config-card dataset-admin-problem-type-card">

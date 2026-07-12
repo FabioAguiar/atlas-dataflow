@@ -305,6 +305,13 @@ function installFetchMock(
       }
       return jsonResponse({ saved: true, profile: publicProfile });
     }
+    if (url.endsWith(`/admin/datasets/${datasetSlug}/home-card-image`) && init?.method === "POST") {
+      const headers = init.headers as Record<string, string>;
+      if (decodeURIComponent(headers["X-File-Name"]).includes("fail") || headers["Content-Type"] === "image/svg+xml") {
+        return jsonResponse({ errors: [{ message: "Choose a PNG, JPEG, WebP, or AVIF image." }] }, 422);
+      }
+      return jsonResponse({ uploaded: true, media_ref: "/media/home-cards/0123456789abcdef0123456789abcdef.png" });
+    }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
       if (options.noExistingDraft) {
         return jsonResponse({ draft_exists: false, profile: null });
@@ -993,9 +1000,49 @@ describe("DatasetAdminPage", () => {
     const upload = container.querySelector('input[type="file"]')!;
     fireEvent.change(upload, { target: { files: [new File(["unsafe"], "card.svg", { type: "image/svg+xml" })] } });
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Choose a PNG, JPEG, WebP, or AVIF image.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a PNG, JPEG, WebP, or AVIF image.");
     expect(iconButton).toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
+  });
+
+  it("uploads ordinary accented filenames without frontend filename or MIME blocking", async () => {
+    const fetchMock = installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["png"], "Visão geral (final).png")] } });
+
+    await waitFor(() => expect(container.querySelector(".dataset-admin-preview-card .dataset-card__media")).toBeInTheDocument());
+    const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith(`/admin/datasets/${datasetSlug}/home-card-image`));
+    expect(uploadCall).toBeDefined();
+    expect(uploadCall?.[1]?.headers).toMatchObject({ "X-File-Name": encodeURIComponent("Visão geral (final).png") });
+    expect(uploadCall?.[1]?.headers).not.toHaveProperty("Content-Type");
+  });
+
+  it("preserves Home card and Performance focus edits when an upload fails", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const iconButton = screen.getByRole("button", { name: "Technology" });
+    fireEvent.click(iconButton);
+    fireEvent.change(screen.getByLabelText("Home card description"), { target: { value: "Unsaved card copy" } });
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["png"], "first image.png", { type: "image/png" })] } });
+    await waitFor(() => expect(container.querySelector(".dataset-admin-preview-card .dataset-card__media")).toBeInTheDocument());
+    fireEvent.change(upload, { target: { files: [new File(["bad"], "fail image.png", { type: "image/png" })] } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a PNG, JPEG, WebP, or AVIF image.");
+    expect(iconButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Home card description")).toHaveValue("Unsaved card copy");
+    expect(screen.getByLabelText("Performance focus")).toHaveValue("balanced_classification");
+    expect(container.querySelector(".dataset-admin-preview-card .dataset-card__media")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
   });
 
   it("binds controlled icon and short-description textarea to the local preview", async () => {
@@ -1009,10 +1056,14 @@ describe("DatasetAdminPage", () => {
     expect(iconButton).toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
 
-    const description = screen.getByLabelText("Short Home card description");
+    const description = screen.getByLabelText("Home card description");
     expect(description.tagName).toBe("TEXTAREA");
     fireEvent.change(description, { target: { value: "Live preview copy" } });
     expect(within(screen.getByText("Home card preview").closest(".dataset-admin-preview-card")!).getByText("Live preview copy", { selector: "p" })).toBeInTheDocument();
+    fireEvent.change(description, { target: { value: "" } });
+    expect(within(screen.getByText("Home card preview").closest(".dataset-admin-preview-card")!).queryByText("Live preview copy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Customer churn prediction dataset")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Short Home card description")).not.toBeInTheDocument();
   });
 
   it("offers 19 controlled icons and selects every icon in the new final row", async () => {
@@ -1063,7 +1114,8 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
     expect(screen.getByRole("heading", { name: "Home card preview" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Short Home card description")).toBeInTheDocument();
+    expect(screen.getByLabelText("Home card description")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Short Home card description")).not.toBeInTheDocument();
 
     const problemTypeGroup = screen.getByRole("radiogroup", { name: "Problem type display" });
     const options = within(problemTypeGroup).getAllByRole("radio") as HTMLInputElement[];
@@ -1135,7 +1187,7 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
     fireEvent.click(screen.getByRole("button", { name: "bank-building" }));
-    fireEvent.change(screen.getByLabelText("Short Home card description"), {
+    fireEvent.change(screen.getByLabelText("Home card description"), {
       target: { value: "Edited home card description" },
     });
     fireEvent.change(screen.getByLabelText("Highlighted score"), { target: { value: "precision" } });

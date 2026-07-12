@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Card } from "../ui";
-import { getDatasetIcon, getProblemTypeLabel, isSafeHomeCardMediaReference, type DatasetIconName } from "../../lib/datasetPresentation";
+import { getDatasetIcon, getProblemTypeLabel, isSafeHomeCardMediaReference, presentHomeCardDescription, type DatasetIconName } from "../../lib/datasetPresentation";
 
 type DatasetCardProps = {
   slug: string;
@@ -86,6 +86,7 @@ export default function DatasetCard({
   const icon = iconOverride ?? getDatasetIcon(domain, tags);
   const analysisLabel = getProblemTypeLabel(problemType);
   const safeMediaRef = isSafeHomeCardMediaReference(mediaRef) ? mediaRef : null;
+  const description = presentHomeCardDescription(summary);
 
   return (
     <Card className="dataset-card">
@@ -104,7 +105,7 @@ export default function DatasetCard({
       <div className="dataset-card__body">
         <h3 className="dataset-card__title">{title}</h3>
         <Badge className="dataset-card__badge">{analysisLabel}</Badge>
-        {summary && <p className="dataset-card__description">{summary}</p>}
+        {description && <p className="dataset-card__description">{description}</p>}
       </div>
       <span className="dataset-card__action" aria-hidden="true">
         Explore dataset <span aria-hidden="true">→</span>

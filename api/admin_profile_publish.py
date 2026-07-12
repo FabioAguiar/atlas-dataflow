@@ -17,19 +17,20 @@ import os
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import unquote
 
 from registry.dataset_public_profile_snapshot_store import (
     publish_snapshot,
     publish_snapshot_from_payload,
 )
 
-HOME_CARD_IMAGE_MAX_BYTES = 5 * 1024 * 1024
-_SAFE_UPLOAD_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_IMAGE_TYPES = {
-    "image/png": ("png",),
-    "image/jpeg": ("jpg", "jpeg"),
-    "image/webp": ("webp",),
-    "image/avif": ("avif",),
+HOME_CARD_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_GENERIC_IMAGE_TYPES = {"", "application/octet-stream"}
+_IMAGE_EXTENSIONS = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/avif": "avif",
 }
 
 
@@ -38,16 +39,24 @@ def _media_root(repo_root: Path) -> Path:
     return Path(configured) if configured else repo_root / "media"
 
 
-def _matches_image_signature(content_type: str, content: bytes) -> bool:
-    if content_type == "image/png":
-        return content.startswith(b"\x89PNG\r\n\x1a\n")
-    if content_type == "image/jpeg":
-        return content.startswith(b"\xff\xd8\xff")
-    if content_type == "image/webp":
-        return len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
-    if content_type == "image/avif":
-        return len(content) >= 12 and content[4:8] == b"ftyp" and content[8:12] in {b"avif", b"avis"}
-    return False
+def _image_type_from_signature(content: bytes) -> str | None:
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp"
+    if len(content) >= 12 and content[4:8] == b"ftyp" and content[8:12] in {b"avif", b"avis"}:
+        return "image/avif"
+    return None
+
+
+def _is_file_name(filename: str | None) -> bool:
+    """Reject empty/directory-like names without using the name for storage."""
+    if not isinstance(filename, str) or not filename.strip() or len(filename) > 512:
+        return False
+    decoded = unquote(filename)
+    return not any(separator in decoded for separator in ("/", "\\", "\u2044", "\u2215", "\u29f8"))
 
 
 def store_home_card_image(
@@ -57,21 +66,23 @@ def store_home_card_image(
     repo_root: Path | None = None,
 ) -> dict:
     """Validate and store one Home-card image, returning only its public reference."""
-    if not isinstance(filename, str) or not _SAFE_UPLOAD_FILENAME.fullmatch(filename):
-        return {"uploaded": False, "media_ref": None, "error": "Choose an image with a safe filename."}
-    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
-    extensions = _IMAGE_TYPES.get(normalized_type)
-    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if not extensions or extension not in extensions:
-        return {"uploaded": False, "media_ref": None, "error": "Choose a PNG, JPEG, WebP, or AVIF image."}
+    if not _is_file_name(filename):
+        return {"uploaded": False, "media_ref": None, "error": "Choose an image file, not a folder."}
     if len(content) > HOME_CARD_IMAGE_MAX_BYTES:
-        return {"uploaded": False, "media_ref": None, "error": "Choose an image smaller than 5 MB."}
-    if not content or not _matches_image_signature(normalized_type, content):
-        return {"uploaded": False, "media_ref": None, "error": "The selected file is not a valid supported image."}
+        return {"uploaded": False, "media_ref": None, "error": "Choose an image smaller than 10 MB."}
+    if not content:
+        return {"uploaded": False, "media_ref": None, "error": "The selected image is empty or corrupt."}
+
+    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_type not in _GENERIC_IMAGE_TYPES and normalized_type not in _IMAGE_EXTENSIONS:
+        return {"uploaded": False, "media_ref": None, "error": "Choose a PNG, JPEG, WebP, or AVIF image."}
+    detected_type = _image_type_from_signature(content)
+    if detected_type is None or (normalized_type not in _GENERIC_IMAGE_TYPES and normalized_type != detected_type):
+        return {"uploaded": False, "media_ref": None, "error": "The selected image is invalid or corrupt."}
 
     root = _media_root(Path(repo_root) if repo_root else Path(__file__).parent.parent)
     destination_root = root / "home-cards"
-    stored_name = f"{uuid.uuid4().hex}.{extensions[0]}"
+    stored_name = f"{uuid.uuid4().hex}.{_IMAGE_EXTENSIONS[detected_type]}"
     destination = destination_root / stored_name
     try:
         destination_root.mkdir(parents=True, exist_ok=True)

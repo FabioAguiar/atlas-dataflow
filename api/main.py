@@ -848,10 +848,10 @@ def put_admin_dataset_detail_slug(
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
-    # Project Spec S0051: renames only the matching registry/datasets.json
-    # entry's dataset_slug -- active_release, public_metadata, releases/,
-    # publisher/runs/, contracts, notebooks, model artifacts, profile
-    # artifacts, evidence, and support-root files are never touched.
+    # S0088 extends the S0051 rename boundary: the matching registry entry and
+    # its slug-keyed profile/predict-view state are rebound together, while
+    # active_release, media, releases/, publisher/runs/, contracts, notebooks,
+    # model artifacts, and support-root files remain untouched.
     # Distinct from DELETE /admin/datasets/{dataset_slug}, which removes the
     # entry entirely rather than renaming it.
     new_dataset_slug = payload.get("new_dataset_slug") if isinstance(payload, dict) else None

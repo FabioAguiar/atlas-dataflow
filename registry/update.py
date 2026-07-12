@@ -45,16 +45,14 @@ registry_bound: false for any run that was promoted to the removed release
 (Project Spec S0048), making that run promotable again without either
 module needing to know about the other's removal-specific logic.
 
-Project Spec S0051 adds rename_dataset_slug(): a safe Dataset Detail slug
-rename boundary that changes only the matching entry's dataset_slug field in
-registry/datasets.json (the same backup/validate/write sequence run() and
-remove_dataset_entry() use), never touching active_release, public_metadata,
-releases/, publisher/runs/, contracts, notebooks, model artifacts, profile
-artifacts, evidence, or support-root files. Rejects an invalid source or
-target slug format, a target slug that collides with another entry, a
-no-op (unchanged) rename, and a rename of a source slug that has no
-matching entry -- mirroring remove_dataset_entry()'s never-raise,
-structured-error contract.
+Project Spec S0051 adds rename_dataset_slug(); S0088 extends it into a safe
+all-or-nothing rebinding boundary for the matching dataset registry entry,
+slug-keyed profile artifacts, predict views, and predict-view customizations.
+It preserves active_release and metadata and never touches media, releases/,
+publisher/runs/, contracts, notebooks, model artifacts, or support-root files.
+Invalid/colliding slugs and existing target artifacts are rejected before any
+write, while write failures trigger best-effort restoration of every involved
+file.
 """
 
 import json
@@ -63,6 +61,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from registry.predict_view_validate import validate_predict_views
 from registry.validate import RELEASE_ID_PATTERN, validate_registry
 
 
@@ -117,6 +116,25 @@ DATASET_SLUG_ALREADY_EXISTS_ERROR = {
     "field": "new_dataset_slug",
     "message": "Another Dataset Detail already uses this dataset_slug.",
 }
+ARTIFACT_TARGET_ALREADY_EXISTS_ERROR = {
+    "code": "DATASET_SLUG_ARTIFACT_TARGET_EXISTS",
+    "field": "new_dataset_slug",
+    "message": "Stored state already exists for the new_dataset_slug.",
+}
+ARTIFACT_REBIND_FAILED_ERROR = {
+    "code": "DATASET_SLUG_ARTIFACT_REBIND_FAILED",
+    "field": None,
+    "message": "Stored Dataset Detail state could not be rebound safely.",
+}
+
+_SLUG_KEYED_ARTIFACTS = (
+    ("profile-drafts", ".json"),
+    ("profile-drafts", ".json.previous"),
+    ("profile-snapshots", ".json"),
+    ("profile-snapshots", ".json.previous"),
+    ("profile-snapshots", ".evidence.json"),
+    ("profile-publications", ".json"),
+)
 
 
 def _load_json_file(path: Path, label: str) -> dict:
@@ -134,6 +152,45 @@ def _load_json_file(path: Path, label: str) -> dict:
         raise RuntimeError(f"{label} must be a JSON object.")
 
     return data
+
+
+def _rewrite_dataset_slug_fields(value: object, old_slug: str, new_slug: str) -> object:
+    """Return a deep copy with explicit dataset_slug bindings rebound."""
+    if isinstance(value, dict):
+        rewritten = {}
+        for key, item in value.items():
+            if key == "dataset_slug" and item == old_slug:
+                rewritten[key] = new_slug
+            else:
+                rewritten[key] = _rewrite_dataset_slug_fields(item, old_slug, new_slug)
+        # Snapshot evidence contains two reduced references derived from the slug.
+        identifier = rewritten.get("snapshot_identifier")
+        if isinstance(identifier, str) and identifier.startswith(f"{old_slug}@"):
+            rewritten["snapshot_identifier"] = f"{new_slug}@{identifier.split('@', 1)[1]}"
+        source = rewritten.get("draft_source_reference")
+        if isinstance(source, dict) and source.get("path") == f"registry/profile-drafts/{old_slug}.json":
+            source["path"] = f"registry/profile-drafts/{new_slug}.json"
+        return rewritten
+    if isinstance(value, list):
+        return [_rewrite_dataset_slug_fields(item, old_slug, new_slug) for item in value]
+    return value
+
+
+def _json_bytes(value: dict) -> bytes:
+    return json.dumps(value, indent=2, ensure_ascii=False).encode("utf-8")
+
+
+def _restore_files(originals: dict[Path, bytes | None]) -> None:
+    """Best-effort rollback of every file participating in a rename."""
+    for path, content in originals.items():
+        try:
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        except OSError:
+            pass
 
 
 def _resolve_run_dir(result_path_or_run_dir: str) -> Path:
@@ -534,13 +591,11 @@ def rename_dataset_slug(
 ) -> dict:
     """Rename exactly one dataset entry's dataset_slug in registry/datasets.json.
 
-    Changes only the matching entry's dataset_slug field -- active_release,
-    public_metadata, and every other entry are left byte-for-byte unchanged.
-    Uses the same validate-before-write/backup sequence as run() and
-    remove_dataset_entry(). Never touches releases/, publisher/runs/,
-    contracts, notebooks, model artifacts, profile artifacts, evidence, or
-    support-root files -- this function never reads or writes any path other
-    than the registry file and its backup.
+    Changes the matching entry's dataset_slug and rebinds optional slug-keyed
+    profile artifacts plus explicit predict-view/customization references.
+    Active release, public metadata, media references, and unrelated entries
+    are preserved. Releases, publisher runs, contracts, notebooks, model
+    artifacts, and support-root files are never read or written.
 
     Returns {"dataset_slug": str, "new_dataset_slug": str, "renamed": bool,
     "errors": [...]}, where errors is a list of {"code", "field", "message"}
@@ -640,18 +695,103 @@ def rename_dataset_slug(
             "errors": [REGISTRY_VALIDATION_FAILED_ERROR],
         }
 
+    # Discover and fully parse every optional artifact before the first write.
+    # Slugs have already passed the strict pattern above, so these paths cannot
+    # escape their fixed registry directories.
+    artifact_moves: list[tuple[Path, Path, dict]] = []
     try:
-        shutil.copy2(registry_path, backup_path)
-        registry_path.write_text(
-            json.dumps(registry, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    except OSError:
+        for directory, suffix in _SLUG_KEYED_ARTIFACTS:
+            source = repo_root / "registry" / directory / f"{dataset_slug}{suffix}"
+            target = repo_root / "registry" / directory / f"{new_dataset_slug}{suffix}"
+            if target.exists():
+                return {
+                    "dataset_slug": dataset_slug,
+                    "new_dataset_slug": new_dataset_slug,
+                    "renamed": False,
+                    "errors": [ARTIFACT_TARGET_ALREADY_EXISTS_ERROR],
+                }
+            if source.exists():
+                artifact = _load_json_file(source, "stored Dataset Detail state")
+                artifact_moves.append(
+                    (source, target, _rewrite_dataset_slug_fields(artifact, dataset_slug, new_dataset_slug))
+                )
+
+        predict_updates: list[tuple[Path, dict]] = []
+        predict_views_path = repo_root / "registry" / "predict-views.json"
+        if predict_views_path.exists():
+            predict_views = _load_json_file(predict_views_path, "predict views registry")
+            rewritten_views = _rewrite_dataset_slug_fields(
+                predict_views, dataset_slug, new_dataset_slug
+            )
+            if rewritten_views != predict_views:
+                known_slugs = {
+                    entry.get("dataset_slug")
+                    for entry in registry.get("datasets", [])
+                    if isinstance(entry, dict) and isinstance(entry.get("dataset_slug"), str)
+                }
+                if validate_predict_views(rewritten_views, known_dataset_slugs=known_slugs)["valid"] is not True:
+                    raise RuntimeError("rewritten predict views are invalid")
+                predict_updates.append((predict_views_path, rewritten_views))
+
+        customizations_path = repo_root / "registry" / "predict-view-customizations.json"
+        if customizations_path.exists():
+            customizations = _load_json_file(customizations_path, "predict view customizations registry")
+            entries = customizations.get("predict_view_customizations", [])
+            if not isinstance(entries, list):
+                raise RuntimeError("predict view customizations are invalid")
+            old_keys = {
+                (entry.get("view_id"), new_dataset_slug)
+                for entry in entries
+                if isinstance(entry, dict) and entry.get("dataset_slug") == dataset_slug
+            }
+            if any(
+                isinstance(entry, dict)
+                and entry.get("dataset_slug") == new_dataset_slug
+                and (entry.get("view_id"), new_dataset_slug) in old_keys
+                for entry in entries
+            ):
+                return {
+                    "dataset_slug": dataset_slug,
+                    "new_dataset_slug": new_dataset_slug,
+                    "renamed": False,
+                    "errors": [ARTIFACT_TARGET_ALREADY_EXISTS_ERROR],
+                }
+            rewritten_customizations = _rewrite_dataset_slug_fields(
+                customizations, dataset_slug, new_dataset_slug
+            )
+            if rewritten_customizations != customizations:
+                predict_updates.append((customizations_path, rewritten_customizations))
+    except (OSError, RuntimeError, json.JSONDecodeError):
         return {
             "dataset_slug": dataset_slug,
             "new_dataset_slug": new_dataset_slug,
             "renamed": False,
-            "errors": [REGISTRY_WRITE_FAILED_ERROR],
+            "errors": [ARTIFACT_REBIND_FAILED_ERROR],
+        }
+
+    touched_paths = {registry_path, backup_path}
+    for source, target, _ in artifact_moves:
+        touched_paths.update((source, target))
+    touched_paths.update(path for path, _ in predict_updates)
+    originals = {path: path.read_bytes() if path.exists() else None for path in touched_paths}
+
+    try:
+        backup_path.write_bytes(originals[registry_path] or b"")
+        for source, target, artifact in artifact_moves:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(_json_bytes(artifact))
+        for path, value in predict_updates:
+            path.write_bytes(_json_bytes(value))
+        registry_path.write_bytes(_json_bytes(registry))
+        for source, _, _ in artifact_moves:
+            source.unlink()
+    except OSError:
+        _restore_files(originals)
+        return {
+            "dataset_slug": dataset_slug,
+            "new_dataset_slug": new_dataset_slug,
+            "renamed": False,
+            "errors": [ARTIFACT_REBIND_FAILED_ERROR],
         }
 
     return {

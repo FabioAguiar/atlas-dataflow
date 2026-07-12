@@ -569,6 +569,80 @@ def test_rename_dataset_slug_leaves_release_and_publisher_run_directories_untouc
     assert (run_dir / "manifest.json").is_file()
 
 
+def test_rename_dataset_slug_rebinds_all_slug_keyed_state(tmp_path):
+    old_slug = "telco-customer-churn"
+    new_slug = "telco-churn-renamed"
+    _write_full_registry(tmp_path, [_full_entry(old_slug, "release-20260616-001")])
+
+    artifact_paths = [
+        ("profile-drafts", ".json"),
+        ("profile-drafts", ".json.previous"),
+        ("profile-snapshots", ".json"),
+        ("profile-snapshots", ".json.previous"),
+        ("profile-publications", ".json"),
+    ]
+    for directory, suffix in artifact_paths:
+        path = tmp_path / "registry" / directory / f"{old_slug}{suffix}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"dataset_slug": old_slug, "media_ref": "media/card.png"}), encoding="utf-8")
+
+    evidence_path = tmp_path / "registry" / "profile-snapshots" / f"{old_slug}.evidence.json"
+    evidence_path.write_text(json.dumps({
+        "dataset_slug": old_slug,
+        "snapshot_identifier": f"{old_slug}@2026-07-12T00:00:00Z",
+        "draft_source_reference": {"path": f"registry/profile-drafts/{old_slug}.json"},
+    }), encoding="utf-8")
+
+    predict_views = _load(Path(__file__).parent / "predict-views" / "valid" / "predict-views.json")
+    (tmp_path / "registry" / "predict-views.json").write_text(json.dumps(predict_views), encoding="utf-8")
+    customizations = {
+        "schema_version": "atlas.dataflow.predict-view-customizations.v1",
+        "predict_view_customizations": [{"view_id": "churn-risk-overview", "dataset_slug": old_slug}],
+    }
+    (tmp_path / "registry" / "predict-view-customizations.json").write_text(
+        json.dumps(customizations), encoding="utf-8"
+    )
+
+    result = rename_dataset_slug(old_slug, new_slug, repo_root=tmp_path)
+
+    assert result["renamed"] is True
+    for directory, suffix in artifact_paths:
+        assert not (tmp_path / "registry" / directory / f"{old_slug}{suffix}").exists()
+        rebound = _load(tmp_path / "registry" / directory / f"{new_slug}{suffix}")
+        assert rebound == {"dataset_slug": new_slug, "media_ref": "media/card.png"}
+    evidence = _load(tmp_path / "registry" / "profile-snapshots" / f"{new_slug}.evidence.json")
+    assert evidence["dataset_slug"] == new_slug
+    assert evidence["snapshot_identifier"].startswith(f"{new_slug}@")
+    assert evidence["draft_source_reference"]["path"] == f"registry/profile-drafts/{new_slug}.json"
+    rebound_views = _load(tmp_path / "registry" / "predict-views.json")
+    assert rebound_views["predict_views"][0]["dataset_slug"] == new_slug
+    assert rebound_views["predict_views"][0]["binding"]["dataset_slug"] == new_slug
+    rebound_customizations = _load(tmp_path / "registry" / "predict-view-customizations.json")
+    assert rebound_customizations["predict_view_customizations"][0]["dataset_slug"] == new_slug
+
+
+def test_rename_dataset_slug_rejects_existing_target_artifact_before_any_mutation(tmp_path):
+    old_slug = "telco-customer-churn"
+    new_slug = "telco-churn-renamed"
+    _write_full_registry(tmp_path, [_full_entry(old_slug, "release-20260616-001")])
+    registry_path = tmp_path / "registry" / "datasets.json"
+    original_registry = registry_path.read_bytes()
+    drafts = tmp_path / "registry" / "profile-drafts"
+    drafts.mkdir(parents=True)
+    (drafts / f"{old_slug}.json").write_text(json.dumps({"dataset_slug": old_slug}), encoding="utf-8")
+    target_content = json.dumps({"dataset_slug": new_slug, "owner": "unrelated"})
+    (drafts / f"{new_slug}.json").write_text(target_content, encoding="utf-8")
+
+    result = rename_dataset_slug(old_slug, new_slug, repo_root=tmp_path)
+
+    assert result["renamed"] is False
+    assert result["errors"][0]["code"] == "DATASET_SLUG_ARTIFACT_TARGET_EXISTS"
+    assert registry_path.read_bytes() == original_registry
+    assert (drafts / f"{old_slug}.json").exists()
+    assert (drafts / f"{new_slug}.json").read_text(encoding="utf-8") == target_content
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
 # ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------

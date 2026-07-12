@@ -82,12 +82,12 @@ const viewsPayload = {
 // (/datasets/{slug}, /context, /metrics, /model-card, /visualizations,
 // /contract, /views); each endpoint's mocked shape mirrors this handoff's
 // grounding of the page's own response-parsing code.
-function installDatasetPageFetchMock() {
+function installDatasetPageFetchMock(context = contextPayload) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
 
     if (url.endsWith(`/datasets/${slug}/context`)) {
-      return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      return jsonResponse({ dataset_slug: slug, context });
     }
     if (url.endsWith(`/datasets/${slug}/metrics`)) {
       return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
@@ -155,6 +155,29 @@ describe("DatasetPage synthetic-slug rendering", () => {
 
     const pendingValues = screen.getAllByText("Pending");
     expect(pendingValues.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders published Performance focus scores in configured order and highlight", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      performance_focus: {
+        focus_id: "positive_class_detection" as const,
+        highlighted_score_id: "recall",
+        visible_scores: [
+          { score_id: "precision", display_label: "Precision", value: "0.679", value_source: "canonical" as const, order: 2 },
+          { score_id: "recall", display_label: "Recall", value: "57.4%", value_source: "manual" as const, order: 1 },
+        ],
+      },
+    });
+
+    const { container } = renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(screen.getByText("Positive-class detection")).toBeInTheDocument();
+    expect(screen.getByText("57.4%")).toBeInTheDocument();
+    expect(screen.queryByText("AUC ROC")).not.toBeInTheDocument();
+    const scores = Array.from(container.querySelectorAll(".performance-summary__score dt"));
+    expect(scores.map((score) => score.textContent)).toEqual(["RecallHighlighted", "Precision"]);
   });
 
   it("switches from Overview to Inference and renders the split inference layout", async () => {

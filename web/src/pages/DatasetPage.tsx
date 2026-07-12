@@ -5,7 +5,7 @@ import DatasetDetailHeader, {
 } from "../components/DatasetDetail/DatasetDetailHeader";
 import DatasetDetailTabs from "../components/DatasetDetail/DatasetDetailTabs";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
-import PerformanceSummary from "../components/DatasetDetail/PerformanceSummary";
+import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import ModelCard from "../components/ModelCard/ModelCard";
 import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
@@ -42,6 +42,7 @@ type PublicContextPayload = {
   source_name?: string | null;
   release_date_label?: string | null;
   primary_metric_key?: string | null;
+  performance_focus?: PerformanceFocus | null;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -476,7 +477,11 @@ export default function DatasetPage() {
       <div className="dataset-detail-overview__analytics">
         {metricsState.status === "loading" && <LoadingState />}
         {metricsState.status === "ready" && (
-          <PerformanceSummary metrics={metricsState.data} emphasizedMetricKey={context?.primary_metric_key} />
+          <PerformanceSummary
+            metrics={metricsState.data}
+            emphasizedMetricKey={context?.primary_metric_key}
+            performanceFocus={context?.performance_focus}
+          />
         )}
         {metricsState.status === "unavailable" && (
           <ErrorState message="Metrics are temporarily unavailable." />

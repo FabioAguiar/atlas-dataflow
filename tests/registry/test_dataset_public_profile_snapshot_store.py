@@ -184,6 +184,62 @@ def test_direct_publish_persists_home_card_presentation_fields(fake_repo):
     assert result["snapshot"]["profile"]["home_card"] == home_card
 
 
+def test_direct_publish_persists_valid_performance_focus(fake_repo):
+    performance_focus = {
+        "focus_id": "positive_class_detection",
+        "highlighted_score_id": "recall",
+        "visible_scores": [
+            {"score_id": "precision", "display_label": "Precision", "value": "0.679", "value_source": "canonical", "order": 1},
+            {"score_id": "recall", "display_label": "Recall", "value": "57.4%", "value_source": "manual", "order": 0},
+        ],
+    }
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=performance_focus), repo_root=fake_repo
+    )
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["performance_focus"] == performance_focus
+
+
+def test_invalid_performance_focus_does_not_replace_previous_snapshot(fake_repo):
+    valid = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(display={"title": "Previous"}), repo_root=fake_repo
+    )
+    snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
+    original = snapshot_path.read_text(encoding="utf-8")
+    invalid_focus = {
+        "focus_id": "positive_class_detection",
+        "highlighted_score_id": "precision",
+        "visible_scores": [
+            {"score_id": "recall", "display_label": "Recall", "value": "0.5", "value_source": "manual", "order": 0},
+        ],
+    }
+    rejected = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=invalid_focus), repo_root=fake_repo
+    )
+    assert valid["published"] is True
+    assert rejected["published"] is False
+    assert "PERFORMANCE_HIGHLIGHT_NOT_VISIBLE" in _codes(rejected)
+    assert snapshot_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("unsafe_value", ["", "not measured", "<script>", "0.5\nprivate"])
+def test_direct_publish_rejects_unsafe_performance_values(fake_repo, unsafe_value):
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(performance_focus={
+            "focus_id": "positive_class_detection",
+            "highlighted_score_id": "recall",
+            "visible_scores": [{
+                "score_id": "recall", "display_label": "Recall", "value": unsafe_value,
+                "value_source": "manual", "order": 0,
+            }],
+        }),
+        repo_root=fake_repo,
+    )
+    assert result["published"] is False
+    assert "SCHEMA_VALIDATION_ERROR" in _codes(result)
+
+
 @pytest.mark.parametrize(
     "unsafe_reference",
     ["/etc/passwd", "../private.png", "file:///tmp/card.png", "https://private.example/card.png", "/media/../private.png"],

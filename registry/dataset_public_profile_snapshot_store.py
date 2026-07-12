@@ -69,7 +69,10 @@ DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 SNAPSHOT_SCHEMA_VERSION = "1.0.0"
 
-_PROFILE_FIELDS = ("display", "home_card", "theme", "inference_presentation", "result_card")
+_PROFILE_FIELDS = (
+    "display", "home_card", "performance_focus", "theme",
+    "inference_presentation", "result_card",
+)
 
 
 class SnapshotNotFoundError(Exception):

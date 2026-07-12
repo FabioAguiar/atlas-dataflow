@@ -380,6 +380,7 @@ _EMPTY_OVERLAY = {
     "home_card_icon": None,
     "short_description": None,
     "theme_preset": None,
+    "home_card_media_ref": None,
 }
 _CURATED_OVERLAY = {
     "display_title": "Curated Title",
@@ -387,6 +388,7 @@ _CURATED_OVERLAY = {
     "home_card_icon": "bank",
     "short_description": "Curated short description.",
     "theme_preset": "atlas-green",
+    "home_card_media_ref": None,
 }
 # M39-03: resolve_public_presentation_overlay's return shape is a superset of
 # registry/list.py's own, separate _snapshot_overlay_fields (unchanged by this
@@ -395,19 +397,29 @@ _CURATED_OVERLAY = {
 # are added.
 _EMPTY_PUBLIC_PROFILE_OVERLAY = {
     **_EMPTY_OVERLAY,
+    "home_card_media_ref": None,
     "source_name": None,
     "source_url": None,
     "release_date_label": None,
     "date_format": None,
     "primary_metric_key": None,
+    "performance_focus": None,
 }
 _CURATED_PUBLIC_PROFILE_OVERLAY = {
     **_CURATED_OVERLAY,
+    "home_card_media_ref": None,
     "source_name": "Original Source Org",
     "source_url": "https://example.org/dataset",
     "release_date_label": "01/07/2026",
     "date_format": "dd/mm/yyyy",
     "primary_metric_key": "precision",
+    "performance_focus": {
+        "focus_id": "positive_class_detection",
+        "highlighted_score_id": "recall",
+        "visible_scores": [
+            {"score_id": "recall", "display_label": "Recall", "value": "0.574", "value_source": "manual", "order": 0}
+        ],
+    },
 }
 
 
@@ -474,6 +486,7 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published():
     assert context["release_date_label"] is None
     assert context["date_format"] is None
     assert context["primary_metric_key"] is None
+    assert context["performance_focus"] is None
     # Base release-context fields are preserved unchanged alongside the overlay.
     assert context["title"] == "Fake Title"
     assert context["summary"] == "Fake summary."
@@ -505,6 +518,7 @@ def test_get_public_context_includes_curated_overlay_fields_when_published():
     assert context["release_date_label"] == "01/07/2026"
     assert context["date_format"] == "dd/mm/yyyy"
     assert context["primary_metric_key"] == "precision"
+    assert context["performance_focus"] == _CURATED_PUBLIC_PROFILE_OVERLAY["performance_focus"]
     # Base release-context fields survive the overlay merge unchanged.
     assert context["title"] == "Fake Title"
     assert context["summary"] == "Fake summary."
@@ -577,6 +591,7 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
                             "primary_metric_key": "precision",
                         },
                         "theme": {"preset": "atlas-green"},
+                        "performance_focus": _CURATED_PUBLIC_PROFILE_OVERLAY["performance_focus"],
                     },
                 }
             ),

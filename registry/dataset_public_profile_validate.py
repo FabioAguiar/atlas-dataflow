@@ -28,6 +28,48 @@ Error messages are sanitized: field path and error code only -- no filesystem
 paths, release IDs, or raw registry/metrics data.
 """
 
+PERFORMANCE_FOCUS_LABELS = {
+    "overall_discrimination": "Overall discrimination",
+    "positive_class_detection": "Positive-class detection",
+    "balanced_classification": "Balanced classification",
+    "probability_quality": "Probability quality",
+    "operational_decision": "Operational decision",
+}
+
+PERFORMANCE_SCORE_CATALOG = {
+    "overall_discrimination": {
+        "roc_auc": "ROC-AUC", "pr_auc": "PR-AUC",
+        "gini_coefficient": "Gini coefficient", "ks_statistic": "KS statistic",
+    },
+    "positive_class_detection": {
+        "recall": "Recall", "precision": "Precision", "f1_score": "F1-score",
+        "f_beta_score": "F-beta score", "pr_auc": "PR-AUC",
+        "false_negative_rate": "False Negative Rate",
+    },
+    "balanced_classification": {
+        "balanced_accuracy": "Balanced Accuracy", "mcc": "MCC",
+        "f1_score": "F1-score", "accuracy": "Accuracy", "recall": "Recall",
+        "specificity": "Specificity", "cohens_kappa": "Cohen's Kappa",
+        "g_mean": "G-Mean",
+    },
+    "probability_quality": {
+        "log_loss": "Log Loss", "brier_score": "Brier Score",
+        "calibration_error": "Calibration Error",
+        "calibration_slope": "Calibration Slope",
+        "calibration_intercept": "Calibration Intercept",
+        "expected_calibration_error": "Expected Calibration Error",
+    },
+    "operational_decision": {
+        "precision_at_k": "Precision@K", "recall_at_k": "Recall@K",
+        "lift_at_k": "Lift@K", "gain_at_k": "Gain@K",
+        "expected_cost": "Expected Cost", "expected_profit": "Expected Profit",
+        "net_benefit": "Net Benefit",
+        "cost_per_correct_detection": "Cost per Correct Detection",
+        "false_positives_at_k": "False Positives at K",
+        "false_negatives_at_k": "False Negatives at K",
+    },
+}
+
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
@@ -118,5 +160,71 @@ def validate_profile_references(
                     "home_card.primary_metric_key",
                     "home_card.primary_metric_key does not reference an existing release metric.",
                 ))
+
+    performance_focus = profile.get("performance_focus")
+    if isinstance(performance_focus, dict):
+        focus_id = performance_focus.get("focus_id")
+        catalog = PERFORMANCE_SCORE_CATALOG.get(focus_id)
+        if catalog is None:
+            errors.append(_err(
+                "PERFORMANCE_FOCUS_UNKNOWN",
+                "performance_focus.focus_id",
+                "performance_focus.focus_id is not supported.",
+            ))
+            catalog = {}
+
+        visible_scores = performance_focus.get("visible_scores")
+        seen_ids: set[str] = set()
+        seen_orders: set[int] = set()
+        if isinstance(visible_scores, list):
+            for index, score in enumerate(visible_scores):
+                if not isinstance(score, dict):
+                    continue
+                score_id = score.get("score_id")
+                field = f"performance_focus.visible_scores.{index}"
+                if isinstance(score_id, str):
+                    if score_id in seen_ids:
+                        errors.append(_err(
+                            "PERFORMANCE_SCORE_DUPLICATE",
+                            f"{field}.score_id",
+                            "Visible performance score identifiers must be unique.",
+                        ))
+                    seen_ids.add(score_id)
+                    expected_label = catalog.get(score_id)
+                    if expected_label is None:
+                        errors.append(_err(
+                            "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS",
+                            f"{field}.score_id",
+                            "Visible score is not supported for the selected performance focus.",
+                        ))
+                    elif score.get("display_label") != expected_label:
+                        errors.append(_err(
+                            "PERFORMANCE_SCORE_LABEL_INVALID",
+                            f"{field}.display_label",
+                            "Visible score label must use the safe catalog label.",
+                        ))
+                order = score.get("order")
+                if isinstance(order, int) and not isinstance(order, bool):
+                    if order in seen_orders:
+                        errors.append(_err(
+                            "PERFORMANCE_SCORE_ORDER_DUPLICATE",
+                            f"{field}.order",
+                            "Visible performance score ordering values must be unique.",
+                        ))
+                    seen_orders.add(order)
+
+        highlighted_score_id = performance_focus.get("highlighted_score_id")
+        if not isinstance(highlighted_score_id, str) or not highlighted_score_id:
+            errors.append(_err(
+                "PERFORMANCE_HIGHLIGHT_EMPTY",
+                "performance_focus.highlighted_score_id",
+                "A highlighted performance score identifier is required.",
+            ))
+        elif highlighted_score_id not in seen_ids:
+            errors.append(_err(
+                "PERFORMANCE_HIGHLIGHT_NOT_VISIBLE",
+                "performance_focus.highlighted_score_id",
+                "The highlighted performance score must be visible.",
+            ))
 
     return {"valid": len(errors) == 0, "errors": errors}

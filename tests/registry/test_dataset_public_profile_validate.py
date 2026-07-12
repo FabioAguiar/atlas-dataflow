@@ -60,6 +60,19 @@ def _profile(**overrides) -> dict:
     return base
 
 
+def _performance_focus(**overrides) -> dict:
+    focus = {
+        "focus_id": "positive_class_detection",
+        "highlighted_score_id": "recall",
+        "visible_scores": [
+            {"score_id": "recall", "display_label": "Recall", "value": "0.574", "value_source": "manual", "order": 0},
+            {"score_id": "precision", "display_label": "Precision", "value": "0.679", "value_source": "canonical", "order": 1},
+        ],
+    }
+    focus.update(overrides)
+    return focus
+
+
 # ---------------------------------------------------------------------------
 # Passing cases
 # ---------------------------------------------------------------------------
@@ -132,6 +145,15 @@ def test_profile_with_valid_primary_metric_key_passes():
     assert result["valid"] is True, f"Expected valid, got errors: {result['errors']}"
 
 
+def test_valid_performance_focus_passes():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus()),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result == {"valid": True, "errors": []}
+
+
 # ---------------------------------------------------------------------------
 # Rejection cases
 # ---------------------------------------------------------------------------
@@ -183,6 +205,36 @@ def test_both_references_invalid_accumulates_both_errors():
     codes = _codes(result)
     assert "BOUND_PREDICT_VIEW_NOT_FOUND" in codes
     assert "PRIMARY_METRIC_KEY_NOT_FOUND" in codes
+
+
+def test_performance_focus_rejects_unknown_focus_duplicates_and_invisible_highlight():
+    duplicate = {"score_id": "recall", "display_label": "Recall", "value": "0.1", "value_source": "manual", "order": 1}
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="unknown_focus",
+            highlighted_score_id="precision",
+            visible_scores=[duplicate, {**duplicate, "order": 2}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    codes = _codes(result)
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_UNKNOWN" in codes
+    assert "PERFORMANCE_SCORE_DUPLICATE" in codes
+    assert "PERFORMANCE_HIGHLIGHT_NOT_VISIBLE" in codes
+
+
+def test_performance_focus_rejects_score_outside_focus_and_unsafe_label():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(visible_scores=[{
+            "score_id": "roc_auc", "display_label": "<script>", "value": "0.85",
+            "value_source": "manual", "order": 0,
+        }], highlighted_score_id="roc_auc")),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS" in _codes(result)
 
 
 # ---------------------------------------------------------------------------

@@ -72,12 +72,14 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "display_subtitle": None,
         "home_card_icon": None,
         "short_description": None,
+        "home_card_media_ref": None,
         "theme_preset": None,
         "source_name": None,
         "source_url": None,
         "release_date_label": None,
         "date_format": None,
         "primary_metric_key": None,
+        "performance_focus": None,
     }
 
     try:
@@ -92,16 +94,19 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
     display = profile.get("display")
     home_card = profile.get("home_card")
     theme = profile.get("theme")
+    performance_focus = profile.get("performance_focus")
 
     return {
         "display_title": display.get("title") if isinstance(display, dict) else None,
         "display_subtitle": display.get("subtitle") if isinstance(display, dict) else None,
         "home_card_icon": home_card.get("icon") if isinstance(home_card, dict) else None,
         "short_description": home_card.get("short_description") if isinstance(home_card, dict) else None,
+        "home_card_media_ref": home_card.get("background_image_ref") if isinstance(home_card, dict) else None,
         "theme_preset": theme.get("preset") if isinstance(theme, dict) else None,
         "source_name": display.get("source_name") if isinstance(display, dict) else None,
         "source_url": display.get("source_url") if isinstance(display, dict) else None,
         "release_date_label": display.get("release_date_label") if isinstance(display, dict) else None,
         "date_format": display.get("date_format") if isinstance(display, dict) else None,
         "primary_metric_key": home_card.get("primary_metric_key") if isinstance(home_card, dict) else None,
+        "performance_focus": performance_focus if isinstance(performance_focus, dict) else None,
     }

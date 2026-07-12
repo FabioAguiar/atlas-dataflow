@@ -11,19 +11,26 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 REPO_ROOT = Path(__file__).parent.parent.parent
 API_ROOT = REPO_ROOT / "api"
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
-from registry.list import list_datasets  # noqa: E402
-from registry.resolve import resolve_dataset  # noqa: E402
+from registry.list import ListedDataset, list_datasets  # noqa: E402
 
 _REAL_REGISTRY_PATH = REPO_ROOT / "registry" / "datasets.json"
-_REAL_RELEASES_ROOT = REPO_ROOT / "releases"
+
+_FIXTURE_DATASET_SLUG = "fixture-public-dataset"
+_FIXTURE_RELEASE_ID = "release-fixture-public-001"
+_FIXTURE_LISTED_DATASET = ListedDataset(
+    dataset_slug=_FIXTURE_DATASET_SLUG,
+    title="Fixture Public Dataset",
+    summary="Complete fixture for public browser dependency compatibility.",
+    domain="testing",
+    visibility="public",
+    tags=["fixture"],
+)
 
 _PUBLIC_HOME_LISTING_KEYS = {
     "dataset_slug",
@@ -71,6 +78,36 @@ def _first_view_for_dataset(dataset_slug):
     return response["views"][0] if response["views"] else None
 
 
+def _write_complete_public_release(releases_root: Path) -> None:
+    release_dir = releases_root / _FIXTURE_RELEASE_ID
+    release_dir.mkdir(parents=True)
+    release_dir.joinpath("manifest.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {"role": "public_context", "reference": "context.json"},
+                    {"role": "metrics", "reference": "metrics.json"},
+                    {"role": "model_card", "reference": "model-card.md"},
+                    {"role": "public_contract", "reference": "public-contract.json"},
+                    {"role": "contracts", "reference": "runtime-contract.json"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    release_dir.joinpath("context.json").write_text(
+        json.dumps({"problem_type": "binary_classification"}), encoding="utf-8"
+    )
+    release_dir.joinpath("metrics.json").write_text(
+        json.dumps({"accuracy": 0.9}), encoding="utf-8"
+    )
+    release_dir.joinpath("model-card.md").write_text("# Fixture model card\n", encoding="utf-8")
+    release_dir.joinpath("public-contract.json").write_text(
+        json.dumps({"features": [{"name": "fixture_feature", "type": "numeric"}]}),
+        encoding="utf-8",
+    )
+
+
 def test_public_listing_shape_matches_frontend_home_route_contract():
     datasets = list_datasets(registry_path=_REAL_REGISTRY_PATH)
     response = {"datasets": [dataset._asdict() for dataset in datasets]}
@@ -86,40 +123,49 @@ def test_public_listing_shape_matches_frontend_home_route_contract():
     _assert_no_public_exposure(response)
 
 
-def test_public_dataset_home_route_dependencies_are_frontend_compatible():
-    datasets = list_datasets(registry_path=_REAL_REGISTRY_PATH)
-    if not datasets:
-        pytest.skip("real registry is empty; non-empty dependency compatibility is fixture-covered elsewhere")
-    dataset_slug = datasets[0].dataset_slug
-    resolved = resolve_dataset(dataset_slug, registry_path=_REAL_REGISTRY_PATH)
+def test_public_dataset_home_route_dependencies_are_frontend_compatible(tmp_path, monkeypatch):
+    releases_root = tmp_path / "releases"
+    _write_complete_public_release(releases_root)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug, active_release=_FIXTURE_RELEASE_ID
+        ),
+    )
+    monkeypatch.setattr(api_main, "list_datasets", lambda: [_FIXTURE_LISTED_DATASET])
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(api_main, "load_public_predict_view_list", lambda _dataset_slug: [])
+    monkeypatch.setenv("RELEASES_ROOT", str(releases_root))
 
-    dataset_response = api_main.get_dataset(dataset_slug)
+    dataset_response = api_main.get_dataset(_FIXTURE_DATASET_SLUG)
     context = api_main.load_public_context(
-        resolved.active_release,
-        releases_root=_REAL_RELEASES_ROOT,
+        _FIXTURE_RELEASE_ID,
+        releases_root=releases_root,
     )
     metrics = api_main.load_public_metrics(
-        resolved.active_release,
-        releases_root=_REAL_RELEASES_ROOT,
+        _FIXTURE_RELEASE_ID,
+        releases_root=releases_root,
     )
     model_card = api_main.load_public_model_card(
-        resolved.active_release,
-        releases_root=_REAL_RELEASES_ROOT,
+        _FIXTURE_RELEASE_ID,
+        releases_root=releases_root,
     )
     contract = api_main.load_public_contract(
-        resolved.active_release,
-        releases_root=_REAL_RELEASES_ROOT,
+        _FIXTURE_RELEASE_ID,
+        releases_root=releases_root,
     )
-    views_response = api_main.list_predict_views(dataset_slug)
+    views_response = api_main.list_predict_views(_FIXTURE_DATASET_SLUG)
 
     assert isinstance(dataset_response, dict)
-    assert dataset_response["dataset_slug"] == dataset_slug
+    assert dataset_response["dataset_slug"] == _FIXTURE_DATASET_SLUG
     assert {"title", "summary", "domain", "visibility", "tags"} <= set(dataset_response)
     assert isinstance(context, dict)
     assert isinstance(metrics, dict)
     assert set(model_card.keys()) == {"content", "format"}
     assert isinstance(contract.get("features"), list)
-    assert views_response["dataset_slug"] == dataset_slug
+    assert views_response["dataset_slug"] == _FIXTURE_DATASET_SLUG
     assert isinstance(views_response["views"], list)
 
     _assert_no_public_exposure(
@@ -134,10 +180,27 @@ def test_public_dataset_home_route_dependencies_are_frontend_compatible():
     )
 
 
-def test_public_predict_view_route_dependencies_are_frontend_compatible():
-    dataset_slug = "telco-customer-churn"
-    if not any(d.dataset_slug == dataset_slug for d in list_datasets(registry_path=_REAL_REGISTRY_PATH)):
-        pytest.skip("real registry has no Telco dataset; predict-view orphan cleanup belongs to S0082")
+def test_public_predict_view_route_dependencies_are_frontend_compatible(monkeypatch):
+    dataset_slug = _FIXTURE_DATASET_SLUG
+    fixture_view = {
+        "view_id": "fixture-risk-overview",
+        "dataset_slug": dataset_slug,
+        "display": {"title": "Fixture Risk Overview", "summary": "Fixture view."},
+        "intent": {"prediction_goal": "Exercise the public view contract.", "audience": "Tests"},
+        "release_mode": "active",
+    }
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda slug: SimpleNamespace(dataset_slug=slug, active_release=_FIXTURE_RELEASE_ID),
+    )
+    monkeypatch.setattr(api_main, "load_public_predict_view_list", lambda _slug: [fixture_view])
+    monkeypatch.setattr(api_main, "load_public_predict_view", lambda _slug, _view_id: fixture_view)
+    monkeypatch.setattr(
+        api_main,
+        "load_public_predict_view_customization",
+        lambda slug, view_id: {"dataset_slug": slug, "view_id": view_id, "field_hints": {}, "groups": []},
+    )
     view = _first_view_for_dataset(dataset_slug)
     assert view is not None
 

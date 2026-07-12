@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-12T19:58:18Z",
+  "published_at": "2026-07-12T20:19:48Z",
   "active_release_at_publish_time": "release-20260712t190939z",
   "profile": {
     "display": {
@@ -11,8 +11,8 @@
       "canonical_name_fallback": true
     },
     "home_card": {
-      "icon": "flask",
-      "background_image_ref": null,
+      "icon": "cpu-chip",
+      "background_image_ref": "/media/home-cards/f246e3f98f52492499b5c08dae435ced.jpg",
       "short_description": "mnm,.b ,mb;lkn",
       "primary_metric_key": null
     },
@@ -23,21 +23,21 @@
         {
           "score_id": "recall",
           "display_label": "Recall",
-          "value": "0",
+          "value": "23",
           "value_source": "manual",
           "order": 0
         },
         {
           "score_id": "precision",
           "display_label": "Precision",
-          "value": "0",
+          "value": "5657",
           "value_source": "manual",
           "order": 1
         },
         {
           "score_id": "f1_score",
           "display_label": "F1-score",
-          "value": "0",
+          "value": "34",
           "value_source": "manual",
           "order": 2
         }

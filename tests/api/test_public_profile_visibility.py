@@ -91,6 +91,12 @@ def _fixture_resolve_dataset(dataset_slug):
     return SimpleNamespace(dataset_slug=dataset_slug, active_release="release-fixture-001")
 
 
+def _make_fixture_publicly_eligible(monkeypatch) -> None:
+    """Isolate success paths from every real public eligibility gate."""
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+
+
 def _make_request(
     headers: dict[str, str],
     method: str = "PUT",
@@ -215,11 +221,12 @@ def test_list_datasets_endpoint_excludes_hidden_dataset():
     assert set(_SEEDED_DATASET_SLUGS) - {_TARGET_SLUG} <= slugs
 
 
-def test_list_datasets_endpoint_includes_all_when_all_visible():
+def test_list_datasets_endpoint_includes_all_when_all_visible(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_list_datasets = api_main.list_datasets
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.list_datasets = _fixture_two_dataset_listing
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -249,7 +256,7 @@ def test_get_dataset_returns_dataset_not_found_shape_when_hidden():
 
 
 def test_get_dataset_returns_data_when_visible(monkeypatch):
-    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: True)
+    _make_fixture_publicly_eligible(monkeypatch)
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
     response = api_main.get_dataset(_TARGET_SLUG)
@@ -670,7 +677,7 @@ def test_resolve_problem_type_none_when_value_not_a_string():
         api_main.load_public_context = original_load_public_context
 
 
-def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset():
+def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_load_public_context = api_main.load_public_context
     original_list_datasets = api_main.list_datasets
@@ -680,6 +687,7 @@ def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset(
     api_main.load_public_context = lambda active_release: {"problem_type": "binary_classification"}
     api_main.list_datasets = _fixture_two_dataset_listing
     api_main.resolve_dataset = _fixture_resolve_dataset
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -693,7 +701,7 @@ def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset(
         assert entry["problem_type"] == "binary_classification"
 
 
-def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excluding_it():
+def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excluding_it(monkeypatch):
     """
     One dataset's release/context lookup failing must not exclude it from the
     listing -- only that dataset's own problem_type resolves to None, and
@@ -714,6 +722,7 @@ def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excl
     api_main.resolve_dataset = fake_resolve_dataset
     api_main.load_public_context = fake_load_public_context
     api_main.list_datasets = _fixture_two_dataset_listing
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -733,6 +742,7 @@ def test_get_dataset_includes_problem_type_when_available(monkeypatch):
     original_load_public_context = api_main.load_public_context
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
     api_main.load_public_context = lambda active_release: {"problem_type": "regression"}

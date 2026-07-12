@@ -12,6 +12,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent.parent
 _DEFAULT_PREDICT_VIEWS_PATH = _REPO_ROOT / "registry" / "predict-views.json"
+_DEFAULT_DATASETS_PATH = _REPO_ROOT / "registry" / "datasets.json"
 
 
 class ViewNotFoundError(Exception):
@@ -26,10 +27,32 @@ class ViewBindingInvalidError(Exception):
     code = "VIEW_BINDING_INVALID"
 
 
+def _dataset_is_registered(dataset_slug: str, datasets_path: Path | None) -> bool:
+    if datasets_path is None:
+        return True
+    try:
+        registry = json.loads(datasets_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    datasets = registry.get("datasets") if isinstance(registry, dict) else None
+    return isinstance(datasets, list) and any(
+        isinstance(entry, dict) and entry.get("dataset_slug") == dataset_slug
+        for entry in datasets
+    )
+
+
+def _datasets_path_for(predict_views_path: Path, datasets_path: Path | None) -> Path | None:
+    if datasets_path is not None:
+        return datasets_path
+    sibling = predict_views_path.parent / "datasets.json"
+    return sibling if sibling.is_file() else None
+
+
 def load_public_predict_view(
     dataset_slug: str,
     view_id: str,
     predict_views_path: Path | None = None,
+    datasets_path: Path | None = None,
 ) -> dict:
     """
     Load a safe public projection of a predict view record.
@@ -48,6 +71,10 @@ def load_public_predict_view(
     Raises ViewBindingInvalidError if a binding inconsistency is detected.
     """
     path = predict_views_path if predict_views_path is not None else _DEFAULT_PREDICT_VIEWS_PATH
+    datasets_path = _datasets_path_for(path, datasets_path or (_DEFAULT_DATASETS_PATH if predict_views_path is None else None))
+
+    if not _dataset_is_registered(dataset_slug, datasets_path):
+        raise ViewNotFoundError("The requested predict view is not available for this dataset.")
 
     try:
         content = path.read_text(encoding="utf-8")
@@ -105,6 +132,7 @@ def load_public_predict_view(
 def load_public_predict_view_list(
     dataset_slug: str,
     predict_views_path: Path | None = None,
+    datasets_path: Path | None = None,
 ) -> list[dict]:
     """
     Return safe public projections for all valid predict views bound to dataset_slug.
@@ -117,6 +145,10 @@ def load_public_predict_view_list(
     Raises ViewNotFoundError if the registry is unreadable or malformed.
     """
     path = predict_views_path if predict_views_path is not None else _DEFAULT_PREDICT_VIEWS_PATH
+    datasets_path = _datasets_path_for(path, datasets_path or (_DEFAULT_DATASETS_PATH if predict_views_path is None else None))
+
+    if not _dataset_is_registered(dataset_slug, datasets_path):
+        return []
 
     try:
         content = path.read_text(encoding="utf-8")

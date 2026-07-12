@@ -264,15 +264,11 @@ def test_loader_raises_view_not_found_returns_registry_unavailable():
 # Loader unit tests: direct calls against registry/predict-views.json
 # ---------------------------------------------------------------------------
 
-def test_loader_returns_views_for_telco_dataset():
+def test_production_loader_returns_no_views_when_registry_is_empty():
     from public_predict_view_loader import load_public_predict_view_list
     registry_path = REPO_ROOT / "registry" / "predict-views.json"
     results = load_public_predict_view_list("telco-customer-churn", predict_views_path=registry_path)
-    assert isinstance(results, list)
-    assert len(results) == 1
-    assert results[0]["view_id"] == "churn-risk-overview"
-    assert results[0]["dataset_slug"] == "telco-customer-churn"
-    assert results[0]["release_mode"] == "active"
+    assert results == []
 
 
 def test_loader_returns_views_for_bank_dataset(tmp_path):
@@ -329,22 +325,33 @@ def test_loader_returns_empty_list_for_unknown_dataset():
     assert results == []
 
 
-def test_loader_result_items_exclude_binding_internals():
+def test_loader_result_items_exclude_binding_internals(tmp_path):
     from public_predict_view_loader import load_public_predict_view_list
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
-    results = load_public_predict_view_list("telco-customer-churn", predict_views_path=registry_path)
+    registry_path = tmp_path / "predict-views.json"
+    registry_path.write_text(json.dumps({"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": [{"view_id": "fixture-view", "dataset_slug": "fixture-dataset", "display": {}, "intent": {}, "binding": {"dataset_slug": "fixture-dataset", "release": {"mode": "active"}}}]}), encoding="utf-8")
+    results = load_public_predict_view_list("fixture-dataset", predict_views_path=registry_path)
     item = results[0]
     assert "binding" not in item
     assert "contract_precedence" not in item
     assert "schema_version" not in item
 
 
-def test_loader_result_items_have_only_public_keys():
+def test_loader_result_items_have_only_public_keys(tmp_path):
     from public_predict_view_loader import load_public_predict_view_list
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
-    results = load_public_predict_view_list("telco-customer-churn", predict_views_path=registry_path)
+    registry_path = tmp_path / "predict-views.json"
+    registry_path.write_text(json.dumps({"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": [{"view_id": "fixture-view", "dataset_slug": "fixture-dataset", "display": {}, "intent": {}, "binding": {"dataset_slug": "fixture-dataset", "release": {"mode": "active"}}}]}), encoding="utf-8")
+    results = load_public_predict_view_list("fixture-dataset", predict_views_path=registry_path)
     item = results[0]
     assert set(item.keys()) == {"view_id", "dataset_slug", "display", "intent", "release_mode"}
+
+
+def test_loader_filters_orphan_when_dataset_registry_is_supplied(tmp_path):
+    from public_predict_view_loader import load_public_predict_view_list
+    views_path = tmp_path / "predict-views.json"
+    datasets_path = tmp_path / "datasets.json"
+    views_path.write_text(json.dumps({"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": [{"view_id": "orphan-view", "dataset_slug": "removed-dataset", "binding": {"dataset_slug": "removed-dataset", "release": {"mode": "active"}}}]}), encoding="utf-8")
+    datasets_path.write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    assert load_public_predict_view_list("removed-dataset", views_path, datasets_path) == []
 
 
 def test_loader_excludes_binding_inconsistent_views(tmp_path):
@@ -379,10 +386,11 @@ def test_loader_excludes_binding_inconsistent_views(tmp_path):
     assert results[0]["view_id"] == "valid-view"
 
 
-def test_loader_display_contains_only_title_and_summary():
+def test_loader_display_contains_only_title_and_summary(tmp_path):
     from public_predict_view_loader import load_public_predict_view_list
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
-    results = load_public_predict_view_list("telco-customer-churn", predict_views_path=registry_path)
+    registry_path = tmp_path / "predict-views.json"
+    registry_path.write_text(json.dumps({"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": [{"view_id": "fixture-view", "dataset_slug": "fixture-dataset", "display": {"title": "Fixture", "summary": "Safe", "description": "private", "tags": ["private"]}, "intent": {}, "binding": {"dataset_slug": "fixture-dataset", "release": {"mode": "active"}}}]}), encoding="utf-8")
+    results = load_public_predict_view_list("fixture-dataset", predict_views_path=registry_path)
     display = results[0]["display"]
     assert "title" in display
     assert "summary" in display

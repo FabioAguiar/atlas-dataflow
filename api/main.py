@@ -273,6 +273,35 @@ def _inference_releases_root() -> Path:
     return _REPO_ROOT / "releases"
 
 
+def _remove_predict_views_for_dataset(dataset_slug: str, repo_root: Path) -> dict:
+    """Remove only predict-view records owned by dataset_slug."""
+    path = repo_root / "registry" / "predict-views.json"
+    try:
+        registry = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"removed": False, "original": None}
+
+    views = registry.get("predict_views") if isinstance(registry, dict) else None
+    if not isinstance(views, list):
+        return {"removed": False, "original": None}
+
+    retained = [
+        record
+        for record in views
+        if not isinstance(record, dict) or record.get("dataset_slug") != dataset_slug
+    ]
+    original = json.dumps(registry, indent=2) + "\n"
+    if len(retained) == len(views):
+        return {"removed": True, "original": original}
+
+    registry["predict_views"] = retained
+    try:
+        path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return {"removed": False, "original": None}
+    return {"removed": True, "original": original}
+
+
 _ADMIN_ENABLED_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -776,13 +805,27 @@ def delete_admin_dataset_detail(dataset_slug: str, request: Request):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
-    # Project Spec S0049: removes only the matching registry/datasets.json
-    # entry -- releases/, publisher/runs/, contracts, notebooks, model
+    # Project Specs S0049/S0082: remove the matching Dataset Detail and only
+    # predict views bound to its slug. Releases, runs, contracts, notebooks, model
     # artifacts, profile artifacts, evidence, and support-root files are
     # never touched. Distinct from DELETE /admin/runs/{run_id}, which only
     # ever removes a run artifact/directory and never mutates the registry.
+    predict_view_cleanup = _remove_predict_views_for_dataset(dataset_slug, _REPO_ROOT)
+    if not predict_view_cleanup["removed"]:
+        return ADMIN_DATASET_DETAIL_REMOVAL_FAILED.response(
+            errors=[{"code": "PREDICT_VIEW_CLEANUP_FAILED", "message": "Associated predict views could not be removed."}]
+        )
+
     result = remove_dataset_entry(dataset_slug, repo_root=_REPO_ROOT)
     if not result["removed"]:
+        original_predict_views = predict_view_cleanup.get("original")
+        if isinstance(original_predict_views, str):
+            try:
+                (_REPO_ROOT / "registry" / "predict-views.json").write_text(
+                    original_predict_views, encoding="utf-8"
+                )
+            except OSError:
+                pass
         return ADMIN_DATASET_DETAIL_REMOVAL_FAILED.response(errors=result["errors"])
 
     return result

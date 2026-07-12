@@ -39,6 +39,7 @@ review_status value.
 """
 
 import json
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -54,6 +55,9 @@ REGISTRY_PATH = Path(__file__).parent / "datasets.json"
 REVIEW_STATUS_READY = "ready"
 REVIEW_STATUS_NEEDS_REVIEW = "needs_review"
 _VALID_REVIEW_STATUSES = {REVIEW_STATUS_READY, REVIEW_STATUS_NEEDS_REVIEW}
+_PUBLIC_HOME_CARD_MEDIA_REF = re.compile(
+    r"^/media/home-cards/[A-Za-z0-9_-]+\.(?:avif|gif|jpeg|jpg|png|webp)$"
+)
 
 
 class ListedDataset(NamedTuple):
@@ -115,10 +119,19 @@ def _snapshot_overlay_fields(dataset_slug: str, repo_root: Path) -> dict:
         "display_title": display.get("title") if isinstance(display, dict) else None,
         "display_subtitle": display.get("subtitle") if isinstance(display, dict) else None,
         "home_card_icon": home_card.get("icon") if isinstance(home_card, dict) else None,
-        "home_card_media_ref": home_card.get("background_image_ref") if isinstance(home_card, dict) else None,
+        "home_card_media_ref": _safe_home_card_media_ref(
+            home_card.get("background_image_ref") if isinstance(home_card, dict) else None
+        ),
         "short_description": home_card.get("short_description") if isinstance(home_card, dict) else None,
         "theme_preset": theme.get("preset") if isinstance(theme, dict) else None,
     }
+
+
+def _safe_home_card_media_ref(value: object) -> str | None:
+    """Return only bounded, same-origin Home card image references."""
+    if not isinstance(value, str) or not value:
+        return None
+    return value if _PUBLIC_HOME_CARD_MEDIA_REF.fullmatch(value) else None
 
 
 def list_datasets(registry_path: Path | None = None) -> list[ListedDataset]:
@@ -131,7 +144,8 @@ def list_datasets(registry_path: Path | None = None) -> list[ListedDataset]:
     Each returned ListedDataset contains the safe public fields
     (dataset_slug, title, summary, domain, visibility, tags) plus the
     published profile snapshot's curated overlay fields (display_title,
-    display_subtitle, home_card_icon, short_description, theme_preset),
+    display_subtitle, home_card_icon, home_card_media_ref, short_description,
+    theme_preset),
     all None when no snapshot has been published for that dataset yet.
     """
     path = registry_path if registry_path is not None else REGISTRY_PATH

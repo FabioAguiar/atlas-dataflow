@@ -1,19 +1,19 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-12T16:48:05Z",
+  "published_at": "2026-07-12T17:41:50Z",
   "active_release_at_publish_time": "release-20260619-001",
   "profile": {
     "display": {
-      "title": "Telco Customer Churn",
+      "title": "Telco Customer Churn  teste",
       "problem_summary_body": "teste25ghcv",
       "release_date_label": "2026-07-10",
       "release_date_mode": "auto",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "icon": "factory",
-      "background_image_ref": "/media/home-cards/d5e0e8c1fe404f1d920aef40bb41be8f.png",
+      "icon": "education-cap",
+      "background_image_ref": null,
       "short_description": "teste",
       "primary_metric_key": null
     },

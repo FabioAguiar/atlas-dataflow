@@ -31,6 +31,9 @@ from registry.dataset_public_profile_store import (  # noqa: E402
     get_draft as _real_get_draft,
     update_draft as _real_update_draft,
 )
+from registry.list import is_dataset_needs_review as _real_is_dataset_needs_review  # noqa: E402
+from registry.list import list_datasets as _real_list_datasets  # noqa: E402
+from registry.resolve import resolve_dataset as _real_resolve_dataset  # noqa: E402
 
 _TARGET_SLUG = "telco-customer-churn"
 _RELEASE_ID = "release-20260101-001"
@@ -160,6 +163,22 @@ def _install_isolated_lifecycle(monkeypatch, fake_repo: Path) -> None:
         api_main,
         "resolve_dataset_visibility",
         functools.partial(_real_resolve_visibility, repo_root=fake_repo),
+    )
+    registry_path = fake_repo / "registry" / "datasets.json"
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        functools.partial(_real_resolve_dataset, registry_path=registry_path),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "list_datasets",
+        functools.partial(_real_list_datasets, registry_path=registry_path),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "is_dataset_needs_review",
+        functools.partial(_real_is_dataset_needs_review, registry_path=registry_path),
     )
     monkeypatch.setattr(
         api_main,

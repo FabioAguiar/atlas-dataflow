@@ -248,13 +248,11 @@ def test_get_dataset_returns_dataset_not_found_shape_when_hidden():
     )
 
 
-def test_get_dataset_returns_data_when_visible():
-    original = api_main.resolve_dataset_visibility
-    api_main.resolve_dataset_visibility = lambda dataset_slug: True
-    try:
-        response = api_main.get_dataset(_TARGET_SLUG)
-    finally:
-        api_main.resolve_dataset_visibility = original
+def test_get_dataset_returns_data_when_visible(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: True)
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
+    response = api_main.get_dataset(_TARGET_SLUG)
 
     assert response["dataset_slug"] == _TARGET_SLUG
 
@@ -440,18 +438,20 @@ def test_get_public_context_returns_dataset_not_found_shape_when_hidden():
     )
 
 
-def test_get_public_context_returns_context_when_visible():
+def test_get_public_context_returns_context_when_visible(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_loader = api_main.load_public_context
     original_overlay = api_main.resolve_public_presentation_overlay
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    api_main.resolve_dataset = _fixture_resolve_dataset
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
         api_main.resolve_dataset_visibility = original_visibility
+        monkeypatch.undo()
         api_main.load_public_context = original_loader
         api_main.resolve_public_presentation_overlay = original_overlay
 
@@ -460,12 +460,13 @@ def test_get_public_context_returns_context_when_visible():
     assert response["context"]["summary"] == "Fake summary."
 
 
-def test_get_public_context_overlay_fields_none_when_no_snapshot_published():
+def test_get_public_context_overlay_fields_none_when_no_snapshot_published(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_loader = api_main.load_public_context
     original_overlay = api_main.resolve_public_presentation_overlay
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     try:
@@ -492,12 +493,13 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published():
     assert context["summary"] == "Fake summary."
 
 
-def test_get_public_context_includes_curated_overlay_fields_when_published():
+def test_get_public_context_includes_curated_overlay_fields_when_published(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_loader = api_main.load_public_context
     original_overlay = api_main.resolve_public_presentation_overlay
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_CURATED_PUBLIC_PROFILE_OVERLAY)
     try:
@@ -619,8 +621,9 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_problem_type_returns_value_when_context_available():
+def test_resolve_problem_type_returns_value_when_context_available(monkeypatch):
     original_load_public_context = api_main.load_public_context
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     api_main.load_public_context = lambda active_release: {"problem_type": "binary_classification"}
     try:
         assert api_main._resolve_problem_type(_TARGET_SLUG) == "binary_classification"
@@ -725,11 +728,13 @@ def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excl
         assert entry["problem_type"] is None
 
 
-def test_get_dataset_includes_problem_type_when_available():
+def test_get_dataset_includes_problem_type_when_available(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_load_public_context = api_main.load_public_context
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
     api_main.load_public_context = lambda active_release: {"problem_type": "regression"}
     try:
         response = api_main.get_dataset(_TARGET_SLUG)
@@ -825,12 +830,13 @@ def test_list_datasets_endpoint_excludes_needs_review_dataset_even_when_visible(
     assert _TARGET_SLUG not in slugs
 
 
-def test_list_datasets_endpoint_includes_dataset_when_not_needs_review():
+def test_list_datasets_endpoint_includes_dataset_when_not_needs_review(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_needs_review = api_main.is_dataset_needs_review
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.is_dataset_needs_review = lambda dataset_slug: False
+    monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -862,12 +868,14 @@ def test_get_dataset_returns_dataset_not_found_shape_when_needs_review():
     )
 
 
-def test_get_dataset_returns_data_when_visible_and_not_needs_review():
+def test_get_dataset_returns_data_when_visible_and_not_needs_review(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_needs_review = api_main.is_dataset_needs_review
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.is_dataset_needs_review = lambda dataset_slug: False
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
     try:
         response = api_main.get_dataset(_TARGET_SLUG)
     finally:

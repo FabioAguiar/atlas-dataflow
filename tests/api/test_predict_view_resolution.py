@@ -62,6 +62,26 @@ _VALID_VIEW_RESPONSE = {
     "release_mode": "active",
 }
 
+_VALID_VIEW_REGISTRY = {
+    "schema_version": "atlas.dataflow.predict-views.v1",
+    "predict_views": [{
+        "view_id": _VALID_VIEW_RESPONSE["view_id"],
+        "dataset_slug": _VALID_VIEW_RESPONSE["dataset_slug"],
+        "display": _VALID_VIEW_RESPONSE["display"],
+        "intent": _VALID_VIEW_RESPONSE["intent"],
+        "binding": {
+            "dataset_slug": _VALID_VIEW_RESPONSE["dataset_slug"],
+            "release": {"mode": "active"},
+        },
+    }],
+}
+
+
+def _write_valid_view_registry(tmp_path: Path) -> Path:
+    path = tmp_path / "predict-views.json"
+    path.write_text(json.dumps(_VALID_VIEW_REGISTRY), encoding="utf-8")
+    return path
+
 
 def _resolved(dataset_slug: str):
     from types import SimpleNamespace
@@ -268,9 +288,9 @@ def test_view_binding_invalid_returns_view_binding_invalid():
 # Loader unit tests: direct calls against registry/predict-views.json
 # ---------------------------------------------------------------------------
 
-def test_loader_resolves_valid_view_from_registry():
+def test_loader_resolves_valid_view_from_registry(tmp_path):
     from public_predict_view_loader import load_public_predict_view
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
+    registry_path = _write_valid_view_registry(tmp_path)
     result = load_public_predict_view(
         "telco-customer-churn",
         "churn-risk-overview",
@@ -313,9 +333,9 @@ def test_loader_raises_view_not_found_for_wrong_dataset():
     assert raised, "Expected ViewNotFoundError when view_id belongs to a different dataset"
 
 
-def test_loader_result_excludes_binding_internals():
+def test_loader_result_excludes_binding_internals(tmp_path):
     from public_predict_view_loader import load_public_predict_view
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
+    registry_path = _write_valid_view_registry(tmp_path)
     result = load_public_predict_view(
         "telco-customer-churn",
         "churn-risk-overview",
@@ -326,9 +346,9 @@ def test_loader_result_excludes_binding_internals():
     assert "schema_version" not in result
 
 
-def test_loader_result_keys_are_public_only():
+def test_loader_result_keys_are_public_only(tmp_path):
     from public_predict_view_loader import load_public_predict_view
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
+    registry_path = _write_valid_view_registry(tmp_path)
     result = load_public_predict_view(
         "telco-customer-churn",
         "churn-risk-overview",

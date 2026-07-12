@@ -127,6 +127,10 @@ def _write_registry(repo_root: Path, datasets: list) -> None:
             "datasets": datasets,
         },
     )
+    _write_json(
+        registry_dir / "predict-views.json",
+        {"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": []},
+    )
 
 
 _PROMOTED_PROMOTION_RESULT = {
@@ -2213,6 +2217,16 @@ def test_delete_dataset_route_removes_only_matching_registry_entry(tmp_path):
     os.environ.pop("ADMIN_API_TOKEN", None)
     repo_root = tmp_path / "repo"
     _write_registry(repo_root, [dict(_TELCO_REGISTRY_ENTRY), dict(_BANK_REGISTRY_ENTRY)])
+    _write_json(
+        repo_root / "registry" / "predict-views.json",
+        {
+            "schema_version": "atlas.dataflow.predict-views.v1",
+            "predict_views": [
+                {"view_id": "telco-view", "dataset_slug": "telco-customer-churn"},
+                {"view_id": "bank-view", "dataset_slug": "bank-marketing"},
+            ],
+        },
+    )
     release_dir = repo_root / "releases" / "release-20260616-001"
     release_dir.mkdir(parents=True)
     _write_json(release_dir / "manifest.json", _VALID_MANIFEST)
@@ -2236,6 +2250,10 @@ def test_delete_dataset_route_removes_only_matching_registry_entry(tmp_path):
         registry = json.loads((repo_root / "registry" / "datasets.json").read_text(encoding="utf-8"))
         slugs = [entry["dataset_slug"] for entry in registry["datasets"]]
         assert slugs == ["bank-marketing"]
+        predict_views = json.loads(
+            (repo_root / "registry" / "predict-views.json").read_text(encoding="utf-8")
+        )["predict_views"]
+        assert predict_views == [{"view_id": "bank-view", "dataset_slug": "bank-marketing"}]
 
         # Removal must never touch releases/ or publisher/runs/.
         assert (release_dir / "manifest.json").is_file()
@@ -2291,6 +2309,10 @@ def test_delete_dataset_route_frees_slug_for_create_new_promotion(tmp_path):
         "telco-customer-churn",
         "release-20260710t101438z",
         registry_entries=[dict(_TELCO_REGISTRY_ENTRY)],
+    )
+    _write_json(
+        repo_root / "registry" / "predict-views.json",
+        {"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": []},
     )
 
     original_root = admin_runs._admin_runs_root

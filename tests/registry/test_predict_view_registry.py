@@ -41,9 +41,10 @@ def _codes(result: dict) -> set[str]:
 # ---------------------------------------------------------------------------
 
 def test_valid_predict_views_passes():
-    result = validate_predict_views_file(
-        VALID_DIR / "predict-views.json",
-        datasets_path=DATASETS_PATH,
+    registry = _load(VALID_DIR / "predict-views.json")
+    result = validate_predict_views(
+        registry,
+        known_dataset_slugs={record["dataset_slug"] for record in registry["predict_views"]},
     )
     assert result["valid"] is True, f"Expected valid, got errors: {result['errors']}"
     assert result["errors"] == []
@@ -63,18 +64,20 @@ def test_invalid_dataset_reference_rejected():
 
 
 def test_invalid_release_reference_rejected():
-    result = validate_predict_views_file(
-        INVALID_DIR / "invalid-release-reference.json",
-        datasets_path=DATASETS_PATH,
+    registry = _load(INVALID_DIR / "invalid-release-reference.json")
+    result = validate_predict_views(
+        registry,
+        known_dataset_slugs={record["dataset_slug"] for record in registry["predict_views"]},
     )
     assert result["valid"] is False
     assert "RELEASE_REFERENCE_INVALID" in _codes(result)
 
 
 def test_incompatible_contract_binding_rejected():
-    result = validate_predict_views_file(
-        INVALID_DIR / "incompatible-contract-binding.json",
-        datasets_path=DATASETS_PATH,
+    registry = _load(INVALID_DIR / "incompatible-contract-binding.json")
+    result = validate_predict_views(
+        registry,
+        known_dataset_slugs={record["dataset_slug"] for record in registry["predict_views"]},
     )
     assert result["valid"] is False
     assert "CONTRACT_BINDING_INVALID" in _codes(result)
@@ -237,6 +240,21 @@ def test_registry_discovery_returns_only_valid_views():
         datasets_path=DATASETS_PATH,
     )
     assert result["valid"] is True, f"Production registry invalid: {result['errors']}"
+
+
+def test_empty_registry_with_no_predict_views_is_valid():
+    result = validate_predict_views(
+        {"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": []},
+        known_dataset_slugs=set(),
+    )
+    assert result == {"valid": True, "errors": []}
+
+
+def test_active_orphan_predict_view_remains_invalid():
+    registry = _load(VALID_DIR / "predict-views.json")
+    result = validate_predict_views(registry, known_dataset_slugs=set())
+    assert result["valid"] is False
+    assert "DATASET_NOT_FOUND" in _codes(result)
 
 
 def test_error_messages_contain_no_filesystem_paths():

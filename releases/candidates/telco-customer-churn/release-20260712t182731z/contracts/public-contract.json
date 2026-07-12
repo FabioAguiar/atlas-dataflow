@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0.0",
+  "features": [
+    {
+      "name": "gender",
+      "input_type": "select",
+      "optional": false,
+      "label": "Gender",
+      "display_order": 1
+    },
+    {
+      "name": "SeniorCitizen",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Seniorcitizen",
+      "display_order": 2
+    },
+    {
+      "name": "Partner",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Partner",
+      "display_order": 3
+    },
+    {
+      "name": "Dependents",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Dependents",
+      "display_order": 4
+    },
+    {
+      "name": "tenure",
+      "input_type": "number",
+      "optional": false,
+      "label": "Tenure",
+      "display_order": 5
+    },
+    {
+      "name": "PhoneService",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Phoneservice",
+      "display_order": 6
+    },
+    {
+      "name": "MultipleLines",
+      "input_type": "select",
+      "optional": false,
+      "label": "Multiplelines",
+      "display_order": 7
+    },
+    {
+      "name": "InternetService",
+      "input_type": "select",
+      "optional": false,
+      "label": "Internetservice",
+      "display_order": 8
+    },
+    {
+      "name": "OnlineSecurity",
+      "input_type": "select",
+      "optional": false,
+      "label": "Onlinesecurity",
+      "display_order": 9
+    },
+    {
+      "name": "OnlineBackup",
+      "input_type": "select",
+      "optional": false,
+      "label": "Onlinebackup",
+      "display_order": 10
+    },
+    {
+      "name": "DeviceProtection",
+      "input_type": "select",
+      "optional": false,
+      "label": "Deviceprotection",
+      "display_order": 11
+    },
+    {
+      "name": "TechSupport",
+      "input_type": "select",
+      "optional": false,
+      "label": "Techsupport",
+      "display_order": 12
+    },
+    {
+      "name": "StreamingTV",
+      "input_type": "select",
+      "optional": false,
+      "label": "Streamingtv",
+      "display_order": 13
+    },
+    {
+      "name": "StreamingMovies",
+      "input_type": "select",
+      "optional": false,
+      "label": "Streamingmovies",
+      "display_order": 14
+    },
+    {
+      "name": "Contract",
+      "input_type": "select",
+      "optional": false,
+      "label": "Contract",
+      "display_order": 15
+    },
+    {
+      "name": "PaperlessBilling",
+      "input_type": "checkbox",
+      "optional": false,
+      "label": "Paperlessbilling",
+      "display_order": 16
+    },
+    {
+      "name": "PaymentMethod",
+      "input_type": "select",
+      "optional": false,
+      "label": "Paymentmethod",
+      "display_order": 17
+    },
+    {
+      "name": "MonthlyCharges",
+      "input_type": "number",
+      "optional": false,
+      "label": "Monthlycharges",
+      "display_order": 18
+    }
+  ]
+}

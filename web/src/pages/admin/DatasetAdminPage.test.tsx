@@ -146,6 +146,7 @@ function installFetchMock(
     // test's default publicProfile fixture is now what the operator sees
     // immediately rather than only after an explicit load.
     noExistingDraft?: boolean;
+    publishedSnapshotProfile?: typeof publicProfile;
     lastUpdated?: string;
     releaseDate?: string;
     releaseDateMode?: "auto" | "manual";
@@ -328,7 +329,17 @@ function installFetchMock(
       if (options.trackProfileDraftSaves) {
         savedProfileDraft = profile;
       }
-      return jsonResponse({ draft_exists: true, profile });
+      return jsonResponse({
+        draft_exists: true,
+        profile,
+        published_snapshot: options.publishedSnapshotProfile
+          ? {
+              source_draft_schema_version: options.publishedSnapshotProfile.schema_version,
+              published_at: "2026-07-11T14:00:00Z",
+              profile: options.publishedSnapshotProfile,
+            }
+          : null,
+      });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) && init?.method === "PUT") {
       if (options.trackCustomizationSaves) {
@@ -636,6 +647,47 @@ describe("DatasetAdminPage", () => {
     expect(toolbarPublishButton).toBeDisabled();
   });
 
+  it("hydrates Metadata & Card from the published snapshot ahead of a stale profile draft and tracks every owned field as dirty (Project Spec S0077)", async () => {
+    const publishedProfile = {
+      ...publicProfile,
+      home_card: {
+        icon: "weather-cloud",
+        background_image_ref: "/media/home-cards/0123456789abcdef0123456789abcdef.png",
+        short_description: "Latest published card copy",
+        primary_metric_key: "balanced_accuracy",
+      },
+      performance_focus: {
+        focus_id: "balanced_classification",
+        highlighted_score_id: "balanced_accuracy",
+        visible_scores: [
+          { score_id: "balanced_accuracy", display_label: "Balanced Accuracy", value: "0.91", value_source: "manual", order: 0 },
+          { score_id: "mcc", display_label: "MCC", value: "0.72", value_source: "manual", order: 1 },
+        ],
+      },
+    } as typeof publicProfile;
+    installFetchMock({ publishedSnapshotProfile: publishedProfile });
+    renderAdminPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Metadata & Card" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Weather cloud" })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Home card description")).toHaveValue("Latest published card copy");
+    expect(screen.getByLabelText("Performance focus")).toHaveValue("balanced_classification");
+    expect(screen.getByLabelText("Balanced Accuracy value")).toHaveValue("0.91");
+
+    const publishButton = within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" }))
+      .getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Chart line" }));
+    expect(publishButton).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Weather cloud" }));
+    expect(publishButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Home card description"), { target: { value: "Edited copy" } });
+    expect(publishButton).toBeEnabled();
+  });
+
   it("renders Release date label as a normalized date input seeded from Dashboard Last updated (Project Spec S0064)", async () => {
     installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "auto", lastUpdated: "2026-06-21T23:15:00Z" });
     renderAdminPage();
@@ -890,7 +942,7 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
-    fireEvent.click(screen.getByRole("button", { name: "chart-line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chart line" }));
     fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
     fireEvent.change(screen.getByLabelText("Balanced Accuracy value"), { target: { value: "0.81" } });
 
@@ -995,7 +1047,7 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
-    const iconButton = screen.getByRole("button", { name: "Technology" });
+    const iconButton = screen.getByRole("button", { name: "CPU chip" });
     fireEvent.click(iconButton);
     const upload = container.querySelector('input[type="file"]')!;
     fireEvent.change(upload, { target: { files: [new File(["unsafe"], "card.svg", { type: "image/svg+xml" })] } });
@@ -1015,6 +1067,10 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(upload, { target: { files: [new File(["png"], "Visão geral (final).png")] } });
 
     await waitFor(() => expect(container.querySelector(".dataset-admin-preview-card .dataset-card__media")).toBeInTheDocument());
+    const previewCard = container.querySelector(".dataset-admin-preview-card .dataset-card");
+    expect(previewCard).toHaveClass("dataset-card--image");
+    expect(previewCard?.querySelector(".dataset-card__media-gradient")).toBeInTheDocument();
+    expect(previewCard?.querySelector(".dataset-card__frame")).toBeInTheDocument();
     const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith(`/admin/datasets/${datasetSlug}/home-card-image`));
     expect(uploadCall).toBeDefined();
     expect(uploadCall?.[1]?.headers).toMatchObject({ "X-File-Name": encodeURIComponent("Visão geral (final).png") });
@@ -1027,7 +1083,7 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
-    const iconButton = screen.getByRole("button", { name: "Technology" });
+    const iconButton = screen.getByRole("button", { name: "CPU chip" });
     fireEvent.click(iconButton);
     fireEvent.change(screen.getByLabelText("Home card description"), { target: { value: "Unsaved card copy" } });
     fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
@@ -1051,7 +1107,7 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
-    const iconButton = screen.getByRole("button", { name: "weather-cloud" });
+    const iconButton = screen.getByRole("button", { name: "Weather cloud" });
     fireEvent.click(iconButton);
     expect(iconButton).toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
@@ -1073,9 +1129,17 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
     const iconBank = screen.getByRole("group", { name: "Home card icon" });
-    expect(within(iconBank).getAllByRole("button")).toHaveLength(19);
+    const iconButtons = within(iconBank).getAllByRole("button");
+    expect(iconButtons).toHaveLength(19);
+    expect(iconButtons.map((button) => button.textContent)).toEqual([
+      "Telecom users", "Bank building", "Chart line", "Heart", "Shopping cart",
+      "Airplane", "Shield", "Education cap", "Energy bolt", "Home house",
+      "Agro leaf", "Logistics truck", "Factory", "Weather cloud", "Database",
+      "Money dollar", "Globe", "Flask", "CPU chip",
+    ]);
+    expect(iconButtons.every((button) => !button.textContent?.includes("-"))).toBe(true);
 
-    for (const label of ["Money", "Global", "Research", "Technology"]) {
+    for (const label of ["Money dollar", "Globe", "Flask", "CPU chip"]) {
       const button = within(iconBank).getByRole("button", { name: label });
       fireEvent.click(button);
       expect(button).toHaveAttribute("aria-pressed", "true");
@@ -1186,7 +1250,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Date format"), { target: { value: "yyyy-mm-dd" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
-    fireEvent.click(screen.getByRole("button", { name: "bank-building" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bank building" }));
     fireEvent.change(screen.getByLabelText("Home card description"), {
       target: { value: "Edited home card description" },
     });

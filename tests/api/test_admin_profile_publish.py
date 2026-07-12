@@ -141,6 +141,49 @@ _VALID_PROFILE = {
 }
 
 
+def test_profile_draft_load_exposes_latest_published_snapshot_for_reload_hydration(monkeypatch):
+    stale_draft = {**_VALID_PROFILE, "home_card": {"icon": "telecom"}}
+    published_profile = {
+        **_VALID_PROFILE,
+        "home_card": {
+            "icon": "weather-cloud",
+            "background_image_ref": "/media/home-cards/0123456789abcdef0123456789abcdef.png",
+            "short_description": "Latest published card copy",
+        },
+        "performance_focus": {
+            "focus_id": "balanced_classification",
+            "highlighted_score_id": "balanced_accuracy",
+            "visible_scores": [{
+                "score_id": "balanced_accuracy",
+                "display_label": "Balanced Accuracy",
+                "value": "0.91",
+                "value_source": "manual",
+                "order": 0,
+            }],
+        },
+    }
+    published_snapshot = {
+        "published_at": "2026-07-11T14:00:00Z",
+        "source_draft_schema_version": "0.1.0",
+        "profile": published_profile,
+    }
+    monkeypatch.setattr(api_main, "read_profile_draft", lambda _slug: {
+        "draft_exists": True,
+        "profile": stale_draft,
+    })
+    monkeypatch.setattr(api_main, "read_published_profile_snapshot", lambda _slug: published_snapshot)
+    monkeypatch.setenv("ATLAS_ADMIN_ENABLED", "true")
+    monkeypatch.delenv("ADMIN_API_TOKEN", raising=False)
+
+    response = api_main.get_admin_profile_draft(
+        "example-dataset",
+        _make_request({}, method="GET", path="/admin/datasets/example-dataset/profile-draft"),
+    )
+
+    assert response["profile"] == stale_draft
+    assert response["published_snapshot"] == published_snapshot
+
+
 # ---------------------------------------------------------------------------
 # admin_profile_publish.publish_profile: direct calls
 # ---------------------------------------------------------------------------

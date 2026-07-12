@@ -89,7 +89,7 @@ export default function DatasetCard({
   const description = presentHomeCardDescription(summary);
 
   return (
-    <Card className="dataset-card">
+    <Card className={["dataset-card", safeMediaRef ? "dataset-card--image" : ""].filter(Boolean).join(" ")}>
       <Link
         to={`/dataset/${slug}`}
         className="dataset-card__link-overlay"
@@ -110,6 +110,7 @@ export default function DatasetCard({
       <span className="dataset-card__action" aria-hidden="true">
         Explore dataset <span aria-hidden="true">→</span>
       </span>
+      {safeMediaRef ? <span aria-hidden="true" className="dataset-card__frame" data-testid="home-card-frame" /> : null}
     </Card>
   );
 }

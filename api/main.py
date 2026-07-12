@@ -77,6 +77,7 @@ from admin_profile_publish import (  # noqa: E402
     HOME_CARD_IMAGE_MAX_BYTES,
     publish_profile,
     publish_profile_payload,
+    read_published_profile_snapshot,
     resolve_home_card_media_path,
     store_home_card_image,
 )
@@ -814,7 +815,15 @@ def get_admin_profile_draft(dataset_slug: str, request: Request):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
     try:
-        return read_profile_draft(dataset_slug)
+        result = read_profile_draft(dataset_slug)
+        # S0077: the direct-publish snapshot is the authoritative reload
+        # source. Keep the private draft in the response for compatibility,
+        # but expose the snapshot separately so stale draft/default values
+        # cannot overwrite fields that were successfully published.
+        published_snapshot = read_published_profile_snapshot(dataset_slug)
+        if published_snapshot is not None:
+            result["published_snapshot"] = published_snapshot
+        return result
     except ValueError:
         return public_error_response(PROFILE_DRAFT_DATASET_SLUG_INVALID)
 

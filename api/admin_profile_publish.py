@@ -20,6 +20,8 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from registry.dataset_public_profile_snapshot_store import (
+    SnapshotNotFoundError,
+    get_snapshot,
     publish_snapshot,
     publish_snapshot_from_payload,
 )
@@ -159,3 +161,11 @@ def publish_profile_payload(dataset_slug: str, profile: dict) -> dict:
         "snapshot": result["snapshot"],
         "errors": result["errors"],
     }
+
+
+def read_published_profile_snapshot(dataset_slug: str) -> dict | None:
+    """Return the latest published snapshot, or None when none exists."""
+    try:
+        return get_snapshot(dataset_slug)
+    except SnapshotNotFoundError:
+        return None

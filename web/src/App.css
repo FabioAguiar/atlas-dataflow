@@ -407,6 +407,10 @@ h1 {
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
+.dataset-card--image {
+  overflow: hidden;
+}
+
 .dataset-card:hover,
 .dataset-card:focus-within {
   border-color: var(--public-shell-color-accent, var(--atlas-color-accent));
@@ -417,7 +421,7 @@ h1 {
 .dataset-card__link-overlay {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 3;
   border-radius: inherit;
 }
 
@@ -464,6 +468,20 @@ h1 {
   inset: 35% 0 0;
   background: linear-gradient(180deg, rgb(255 255 255 / 0%), var(--atlas-color-surface) 100%);
   pointer-events: none;
+}
+
+.dataset-card__frame {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: 1px solid var(--atlas-color-border);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.dataset-card:hover .dataset-card__frame,
+.dataset-card:focus-within .dataset-card__frame {
+  border-color: var(--public-shell-color-accent, var(--atlas-color-accent));
 }
 
 .dataset-card__body {

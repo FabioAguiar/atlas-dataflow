@@ -52,25 +52,25 @@ function toLegacyPreviewIcon(
 }
 
 const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> = [
-  { value: "telecom-users", label: "telecom-users" },
-  { value: "bank-building", label: "bank-building" },
-  { value: "chart-line", label: "chart-line" },
+  { value: "telecom-users", label: "Telecom users" },
+  { value: "bank-building", label: "Bank building" },
+  { value: "chart-line", label: "Chart line" },
   { value: "heart", label: "Heart" },
-  { value: "shopping-cart", label: "shopping-cart" },
+  { value: "shopping-cart", label: "Shopping cart" },
   { value: "airplane", label: "Airplane" },
   { value: "shield", label: "Shield" },
-  { value: "education-cap", label: "education-cap" },
-  { value: "energy-bolt", label: "energy-bolt" },
-  { value: "home-house", label: "home-house" },
-  { value: "agro-leaf", label: "agro-leaf" },
-  { value: "logistics-truck", label: "logistics-truck" },
+  { value: "education-cap", label: "Education cap" },
+  { value: "energy-bolt", label: "Energy bolt" },
+  { value: "home-house", label: "Home house" },
+  { value: "agro-leaf", label: "Agro leaf" },
+  { value: "logistics-truck", label: "Logistics truck" },
   { value: "factory", label: "Factory" },
-  { value: "weather-cloud", label: "weather-cloud" },
+  { value: "weather-cloud", label: "Weather cloud" },
   { value: "database", label: "Database" },
-  { value: "money-dollar", label: "Money" },
-  { value: "globe", label: "Global" },
-  { value: "flask", label: "Research" },
-  { value: "cpu-chip", label: "Technology" },
+  { value: "money-dollar", label: "Money dollar" },
+  { value: "globe", label: "Globe" },
+  { value: "flask", label: "Flask" },
+  { value: "cpu-chip", label: "CPU chip" },
 ];
 
 const THEME_PRESET_CARDS = [
@@ -1263,6 +1263,9 @@ type PublicContentFields = Pick<
   | "release_date_mode"
   | "date_format"
   | "canonical_name_fallback"
+  | "home_card_icon"
+  | "short_description"
+  | "primary_metric_key"
   | "performance_focus"
   | "background_image_ref"
 >;
@@ -1279,6 +1282,9 @@ function publicContentFields(form: DraftForm): PublicContentFields {
     release_date_mode: form.release_date_mode,
     date_format: form.date_format,
     canonical_name_fallback: form.canonical_name_fallback,
+    home_card_icon: form.home_card_icon,
+    short_description: form.short_description,
+    primary_metric_key: form.primary_metric_key,
     performance_focus: form.performance_focus,
     background_image_ref: form.background_image_ref,
   };
@@ -3120,19 +3126,34 @@ export default function DatasetAdminPage() {
           setDraftState({ status: "unavailable", message: "Content could not be loaded from the admin API." });
           return null;
         }
-        return response.json() as Promise<{ draft_exists: boolean; profile: ProfileDraft | null }>;
+        return response.json() as Promise<{
+          draft_exists: boolean;
+          profile: ProfileDraft | null;
+          published_snapshot?: PublishSnapshot | null;
+        }>;
       })
       .then((data) => {
         if (!data) {
           return;
         }
+        const publishedProfile = profileFromSnapshot(data.published_snapshot, selectedSlug);
+        const hydrationProfile = publishedProfile ?? data.profile;
         const previousProfile = backendDraftProfile(draftStateRef.current);
         const currentProfile = profileFromForm(draftFormRef.current, selectedSlug);
         const hasDirtyFields = Boolean(previousProfile && !sameProfile(currentProfile, previousProfile));
         if (!isBackgroundRefresh || !hasDirtyFields) {
-          setDraftForm(formFromProfile(data.profile, selectedSlug));
+          setDraftForm(formFromProfile(hydrationProfile, selectedSlug));
         }
-        setDraftState({ status: "ready", draftExists: data.draft_exists, profile: data.profile });
+        setDraftState({ status: "ready", draftExists: data.draft_exists, profile: hydrationProfile });
+        if (publishedProfile) {
+          setPublicationState((current) => ({
+            status: "idle",
+            visible: current.visible,
+            publishedProfile,
+            message: "Latest published snapshot loaded.",
+          }));
+          setLastPublishedAt(data.published_snapshot?.published_at);
+        }
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {

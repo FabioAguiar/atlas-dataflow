@@ -161,6 +161,8 @@ describe("HomePage problem_type and curated icon rendering", () => {
 
     expect(screen.getByTestId("home-card-media")).toHaveStyle({ backgroundImage: 'url("/media/home-cards/published.webp")' });
     expect(screen.getByTestId("home-card-media-gradient")).toBeInTheDocument();
+    expect(screen.getByTestId("home-card-frame")).toBeInTheDocument();
+    expect(screen.getByTestId("home-card-media").closest(".dataset-card")).toHaveClass("dataset-card--image");
     expect(container.querySelector(".dataset-card__icon")).not.toBeInTheDocument();
   });
 

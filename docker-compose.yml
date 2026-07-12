@@ -13,6 +13,7 @@ services:
       # governed by the private runtime and loopback/SSH-tunneled access.
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
       ADMIN_RUNS_ROOT: ${ADMIN_RUNS_ROOT:-/app/publisher/runs}
+      ATLAS_MEDIA_ROOT: /app/media
     expose:
       - "8000"
     volumes:
@@ -20,6 +21,7 @@ services:
       - ./publisher/runs:/app/publisher/runs
       - ./releases:/app/releases
       - ./registry:/app/registry
+      - ./media/home-cards:/app/media/home-cards
     healthcheck:
       test:
         [
@@ -72,6 +74,14 @@ services:
 
             location /api/ {
                 proxy_pass http://api:8000/;
+                proxy_http_version 1.1;
+                proxy_set_header Host $$host;
+                proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $$scheme;
+            }
+
+            location ^~ /media/home-cards/ {
+                proxy_pass http://api:8000;
                 proxy_http_version 1.1;
                 proxy_set_header Host $$host;
                 proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;

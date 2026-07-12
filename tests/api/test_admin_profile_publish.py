@@ -451,6 +451,57 @@ def test_home_card_image_store_rejects_traversal_svg_oversize_and_invalid_conten
     assert not (tmp_path / "media").exists()
 
 
+def test_home_card_media_resolver_serves_only_generated_safe_filenames(tmp_path, monkeypatch):
+    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
+    stored = admin_profile_publish.store_home_card_image(
+        "Home card.png", "image/png", png, tmp_path
+    )
+    stored_name = stored["media_ref"].rsplit("/", 1)[-1]
+    monkeypatch.setenv("ATLAS_MEDIA_ROOT", str(tmp_path / "media"))
+
+    response = api_main.get_home_card_image(stored_name)
+    assert response.path == tmp_path / "media" / "home-cards" / stored_name
+    assert response.media_type == "image/png"
+
+    for unsafe_name in (
+        "does-not-exist.png",
+        "published.png",
+        "../" + stored_name,
+        "%2e%2e%2f" + stored_name,
+        stored_name.upper(),
+    ):
+        assert admin_profile_publish.resolve_home_card_media_path(unsafe_name, tmp_path) is None
+
+
+def test_home_card_media_route_returns_safe_json_404_for_missing_file():
+    response = api_main.get_home_card_image("0" * 32 + ".png")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_published_profile_keeps_only_bounded_home_card_media_reference():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        original = _install_isolated_publish(fake_repo)
+        try:
+            media_ref = "/media/home-cards/" + "a" * 32 + ".webp"
+            payload = {**_VALID_PROFILE, "home_card": {"background_image_ref": media_ref}}
+            response = api_main.put_admin_profile_publish(
+                "example-dataset", _make_request({}), payload
+            )
+
+            assert response["published"] is True
+            assert response["snapshot"]["profile"]["home_card"]["background_image_ref"] == media_ref
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+
 if __name__ == "__main__":
     import pytest
 

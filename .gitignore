@@ -65,3 +65,6 @@ data/
 atlas_dataflow.egg-info/
 
 pipeline/prepared/
+
+# Generated Home card uploads are local runtime data, not repository source.
+/media/home-cards/

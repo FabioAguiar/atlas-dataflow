@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "telco-customer-churn",
+  "published_at": "2026-07-12T19:58:18Z",
+  "active_release_at_publish_time": "release-20260712t190939z",
+  "profile": {
+    "display": {
+      "title": "Telco Customer Churn",
+      "release_date_label": "2026-07-12",
+      "release_date_mode": "auto",
+      "canonical_name_fallback": true
+    },
+    "home_card": {
+      "icon": "flask",
+      "background_image_ref": null,
+      "short_description": "mnm,.b ,mb;lkn",
+      "primary_metric_key": null
+    },
+    "performance_focus": {
+      "focus_id": "positive_class_detection",
+      "highlighted_score_id": "recall",
+      "visible_scores": [
+        {
+          "score_id": "recall",
+          "display_label": "Recall",
+          "value": "0",
+          "value_source": "manual",
+          "order": 0
+        },
+        {
+          "score_id": "precision",
+          "display_label": "Precision",
+          "value": "0",
+          "value_source": "manual",
+          "order": 1
+        },
+        {
+          "score_id": "f1_score",
+          "display_label": "F1-score",
+          "value": "0",
+          "value_source": "manual",
+          "order": 2
+        }
+      ]
+    },
+    "theme": {
+      "preset": "atlas-green"
+    },
+    "inference_presentation": {
+      "bound_predict_view_id": null
+    },
+    "result_card": {
+      "badge_preset": "risk",
+      "badge_labels": {}
+    }
+  },
+  "source_draft_schema_version": "1.0.0"
+}

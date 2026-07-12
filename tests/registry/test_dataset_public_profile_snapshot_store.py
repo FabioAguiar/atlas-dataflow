@@ -93,6 +93,12 @@ def _write_datasets_registry(fake_repo: Path, registry: dict) -> None:
     )
 
 
+def _set_active_release(fake_repo: Path, release_id: str) -> None:
+    registry = json.loads(json.dumps(_MOCK_DATASETS_REGISTRY))
+    registry["datasets"][0]["active_release"] = release_id
+    _write_datasets_registry(fake_repo, registry)
+
+
 def _write_predict_views_registry(fake_repo: Path, registry: dict) -> None:
     (fake_repo / "registry" / "predict-views.json").write_text(
         json.dumps(registry), encoding="utf-8"
@@ -168,6 +174,50 @@ def test_publish_creates_deterministic_snapshot_file(fake_repo):
     assert persisted["profile"]["home_card"]["primary_metric_key"] == "auc_roc"
     assert "contract" not in persisted
     assert "metrics" not in persisted
+
+
+@pytest.mark.parametrize(
+    "release_id",
+    ["release-20260101-001", "release-20260712t190939z"],
+)
+def test_publish_accepts_and_preserves_supported_release_id_formats(fake_repo, release_id):
+    _set_active_release(fake_repo, release_id)
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert result["snapshot"]["active_release_at_publish_time"] == release_id
+    evidence = json.loads(
+        _evidence_path(fake_repo, "telco-customer-churn").read_text(encoding="utf-8")
+    )
+    assert evidence["active_release_at_publish_time"] == release_id
+
+
+@pytest.mark.parametrize(
+    "release_id",
+    [
+        "",
+        "release-latest",
+        "release-20260712T190939Z",
+        "release-20260712t190939z-extra",
+        "prefix-release-20260101-001",
+        "../release-20260101-001",
+        "https://example.com/release-20260101-001",
+    ],
+)
+def test_publish_rejects_malformed_release_ids(fake_repo, release_id):
+    _set_active_release(fake_repo, release_id)
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    expected_code = "ACTIVE_RELEASE_NOT_FOUND" if release_id == "" else "SCHEMA_VALIDATION_ERROR"
+    assert expected_code in _codes(result)
+    assert not _evidence_path(fake_repo, "telco-customer-churn").exists()
 
 
 @pytest.mark.parametrize("icon", ["money-dollar", "globe", "flask", "cpu-chip"])

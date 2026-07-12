@@ -62,7 +62,9 @@ def _make_request(
     return Request(scope)
 
 
-def _build_fake_repo(tmp_root: Path) -> Path:
+def _build_fake_repo(
+    tmp_root: Path, active_release: str = "release-20260101-001"
+) -> Path:
     contracts_dir = tmp_root / "contracts"
     contracts_dir.mkdir(parents=True)
     shutil.copy2(
@@ -89,7 +91,7 @@ def _build_fake_repo(tmp_root: Path) -> Path:
             "datasets": [
                 {
                     "dataset_slug": "example-dataset",
-                    "active_release": "release-20260101-001",
+                    "active_release": active_release,
                     "public_metadata": {
                         "title": "Example Dataset",
                         "summary": "Test dataset for publish route tests.",
@@ -103,13 +105,13 @@ def _build_fake_repo(tmp_root: Path) -> Path:
         encoding="utf-8",
     )
 
-    metrics_dir = tmp_root / "releases" / "release-20260101-001" / "metrics"
+    metrics_dir = tmp_root / "releases" / active_release / "metrics"
     metrics_dir.mkdir(parents=True)
     metrics_dir.joinpath("metrics.json").write_text(
         json.dumps({
             "schema_version": "metrics.v1",
             "dataset_slug": "example-dataset",
-            "release_id": "release-20260101-001",
+            "release_id": active_release,
             "evaluation": {"split": "test", "sample_size": 1, "metrics": {"accuracy": 1.0}},
         }),
         encoding="utf-8",
@@ -359,6 +361,52 @@ def test_publish_route_with_body_publishes_payload_directly_without_a_draft():
             # repo, so a successful direct publish proves the persisted
             # draft store was never read along this path.
             assert not (fake_repo / "registry" / "profile-drafts" / "example-dataset.json").exists()
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+
+def test_publish_route_with_timestamp_active_release_persists_exact_binding_and_hydrates(monkeypatch):
+    release_id = "release-20260712t190939z"
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp), active_release=release_id)
+        original = _install_isolated_publish(fake_repo)
+        try:
+            response = api_main.put_admin_profile_publish(
+                "example-dataset", _make_request({}), dict(_VALID_PROFILE)
+            )
+            assert response["published"] is True
+            assert response["snapshot"]["active_release_at_publish_time"] == release_id
+
+            monkeypatch.setattr(
+                api_main,
+                "read_profile_draft",
+                lambda _slug: {"draft_exists": False, "profile": None},
+            )
+            monkeypatch.setattr(
+                api_main,
+                "read_published_profile_snapshot",
+                lambda _slug: response["snapshot"],
+            )
+            monkeypatch.setattr(
+                api_main,
+                "resolve_dataset",
+                lambda _slug: type("Resolved", (), {"active_release": release_id})(),
+            )
+            refreshed = api_main.get_admin_profile_draft(
+                "example-dataset",
+                _make_request(
+                    {}, method="GET", path="/admin/datasets/example-dataset/profile-draft"
+                ),
+            )
+            assert refreshed["published_snapshot"] == response["snapshot"]
+            assert refreshed["profile_hydration"] == {
+                "source": "current_release_snapshot",
+                "active_release": release_id,
+            }
         finally:
             _restore_publish(original)
             os.environ.pop("ATLAS_ADMIN_ENABLED", None)

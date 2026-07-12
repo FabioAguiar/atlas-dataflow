@@ -45,7 +45,7 @@
     },
     "active_release_at_publish_time": {
       "type": "string",
-      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "pattern": "^release-(?:[0-9]{8}-[0-9]{3}|[0-9]{8}t[0-9]{6}z)$",
       "title": "Active Release At Publish Time",
       "description": "The dataset's registry active_release identifier at the moment of publish, recorded for traceability only. This is a reference, not a copy of release artifact content, and must never be treated as this snapshot's own release authority."
     },

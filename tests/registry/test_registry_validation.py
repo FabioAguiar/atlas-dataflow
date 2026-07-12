@@ -14,6 +14,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -23,7 +25,7 @@ from registry.update import (  # noqa: E402
     remove_dataset_entry,
     rename_dataset_slug,
 )
-from registry.validate import validate_registry, validate_registry_file  # noqa: E402
+from registry.validate import RELEASE_ID_PATTERN, validate_registry, validate_registry_file  # noqa: E402
 
 VALID_DIR = Path(__file__).parent / "valid"
 INVALID_DIR = Path(__file__).parent / "invalid"
@@ -84,6 +86,22 @@ def test_malformed_active_release_rejected():
     result = validate_registry(registry)
     assert result["valid"] is False
     assert "INVALID_ACTIVE_RELEASE_FORMAT" in _codes(result)
+
+
+@pytest.mark.parametrize(
+    "release_id",
+    ["release-20260616-001", "release-20260712t190939z"],
+)
+def test_canonical_release_id_pattern_accepts_supported_formats(release_id):
+    assert RELEASE_ID_PATTERN.fullmatch(release_id)
+
+
+@pytest.mark.parametrize(
+    "release_id",
+    ["", "release-latest", "release-20260712T190939Z", "release-20260712t190939z-extra"],
+)
+def test_canonical_release_id_pattern_rejects_malformed_formats(release_id):
+    assert RELEASE_ID_PATTERN.fullmatch(release_id) is None
 
 
 def test_missing_public_metadata_rejected():

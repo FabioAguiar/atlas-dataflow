@@ -48,7 +48,7 @@
     },
     "active_release_at_publish_time": {
       "type": "string",
-      "pattern": "^release-[0-9]{8}-[0-9]{3}$",
+      "pattern": "^release-(?:[0-9]{8}-[0-9]{3}|[0-9]{8}t[0-9]{6}z)$",
       "title": "Active Release At Publish Time",
       "description": "Must match the published snapshot's own active_release_at_publish_time. Reference only, not release artifact content."
     },

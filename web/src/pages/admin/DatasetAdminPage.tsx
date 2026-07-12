@@ -1497,8 +1497,9 @@ function MetadataCardTab({
   const context = stateValue(readOnlyData.context);
   return (
     <TabWorkspace eyebrow="Metadata & Card" helper="Editable Home card fields store references and presentation copy only.">
-      <div className="dataset-admin-card-grid dataset-admin-card-grid--split">
-        <Card className="dataset-admin-config-card">
+      <div className="dataset-admin-metadata-layout">
+        <div className="dataset-admin-metadata-layout__controls">
+          <Card className="dataset-admin-config-card">
           <div className="dataset-admin-card-heading">
             <h2>Icon bank</h2>
             <p>Select a controlled icon for the public Home card.</p>
@@ -1536,56 +1537,74 @@ function MetadataCardTab({
               );
             })}
           </div>
-        </Card>
+          </Card>
 
-        <Card className="dataset-admin-config-card">
-          <div className="dataset-admin-card-heading">
-            <h2>Home card controls</h2>
-            <p>Curate preview copy and the score highlight while technical metadata stays locked.</p>
-          </div>
-          <FormRow helpText="Available keys come from Atlas metrics." htmlFor="primary-metric-key" label="Primary metric key">
-            <select
-              id="primary-metric-key"
-              onChange={(event) => setField("primary_metric_key", event.target.value)}
-              style={inputStyle}
-              value={form.primary_metric_key}
-            >
-              <option value="">No highlighted metric</option>
-              {keys.map((key) => (
-                <option key={key} value={key}>
-                  {key}
-                </option>
-              ))}
-            </select>
-          </FormRow>
-          <TextField label="Background image reference" onChange={(value) => setField("background_image_ref", value)} value={form.background_image_ref} />
-          <TextField label="Short Home card description" onChange={(value) => setField("short_description", value)} value={form.short_description} />
-          <div className="dataset-admin-locked-grid">
-            <ReadOnlyField label="Problem type" value={context?.problem_type ?? ""} />
-            <div className="dataset-admin-locked-card" aria-disabled="true">
-              <Badge>Locked</Badge>
-              <strong>Technical metadata</strong>
-              <span>Problem type options are visible as read-only Atlas state.</span>
+          <Card className="dataset-admin-config-card">
+            <div className="dataset-admin-card-heading">
+              <h2>Home card controls</h2>
+              <p>Curate the score highlight and image reference while technical metadata stays locked.</p>
             </div>
-          </div>
-        </Card>
+            <FormRow helpText="Available keys come from Atlas metrics." htmlFor="primary-metric-key" label="Primary metric key">
+              <select
+                id="primary-metric-key"
+                onChange={(event) => setField("primary_metric_key", event.target.value)}
+                style={inputStyle}
+                value={form.primary_metric_key}
+              >
+                <option value="">No highlighted metric</option>
+                {keys.map((key) => (
+                  <option key={key} value={key}>
+                    {key}
+                  </option>
+                ))}
+              </select>
+            </FormRow>
+            <TextField label="Background image reference" onChange={(value) => setField("background_image_ref", value)} value={form.background_image_ref} />
+          </Card>
+        </div>
 
-        <Card className="dataset-admin-preview-card">
-          <div className="dataset-admin-card-heading">
-            <h2>Home card preview</h2>
-            <p>Uses the same shared card projection as Live Preview.</p>
-          </div>
-          <DatasetCard
-            {...projectHomeCardPreview(
-              stateValue(readOnlyData.dataset) ?? undefined,
-              {
-                ...form,
-                home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
-              },
-              context,
-            )}
-          />
-        </Card>
+        <div className="dataset-admin-metadata-layout__preview">
+          <Card className="dataset-admin-preview-card">
+            <div className="dataset-admin-card-heading">
+              <h2>Home card preview</h2>
+              <p>Uses the same shared card projection as Live Preview.</p>
+            </div>
+            <DatasetCard
+              {...projectHomeCardPreview(
+                stateValue(readOnlyData.dataset) ?? undefined,
+                {
+                  ...form,
+                  home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
+                },
+                context,
+              )}
+            />
+            <TextField label="Short Home card description" onChange={(value) => setField("short_description", value)} value={form.short_description} />
+          </Card>
+
+          <Card className="dataset-admin-config-card dataset-admin-problem-type-card">
+            <div className="dataset-admin-card-heading">
+              <h2>Problem type display</h2>
+              <p>Problem type is derived from the Atlas dataset and model contract and cannot be edited here.</p>
+            </div>
+            <div aria-label="Problem type display" className="dataset-admin-problem-type-options" role="radiogroup">
+              {[
+                ["binary-classification", "Binary Classification", "Selected from Atlas"],
+                ["regression", "Regression", "Locked"],
+                ["multiclass-classification", "Multiclass Classification", "Locked"],
+                ["time-series", "Time Series", "Locked"],
+              ].map(([value, label, status], index) => (
+                <label className={["dataset-admin-problem-type-option", index === 0 ? "is-selected" : ""].filter(Boolean).join(" ")} key={value}>
+                  <input checked={index === 0} disabled name="problem-type-display" readOnly type="radio" value={value} />
+                  <span>
+                    <strong>{label}</strong>
+                    <small>{status}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </Card>
+        </div>
       </div>
     </TabWorkspace>
   );

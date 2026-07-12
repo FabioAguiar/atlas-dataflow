@@ -1318,6 +1318,19 @@ h1 {
   align-items: start;
 }
 
+.dataset-admin-metadata-layout {
+  display: grid;
+  gap: var(--atlas-space-4);
+  grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 0.65fr);
+  align-items: start;
+}
+
+.dataset-admin-metadata-layout__controls,
+.dataset-admin-metadata-layout__preview {
+  display: grid;
+  gap: var(--atlas-space-4);
+}
+
 .dataset-admin-config-card,
 .dataset-admin-preview-card,
 .atlas-card.dataset-admin-config-card,
@@ -1433,6 +1446,46 @@ h1 {
   padding: var(--atlas-space-3);
   color: var(--atlas-color-text-muted);
   background: var(--atlas-color-surface-muted);
+}
+
+.dataset-admin-problem-type-options {
+  display: grid;
+  gap: var(--atlas-space-2);
+}
+
+.dataset-admin-problem-type-option {
+  display: grid;
+  gap: var(--atlas-space-3);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+  padding: var(--atlas-space-3);
+  color: var(--atlas-color-text-muted);
+  background: var(--atlas-color-surface-muted);
+  cursor: not-allowed;
+}
+
+.dataset-admin-problem-type-option.is-selected {
+  border-color: var(--atlas-color-accent);
+  color: var(--atlas-color-text);
+  background: var(--atlas-color-accent-muted);
+}
+
+.dataset-admin-problem-type-option input {
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+  accent-color: var(--atlas-color-accent-strong);
+}
+
+.dataset-admin-problem-type-option span {
+  display: grid;
+  gap: var(--atlas-space-1);
+}
+
+.dataset-admin-problem-type-option small {
+  color: var(--atlas-color-text-subtle);
 }
 
 .dataset-admin-theme-grid {
@@ -1826,6 +1879,7 @@ h1 {
   }
 
   .dataset-admin-card-grid--split,
+  .dataset-admin-metadata-layout,
   .dataset-admin-builder,
   .dataset-admin-publishing-layout {
     grid-template-columns: 1fr;

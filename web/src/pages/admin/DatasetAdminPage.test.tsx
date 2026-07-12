@@ -974,6 +974,33 @@ describe("DatasetAdminPage", () => {
     expect(container.querySelectorAll('input[type="file"]')).toHaveLength(0);
   });
 
+  it("renders the model-derived problem type as an ordered, locked radio group beside the Home card preview", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    expect(screen.getByRole("heading", { name: "Home card preview" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Short Home card description")).toBeInTheDocument();
+
+    const problemTypeGroup = screen.getByRole("radiogroup", { name: "Problem type display" });
+    const options = within(problemTypeGroup).getAllByRole("radio") as HTMLInputElement[];
+    expect(options.map((option) => option.value)).toEqual([
+      "binary-classification",
+      "regression",
+      "multiclass-classification",
+      "time-series",
+    ]);
+    expect(options[0]).toBeChecked();
+    options.forEach((option) => expect(option).toBeDisabled());
+
+    fireEvent.click(within(problemTypeGroup).getByText("Regression"));
+    expect(options[0]).toBeChecked();
+    expect(options[1]).not.toBeChecked();
+    expect(screen.getByText(/derived from the Atlas dataset and model contract/i)).toBeInTheDocument();
+  });
+
   it("renders Live Preview subviews from real public components and the loaded customization", async () => {
     installFetchMock();
     renderAdminPage();

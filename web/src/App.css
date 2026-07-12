@@ -1185,6 +1185,10 @@ h1 {
   background: var(--atlas-color-surface);
 }
 
+.dataset-admin-registry-visibility-pill .atlas-status-pill__indicator {
+  margin-inline-end: var(--atlas-space-2);
+}
+
 .atlas-status-pill__indicator {
   width: 0.75rem;
   height: 0.75rem;
@@ -1220,7 +1224,7 @@ h1 {
 
 .dataset-admin-page .atlas-tabs:has(.atlas-tab__icon) {
   display: grid;
-  grid-template-columns: repeat(7, minmax(max-content, 1fr));
+  grid-template-columns: repeat(8, minmax(max-content, 1fr));
   gap: 0;
   align-items: stretch;
   border-bottom: 1px solid var(--atlas-color-border);
@@ -1257,6 +1261,12 @@ h1 {
   width: 1.1rem;
   height: 1.1rem;
   flex: 0 0 auto;
+}
+
+.dataset-admin-page .atlas-tab__icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  align-self: center;
 }
 
 .atlas-tab__icon svg {
@@ -1795,11 +1805,11 @@ h1 {
        enough that seven max-content-sized tab columns can add up wider than
        the available shell width. Letting columns shrink to 0 -- with the
        tab itself allowed to shrink below its content and the label
-       ellipsis-truncated below -- keeps this a fixed seven-column desktop
+       ellipsis-truncated below -- keeps this a fixed eight-column desktop
        grid (not a mobile/scrolling tab pattern) while making horizontal
        overflow structurally impossible instead of relying on label-width
        arithmetic. */
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
   }
 
   .dataset-admin-page .atlas-tab:has(.atlas-tab__icon) {

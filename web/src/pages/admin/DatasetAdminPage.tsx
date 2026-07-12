@@ -529,6 +529,17 @@ const adminTabs: TabItem[] = [
     ),
   },
   {
+    id: "documentation",
+    label: "Documentation",
+    showIndicator: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M5 4.5h10a4 4 0 0 1 4 4V20H9a4 4 0 0 1-4-4Z" />
+        <path d="M9 20a4 4 0 0 1 4-4h6M9 8h6M9 11h5" />
+      </svg>
+    ),
+  },
+  {
     id: "publishing",
     label: "Publishing",
     showIndicator: true,
@@ -1332,23 +1343,10 @@ async function fetchJson<T>(path: string, signal: AbortSignal): Promise<SectionS
 
 function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
   if (draftState.status === "ready") {
-    return (
-      <article style={readOnlyFieldStyle}>
-        <strong>{draftState.draftExists ? "Content loaded" : "No saved content yet"}</strong>
-        <p style={mutedTextStyle}>
-          {draftState.draftExists
-            ? "Editable fields were populated from your last saved content."
-            : "Saving will create the first saved content for this Dataset Detail."}
-        </p>
-      </article>
-    );
+    return <span data-testid="dataset-admin-draft-ready" hidden />;
   }
   if (draftState.status === "saved") {
-    return (
-      <article className="atlas-status-pill atlas-status-pill--success" role="status">
-        Changes saved.
-      </article>
-    );
+    return <span data-testid="dataset-admin-draft-saved" hidden />;
   }
   if (draftState.status === "invalid") {
     return (
@@ -1478,7 +1476,6 @@ function PublicContentTab({
               <option value="mm/dd/yyyy">mm/dd/yyyy</option>
               <option value="yyyy-mm-dd">yyyy-mm-dd</option>
             </select>
-            <small style={mutedTextStyle}>Controls public date label rendering only.</small>
           </label>
         </div>
       </section>
@@ -2713,6 +2710,8 @@ function renderSelectedTab(
       );
     case "result-card":
       return <ResultCardTab form={form} setField={setField} />;
+    case "documentation":
+      return <div aria-label="Documentation placeholder" />;
     case "publishing":
       {
         const publishDisabledReason = !selectedSlug
@@ -3474,14 +3473,6 @@ export default function DatasetAdminPage() {
             selectedDataset={selectedAdminDataset}
             stateStatus={adminDatasetsState.status}
           />
-          <button
-            disabled={!selectedSlug || draftState.status === "loading"}
-            onClick={() => setRefreshRevision((current) => current + 1)}
-            style={!selectedSlug || draftState.status === "loading" ? disabledButtonStyle : secondaryButtonStyle}
-            type="button"
-          >
-            Refresh
-          </button>
           <button
             disabled={toolbarPublishDisabled}
             onClick={publishChanges}

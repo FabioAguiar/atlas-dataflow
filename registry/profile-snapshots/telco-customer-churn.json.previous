@@ -1,18 +1,20 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-11T17:02:06Z",
+  "published_at": "2026-07-11T21:16:02Z",
   "active_release_at_publish_time": "release-20260619-001",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
-      "problem_summary_title": "dasd",
-      "problem_summary_body": "teste25gasdasd",
+      "problem_summary_body": "teste25ghcv",
+      "release_date_label": "2026-07-10",
+      "release_date_mode": "auto",
       "canonical_name_fallback": true
     },
     "home_card": {
+      "icon": "bank",
       "background_image_ref": null,
-      "primary_metric_key": null
+      "primary_metric_key": "auc_roc"
     },
     "theme": {
       "preset": "atlas-green"

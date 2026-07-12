@@ -347,13 +347,9 @@ function installFetchMock(
 
 async function loadDraftOnly() {
   expect(screen.queryByLabelText(["Operator", "token"].join(" "))).not.toBeInTheDocument();
-  // Project Spec S0058 removes the manual "Load draft" action -- the
-  // private/admin profile draft now loads automatically as soon as a
-  // Dataset Detail is selected. Project Spec S0060 renames DraftStatusPanel's
-  // "ready" branch heading from the internal-implementation-flavored "Draft
-  // loaded" to the operator-facing "Content loaded" (no trailing period)
-  // once that resolves.
-  expect(await screen.findByText("Content loaded")).toBeInTheDocument();
+  expect(await screen.findByTestId("dataset-admin-draft-ready")).toBeInTheDocument();
+  expect(screen.queryByText("Content loaded")).not.toBeInTheDocument();
+  expect(screen.queryByText("Editable fields were populated from your last saved content.")).not.toBeInTheDocument();
 }
 
 async function loadDraftAndCustomization() {
@@ -395,6 +391,7 @@ describe("DatasetAdminPage", () => {
       "Theme Preset",
       "Inference Form",
       "Result Card",
+      "Documentation",
       "Publishing",
       "Live Preview",
     ]);
@@ -419,7 +416,8 @@ describe("DatasetAdminPage", () => {
     // lives in the workspace toolbar (S0058) -- scope to the tabpanel so
     // these queries never collide with the toolbar's own button.
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
+    expect(await screen.findByTestId("dataset-admin-draft-saved")).toBeInTheDocument();
+    expect(screen.queryByText("Changes saved.")).not.toBeInTheDocument();
     expect(within(screen.getByRole("tabpanel")).getByText("Saved and matches public snapshot.")).toBeInTheDocument();
 
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
@@ -529,6 +527,7 @@ describe("DatasetAdminPage", () => {
     // together in the workspace toolbar, positioned above the tabs.
     const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
     expect(within(toolbar).getByRole("button", { name: "Dataset" })).toBeInTheDocument();
+    expect(within(toolbar).queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
     expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeInTheDocument();
 
     // Existing tab navigation remains available.
@@ -538,6 +537,7 @@ describe("DatasetAdminPage", () => {
       "Theme Preset",
       "Inference Form",
       "Result Card",
+      "Documentation",
       "Publishing",
       "Live Preview",
     ]);
@@ -553,7 +553,7 @@ describe("DatasetAdminPage", () => {
     // jsdom has no CSS layout engine, so this cannot assert pixel-level
     // overflow -- it asserts the acceptance criterion that matters at the
     // DOM level: at the compact desktop baseline the page still renders as
-    // the same seven-tab desktop structure (no mobile/tablet fallback
+    // the same eight-tab desktop structure (no mobile/tablet fallback
     // markup, no collapsed overflow menu), matching how the compact-desktop
     // CSS in App.css narrows spacing without changing structure.
     const originalWidth = window.innerWidth;
@@ -575,6 +575,7 @@ describe("DatasetAdminPage", () => {
         "Theme Preset",
         "Inference Form",
         "Result Card",
+        "Documentation",
         "Publishing",
         "Live Preview",
       ]);
@@ -746,27 +747,23 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByText(/PROFILE_PUBLISH_FAILED/)).not.toBeInTheDocument();
   });
 
-  it("keeps dirty Public Content fields mounted and unchanged during a same-dataset refresh (Project Spec S0065)", async () => {
+  it("removes manual refresh and loaded-content copy, and selects Documentation without persisting data (Project Spec S0066)", async () => {
     const fetchMock = installFetchMock();
     renderAdminPage();
 
     const subtitleInput = await screen.findByLabelText("Subtitle");
     await waitFor(() => expect(subtitleInput).toHaveValue("Operator-authored public subtitle"));
-    fireEvent.change(subtitleInput, { target: { value: "Unsaved refresh-safe subtitle" } });
+    const mutationCallsBefore = fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET").length;
 
-    const profileLoadsBefore = fetchMock.mock.calls.filter(([input, init]) =>
-      String(input).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) && !init?.method,
-    ).length;
-    fireEvent.click(within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Refresh" }));
+    expect(within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Content loaded")).not.toBeInTheDocument();
+    expect(screen.queryByText("Editable fields were populated from your last saved content.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Controls public date label rendering only.")).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      const profileLoadsAfter = fetchMock.mock.calls.filter(([input, init]) =>
-        String(input).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) && !init?.method,
-      ).length;
-      expect(profileLoadsAfter).toBeGreaterThan(profileLoadsBefore);
-    });
-    expect(screen.getByLabelText("Subtitle")).toBe(subtitleInput);
-    expect(subtitleInput).toHaveValue("Unsaved refresh-safe subtitle");
+    fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+    expect(screen.getByRole("tab", { name: "Documentation", selected: true })).toBeInTheDocument();
+    expect(screen.getByLabelText("Documentation placeholder")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(mutationCallsBefore);
   });
 
   it("surfaces backend profile validation feedback without publishing side effects", async () => {
@@ -897,7 +894,8 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     const callsBeforeSave = fetchMock.mock.calls.length;
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    await screen.findByText("Changes saved.");
+    await screen.findByTestId("dataset-admin-draft-saved");
+    expect(screen.queryByText("Changes saved.")).not.toBeInTheDocument();
 
     const saveCall = fetchMock.mock.calls
       .slice(callsBeforeSave)
@@ -1671,7 +1669,8 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
+    expect(await screen.findByTestId("dataset-admin-draft-saved")).toBeInTheDocument();
+    expect(screen.queryByText("Changes saved.")).not.toBeInTheDocument();
     expect(screen.queryByText("Draft saved through the profile draft model.")).not.toBeInTheDocument();
     expect(forbiddenDraftTermsPresent()).toEqual([]);
 

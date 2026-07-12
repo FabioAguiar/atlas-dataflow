@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-12T21:07:27Z",
+  "published_at": "2026-07-12T21:31:50Z",
   "active_release_at_publish_time": "release-20260712t210442z",
   "profile": {
     "display": {
-      "title": "Telco Customer Churn123",
+      "title": "Telco Customer Churn",
       "problem_summary_title": "dghd",
       "problem_summary_body": "dfgdfg",
-      "release_date_label": "2026-07-13",
+      "release_date_label": "2026-07-12",
       "release_date_mode": "manual",
       "canonical_name_fallback": true
     },

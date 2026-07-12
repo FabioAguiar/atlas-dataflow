@@ -2747,6 +2747,78 @@ def test_admin_datasets_route_returns_draft_and_published_entries_in_private_run
     _assert_no_private_markers(response)
 
 
+def test_admin_datasets_prefers_current_release_profile_date_after_slug_rebinding(tmp_path, monkeypatch):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    registry_path = tmp_path / "datasets.json"
+    renamed = {
+        **_EXPLICITLY_READY_ENTRY,
+        "dataset_slug": "renamed-dataset",
+        "active_release": "release-20260601-002",
+    }
+    _write_json(
+        registry_path,
+        {
+            "schema_version": "atlas.dataflow.registry.v1",
+            "conventions": {
+                "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                "active_release": {"description": "x"},
+            },
+            "datasets": [renamed],
+        },
+    )
+    from registry import list as registry_list
+
+    original_registry_path = registry_list.REGISTRY_PATH
+    monkeypatch.setattr(api_main, "list_admin_run_summaries", lambda: {"runs": [{
+        "dataset_candidate": "old-dataset", "created_at": "2026-07-10T10:00:00Z"
+    }]})
+    monkeypatch.setattr(api_main, "read_published_profile_snapshot", lambda slug: {
+        "active_release_at_publish_time": "release-20260601-002",
+        "profile": {"display": {"release_date_label": "2026-05-12", "release_date_mode": "manual"}},
+    })
+    try:
+        registry_list.REGISTRY_PATH = registry_path
+        response = api_main.list_admin_datasets_route(_make_request({}))
+    finally:
+        registry_list.REGISTRY_PATH = original_registry_path
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+    assert response["datasets"][0]["last_updated"] == "2026-05-12"
+
+
+def test_admin_datasets_derives_date_from_active_release_without_profile_or_matching_run(tmp_path, monkeypatch):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    registry_path = tmp_path / "datasets.json"
+    _write_json(
+        registry_path,
+        {
+            "schema_version": "atlas.dataflow.registry.v1",
+            "conventions": {
+                "dataset_slug": {"pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "x"},
+                "release_id": {"pattern": "^release-[0-9]{8}-[0-9]{3}$", "description": "x"},
+                "active_release": {"description": "x"},
+            },
+            "datasets": [_DRAFT_PROMOTED_ENTRY],
+        },
+    )
+    from registry import list as registry_list
+
+    original_registry_path = registry_list.REGISTRY_PATH
+    monkeypatch.setattr(api_main, "list_admin_run_summaries", lambda: {"runs": []})
+    monkeypatch.setattr(api_main, "read_published_profile_snapshot", lambda slug: None)
+    try:
+        registry_list.REGISTRY_PATH = registry_path
+        response = api_main.list_admin_datasets_route(_make_request({}))
+    finally:
+        registry_list.REGISTRY_PATH = original_registry_path
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+    assert response["datasets"][0]["last_updated"] == "2026-07-10"
+
+
 def test_admin_datasets_route_registered_and_distinct_from_public_datasets_route():
     paths = {route.path for route in api_main.app.routes}
     assert "/admin/datasets" in paths

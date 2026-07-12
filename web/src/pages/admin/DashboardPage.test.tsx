@@ -1399,6 +1399,28 @@ describe("DashboardPage", () => {
       ).toBeInTheDocument();
     });
 
+    it("uses the Dataset Detail profile date instead of a historical run date for Last updated", async () => {
+      installRunsAndRegistryFetchMock(
+        jsonResponse({
+          datasets: [
+            {
+              dataset_slug: "synthetic-retail-forecast",
+              title: "Synthetic Retail Forecast",
+              display_title: "Retail Demand Display",
+              publication_status: "ready",
+              last_updated: "2026-07-13",
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const datasetTable = await screen.findByRole("table", { name: "Dataset details" });
+      expect(within(datasetTable).getByText(/Jul 13, 2026/)).toBeInTheDocument();
+      expect(within(datasetTable).queryByText(/Jun 1, 2026/)).not.toBeInTheDocument();
+    });
+
     it("shows Needs review (yellow) and Ready (green) status labels and derives the Published/Draft counts from them (Project Spec S0052)", async () => {
       installRunsAndRegistryFetchMock(
         jsonResponse({

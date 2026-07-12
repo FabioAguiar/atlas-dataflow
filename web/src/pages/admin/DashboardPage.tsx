@@ -136,6 +136,7 @@ type DatasetRegistryEntry = {
   title: string;
   display_title?: string | null;
   publication_status: PublicationStatus;
+  last_updated?: string | null;
 };
 
 type DatasetRegistryResponse = {
@@ -562,7 +563,8 @@ function isDatasetRegistryEntry(value: unknown): value is DatasetRegistryEntry {
     record.dataset_slug.length > 0 &&
     typeof record.title === "string" &&
     (record.display_title === undefined || record.display_title === null || typeof record.display_title === "string") &&
-    (record.publication_status === "needs_review" || record.publication_status === "ready")
+    (record.publication_status === "needs_review" || record.publication_status === "ready") &&
+    (record.last_updated === undefined || typeof record.last_updated === "string" || record.last_updated === null)
   );
 }
 
@@ -739,7 +741,7 @@ function buildDatasetDetailRows(
         displayName: dataset.display_title?.trim() || dataset.title.trim() || datasetDisplayName(dataset.dataset_slug),
         slug: dataset.dataset_slug,
         publicationStatus: dataset.publication_status,
-        lastUpdated: runDerivedRows.get(dataset.dataset_slug)?.lastUpdated ?? null,
+        lastUpdated: dataset.last_updated ?? runDerivedRows.get(dataset.dataset_slug)?.lastUpdated ?? null,
         isRegistryBacked: true,
       }))
       .sort((first, second) => first.displayName.localeCompare(second.displayName));

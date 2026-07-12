@@ -774,8 +774,10 @@ def list_admin_datasets_route(request: Request):
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
 
-    # Use the same run-derived value and comparison as Dashboard's Dataset
-    # Details table: latest created_at grouped by dataset_candidate.
+    # Project Spec S0089: historical runs are only the final compatibility
+    # fallback.  The Dataset Detail's current, active-release-bound public
+    # profile is the stable source for its operational display date, so slug
+    # rebinding does not require rewriting immutable run metadata.
     last_updated_by_slug: dict[str, str] = {}
     run_listing = list_admin_run_summaries()
     runs = run_listing.get("runs", []) if isinstance(run_listing, dict) else []
@@ -796,7 +798,37 @@ def list_admin_datasets_route(request: Request):
     projected = []
     for dataset in datasets:
         item = dataset._asdict()
-        item["last_updated"] = last_updated_by_slug.get(dataset.dataset_slug)
+        last_updated = None
+        snapshot = read_published_profile_snapshot(dataset.dataset_slug)
+        if (
+            isinstance(snapshot, dict)
+            and snapshot.get("active_release_at_publish_time") == dataset.active_release
+        ):
+            profile = snapshot.get("profile")
+            display = profile.get("display") if isinstance(profile, dict) else None
+            release_date_label = (
+                display.get("release_date_label") if isinstance(display, dict) else None
+            )
+            if isinstance(release_date_label, str) and release_date_label:
+                last_updated = release_date_label
+
+        # Both supported release-id families carry a deterministic UTC date.
+        # Derive it without reading or modifying immutable release artifacts.
+        if last_updated is None and isinstance(dataset.active_release, str):
+            release_match = re.fullmatch(
+                r"release-(\d{4})(\d{2})(\d{2})(?:-\d{3}|t\d{6}z)",
+                dataset.active_release,
+            )
+            if release_match:
+                candidate = "-".join(release_match.groups())
+                try:
+                    last_updated = datetime.fromisoformat(candidate).date().isoformat()
+                except ValueError:
+                    pass
+
+        if last_updated is None:
+            last_updated = last_updated_by_slug.get(dataset.dataset_slug)
+        item["last_updated"] = last_updated
         projected.append(item)
     return {"datasets": projected}
 

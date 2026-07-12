@@ -1,19 +1,22 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-12T20:19:53Z",
+  "published_at": "2026-07-12T20:43:07Z",
   "active_release_at_publish_time": "release-20260712t190939z",
   "profile": {
     "display": {
-      "title": "Telco Customer Churn",
+      "title": "Telco Customer Churn 42",
+      "subtitle": "teste",
+      "problem_summary_title": "teste",
+      "problem_summary_body": "teste",
       "release_date_label": "2026-07-12",
       "release_date_mode": "auto",
       "canonical_name_fallback": true
     },
     "home_card": {
       "icon": "cpu-chip",
-      "background_image_ref": null,
-      "short_description": "mnm,.b ,mb;lkn",
+      "background_image_ref": "/media/home-cards/738683b0c00f447f848c095071fac4f5.jpg",
+      "short_description": "mnm,.b ,mb;lknasdasdg",
       "primary_metric_key": null
     },
     "performance_focus": {

@@ -1579,6 +1579,11 @@ function MetadataCardTab({
   selectedSlug: string;
 }) {
   const context = stateValue(readOnlyData.context);
+  const lockedProblemType = {
+    machineId: "binary_classification",
+    optionValue: "binary-classification",
+    label: "Binary Classification",
+  } as const;
   const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
   const [imageUploadError, setImageUploadError] = useState("");
 
@@ -1679,7 +1684,9 @@ function MetadataCardTab({
                   ...form,
                   home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
                 },
-                context,
+                context
+                  ? { ...context, problem_type: lockedProblemType.machineId }
+                  : { problem_type: lockedProblemType.machineId },
               )}
               mediaRef={form.background_image_ref}
               summary={form.short_description}
@@ -1693,7 +1700,7 @@ function MetadataCardTab({
             </div>
             <div aria-label="Problem type display" className="dataset-admin-problem-type-options" role="radiogroup">
               {[
-                ["binary-classification", "Binary Classification", "Selected from Atlas"],
+                [lockedProblemType.optionValue, lockedProblemType.label, ""],
                 ["regression", "Regression", "Locked"],
                 ["multiclass-classification", "Multiclass Classification", "Locked"],
                 ["time-series", "Time Series", "Locked"],
@@ -1702,7 +1709,7 @@ function MetadataCardTab({
                   <input checked={index === 0} disabled name="problem-type-display" readOnly type="radio" value={value} />
                   <span>
                     <strong>{label}</strong>
-                    <small>{status}</small>
+                    {status ? <small>{status}</small> : null}
                   </span>
                 </label>
               ))}

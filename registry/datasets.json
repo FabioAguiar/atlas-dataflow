@@ -16,7 +16,7 @@
   },
   "datasets": [
     {
-      "dataset_slug": "telco-customer-churn",
+      "dataset_slug": "telco-customer-churn21",
       "active_release": "release-20260712t190939z",
       "public_metadata": {
         "title": "Telco Customer Churn",

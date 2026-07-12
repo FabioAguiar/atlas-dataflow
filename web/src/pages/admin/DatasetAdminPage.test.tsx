@@ -1213,6 +1213,12 @@ describe("DatasetAdminPage", () => {
     expect(options[0]).toBeChecked();
     options.forEach((option) => expect(option).toBeDisabled());
 
+    const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
+    expect(within(previewCard).getByText("Binary Classification")).toBeInTheDocument();
+    expect(within(previewCard).queryByText("Predictive Analysis")).not.toBeInTheDocument();
+    expect(within(problemTypeGroup).getByText("Binary Classification")).toBeInTheDocument();
+    expect(within(problemTypeGroup).queryByText("Selected from Atlas")).not.toBeInTheDocument();
+
     fireEvent.click(within(problemTypeGroup).getByText("Regression"));
     expect(options[0]).toBeChecked();
     expect(options[1]).not.toBeChecked();

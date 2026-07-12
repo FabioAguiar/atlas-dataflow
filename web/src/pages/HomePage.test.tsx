@@ -28,6 +28,7 @@ type DatasetListingFixture = {
   tags: string[];
   problem_type?: string | null;
   home_card_icon?: string | null;
+  home_card_media_ref?: string | null;
 };
 
 // Mirrors the real GET /datasets response envelope confirmed at
@@ -136,6 +137,25 @@ const TELECOM_ICON_PATH_D =
 const BANK_ICON_PATH_D = "M4 10h16L12 5 4 10Zm2 0v8m4-8v8m4-8v8m4-8v8M4 19h16";
 
 describe("HomePage problem_type and curated icon rendering", () => {
+  it("renders a published Home card media reference instead of icon mode", async () => {
+    installDatasetsFetchMock([{
+      dataset_slug: "media-card-dataset",
+      title: "Media Card Dataset",
+      summary: "Published media card",
+      domain: "synthetic",
+      visibility: "public",
+      tags: [],
+      home_card_icon: "heart",
+      home_card_media_ref: "/media/home-cards/published.webp",
+    }]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Media Card Dataset");
+
+    expect(screen.getByTestId("home-card-media")).toHaveStyle({ backgroundImage: 'url("/media/home-cards/published.webp")' });
+    expect(container.querySelector(".dataset-card__icon")).not.toBeInTheDocument();
+  });
+
   it("renders the real analysis-type label when problem_type is present", async () => {
     installDatasetsFetchMock([
       {

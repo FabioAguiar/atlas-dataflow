@@ -170,6 +170,35 @@ def test_publish_creates_deterministic_snapshot_file(fake_repo):
     assert "metrics" not in persisted
 
 
+def test_direct_publish_persists_home_card_presentation_fields(fake_repo):
+    home_card = {
+        "icon": "weather-cloud",
+        "background_image_ref": "/media/home-cards/churn.webp",
+        "short_description": "Published card copy",
+    }
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(home_card=home_card), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["home_card"] == home_card
+
+
+@pytest.mark.parametrize(
+    "unsafe_reference",
+    ["/etc/passwd", "../private.png", "file:///tmp/card.png", "https://private.example/card.png", "/media/../private.png"],
+)
+def test_direct_publish_rejects_unsafe_home_card_media_references(fake_repo, unsafe_reference):
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(home_card={"background_image_ref": unsafe_reference}),
+        repo_root=fake_repo,
+    )
+
+    assert result["published"] is False
+    assert "SCHEMA_VALIDATION_ERROR" in _codes(result)
+
+
 def test_direct_publish_preserves_release_date_override_metadata(fake_repo):
     result = publish_snapshot_from_payload(
         "telco-customer-churn",

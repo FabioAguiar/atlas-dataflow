@@ -149,7 +149,9 @@
         "background_image_ref": {
           "type": ["string", "null"],
           "minLength": 1,
-          "description": "Optional reference/handle to an uploaded Home card background image. This is a bounded reference only -- never raw image bytes, a local filesystem path, or arbitrary URL content. Null when no background image is set."
+          "maxLength": 256,
+          "pattern": "^/media/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\\.(?:avif|gif|jpeg|jpg|png|webp)$",
+          "description": "Optional same-origin public media reference for a Home card background image. Only /media/... image paths are accepted; raw bytes, filesystem paths, traversal segments, private URLs, query strings, and fragments are rejected. Null when no background image is set."
         },
         "short_description": {
           "type": "string",

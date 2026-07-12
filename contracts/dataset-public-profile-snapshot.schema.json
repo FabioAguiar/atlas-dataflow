@@ -152,13 +152,15 @@
       "properties": {
         "icon": {
           "type": "string",
-          "enum": ["telecom", "bank", "generic"],
+          "enum": ["telecom", "bank", "generic", "telecom-users", "bank-building", "chart-line", "heart", "shopping-cart", "airplane", "shield", "education-cap", "energy-bolt", "home-house", "agro-leaf", "logistics-truck", "factory", "weather-cloud", "database"],
           "description": "Optional selected Home card icon."
         },
         "background_image_ref": {
           "type": ["string", "null"],
           "minLength": 1,
-          "description": "Optional reference/handle to an uploaded Home card background image."
+          "maxLength": 256,
+          "pattern": "^/media/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\\.(?:avif|gif|jpeg|jpg|png|webp)$",
+          "description": "Optional same-origin public /media/... image reference. Filesystem paths, traversal segments, arbitrary URLs, query strings, and fragments are rejected."
         },
         "short_description": {
           "type": "string",

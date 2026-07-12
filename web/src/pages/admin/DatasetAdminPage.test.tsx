@@ -974,6 +974,30 @@ describe("DatasetAdminPage", () => {
     expect(container.querySelectorAll('input[type="file"]')).toHaveLength(0);
   });
 
+  it("binds controlled icon, safe media reference, clearing, and short description to the local preview", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const iconButton = screen.getByRole("button", { name: "weather-cloud" });
+    fireEvent.click(iconButton);
+    expect(iconButton).toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Background image reference"), {
+      target: { value: "/media/home-cards/preview.webp" },
+    });
+    expect(within(screen.getByText("Home card preview").closest(".dataset-admin-preview-card")!).getByTestId("home-card-media")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Short Home card description"), { target: { value: "Live preview copy" } });
+    expect(screen.getByText("Live preview copy")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Background image reference"), { target: { value: "" } });
+    expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
+    expect(screen.queryByTestId("home-card-media")).not.toBeInTheDocument();
+  });
+
   it("renders the model-derived problem type as an ordered, locked radio group beside the Home card preview", async () => {
     installFetchMock();
     renderAdminPage();
@@ -1053,7 +1077,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Date format"), { target: { value: "yyyy-mm-dd" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
-    fireEvent.change(screen.getByLabelText("Home card icon"), { target: { value: "bank" } });
+    fireEvent.change(screen.getByLabelText("Home card icon"), { target: { value: "bank-building" } });
     fireEvent.change(screen.getByLabelText("Short Home card description"), {
       target: { value: "Edited home card description" },
     });

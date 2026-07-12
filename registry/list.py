@@ -66,6 +66,7 @@ class ListedDataset(NamedTuple):
     display_title: str | None = None
     display_subtitle: str | None = None
     home_card_icon: str | None = None
+    home_card_media_ref: str | None = None
     short_description: str | None = None
     theme_preset: str | None = None
 
@@ -92,6 +93,7 @@ def _snapshot_overlay_fields(dataset_slug: str, repo_root: Path) -> dict:
         "display_title": None,
         "display_subtitle": None,
         "home_card_icon": None,
+        "home_card_media_ref": None,
         "short_description": None,
         "theme_preset": None,
     }
@@ -113,6 +115,7 @@ def _snapshot_overlay_fields(dataset_slug: str, repo_root: Path) -> dict:
         "display_title": display.get("title") if isinstance(display, dict) else None,
         "display_subtitle": display.get("subtitle") if isinstance(display, dict) else None,
         "home_card_icon": home_card.get("icon") if isinstance(home_card, dict) else None,
+        "home_card_media_ref": home_card.get("background_image_ref") if isinstance(home_card, dict) else None,
         "short_description": home_card.get("short_description") if isinstance(home_card, dict) else None,
         "theme_preset": theme.get("preset") if isinstance(theme, dict) else None,
     }
@@ -161,6 +164,7 @@ def list_datasets(registry_path: Path | None = None) -> list[ListedDataset]:
             display_title=overlay["display_title"],
             display_subtitle=overlay["display_subtitle"],
             home_card_icon=overlay["home_card_icon"],
+            home_card_media_ref=overlay["home_card_media_ref"],
             short_description=overlay["short_description"],
             theme_preset=overlay["theme_preset"],
         ))

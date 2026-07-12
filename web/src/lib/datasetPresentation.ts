@@ -89,7 +89,18 @@ export function getDatasetIcon(domain?: string | null, tags: string[] = []): Dat
 // enum is restricted to exactly these three values today (a narrower set
 // than DatasetIconName's full curated bank above), so a curated
 // home_card_icon value from GET /datasets is only ever one of these.
-const CURATABLE_HOME_CARD_ICONS: readonly DatasetIconName[] = ["telecom", "bank", "generic"];
+export const CURATABLE_HOME_CARD_ICONS: readonly DatasetIconName[] = [
+  "telecom", "bank", "generic", "telecom-users", "bank-building", "chart-line",
+  "heart", "shopping-cart", "airplane", "shield", "education-cap", "energy-bolt",
+  "home-house", "agro-leaf", "logistics-truck", "factory", "weather-cloud", "database",
+];
+
+const SAFE_HOME_CARD_MEDIA_REFERENCE =
+  /^\/media\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:avif|gif|jpeg|jpg|png|webp)$/;
+
+export function isSafeHomeCardMediaReference(value?: string | null): value is string {
+  return typeof value === "string" && value.length <= 256 && SAFE_HOME_CARD_MEDIA_REFERENCE.test(value);
+}
 
 /**
  * Prefers a curated icon explicitly published on the dataset's profile

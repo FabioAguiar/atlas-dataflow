@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Badge, Card, FormRow, StatusPill, Tabs, type TabItem } from "../../components/ui";
 import DatasetCard from "../../components/DatasetCard";
+import { DatasetIcon } from "../../components/DatasetCard/DatasetCard";
 import DatasetDetailHeader from "../../components/DatasetDetail/DatasetDetailHeader";
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
@@ -28,7 +29,7 @@ import {
   projectResultCardPreview,
   toVisualizationsPayload,
 } from "../../lib/livePreviewProjection";
-import type { DatasetIconName } from "../../lib/datasetPresentation";
+import { isSafeHomeCardMediaReference, type DatasetIconName } from "../../lib/datasetPresentation";
 
 // Curator-facing labels for Atlas's full controlled icon bank (see
 // contracts/dataset-public-profile.schema.json's home_card.icon enum).
@@ -50,23 +51,20 @@ function toLegacyPreviewIcon(
 }
 
 const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> = [
-  { value: "telecom", label: "Telecom" },
-  { value: "bank", label: "Bank" },
-  { value: "generic", label: "Generic" },
-  { value: "telecom-users", label: "Telecom (Users)" },
-  { value: "bank-building", label: "Bank (Building)" },
-  { value: "chart-line", label: "Chart Line" },
+  { value: "telecom-users", label: "telecom-users" },
+  { value: "bank-building", label: "bank-building" },
+  { value: "chart-line", label: "chart-line" },
   { value: "heart", label: "Heart" },
-  { value: "shopping-cart", label: "Shopping Cart" },
+  { value: "shopping-cart", label: "shopping-cart" },
   { value: "airplane", label: "Airplane" },
   { value: "shield", label: "Shield" },
-  { value: "education-cap", label: "Education Cap" },
-  { value: "energy-bolt", label: "Energy Bolt" },
-  { value: "home-house", label: "Home / House" },
-  { value: "agro-leaf", label: "Agriculture Leaf" },
-  { value: "logistics-truck", label: "Logistics Truck" },
+  { value: "education-cap", label: "education-cap" },
+  { value: "energy-bolt", label: "energy-bolt" },
+  { value: "home-house", label: "home-house" },
+  { value: "agro-leaf", label: "agro-leaf" },
+  { value: "logistics-truck", label: "logistics-truck" },
   { value: "factory", label: "Factory" },
-  { value: "weather-cloud", label: "Weather Cloud" },
+  { value: "weather-cloud", label: "weather-cloud" },
   { value: "database", label: "Database" },
 ];
 
@@ -1495,6 +1493,7 @@ function MetadataCardTab({
   const metrics = stateValue(readOnlyData.metrics);
   const keys = metricKeys(metrics);
   const context = stateValue(readOnlyData.context);
+  const mediaReferenceIsValid = !form.background_image_ref || isSafeHomeCardMediaReference(form.background_image_ref);
   return (
     <TabWorkspace eyebrow="Metadata & Card" helper="Editable Home card fields store references and presentation copy only.">
       <div className="dataset-admin-metadata-layout">
@@ -1531,7 +1530,7 @@ function MetadataCardTab({
                   onClick={() => setField("home_card_icon", value)}
                   type="button"
                 >
-                  <span className="dataset-admin-icon-card__glyph">{label.slice(0, 1)}</span>
+                  <span aria-hidden="true" className="dataset-admin-icon-card__glyph"><DatasetIcon name={value} /></span>
                   <span>{label}</span>
                 </button>
               );
@@ -1559,7 +1558,23 @@ function MetadataCardTab({
                 ))}
               </select>
             </FormRow>
-            <TextField label="Background image reference" onChange={(value) => setField("background_image_ref", value)} value={form.background_image_ref} />
+            <FormRow
+              helpText={mediaReferenceIsValid ? "Use a same-origin public image path such as /media/home-cards/churn.webp." : "Enter a /media/... path ending in avif, gif, jpeg, jpg, png, or webp."}
+              htmlFor="background-image-reference"
+              label="Background image reference"
+            >
+              <input
+                aria-invalid={!mediaReferenceIsValid}
+                id="background-image-reference"
+                maxLength={256}
+                onChange={(event) => setField("background_image_ref", event.target.value)}
+                pattern="/media/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\\.(?:avif|gif|jpeg|jpg|png|webp)"
+                placeholder="/media/home-cards/example.webp"
+                style={inputStyle}
+                type="text"
+                value={form.background_image_ref}
+              />
+            </FormRow>
           </Card>
         </div>
 
@@ -1578,6 +1593,7 @@ function MetadataCardTab({
                 },
                 context,
               )}
+              mediaRef={form.background_image_ref}
             />
             <TextField label="Short Home card description" onChange={(value) => setField("short_description", value)} value={form.short_description} />
           </Card>
@@ -2650,6 +2666,7 @@ function LivePreviewTab({
                 },
                 stateValue(readOnlyData.context),
               )}
+              mediaRef={form.background_image_ref}
             />
           </article>
         )}

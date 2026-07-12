@@ -20,6 +20,7 @@ type DatasetListing = {
   display_title?: string | null;
   display_subtitle?: string | null;
   home_card_icon?: string | null;
+  home_card_media_ref?: string | null;
   short_description?: string | null;
   problem_type?: string | null;
 };
@@ -133,6 +134,7 @@ export default function HomePage() {
                   tags={ds.tags}
                   problemType={ds.problem_type ?? undefined}
                   iconOverride={resolveDatasetIcon(ds.home_card_icon, ds.domain, ds.tags)}
+                  mediaRef={ds.home_card_media_ref}
                 />
               ))}
             </div>

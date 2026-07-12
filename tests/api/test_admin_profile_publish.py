@@ -274,6 +274,27 @@ def test_publish_route_with_body_publishes_payload_directly_without_a_draft():
             os.environ.pop("ADMIN_API_TOKEN", None)
 
 
+def test_publish_route_accepts_and_persists_each_new_bounded_icon():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        original = _install_isolated_publish(fake_repo)
+        try:
+            for icon in ("money-dollar", "globe", "flask", "cpu-chip"):
+                payload = {**_VALID_PROFILE, "home_card": {"icon": icon}}
+                response = api_main.put_admin_profile_publish(
+                    "example-dataset", _make_request({}), payload
+                )
+
+                assert response["published"] is True
+                assert response["snapshot"]["profile"]["home_card"]["icon"] == icon
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+
 def test_publish_route_with_invalid_body_returns_422_and_preserves_previous_snapshot():
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
@@ -383,6 +404,33 @@ def test_publish_route_registered_only_under_admin_and_public_datasets_unchanged
 
     public_paths = {path for path in paths if not path.startswith("/admin")}
     assert not any("publish" in path for path in public_paths)
+
+
+def test_home_card_image_store_generates_bounded_reference_and_ignores_original_name(tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
+    result = admin_profile_publish.store_home_card_image("operator-card.png", "image/png", png, tmp_path)
+
+    assert result["uploaded"] is True
+    assert result["media_ref"].startswith("/media/home-cards/")
+    assert "operator-card" not in result["media_ref"]
+    stored_name = result["media_ref"].rsplit("/", 1)[-1]
+    assert admin_profile_publish.resolve_home_card_media_path(stored_name, tmp_path).read_bytes() == png
+
+
+def test_home_card_image_store_rejects_traversal_svg_oversize_and_invalid_content(tmp_path):
+    valid_png = b"\x89PNG\r\n\x1a\n" + b"payload"
+    cases = [
+        ("../card.png", "image/png", valid_png),
+        ("card.svg", "image/svg+xml", b"<svg><script/></svg>"),
+        ("card.png", "image/png", b"not a png"),
+        ("card.png", "image/png", valid_png + b"x" * admin_profile_publish.HOME_CARD_IMAGE_MAX_BYTES),
+    ]
+    for filename, content_type, content in cases:
+        result = admin_profile_publish.store_home_card_image(filename, content_type, content, tmp_path)
+        assert result["uploaded"] is False
+        assert result["media_ref"] is None
+
+    assert not (tmp_path / "media").exists()
 
 
 if __name__ == "__main__":

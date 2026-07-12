@@ -155,7 +155,7 @@
       "properties": {
         "icon": {
           "type": "string",
-          "enum": ["telecom", "bank", "generic", "telecom-users", "bank-building", "chart-line", "heart", "shopping-cart", "airplane", "shield", "education-cap", "energy-bolt", "home-house", "agro-leaf", "logistics-truck", "factory", "weather-cloud", "database"],
+          "enum": ["telecom", "bank", "generic", "telecom-users", "bank-building", "chart-line", "heart", "shopping-cart", "airplane", "shield", "education-cap", "energy-bolt", "home-house", "agro-leaf", "logistics-truck", "factory", "weather-cloud", "database", "money-dollar", "globe", "flask", "cpu-chip"],
           "description": "Optional selected Home card icon."
         },
         "background_image_ref": {

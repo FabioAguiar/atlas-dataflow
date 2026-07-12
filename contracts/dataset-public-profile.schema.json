@@ -165,7 +165,11 @@
             "logistics-truck",
             "factory",
             "weather-cloud",
-            "database"
+            "database",
+            "money-dollar",
+            "globe",
+            "flask",
+            "cpu-chip"
           ],
           "description": "Optional selected Home card icon. \"telecom\", \"bank\", and \"generic\" are the original deterministic-fallback values and remain supported for backward compatibility with already-published data. The remaining values are Atlas's controlled curated icon bank, selectable by an authoring curator regardless of dataset domain; values outside this set are not renderable and must be rejected."
         },

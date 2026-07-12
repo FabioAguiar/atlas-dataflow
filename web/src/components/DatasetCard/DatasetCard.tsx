@@ -63,6 +63,10 @@ const DATASET_ICONS: Partial<Record<DatasetIconName, ReactElement>> = {
   factory: <svg viewBox="0 0 24 24"><path d="M3 21V10l6 3V9l6 4V4h4v17H3Zm4-4h2m3 0h2m3 0h2" /></svg>,
   "weather-cloud": <svg viewBox="0 0 24 24"><path d="M7 18h11a4 4 0 0 0 0-8 6 6 0 0 0-11.5-1.5A4.8 4.8 0 0 0 7 18Z" /></svg>,
   database: <svg viewBox="0 0 24 24"><path d="M4 6c0-2 16-2 16 0s-16 2-16 0Zm0 0v6c0 2 16 2 16 0V6m-16 6v6c0 2 16 2 16 0v-6" /></svg>,
+  "money-dollar": <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M15 8.5c-.7-.7-1.7-1-3-1-1.7 0-3 .9-3 2.2 0 3.5 6 1.4 6 4.8 0 1.4-1.3 2.3-3 2.3-1.3 0-2.5-.4-3.3-1.2M12 5.5v13" /></svg>,
+  globe: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.4 2.5 3.5 5.5 3.5 9S14.4 18.5 12 21c-2.4-2.5-3.5-5.5-3.5-9S9.6 5.5 12 3Z" /></svg>,
+  flask: <svg viewBox="0 0 24 24"><path d="M9 3h6m-5 0v6l-5.5 9.2A1.8 1.8 0 0 0 6 21h12a1.8 1.8 0 0 0 1.5-2.8L14 9V3M7 15h10" /></svg>,
+  "cpu-chip": <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4" /></svg>,
 };
 
 export function DatasetIcon({ name }: { name: DatasetIconName }) {
@@ -88,10 +92,12 @@ export default function DatasetCard({
       <Link
         to={`/dataset/${slug}`}
         className="dataset-card__link-overlay"
-        aria-label={`Explorar dataset ${title}`}
+        aria-label={`Explore dataset ${title}`}
       />
       {safeMediaRef ? (
-        <div className="dataset-card__media" style={{ backgroundImage: `url(${JSON.stringify(safeMediaRef)})` }} data-testid="home-card-media" />
+        <div className="dataset-card__media" style={{ backgroundImage: `url(${JSON.stringify(safeMediaRef)})` }} data-testid="home-card-media">
+          <span aria-hidden="true" className="dataset-card__media-gradient" data-testid="home-card-media-gradient" />
+        </div>
       ) : (
         <span className="dataset-card__icon" aria-hidden="true"><DatasetIcon name={icon} /></span>
       )}
@@ -101,7 +107,7 @@ export default function DatasetCard({
         {summary && <p className="dataset-card__description">{summary}</p>}
       </div>
       <span className="dataset-card__action" aria-hidden="true">
-        Explorar dataset <span aria-hidden="true">→</span>
+        Explore dataset <span aria-hidden="true">→</span>
       </span>
     </Card>
   );

@@ -30,7 +30,7 @@ import {
   projectResultCardPreview,
   toVisualizationsPayload,
 } from "../../lib/livePreviewProjection";
-import { isSafeHomeCardMediaReference, type DatasetIconName } from "../../lib/datasetPresentation";
+import type { DatasetIconName } from "../../lib/datasetPresentation";
 
 // Curator-facing labels for Atlas's full controlled icon bank (see
 // contracts/dataset-public-profile.schema.json's home_card.icon enum).
@@ -67,6 +67,10 @@ const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> =
   { value: "factory", label: "Factory" },
   { value: "weather-cloud", label: "weather-cloud" },
   { value: "database", label: "Database" },
+  { value: "money-dollar", label: "Money" },
+  { value: "globe", label: "Global" },
+  { value: "flask", label: "Research" },
+  { value: "cpu-chip", label: "Technology" },
 ];
 
 const THEME_PRESET_CARDS = [
@@ -1244,12 +1248,9 @@ function sameProfile(left: ProfileDraft | null, right: ProfileDraft | null): boo
   return stableJson(normalizedLeft) === stableJson(normalizedRight);
 }
 
-// The fields Public Content actually authors (contracts/dataset-public-profile
-// .schema.json's display.*). The workspace toolbar's Publish changes button
-// (Project Spec S0058) only tracks dirtiness against this subset -- the
-// initial dirty-state implementation is scoped to Public Content, not the
-// whole profile (Metadata & Card, Theme Preset, etc. keep using their own
-// Publishing-tab-wide comparison, unchanged).
+// Fields observed by the workspace Publish changes action. Home-card media
+// joins the original Public Content subset so a successful upload/clear is
+// immediately publishable without requiring an unrelated text edit.
 type PublicContentFields = Pick<
   DraftForm,
   | "display_title"
@@ -1263,6 +1264,7 @@ type PublicContentFields = Pick<
   | "date_format"
   | "canonical_name_fallback"
   | "performance_focus"
+  | "background_image_ref"
 >;
 
 function publicContentFields(form: DraftForm): PublicContentFields {
@@ -1278,6 +1280,7 @@ function publicContentFields(form: DraftForm): PublicContentFields {
     date_format: form.date_format,
     canonical_name_fallback: form.canonical_name_fallback,
     performance_focus: form.performance_focus,
+    background_image_ref: form.background_image_ref,
   };
 }
 
@@ -1556,63 +1559,92 @@ function MetadataCardTab({
   form,
   setField,
   readOnlyData,
+  selectedSlug,
 }: {
   form: DraftForm;
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
   readOnlyData: ReadOnlyData;
+  selectedSlug: string;
 }) {
   const context = stateValue(readOnlyData.context);
-  const mediaReferenceIsValid = !form.background_image_ref || isSafeHomeCardMediaReference(form.background_image_ref);
+  const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
+  const [imageUploadError, setImageUploadError] = useState("");
+  const supportedImageTypes = ["image/png", "image/jpeg", "image/webp", "image/avif"];
+
+  function uploadHomeCardImage(file: File | undefined) {
+    if (!file) return;
+    setImageUploadError("");
+    if (!supportedImageTypes.includes(file.type)) {
+      setImageUploadError("Choose a PNG, JPEG, WebP, or AVIF image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setImageUploadError("Choose an image smaller than 5 MB.");
+      return;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(file.name)) {
+      setImageUploadError("Choose an image with a safe filename.");
+      return;
+    }
+    setImageUploadState("uploading");
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/home-card-image`, {
+      method: "POST",
+      headers: { "Content-Type": file.type, "X-File-Name": file.name },
+      body: file,
+    })
+      .then(async (response) => {
+        const body = await response.json() as { media_ref?: string; errors?: DraftError[] };
+        if (!response.ok || !body.media_ref) throw new Error(body.errors?.[0]?.message || "The image could not be uploaded. Try again.");
+        setField("background_image_ref", body.media_ref);
+      })
+      .catch((error: Error) => setImageUploadError(error.message || "The image could not be uploaded. Try again."))
+      .finally(() => setImageUploadState("idle"));
+  }
   return (
-    <TabWorkspace eyebrow="Metadata & Card" helper="Editable Home card fields store references and presentation copy only.">
+    <div className="dataset-admin-tab-workspace">
       <div className="dataset-admin-metadata-layout">
         <div className="dataset-admin-metadata-layout__controls">
           <Card className="dataset-admin-config-card">
-          <div className="dataset-admin-card-heading">
-            <h2>Icon bank</h2>
-            <p>Select a controlled icon for the public Home card.</p>
-          </div>
-          <label className="sr-only" htmlFor="home-card-icon">
-            Home card icon
-          </label>
-          <select
-            id="home-card-icon"
-            onChange={(event) => setField("home_card_icon", event.target.value as DraftForm["home_card_icon"])}
-            style={inputStyle}
-            value={form.home_card_icon}
-          >
-            <option value="">No curated icon</option>
-            {HOME_CARD_ICON_OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <div className="dataset-admin-icon-grid" role="list">
-            {HOME_CARD_ICON_OPTIONS.map(({ value, label }) => {
-              const selected = form.home_card_icon === value;
-              return (
-                <button
-                  aria-pressed={selected}
-                  className={["dataset-admin-icon-card", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
-                  key={value}
-                  onClick={() => setField("home_card_icon", value)}
-                  type="button"
-                >
-                  <span aria-hidden="true" className="dataset-admin-icon-card__glyph"><DatasetIcon name={value} /></span>
-                  <span>{label}</span>
-                </button>
-              );
-            })}
-          </div>
+            <div aria-label="Home card icon" className="dataset-admin-icon-grid" role="group">
+              {HOME_CARD_ICON_OPTIONS.map(({ value, label }) => {
+                const selected = form.home_card_icon === value;
+                return (
+                  <button
+                    aria-pressed={selected}
+                    className={["dataset-admin-icon-card", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
+                    key={value}
+                    onClick={() => setField("home_card_icon", value)}
+                    type="button"
+                  >
+                    <span aria-hidden="true" className="dataset-admin-icon-card__glyph"><DatasetIcon name={value} /></span>
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
+              <label className="dataset-admin-icon-card dataset-admin-image-upload-tile">
+                <span aria-hidden="true" className="dataset-admin-image-upload-tile__glyph">↑</span>
+                <span>{imageUploadState === "uploading" ? "Uploading…" : "Upload image"}</span>
+                <input
+                  accept="image/png,image/jpeg,image/webp,image/avif"
+                  disabled={!selectedSlug || imageUploadState === "uploading"}
+                  onChange={(event) => {
+                    uploadHomeCardImage(event.target.files?.[0]);
+                    event.target.value = "";
+                  }}
+                  type="file"
+                />
+              </label>
+            </div>
+            {imageUploadError ? <p className="dataset-admin-image-upload-error" role="alert">{imageUploadError}</p> : null}
+            {form.background_image_ref ? (
+              <button className="dataset-admin-clear-image" onClick={() => { setField("background_image_ref", ""); setImageUploadError(""); }} type="button">
+                Remove image
+              </button>
+            ) : null}
           </Card>
 
           <Card className="dataset-admin-config-card">
-            <div className="dataset-admin-card-heading">
-              <h2>Performance focus</h2>
-              <p>Choose the public evaluation focus, visible scores, and highlighted presentation value.</p>
-            </div>
-            <FormRow helpText="The focus controls the bounded score catalog below." htmlFor="performance-focus" label="Performance focus">
+            <FormRow htmlFor="performance-focus" label="Performance focus">
               <select
                 id="performance-focus"
                 onChange={(event) => setField("performance_focus", defaultPerformanceFocus(event.target.value as PerformanceFocusId))}
@@ -1628,37 +1660,12 @@ function MetadataCardTab({
             </FormRow>
             <PerformanceFocusBuilder focus={form.performance_focus} onChange={(focus) => setField("performance_focus", focus)} />
           </Card>
-
-          <Card className="dataset-admin-config-card">
-            <div className="dataset-admin-card-heading">
-              <h2>Home card controls</h2>
-              <p>Curate the image reference while technical metadata stays locked.</p>
-            </div>
-            <FormRow
-              helpText={mediaReferenceIsValid ? "Use a same-origin public image path such as /media/home-cards/churn.webp." : "Enter a /media/... path ending in avif, gif, jpeg, jpg, png, or webp."}
-              htmlFor="background-image-reference"
-              label="Background image reference"
-            >
-              <input
-                aria-invalid={!mediaReferenceIsValid}
-                id="background-image-reference"
-                maxLength={256}
-                onChange={(event) => setField("background_image_ref", event.target.value)}
-                pattern="/media/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\\.(?:avif|gif|jpeg|jpg|png|webp)"
-                placeholder="/media/home-cards/example.webp"
-                style={inputStyle}
-                type="text"
-                value={form.background_image_ref}
-              />
-            </FormRow>
-          </Card>
         </div>
 
         <div className="dataset-admin-metadata-layout__preview">
           <Card className="dataset-admin-preview-card">
             <div className="dataset-admin-card-heading">
               <h2>Home card preview</h2>
-              <p>Uses the same shared card projection as Live Preview.</p>
             </div>
             <DatasetCard
               {...projectHomeCardPreview(
@@ -1671,13 +1678,12 @@ function MetadataCardTab({
               )}
               mediaRef={form.background_image_ref}
             />
-            <TextField label="Short Home card description" onChange={(value) => setField("short_description", value)} value={form.short_description} />
+            <TextField label="Short Home card description" multiline onChange={(value) => setField("short_description", value)} rows={3} value={form.short_description} />
           </Card>
 
           <Card className="dataset-admin-config-card dataset-admin-problem-type-card">
             <div className="dataset-admin-card-heading">
               <h2>Problem type display</h2>
-              <p>Problem type is derived from the Atlas dataset and model contract and cannot be edited here.</p>
             </div>
             <div aria-label="Problem type display" className="dataset-admin-problem-type-options" role="radiogroup">
               {[
@@ -1698,7 +1704,7 @@ function MetadataCardTab({
           </Card>
         </div>
       </div>
-    </TabWorkspace>
+    </div>
   );
 }
 
@@ -1741,8 +1747,7 @@ function PerformanceFocusBuilder({ focus, onChange }: { focus: PerformanceFocusD
         </FormRow>
       </div>
       <div className="performance-focus-builder__heading">
-        <div><strong>Scores shown on Dataset Detail</strong><p>Unchecked values stay in this edit session but are excluded from preview and publish.</p></div>
-        <Badge>{visibleScores.length} selected</Badge>
+        <strong>Scores shown on Dataset Detail</strong>
       </div>
       <div className="performance-focus-builder__scores">
         {focus.scores.map((score) => (
@@ -2879,7 +2884,7 @@ function renderSelectedTab(
 
   switch (selectedTab) {
     case "metadata-card":
-      return <MetadataCardTab form={form} readOnlyData={readOnlyData} setField={setField} />;
+      return <MetadataCardTab form={form} readOnlyData={readOnlyData} selectedSlug={selectedSlug} setField={setField} />;
     case "theme-preset":
       return <ThemePresetTab form={form} setField={setField} />;
     case "inference-form":

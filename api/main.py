@@ -9,7 +9,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import Body, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 # Ensure the repository root is on the Python path so registry/ is importable
 # when main.py is invoked from the api/ subdirectory.
@@ -72,7 +72,13 @@ from public_profile_visibility import (  # noqa: E402
 )
 from admin_runs import list_admin_run_summaries, promote_admin_run, remove_admin_run  # noqa: E402
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
-from admin_profile_publish import publish_profile, publish_profile_payload  # noqa: E402
+from admin_profile_publish import (  # noqa: E402
+    HOME_CARD_IMAGE_MAX_BYTES,
+    publish_profile,
+    publish_profile_payload,
+    resolve_home_card_media_path,
+    store_home_card_image,
+)
 from admin_profile_visibility import set_dataset_visibility  # noqa: E402
 from admin_settings import read_admin_settings, write_admin_settings  # noqa: E402
 from admin_predict_view_customizations import (  # noqa: E402
@@ -155,6 +161,13 @@ PROFILE_PUBLISH_FAILED = PublicError(
     error_type="profile_publish_failed",
     error_code="PROFILE_PUBLISH_FAILED",
     message="The profile could not be published.",
+)
+
+HOME_CARD_IMAGE_UPLOAD_FAILED = PublicError(
+    status_code=422,
+    error_type="home_card_image_upload_failed",
+    error_code="HOME_CARD_IMAGE_UPLOAD_FAILED",
+    message="The Home card image could not be uploaded.",
 )
 
 PROFILE_VISIBILITY_DATASET_SLUG_INVALID = PublicError(
@@ -850,6 +863,36 @@ def put_admin_profile_publish(
         return PROFILE_PUBLISH_FAILED.response(errors=result["errors"])
 
     return result
+
+
+@app.post("/admin/datasets/{dataset_slug}/home-card-image")
+async def post_admin_home_card_image(dataset_slug: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", dataset_slug):
+        return public_error_response(PROFILE_PUBLISH_DATASET_SLUG_INVALID)
+    declared_length = request.headers.get("content-length")
+    if declared_length and declared_length.isdigit() and int(declared_length) > HOME_CARD_IMAGE_MAX_BYTES:
+        return HOME_CARD_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 5 MB."}])
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > HOME_CARD_IMAGE_MAX_BYTES:
+            return HOME_CARD_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 5 MB."}])
+    result = store_home_card_image(
+        request.headers.get("x-file-name"), request.headers.get("content-type"), bytes(chunks), _REPO_ROOT
+    )
+    if not result["uploaded"]:
+        return HOME_CARD_IMAGE_UPLOAD_FAILED.response(errors=[{"message": result["error"]}])
+    return result
+
+
+@app.get("/media/home-cards/{filename}")
+def get_home_card_image(filename: str):
+    path = resolve_home_card_media_path(filename, _REPO_ROOT)
+    if path is None:
+        return _admin_route_not_found_response()
+    return FileResponse(path)
 
 
 @app.put("/admin/datasets/{dataset_slug}/visibility")

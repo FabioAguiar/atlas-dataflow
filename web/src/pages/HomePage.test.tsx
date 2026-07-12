@@ -70,7 +70,7 @@ describe("HomePage dataset-count states", () => {
     renderHomePage();
 
     expect(await screen.findByText("Nenhum dataset disponível")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Explorar dataset/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Explore dataset/ })).not.toBeInTheDocument();
   });
 
   it("renders a single dataset card for exactly one published dataset", async () => {
@@ -88,7 +88,7 @@ describe("HomePage dataset-count states", () => {
     renderHomePage();
 
     expect(await screen.findByText("Synthetic Demo Dataset")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /Explorar dataset/ })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: /Explore dataset/ })).toHaveLength(1);
     expect(screen.queryByText("Nenhum dataset disponível")).not.toBeInTheDocument();
   });
 
@@ -125,7 +125,7 @@ describe("HomePage dataset-count states", () => {
     expect(await screen.findByText("Synthetic Demo Dataset One")).toBeInTheDocument();
     expect(screen.getByText("Synthetic Demo Dataset Two")).toBeInTheDocument();
     expect(screen.getByText("Synthetic Demo Dataset Three")).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /Explorar dataset/ })).toHaveLength(3);
+    expect(screen.getAllByRole("link", { name: /Explore dataset/ })).toHaveLength(3);
   });
 });
 
@@ -135,6 +135,12 @@ describe("HomePage dataset-count states", () => {
 const TELECOM_ICON_PATH_D =
   "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3.5 19a4.5 4.5 0 0 1 9 0m-1.5-5.5A5.5 5.5 0 0 1 20.5 19";
 const BANK_ICON_PATH_D = "M4 10h16L12 5 4 10Zm2 0v8m4-8v8m4-8v8m4-8v8M4 19h16";
+const NEW_ICON_PATHS: Record<string, string> = {
+  "money-dollar": "M15 8.5c-.7-.7-1.7-1-3-1-1.7 0-3 .9-3 2.2 0 3.5 6 1.4 6 4.8 0 1.4-1.3 2.3-3 2.3-1.3 0-2.5-.4-3.3-1.2M12 5.5v13",
+  globe: "M3 12h18M12 3c2.4 2.5 3.5 5.5 3.5 9S14.4 18.5 12 21c-2.4-2.5-3.5-5.5-3.5-9S9.6 5.5 12 3Z",
+  flask: "M9 3h6m-5 0v6l-5.5 9.2A1.8 1.8 0 0 0 6 21h12a1.8 1.8 0 0 0 1.5-2.8L14 9V3M7 15h10",
+  "cpu-chip": "M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4",
+};
 
 describe("HomePage problem_type and curated icon rendering", () => {
   it("renders a published Home card media reference instead of icon mode", async () => {
@@ -153,6 +159,7 @@ describe("HomePage problem_type and curated icon rendering", () => {
     await screen.findByText("Media Card Dataset");
 
     expect(screen.getByTestId("home-card-media")).toHaveStyle({ backgroundImage: 'url("/media/home-cards/published.webp")' });
+    expect(screen.getByTestId("home-card-media-gradient")).toBeInTheDocument();
     expect(container.querySelector(".dataset-card__icon")).not.toBeInTheDocument();
   });
 
@@ -171,7 +178,7 @@ describe("HomePage problem_type and curated icon rendering", () => {
 
     renderHomePage();
 
-    expect(await screen.findByText("Classificação binária")).toBeInTheDocument();
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
   });
 
   it("falls back to the default analysis-type label when problem_type is absent", async () => {
@@ -188,7 +195,7 @@ describe("HomePage problem_type and curated icon rendering", () => {
 
     renderHomePage();
 
-    expect(await screen.findByText("Análise preditiva")).toBeInTheDocument();
+    expect(await screen.findByText("Predictive Analysis")).toBeInTheDocument();
   });
 
   it("prefers a curated home_card_icon over the domain/tags keyword-derived fallback", async () => {
@@ -229,6 +236,39 @@ describe("HomePage problem_type and curated icon rendering", () => {
     const iconPath = container.querySelector(".dataset-card__icon path");
     expect(iconPath?.getAttribute("d")).toBe(TELECOM_ICON_PATH_D);
   });
+
+  it.each(Object.entries(NEW_ICON_PATHS))("renders the new %s icon without the generic fallback", async (icon, expectedPath) => {
+    installDatasetsFetchMock([{
+      dataset_slug: `${icon}-dataset`,
+      title: `${icon} dataset`,
+      summary: "New curated icon",
+      domain: "synthetic",
+      visibility: "public",
+      tags: [],
+      home_card_icon: icon,
+    }]);
+
+    const { container } = renderHomePage();
+    await screen.findByText(`${icon} dataset`);
+    const paths = Array.from(container.querySelectorAll(".dataset-card__icon path"));
+    expect(paths.some((path) => path.getAttribute("d") === expectedPath)).toBe(true);
+  });
+
+  it("falls back safely when a published icon ID is unknown", async () => {
+    installDatasetsFetchMock([{
+      dataset_slug: "unknown-icon-dataset",
+      title: "Unknown icon dataset",
+      summary: "Unknown curated icon",
+      domain: "telecom",
+      visibility: "public",
+      tags: [],
+      home_card_icon: "not-a-controlled-icon",
+    }]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Unknown icon dataset");
+    expect(container.querySelector(".dataset-card__icon path")?.getAttribute("d")).toBe(TELECOM_ICON_PATH_D);
+  });
 });
 
 // S0017: a ready, real-shaped telco-customer-churn listing entry (matching
@@ -255,8 +295,8 @@ describe("HomePage Telco-like ready dataset listing (S0017)", () => {
     expect(
       screen.getByText("Customer churn prediction dataset for a telecommunications provider."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Classificação binária")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Explorar dataset/ })).toHaveAttribute(
+    expect(screen.getByText("Binary Classification")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Explore dataset/ })).toHaveAttribute(
       "href",
       "/dataset/telco-customer-churn",
     );

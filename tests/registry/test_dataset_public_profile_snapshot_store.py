@@ -170,12 +170,23 @@ def test_publish_creates_deterministic_snapshot_file(fake_repo):
     assert "metrics" not in persisted
 
 
-def test_direct_publish_persists_home_card_presentation_fields(fake_repo):
+@pytest.mark.parametrize("icon", ["money-dollar", "globe", "flask", "cpu-chip"])
+def test_direct_publish_persists_new_home_card_icons(fake_repo, icon):
     home_card = {
-        "icon": "weather-cloud",
+        "icon": icon,
         "background_image_ref": "/media/home-cards/churn.webp",
         "short_description": "Published card copy",
     }
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(home_card=home_card), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["home_card"] == home_card
+
+
+def test_direct_publish_persists_existing_home_card_presentation_fields(fake_repo):
+    home_card = {"icon": "weather-cloud", "short_description": "Published card copy"}
     result = publish_snapshot_from_payload(
         "telco-customer-churn", _profile(home_card=home_card), repo_root=fake_repo
     )

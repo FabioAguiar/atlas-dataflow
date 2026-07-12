@@ -21,18 +21,22 @@ export type DatasetIconName =
   | "logistics-truck"
   | "factory"
   | "weather-cloud"
-  | "database";
+  | "database"
+  | "money-dollar"
+  | "globe"
+  | "flask"
+  | "cpu-chip";
 
 const PROBLEM_TYPE_LABELS: Record<string, string> = {
-  binary_classification: "Classificação binária",
-  multiclass_classification: "Classificação multiclasse",
-  regression: "Regressão",
-  clustering: "Agrupamento",
-  anomaly_detection: "Detecção de anomalias",
-  time_series_forecasting: "Previsão de série temporal",
+  binary_classification: "Binary Classification",
+  multiclass_classification: "Multiclass Classification",
+  regression: "Regression",
+  clustering: "Clustering",
+  anomaly_detection: "Anomaly Detection",
+  time_series_forecasting: "Time Series Forecasting",
 };
 
-const DEFAULT_PROBLEM_TYPE_LABEL = "Análise preditiva";
+const DEFAULT_PROBLEM_TYPE_LABEL = "Predictive Analysis";
 
 /**
  * GET /datasets (registry/list.py ListedDataset) returns only dataset_slug,
@@ -93,6 +97,7 @@ export const CURATABLE_HOME_CARD_ICONS: readonly DatasetIconName[] = [
   "telecom", "bank", "generic", "telecom-users", "bank-building", "chart-line",
   "heart", "shopping-cart", "airplane", "shield", "education-cap", "energy-bolt",
   "home-house", "agro-leaf", "logistics-truck", "factory", "weather-cloud", "database",
+  "money-dollar", "globe", "flask", "cpu-chip",
 ];
 
 const SAFE_HOME_CARD_MEDIA_REFERENCE =

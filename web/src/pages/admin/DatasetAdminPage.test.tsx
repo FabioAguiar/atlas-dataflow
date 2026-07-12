@@ -869,6 +869,10 @@ describe("DatasetAdminPage", () => {
       "factory",
       "weather-cloud",
       "database",
+      "money-dollar",
+      "globe",
+      "flask",
+      "cpu-chip",
     ];
     const SCHEMA_SUPPORTED_THEME_PRESETS = ["atlas-green"];
     const SCHEMA_SUPPORTED_BADGE_PRESETS = ["risk"];
@@ -879,7 +883,7 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
-    fireEvent.change(screen.getByLabelText("Home card icon"), { target: { value: "chart-line" } });
+    fireEvent.click(screen.getByRole("button", { name: "chart-line" }));
     fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
     fireEvent.change(screen.getByLabelText("Balanced Accuracy value"), { target: { value: "0.81" } });
 
@@ -963,24 +967,38 @@ describe("DatasetAdminPage", () => {
     // payload through this form.
   });
 
-  it("renders the Home card background-image field as a plain text input with no file-upload affordance anywhere on the page", async () => {
-    // docs/design-prototype-behavior-inventory.md classifies the prototype's uploaded
-    // Home card background image as `deferred`: no upload/storage/reference schema owner
-    // exists yet. background_image_ref is only an operator-entered reference string, not
-    // a file upload -- this test proves that boundary stays true rather than silently
-    // regressing into an unreviewed upload affordance.
+  it("replaces the obsolete image-reference control with a controlled upload tile", async () => {
     installFetchMock();
     const { container } = renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
-    const backgroundImageField = screen.getByLabelText("Background image reference") as HTMLInputElement;
-    expect(backgroundImageField).toHaveAttribute("type", "text");
-    expect(container.querySelectorAll('input[type="file"]')).toHaveLength(0);
+    expect(screen.queryByRole("heading", { name: "Home card controls" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Background image reference")).not.toBeInTheDocument();
+    const upload = container.querySelector('input[type="file"]');
+    expect(upload).toBeInTheDocument();
+    expect(upload).toHaveAttribute("accept", "image/png,image/jpeg,image/webp,image/avif");
+    expect(screen.getByText("Upload image")).toBeInTheDocument();
   });
 
-  it("binds controlled icon, safe media reference, clearing, and short description to the local preview", async () => {
+  it("rejects unsupported uploads safely without clearing the selected icon", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const iconButton = screen.getByRole("button", { name: "Technology" });
+    fireEvent.click(iconButton);
+    const upload = container.querySelector('input[type="file"]')!;
+    fireEvent.change(upload, { target: { files: [new File(["unsafe"], "card.svg", { type: "image/svg+xml" })] } });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose a PNG, JPEG, WebP, or AVIF image.");
+    expect(iconButton).toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
+  });
+
+  it("binds controlled icon and short-description textarea to the local preview", async () => {
     installFetchMock();
     const { container } = renderAdminPage();
     await loadDraftOnly();
@@ -991,17 +1009,50 @@ describe("DatasetAdminPage", () => {
     expect(iconButton).toHaveAttribute("aria-pressed", "true");
     expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Background image reference"), {
-      target: { value: "/media/home-cards/preview.webp" },
-    });
-    expect(within(screen.getByText("Home card preview").closest(".dataset-admin-preview-card")!).getByTestId("home-card-media")).toBeInTheDocument();
+    const description = screen.getByLabelText("Short Home card description");
+    expect(description.tagName).toBe("TEXTAREA");
+    fireEvent.change(description, { target: { value: "Live preview copy" } });
+    expect(within(screen.getByText("Home card preview").closest(".dataset-admin-preview-card")!).getByText("Live preview copy", { selector: "p" })).toBeInTheDocument();
+  });
 
-    fireEvent.change(screen.getByLabelText("Short Home card description"), { target: { value: "Live preview copy" } });
-    expect(screen.getByText("Live preview copy")).toBeInTheDocument();
+  it("offers 19 controlled icons and selects every icon in the new final row", async () => {
+    installFetchMock();
+    const { container } = renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
 
-    fireEvent.change(screen.getByLabelText("Background image reference"), { target: { value: "" } });
-    expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon")).toBeInTheDocument();
-    expect(screen.queryByTestId("home-card-media")).not.toBeInTheDocument();
+    const iconBank = screen.getByRole("group", { name: "Home card icon" });
+    expect(within(iconBank).getAllByRole("button")).toHaveLength(19);
+
+    for (const label of ["Money", "Global", "Research", "Technology"]) {
+      const button = within(iconBank).getByRole("button", { name: label });
+      fireEvent.click(button);
+      expect(button).toHaveAttribute("aria-pressed", "true");
+      expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon svg")).toBeInTheDocument();
+    }
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+  });
+
+  it("renders the tightened Metadata & Card copy and English public-card labels", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    expect(screen.queryByText("Editable Home card fields store references and presentation copy only.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Metadata & Card" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Icon bank")).not.toBeInTheDocument();
+    expect(screen.queryByText("Select a controlled icon for the public Home card.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Home card icon" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Uses the same shared card projection as Live Preview.")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Binary Classification")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /Explore dataset/ })).toBeInTheDocument();
+    expect(screen.queryByText("Explorar dataset")).not.toBeInTheDocument();
+    expect(screen.queryByText("The focus controls the bounded score catalog below.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Unchecked values stay in this edit session/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/selected$/)).not.toBeInTheDocument();
   });
 
   it("renders the model-derived problem type as an ordered, locked radio group beside the Home card preview", async () => {
@@ -1028,7 +1079,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(within(problemTypeGroup).getByText("Regression"));
     expect(options[0]).toBeChecked();
     expect(options[1]).not.toBeChecked();
-    expect(screen.getByText(/derived from the Atlas dataset and model contract/i)).toBeInTheDocument();
+    expect(screen.queryByText(/derived from the Atlas dataset and model contract/i)).not.toBeInTheDocument();
   });
 
   it("renders Live Preview subviews from real public components and the loaded customization", async () => {
@@ -1083,7 +1134,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Date format"), { target: { value: "yyyy-mm-dd" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
-    fireEvent.change(screen.getByLabelText("Home card icon"), { target: { value: "bank-building" } });
+    fireEvent.click(screen.getByRole("button", { name: "bank-building" }));
     fireEvent.change(screen.getByLabelText("Short Home card description"), {
       target: { value: "Edited home card description" },
     });

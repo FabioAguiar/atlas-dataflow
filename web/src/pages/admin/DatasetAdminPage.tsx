@@ -25,6 +25,7 @@ import InferenceForm, {
 import {
   projectDatasetDetailPreview,
   projectHomeCardPreview,
+  projectPerformanceFocusPreview,
   projectModelCardPreview,
   projectResultCardPreview,
   toVisualizationsPayload,
@@ -166,6 +167,7 @@ type ProfileDraft = {
     short_description?: string;
     primary_metric_key?: string | null;
   };
+  performance_focus?: PerformanceFocus | null;
   theme?: {
     preset?: "atlas-green";
   };
@@ -185,6 +187,51 @@ type ProfileDraft = {
   };
 };
 
+type PerformanceFocus = {
+  focus_id: PerformanceFocusId;
+  highlighted_score_id: string;
+  visible_scores: PerformanceScore[];
+};
+
+type PerformanceScore = {
+  score_id: string;
+  display_label: string;
+  value: string;
+  value_source: "canonical" | "manual";
+  order: number;
+};
+
+type PerformanceFocusId = keyof typeof PERFORMANCE_SCORE_CATALOG;
+type PerformanceScoreDraft = PerformanceScore & { visible: boolean };
+type PerformanceFocusDraft = {
+  focus_id: PerformanceFocusId;
+  highlighted_score_id: string;
+  scores: PerformanceScoreDraft[];
+};
+
+const PERFORMANCE_SCORE_CATALOG = {
+  overall_discrimination: [["roc_auc", "ROC-AUC"], ["pr_auc", "PR-AUC"], ["gini_coefficient", "Gini coefficient"], ["ks_statistic", "KS statistic"]],
+  positive_class_detection: [["recall", "Recall"], ["precision", "Precision"], ["f1_score", "F1-score"], ["f_beta_score", "F-beta score"], ["pr_auc", "PR-AUC"], ["false_negative_rate", "False Negative Rate"]],
+  balanced_classification: [["balanced_accuracy", "Balanced Accuracy"], ["mcc", "MCC"], ["f1_score", "F1-score"], ["accuracy", "Accuracy"], ["recall", "Recall"], ["specificity", "Specificity"], ["cohens_kappa", "Cohen's Kappa"], ["g_mean", "G-Mean"]],
+  probability_quality: [["log_loss", "Log Loss"], ["brier_score", "Brier Score"], ["calibration_error", "Calibration Error"], ["calibration_slope", "Calibration Slope"], ["calibration_intercept", "Calibration Intercept"], ["expected_calibration_error", "Expected Calibration Error"]],
+  operational_decision: [["precision_at_k", "Precision@K"], ["recall_at_k", "Recall@K"], ["lift_at_k", "Lift@K"], ["gain_at_k", "Gain@K"], ["expected_cost", "Expected Cost"], ["expected_profit", "Expected Profit"], ["net_benefit", "Net Benefit"], ["cost_per_correct_detection", "Cost per Correct Detection"], ["false_positives_at_k", "False Positives at K"], ["false_negatives_at_k", "False Negatives at K"]],
+} as const;
+
+const PERFORMANCE_FOCUS_OPTIONS: Array<{ value: PerformanceFocusId; label: string }> = [
+  { value: "overall_discrimination", label: "Overall discrimination" },
+  { value: "positive_class_detection", label: "Positive-class detection" },
+  { value: "balanced_classification", label: "Balanced classification" },
+  { value: "probability_quality", label: "Probability quality" },
+  { value: "operational_decision", label: "Operational decision" },
+];
+
+function defaultPerformanceFocus(focus_id: PerformanceFocusId = "positive_class_detection"): PerformanceFocusDraft {
+  const scores = PERFORMANCE_SCORE_CATALOG[focus_id].map(([score_id, display_label], order) => ({
+    score_id, display_label, value: "0", value_source: "manual" as const, order, visible: order < 3,
+  }));
+  return { focus_id, highlighted_score_id: scores[0]?.score_id ?? "", scores };
+}
+
 type DraftForm = {
   schema_version: string;
   display_title: string;
@@ -201,6 +248,7 @@ type DraftForm = {
   background_image_ref: string;
   short_description: string;
   primary_metric_key: string;
+  performance_focus: PerformanceFocusDraft;
   theme_preset: "" | "atlas-green";
   bound_predict_view_id: string;
   probability_label: string;
@@ -1025,6 +1073,7 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     background_image_ref: "",
     short_description: "",
     primary_metric_key: "",
+    performance_focus: defaultPerformanceFocus(),
     theme_preset: "atlas-green",
     bound_predict_view_id: "",
     probability_label: "",
@@ -1043,6 +1092,16 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     return form;
   }
 
+  const focus = profile.performance_focus;
+  const performanceFocus = focus ? defaultPerformanceFocus(focus.focus_id) : form.performance_focus;
+  if (focus) {
+    const publishedById = new Map(focus.visible_scores.map((score) => [score.score_id, score]));
+    performanceFocus.highlighted_score_id = focus.highlighted_score_id;
+    performanceFocus.scores = performanceFocus.scores.map((score) => {
+      const published = publishedById.get(score.score_id);
+      return published ? { ...published, visible: true } : score;
+    });
+  }
   return {
     ...form,
     schema_version: profile.schema_version || form.schema_version,
@@ -1060,6 +1119,7 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     background_image_ref: profile.home_card?.background_image_ref ?? "",
     short_description: profile.home_card?.short_description ?? "",
     primary_metric_key: profile.home_card?.primary_metric_key ?? "",
+    performance_focus: performanceFocus,
     theme_preset: profile.theme?.preset ?? "atlas-green",
     bound_predict_view_id: profile.inference_presentation?.bound_predict_view_id ?? "",
     probability_label: profile.result_card?.probability_label ?? "",
@@ -1122,6 +1182,15 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   homeCard.short_description = textValue(form.short_description);
   homeCard.primary_metric_key = form.primary_metric_key.trim() || null;
   profile.home_card = homeCard;
+
+  const visibleScores = form.performance_focus.scores.filter((score) => score.visible);
+  if (visibleScores.length && visibleScores.some((score) => score.score_id === form.performance_focus.highlighted_score_id)) {
+    profile.performance_focus = {
+      focus_id: form.performance_focus.focus_id,
+      highlighted_score_id: form.performance_focus.highlighted_score_id,
+      visible_scores: visibleScores.map(({ visible: _visible, ...score }, order) => ({ ...score, order })),
+    };
+  }
 
   if (form.theme_preset) {
     profile.theme = { preset: form.theme_preset };
@@ -1193,6 +1262,7 @@ type PublicContentFields = Pick<
   | "release_date_mode"
   | "date_format"
   | "canonical_name_fallback"
+  | "performance_focus"
 >;
 
 function publicContentFields(form: DraftForm): PublicContentFields {
@@ -1207,6 +1277,7 @@ function publicContentFields(form: DraftForm): PublicContentFields {
     release_date_mode: form.release_date_mode,
     date_format: form.date_format,
     canonical_name_fallback: form.canonical_name_fallback,
+    performance_focus: form.performance_focus,
   };
 }
 
@@ -1490,8 +1561,6 @@ function MetadataCardTab({
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
   readOnlyData: ReadOnlyData;
 }) {
-  const metrics = stateValue(readOnlyData.metrics);
-  const keys = metricKeys(metrics);
   const context = stateValue(readOnlyData.context);
   const mediaReferenceIsValid = !form.background_image_ref || isSafeHomeCardMediaReference(form.background_image_ref);
   return (
@@ -1540,24 +1609,31 @@ function MetadataCardTab({
 
           <Card className="dataset-admin-config-card">
             <div className="dataset-admin-card-heading">
-              <h2>Home card controls</h2>
-              <p>Curate the score highlight and image reference while technical metadata stays locked.</p>
+              <h2>Performance focus</h2>
+              <p>Choose the public evaluation focus, visible scores, and highlighted presentation value.</p>
             </div>
-            <FormRow helpText="Available keys come from Atlas metrics." htmlFor="primary-metric-key" label="Primary metric key">
+            <FormRow helpText="The focus controls the bounded score catalog below." htmlFor="performance-focus" label="Performance focus">
               <select
-                id="primary-metric-key"
-                onChange={(event) => setField("primary_metric_key", event.target.value)}
+                id="performance-focus"
+                onChange={(event) => setField("performance_focus", defaultPerformanceFocus(event.target.value as PerformanceFocusId))}
                 style={inputStyle}
-                value={form.primary_metric_key}
+                value={form.performance_focus.focus_id}
               >
-                <option value="">No highlighted metric</option>
-                {keys.map((key) => (
-                  <option key={key} value={key}>
-                    {key}
+                {PERFORMANCE_FOCUS_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
                   </option>
                 ))}
               </select>
             </FormRow>
+            <PerformanceFocusBuilder focus={form.performance_focus} onChange={(focus) => setField("performance_focus", focus)} />
+          </Card>
+
+          <Card className="dataset-admin-config-card">
+            <div className="dataset-admin-card-heading">
+              <h2>Home card controls</h2>
+              <p>Curate the image reference while technical metadata stays locked.</p>
+            </div>
             <FormRow
               helpText={mediaReferenceIsValid ? "Use a same-origin public image path such as /media/home-cards/churn.webp." : "Enter a /media/... path ending in avif, gif, jpeg, jpg, png, or webp."}
               htmlFor="background-image-reference"
@@ -1623,6 +1699,77 @@ function MetadataCardTab({
         </div>
       </div>
     </TabWorkspace>
+  );
+}
+
+function PerformanceFocusBuilder({ focus, onChange }: { focus: PerformanceFocusDraft; onChange: (focus: PerformanceFocusDraft) => void }) {
+  const visibleScores = focus.scores.filter((score) => score.visible);
+  const highlighted = visibleScores.find((score) => score.score_id === focus.highlighted_score_id);
+
+  function updateScore(scoreId: string, update: Partial<PerformanceScoreDraft>) {
+    const scores = focus.scores.map((score) => score.score_id === scoreId ? { ...score, ...update } : score);
+    const nextVisible = scores.filter((score) => score.visible);
+    const highlightedStillVisible = nextVisible.some((score) => score.score_id === focus.highlighted_score_id);
+    onChange({ ...focus, scores, highlighted_score_id: highlightedStillVisible ? focus.highlighted_score_id : nextVisible[0]?.score_id ?? "" });
+  }
+
+  return (
+    <div className="performance-focus-builder">
+      <div className="performance-focus-builder__highlight">
+        <FormRow htmlFor="highlighted-score" label="Highlighted score">
+          <select
+            disabled={!visibleScores.length}
+            id="highlighted-score"
+            onChange={(event) => onChange({ ...focus, highlighted_score_id: event.target.value })}
+            style={inputStyle}
+            value={highlighted?.score_id ?? ""}
+          >
+            {!visibleScores.length && <option value="">No visible scores</option>}
+            {visibleScores.map((score) => <option key={score.score_id} value={score.score_id}>{score.display_label}</option>)}
+          </select>
+        </FormRow>
+        <FormRow htmlFor="highlighted-score-value" label="Highlighted score value">
+          <input
+            disabled={!highlighted}
+            id="highlighted-score-value"
+            inputMode="decimal"
+            maxLength={32}
+            onChange={(event) => highlighted && updateScore(highlighted.score_id, { value: event.target.value, value_source: "manual" })}
+            style={inputStyle}
+            value={highlighted?.value ?? ""}
+          />
+        </FormRow>
+      </div>
+      <div className="performance-focus-builder__heading">
+        <div><strong>Scores shown on Dataset Detail</strong><p>Unchecked values stay in this edit session but are excluded from preview and publish.</p></div>
+        <Badge>{visibleScores.length} selected</Badge>
+      </div>
+      <div className="performance-focus-builder__scores">
+        {focus.scores.map((score) => (
+          <div className={`performance-focus-builder__score${score.visible ? " is-selected" : ""}`} key={score.score_id}>
+            <label>
+              <input
+                aria-label={`Show ${score.display_label}`}
+                checked={score.visible}
+                onChange={(event) => updateScore(score.score_id, { visible: event.target.checked })}
+                type="checkbox"
+              />
+              <strong>{score.display_label}</strong>
+            </label>
+            <input
+              aria-label={`${score.display_label} value`}
+              disabled={!score.visible}
+              inputMode="decimal"
+              maxLength={32}
+              onChange={(event) => updateScore(score.score_id, { value: event.target.value, value_source: "manual" })}
+              pattern="[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:%|[eE][+-]?[0-9]+)?"
+              style={inputStyle}
+              value={score.value}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -2523,7 +2670,10 @@ function DatasetDetailLivePreview({
         metadata={preview.metadata}
         subtitle={preview.subtitle}
       />
-      <PerformanceSummary metrics={metrics ?? {}} emphasizedMetricKey={form.primary_metric_key} />
+      <PerformanceSummary
+        metrics={metrics ?? {}}
+        performanceFocus={projectPerformanceFocusPreview(form.performance_focus)}
+      />
       <TargetDistribution visualizations={visualizations} />
       <FeatureImportance visualizations={visualizations} />
       {modelCardPreview && <ModelCard modelCard={modelCardPreview} />}

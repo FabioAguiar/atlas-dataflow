@@ -846,7 +846,7 @@ describe("DatasetAdminPage", () => {
     expect(within(screen.getByRole("tabpanel")).getByText("Saved and matches public snapshot.")).toBeInTheDocument();
   });
 
-  it("saves a schema-valid profile-draft payload for supported icon, primary metric, theme preset, and result-card values", async () => {
+  it("saves a schema-valid profile-draft payload for supported icon, performance focus, theme preset, and result-card values", async () => {
     // contracts/dataset-public-profile.schema.json's closed enums: home_card.icon, theme.preset,
     // and result_card.badge_preset. Asserting membership here proves the saved payload stays
     // inside the schema's supported values (acceptance-01).
@@ -880,7 +880,8 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
     fireEvent.change(screen.getByLabelText("Home card icon"), { target: { value: "chart-line" } });
-    fireEvent.change(screen.getByLabelText("Primary metric key"), { target: { value: "accuracy" } });
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
+    fireEvent.change(screen.getByLabelText("Balanced Accuracy value"), { target: { value: "0.81" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
     fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
@@ -910,13 +911,18 @@ describe("DatasetAdminPage", () => {
     });
     const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
       home_card?: { icon?: string; primary_metric_key?: string | null };
+      performance_focus?: { focus_id?: string; highlighted_score_id?: string; visible_scores?: Array<{ score_id: string; value: string }> };
       theme?: { preset?: string };
       result_card?: { badge_preset?: string; badge_labels?: { high?: string } };
     };
 
     expect(body.home_card?.icon).toBe("chart-line");
     expect(SCHEMA_SUPPORTED_ICONS).toContain(body.home_card?.icon);
-    expect(body.home_card?.primary_metric_key).toBe("accuracy");
+    expect(body.performance_focus).toMatchObject({
+      focus_id: "balanced_classification",
+      highlighted_score_id: "balanced_accuracy",
+    });
+    expect(body.performance_focus?.visible_scores?.[0]).toMatchObject({ score_id: "balanced_accuracy", value: "0.81" });
     expect(body.theme?.preset).toBe("atlas-green");
     expect(SCHEMA_SUPPORTED_THEME_PRESETS).toContain(body.theme?.preset);
     expect(body.result_card?.badge_preset).toBe("risk");
@@ -1081,7 +1087,8 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Short Home card description"), {
       target: { value: "Edited home card description" },
     });
-    fireEvent.change(screen.getByLabelText("Primary metric key"), { target: { value: "precision" } });
+    fireEvent.change(screen.getByLabelText("Highlighted score"), { target: { value: "precision" } });
+    fireEvent.change(screen.getByLabelText("Highlighted score value"), { target: { value: "0.81" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
     fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
@@ -1132,11 +1139,30 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByText("Elevated risk (edited)")).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure (edited)")).toBeInTheDocument();
 
-    // primary_metric_key now resolves to "precision" (present in this test's
-    // overridden metrics fixture and recognized by PerformanceSummary's
-    // SCORE_ORDER) -- the "Highlighted" badge moves off its default AUC ROC
-    // row onto Precision.
+    // The draft performance-focus projection moves the highlight and public
+    // presentation value before publish.
     expect(screen.getByText("Highlighted").closest("dt")).toHaveTextContent("Precision");
+    expect(screen.getByText("Highlighted").closest("div")?.querySelector("dd")).toHaveTextContent("0.81");
+  });
+
+  it("constrains highlighted scores to visible rows and synchronizes values", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+    const toolbarPublish = within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" });
+    fireEvent.change(screen.getByLabelText("Highlighted score"), { target: { value: "precision" } });
+    expect(toolbarPublish).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Highlighted score value"), { target: { value: "0.68" } });
+    expect(screen.getByLabelText("Precision value")).toHaveValue("0.68");
+    fireEvent.change(screen.getByLabelText("Precision value"), { target: { value: "0.69" } });
+    expect(screen.getByLabelText("Highlighted score value")).toHaveValue("0.69");
+
+    fireEvent.click(screen.getByLabelText("Show Precision"));
+    expect(screen.getByLabelText("Precision value")).toBeDisabled();
+    expect(screen.getByLabelText("Highlighted score")).toHaveValue("recall");
+    expect(within(screen.getByLabelText("Highlighted score")).queryByRole("option", { name: "Precision" })).not.toBeInTheDocument();
   });
 
   it("shows pointer-following drag overlay activity for fields and groups", async () => {

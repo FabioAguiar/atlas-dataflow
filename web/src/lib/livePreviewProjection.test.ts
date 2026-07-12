@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { projectDatasetDetailPreview, projectHomeCardPreview } from "./livePreviewProjection";
+import { projectDatasetDetailPreview, projectHomeCardPreview, projectPerformanceFocusPreview } from "./livePreviewProjection";
 
 const dataset = {
   dataset_slug: "telco-customer-churn",
@@ -76,5 +76,34 @@ describe("projectDatasetDetailPreview", () => {
         hint: "Format: yyyy-mm-dd",
       },
     ]);
+  });
+});
+
+describe("projectPerformanceFocusPreview", () => {
+  it("projects checked scores in deterministic order and keeps the draft highlight", () => {
+    expect(projectPerformanceFocusPreview({
+      focus_id: "positive_class_detection",
+      highlighted_score_id: "precision",
+      scores: [
+        { score_id: "recall", display_label: "Recall", value: "0.57", value_source: "manual", order: 9, visible: false },
+        { score_id: "precision", display_label: "Precision", value: "0.68", value_source: "manual", order: 8, visible: true },
+        { score_id: "f1_score", display_label: "F1-score", value: "0.62", value_source: "manual", order: 7, visible: true },
+      ],
+    })).toEqual({
+      focus_id: "positive_class_detection",
+      highlighted_score_id: "precision",
+      visible_scores: [
+        { score_id: "precision", display_label: "Precision", value: "0.68", value_source: "manual", order: 0 },
+        { score_id: "f1_score", display_label: "F1-score", value: "0.62", value_source: "manual", order: 1 },
+      ],
+    });
+  });
+
+  it("returns null when no visible score can own the highlight", () => {
+    expect(projectPerformanceFocusPreview({
+      focus_id: "overall_discrimination",
+      highlighted_score_id: "roc_auc",
+      scores: [{ score_id: "roc_auc", display_label: "ROC-AUC", value: "0.85", value_source: "manual", order: 0, visible: false }],
+    })).toBeNull();
   });
 });

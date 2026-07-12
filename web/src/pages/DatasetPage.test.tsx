@@ -43,6 +43,20 @@ const contextPayload = {
   prediction_target_description: "Whether the synthetic target event occurs.",
 };
 
+type ContextPayloadFixture = typeof contextPayload & {
+  performance_focus?: {
+    focus_id: "overall_discrimination" | "positive_class_detection" | "balanced_classification" | "probability_quality" | "operational_decision";
+    highlighted_score_id: string;
+    visible_scores: Array<{
+      score_id: string;
+      display_label: string;
+      value: string;
+      value_source: "canonical" | "manual";
+      order: number;
+    }>;
+  } | null;
+};
+
 const metricsPayload = {
   auc_roc: 0.87,
   precision: 0.8,
@@ -82,7 +96,7 @@ const viewsPayload = {
 // (/datasets/{slug}, /context, /metrics, /model-card, /visualizations,
 // /contract, /views); each endpoint's mocked shape mirrors this handoff's
 // grounding of the page's own response-parsing code.
-function installDatasetPageFetchMock(context = contextPayload) {
+function installDatasetPageFetchMock(context: ContextPayloadFixture = contextPayload) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
 

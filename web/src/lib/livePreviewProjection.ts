@@ -2,6 +2,7 @@ import type { DatasetDetailMetadataItem } from "../components/DatasetDetail/Data
 import type { VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import type { ResultPreviewLabels, PredictionResult } from "../components/InferenceResult/InferenceResult";
 import type { DatasetIconName } from "./datasetPresentation";
+import type { PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 
 /**
  * Live Preview input shapes are declared locally (structurally compatible
@@ -67,6 +68,12 @@ type PreviewResultCardForm = {
   badge_high: string;
   badge_medium: string;
   badge_low: string;
+};
+
+type PreviewPerformanceFocusDraft = {
+  focus_id: PerformanceFocus["focus_id"];
+  highlighted_score_id: string;
+  scores: Array<PerformanceFocus["visible_scores"][number] & { visible: boolean }>;
 };
 
 export type HomeCardPreviewProps = {
@@ -227,5 +234,20 @@ export function projectResultCardPreview(form: PreviewResultCardForm): ResultCar
       modelLabel: form.model_label.trim() || undefined,
       toneLabels: Object.keys(toneLabels).length ? toneLabels : undefined,
     },
+  };
+}
+
+/** Projects only checked presentation scores into the public S0069 shape. */
+export function projectPerformanceFocusPreview(draft: PreviewPerformanceFocusDraft): PerformanceFocus | null {
+  const visibleScores = draft.scores
+    .filter((score) => score.visible)
+    .map(({ visible: _visible, ...score }, order) => ({ ...score, order }));
+  if (!visibleScores.some((score) => score.score_id === draft.highlighted_score_id)) {
+    return null;
+  }
+  return {
+    focus_id: draft.focus_id,
+    highlighted_score_id: draft.highlighted_score_id,
+    visible_scores: visibleScores,
   };
 }

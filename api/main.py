@@ -78,6 +78,7 @@ from admin_profile_publish import (  # noqa: E402
     publish_profile,
     publish_profile_payload,
     read_published_profile_snapshot,
+    remove_profile_artifacts,
     resolve_home_card_media_path,
     store_home_card_image,
 )
@@ -805,10 +806,10 @@ def delete_admin_dataset_detail(dataset_slug: str, request: Request):
     if not _admin_request_authorized(request):
         return _admin_route_not_found_response()
 
-    # Project Specs S0049/S0082: remove the matching Dataset Detail and only
-    # predict views bound to its slug. Releases, runs, contracts, notebooks, model
-    # artifacts, profile artifacts, evidence, and support-root files are
-    # never touched. Distinct from DELETE /admin/runs/{run_id}, which only
+    # Project Specs S0049/S0082/S0083: remove the matching Dataset Detail,
+    # predict views bound to its slug, and its mutable public-profile lifecycle.
+    # Releases, runs, contracts, notebooks, and model artifacts are never
+    # touched. Distinct from DELETE /admin/runs/{run_id}, which only
     # ever removes a run artifact/directory and never mutates the registry.
     predict_view_cleanup = _remove_predict_views_for_dataset(dataset_slug, _REPO_ROOT)
     if not predict_view_cleanup["removed"]:
@@ -828,6 +829,15 @@ def delete_admin_dataset_detail(dataset_slug: str, request: Request):
                 pass
         return ADMIN_DATASET_DETAIL_REMOVAL_FAILED.response(errors=result["errors"])
 
+    profile_cleanup = remove_profile_artifacts(dataset_slug, repo_root=_REPO_ROOT)
+    if not profile_cleanup["completed"]:
+        return ADMIN_DATASET_DETAIL_REMOVAL_FAILED.response(errors=profile_cleanup["errors"])
+
+    result["profile_cleanup"] = {
+        "completed": True,
+        "artifacts_removed": profile_cleanup["artifacts_removed"],
+        "media_removed": profile_cleanup["media_removed"],
+    }
     return result
 
 
@@ -859,13 +869,37 @@ def get_admin_profile_draft(dataset_slug: str, request: Request):
         return _admin_route_not_found_response()
     try:
         result = read_profile_draft(dataset_slug)
-        # S0077: the direct-publish snapshot is the authoritative reload
-        # source. Keep the private draft in the response for compatibility,
-        # but expose the snapshot separately so stale draft/default values
-        # cannot overwrite fields that were successfully published.
+        # S0077/S0084: a direct-publish snapshot is authoritative only for
+        # the Dataset Detail lifecycle whose live active_release it records.
+        # Keep the private draft in the response for compatibility, while
+        # explicitly telling current clients to use a clean baseline when a
+        # same-slug snapshot is missing, unbound, or belongs to an old release.
+        current_active_release = None
+        try:
+            current_active_release = resolve_dataset(dataset_slug).active_release
+        except (DatasetUnavailableError, RegistryInvalidError, ReleaseUnavailableError):
+            pass
         published_snapshot = read_published_profile_snapshot(dataset_slug)
-        if published_snapshot is not None:
+        snapshot_release = (
+            published_snapshot.get("active_release_at_publish_time")
+            if isinstance(published_snapshot, dict)
+            else None
+        )
+        if (
+            isinstance(current_active_release, str)
+            and current_active_release
+            and snapshot_release == current_active_release
+        ):
             result["published_snapshot"] = published_snapshot
+            result["profile_hydration"] = {
+                "source": "current_release_snapshot",
+                "active_release": current_active_release,
+            }
+        elif isinstance(current_active_release, str) and current_active_release:
+            result["profile_hydration"] = {
+                "source": "fresh_promotion_baseline",
+                "active_release": current_active_release,
+            }
         return result
     except ValueError:
         return public_error_response(PROFILE_DRAFT_DATASET_SLUG_INVALID)

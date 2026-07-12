@@ -147,6 +147,7 @@ function installFetchMock(
     // immediately rather than only after an explicit load.
     noExistingDraft?: boolean;
     publishedSnapshotProfile?: typeof publicProfile;
+    freshPromotionHydration?: boolean;
     lastUpdated?: string;
     releaseDate?: string;
     releaseDateMode?: "auto" | "manual";
@@ -332,10 +333,16 @@ function installFetchMock(
       return jsonResponse({
         draft_exists: true,
         profile,
+        profile_hydration: options.freshPromotionHydration
+          ? { source: "fresh_promotion_baseline", active_release: "release-20260619-001" }
+          : options.publishedSnapshotProfile
+          ? { source: "current_release_snapshot", active_release: "release-20260619-001" }
+          : undefined,
         published_snapshot: options.publishedSnapshotProfile
           ? {
               source_draft_schema_version: options.publishedSnapshotProfile.schema_version,
               published_at: "2026-07-11T14:00:00Z",
+              active_release_at_publish_time: "release-20260619-001",
               profile: options.publishedSnapshotProfile,
             }
           : null,
@@ -686,6 +693,20 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.change(screen.getByLabelText("Home card description"), { target: { value: "Edited copy" } });
     expect(publishButton).toBeEnabled();
+  });
+
+  it("uses a clean baseline when the backend rejects same-slug profile state for the current release (Project Spec S0084)", async () => {
+    installFetchMock({ freshPromotionHydration: true });
+    renderAdminPage();
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Metadata & Card" }));
+    await waitFor(() => expect(screen.getByLabelText("Home card description")).toHaveValue(""));
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Telecom users" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByLabelText("Performance focus")).toHaveValue("positive_class_detection");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    expect(within(screen.getByRole("tabpanel")).getByText("Not published yet.")).toBeInTheDocument();
   });
 
   it("renders Release date label as a normalized date input seeded from Dashboard Last updated (Project Spec S0064)", async () => {

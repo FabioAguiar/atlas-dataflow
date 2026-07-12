@@ -13,6 +13,7 @@ replaced; the persistence module's own {code, field, message} error list is
 propagated unchanged to the calling route.
 """
 
+import json
 import os
 import re
 import uuid
@@ -34,6 +35,9 @@ _IMAGE_EXTENSIONS = {
     "image/webp": "webp",
     "image/avif": "avif",
 }
+_HOME_CARD_MEDIA_REF_PATTERN = re.compile(
+    r"^/media/home-cards/([0-9a-f]{32}\.(?:avif|jpg|png|webp))$"
+)
 
 
 def _media_root(repo_root: Path) -> Path:
@@ -107,6 +111,141 @@ def resolve_home_card_media_path(filename: str, repo_root: Path | None = None) -
     except ValueError:
         return None
     return candidate if candidate.is_file() else None
+
+
+def _profile_artifact_paths(dataset_slug: str, repo_root: Path) -> tuple[Path, ...]:
+    """Return the complete, bounded set of mutable profile artifacts for a slug."""
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", dataset_slug):
+        raise ValueError("dataset_slug is missing or invalid.")
+    registry_root = repo_root / "registry"
+    return (
+        registry_root / "profile-drafts" / f"{dataset_slug}.json",
+        registry_root / "profile-drafts" / f"{dataset_slug}.json.previous",
+        registry_root / "profile-snapshots" / f"{dataset_slug}.json",
+        registry_root / "profile-snapshots" / f"{dataset_slug}.json.previous",
+        registry_root / "profile-snapshots" / f"{dataset_slug}.evidence.json",
+        registry_root / "profile-publications" / f"{dataset_slug}.json",
+    )
+
+
+def _media_references_in_json(path: Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+    references: set[str] = set()
+
+    def visit(candidate: object) -> None:
+        if isinstance(candidate, dict):
+            for item in candidate.values():
+                visit(item)
+        elif isinstance(candidate, list):
+            for item in candidate:
+                visit(item)
+        elif isinstance(candidate, str):
+            match = _HOME_CARD_MEDIA_REF_PATTERN.fullmatch(candidate)
+            if match:
+                references.add(match.group(1))
+
+    visit(value)
+    return references
+
+
+def _live_dataset_slugs(repo_root: Path) -> list[str]:
+    try:
+        registry = json.loads(
+            (repo_root / "registry" / "datasets.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return []
+    datasets = registry.get("datasets") if isinstance(registry, dict) else None
+    if not isinstance(datasets, list):
+        return []
+    return [
+        entry["dataset_slug"]
+        for entry in datasets
+        if isinstance(entry, dict)
+        and isinstance(entry.get("dataset_slug"), str)
+        and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", entry["dataset_slug"])
+    ]
+
+
+def remove_profile_artifacts(dataset_slug: str, repo_root: Path | None = None) -> dict:
+    """Remove one deleted Dataset Detail's mutable profile lifecycle safely.
+
+    The registry entry must already have been removed by the caller. Missing
+    artifacts are successful no-ops. Only generated Home-card media owned by
+    the removed artifacts and unreferenced by every live Dataset Detail is
+    eligible for deletion; run and release trees are never inspected.
+    """
+    root = Path(repo_root) if repo_root else Path(__file__).parent.parent
+    try:
+        artifact_paths = _profile_artifact_paths(dataset_slug, root)
+    except ValueError:
+        return {
+            "completed": False,
+            "artifacts_removed": 0,
+            "media_removed": 0,
+            "errors": [{
+                "code": "PROFILE_CLEANUP_SLUG_INVALID",
+                "field": "dataset_slug",
+                "message": "The Dataset Detail profile cleanup identifier is invalid.",
+            }],
+        }
+
+    owned_media: set[str] = set()
+    for path in artifact_paths[:4]:
+        owned_media.update(_media_references_in_json(path))
+
+    live_media: set[str] = set()
+    for live_slug in _live_dataset_slugs(root):
+        live_paths = _profile_artifact_paths(live_slug, root)
+        for path in live_paths[:4]:
+            live_media.update(_media_references_in_json(path))
+
+    artifacts_removed = 0
+    media_removed = 0
+    try:
+        for path in artifact_paths:
+            try:
+                path.unlink()
+                artifacts_removed += 1
+            except FileNotFoundError:
+                pass
+
+        media_root = (_media_root(root) / "home-cards").resolve()
+        for filename in sorted(owned_media - live_media):
+            candidate = (media_root / filename).resolve()
+            try:
+                candidate.relative_to(media_root)
+            except ValueError:
+                continue
+            try:
+                candidate.unlink()
+                media_removed += 1
+            except FileNotFoundError:
+                pass
+    except OSError:
+        return {
+            "completed": False,
+            "artifacts_removed": artifacts_removed,
+            "media_removed": media_removed,
+            "errors": [{
+                "code": "PROFILE_CLEANUP_FAILED",
+                "field": None,
+                "message": "Associated public profile artifacts could not be fully removed.",
+            }],
+        }
+
+    return {
+        "completed": True,
+        "artifacts_removed": artifacts_removed,
+        "media_removed": media_removed,
+        "errors": [],
+    }
 
 
 def _display_title_from_snapshot(snapshot: dict | None) -> str | None:

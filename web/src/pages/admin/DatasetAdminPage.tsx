@@ -274,7 +274,13 @@ type PublishSnapshot = {
   schema_version?: string;
   source_draft_schema_version?: string;
   published_at?: string;
+  active_release_at_publish_time?: string;
   profile?: Partial<ProfileDraft>;
+};
+
+type ProfileHydration = {
+  source: "current_release_snapshot" | "fresh_promotion_baseline";
+  active_release: string | null;
 };
 
 type PublicationState =
@@ -3130,6 +3136,7 @@ export default function DatasetAdminPage() {
           draft_exists: boolean;
           profile: ProfileDraft | null;
           published_snapshot?: PublishSnapshot | null;
+          profile_hydration?: ProfileHydration;
         }>;
       })
       .then((data) => {
@@ -3137,7 +3144,16 @@ export default function DatasetAdminPage() {
           return;
         }
         const publishedProfile = profileFromSnapshot(data.published_snapshot, selectedSlug);
-        const hydrationProfile = publishedProfile ?? data.profile;
+        // S0084 responses explicitly bind hydration to the live release. A
+        // fresh baseline must not fall back to a same-slug private draft,
+        // which may also be residue from an older Dataset Detail lifecycle.
+        // The legacy fallback remains only for older backend responses that
+        // do not yet expose profile_hydration.
+        const hydrationProfile = data.profile_hydration
+          ? data.profile_hydration.source === "current_release_snapshot"
+            ? publishedProfile
+            : null
+          : publishedProfile ?? data.profile;
         const previousProfile = backendDraftProfile(draftStateRef.current);
         const currentProfile = profileFromForm(draftFormRef.current, selectedSlug);
         const hasDirtyFields = Boolean(previousProfile && !sameProfile(currentProfile, previousProfile));

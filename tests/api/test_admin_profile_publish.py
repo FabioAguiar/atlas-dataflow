@@ -164,6 +164,7 @@ def test_profile_draft_load_exposes_latest_published_snapshot_for_reload_hydrati
     }
     published_snapshot = {
         "published_at": "2026-07-11T14:00:00Z",
+        "active_release_at_publish_time": "release-20260101-001",
         "source_draft_schema_version": "0.1.0",
         "profile": published_profile,
     }
@@ -172,6 +173,9 @@ def test_profile_draft_load_exposes_latest_published_snapshot_for_reload_hydrati
         "profile": stale_draft,
     })
     monkeypatch.setattr(api_main, "read_published_profile_snapshot", lambda _slug: published_snapshot)
+    monkeypatch.setattr(api_main, "resolve_dataset", lambda _slug: type(
+        "Resolved", (), {"active_release": "release-20260101-001"}
+    )())
     monkeypatch.setenv("ATLAS_ADMIN_ENABLED", "true")
     monkeypatch.delenv("ADMIN_API_TOKEN", raising=False)
 
@@ -182,6 +186,50 @@ def test_profile_draft_load_exposes_latest_published_snapshot_for_reload_hydrati
 
     assert response["profile"] == stale_draft
     assert response["published_snapshot"] == published_snapshot
+    assert response["profile_hydration"] == {
+        "source": "current_release_snapshot",
+        "active_release": "release-20260101-001",
+    }
+
+
+def test_profile_draft_load_ignores_stale_or_unbound_snapshot(monkeypatch):
+    stale_profile = {
+        **_VALID_PROFILE,
+        "home_card": {
+            "icon": "weather-cloud",
+            "background_image_ref": "/media/home-cards/0123456789abcdef0123456789abcdef.png",
+            "short_description": "Old lifecycle copy",
+        },
+        "performance_focus": {"focus_id": "old-focus"},
+    }
+    monkeypatch.setattr(api_main, "read_profile_draft", lambda _slug: {
+        "draft_exists": True,
+        "profile": stale_profile,
+    })
+    monkeypatch.setattr(api_main, "resolve_dataset", lambda _slug: type(
+        "Resolved", (), {"active_release": "release-20260101-002"}
+    )())
+    monkeypatch.setenv("ATLAS_ADMIN_ENABLED", "true")
+    monkeypatch.delenv("ADMIN_API_TOKEN", raising=False)
+
+    for snapshot in (
+        {"active_release_at_publish_time": "release-20260101-001", "profile": stale_profile},
+        {"profile": stale_profile},
+    ):
+        monkeypatch.setattr(api_main, "read_published_profile_snapshot", lambda _slug, value=snapshot: value)
+        response = api_main.get_admin_profile_draft(
+            "example-dataset",
+            _make_request({}, method="GET", path="/admin/datasets/example-dataset/profile-draft"),
+        )
+
+        assert "published_snapshot" not in response
+        assert response["profile_hydration"] == {
+            "source": "fresh_promotion_baseline",
+            "active_release": "release-20260101-002",
+        }
+        # Compatibility data may remain present, but the explicit hydration
+        # contract prevents current clients from using it as their baseline.
+        assert response["profile"] == stale_profile
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +591,69 @@ def test_published_profile_keeps_only_bounded_home_card_media_reference():
             _restore_publish(original)
             os.environ.pop("ATLAS_ADMIN_ENABLED", None)
             os.environ.pop("ADMIN_API_TOKEN", None)
+
+
+def test_remove_profile_artifacts_cleans_lifecycle_and_only_unshared_media(tmp_path):
+    deleted_slug = "deleted-dataset"
+    live_slug = "live-dataset"
+    deleted_media = "a" * 32 + ".png"
+    shared_media = "b" * 32 + ".webp"
+    media_root = tmp_path / "media" / "home-cards"
+    media_root.mkdir(parents=True)
+    (media_root / deleted_media).write_bytes(b"deleted")
+    (media_root / shared_media).write_bytes(b"shared")
+
+    registry_root = tmp_path / "registry"
+    registry_root.mkdir()
+    (registry_root / "datasets.json").write_text(json.dumps({
+        "datasets": [{"dataset_slug": live_slug}],
+    }), encoding="utf-8")
+
+    artifact_paths = [
+        registry_root / "profile-drafts" / f"{deleted_slug}.json",
+        registry_root / "profile-drafts" / f"{deleted_slug}.json.previous",
+        registry_root / "profile-snapshots" / f"{deleted_slug}.json",
+        registry_root / "profile-snapshots" / f"{deleted_slug}.json.previous",
+        registry_root / "profile-snapshots" / f"{deleted_slug}.evidence.json",
+        registry_root / "profile-publications" / f"{deleted_slug}.json",
+    ]
+    for path in artifact_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "home_card": {
+                "deleted": f"/media/home-cards/{deleted_media}",
+                "shared": f"/media/home-cards/{shared_media}",
+                "unsafe": "/media/home-cards/../../outside.png",
+            },
+        }), encoding="utf-8")
+
+    live_snapshot = registry_root / "profile-snapshots" / f"{live_slug}.json"
+    live_snapshot.write_text(json.dumps({
+        "profile": {"home_card": {"background_image_ref": f"/media/home-cards/{shared_media}"}},
+    }), encoding="utf-8")
+
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"outside")
+    result = admin_profile_publish.remove_profile_artifacts(deleted_slug, tmp_path)
+
+    assert result == {
+        "completed": True,
+        "artifacts_removed": 6,
+        "media_removed": 1,
+        "errors": [],
+    }
+    assert all(not path.exists() for path in artifact_paths)
+    assert not (media_root / deleted_media).exists()
+    assert (media_root / shared_media).is_file()
+    assert outside.is_file()
+    assert live_snapshot.is_file()
+
+    assert admin_profile_publish.remove_profile_artifacts(deleted_slug, tmp_path) == {
+        "completed": True,
+        "artifacts_removed": 0,
+        "media_removed": 0,
+        "errors": [],
+    }
 
 
 if __name__ == "__main__":

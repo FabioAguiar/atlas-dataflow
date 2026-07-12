@@ -2233,6 +2233,23 @@ def test_delete_dataset_route_removes_only_matching_registry_entry(tmp_path):
     run_dir = repo_root / "publisher" / "runs" / "some-run"
     run_dir.mkdir(parents=True)
     _write_json(run_dir / "manifest.json", _VALID_MANIFEST)
+    media_name = "a" * 32 + ".png"
+    media_file = repo_root / "media" / "home-cards" / media_name
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes(b"profile image")
+    profile_artifacts = [
+        repo_root / "registry" / "profile-drafts" / "telco-customer-churn.json",
+        repo_root / "registry" / "profile-drafts" / "telco-customer-churn.json.previous",
+        repo_root / "registry" / "profile-snapshots" / "telco-customer-churn.json",
+        repo_root / "registry" / "profile-snapshots" / "telco-customer-churn.json.previous",
+        repo_root / "registry" / "profile-snapshots" / "telco-customer-churn.evidence.json",
+        repo_root / "registry" / "profile-publications" / "telco-customer-churn.json",
+    ]
+    for artifact in profile_artifacts:
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(artifact, {
+            "profile": {"home_card": {"background_image_ref": f"/media/home-cards/{media_name}"}},
+        })
 
     original_repo_root = api_main._REPO_ROOT
     try:
@@ -2245,6 +2262,11 @@ def test_delete_dataset_route_removes_only_matching_registry_entry(tmp_path):
             "removed": True,
             "previous_active_release": "release-20260616-001",
             "errors": [],
+            "profile_cleanup": {
+                "completed": True,
+                "artifacts_removed": 6,
+                "media_removed": 1,
+            },
         }
 
         registry = json.loads((repo_root / "registry" / "datasets.json").read_text(encoding="utf-8"))
@@ -2258,6 +2280,8 @@ def test_delete_dataset_route_removes_only_matching_registry_entry(tmp_path):
         # Removal must never touch releases/ or publisher/runs/.
         assert (release_dir / "manifest.json").is_file()
         assert (run_dir / "manifest.json").is_file()
+        assert all(not artifact.exists() for artifact in profile_artifacts)
+        assert not media_file.exists()
         _assert_no_private_markers(response)
     finally:
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)

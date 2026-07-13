@@ -59,6 +59,7 @@ import json
 import re
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from registry.predict_view_validate import validate_predict_views
@@ -587,7 +588,10 @@ def remove_dataset_entry(dataset_slug: str, repo_root: Path | None = None) -> di
 
 
 def rename_dataset_slug(
-    dataset_slug: str, new_dataset_slug: str, repo_root: Path | None = None
+    dataset_slug: str,
+    new_dataset_slug: str,
+    repo_root: Path | None = None,
+    updated_at: str | None = None,
 ) -> dict:
     """Rename exactly one dataset entry's dataset_slug in registry/datasets.json.
 
@@ -684,7 +688,9 @@ def rename_dataset_slug(
             "errors": [DATASET_SLUG_ALREADY_EXISTS_ERROR],
         }
 
+    mutation_timestamp = updated_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     target_entry["dataset_slug"] = new_dataset_slug
+    target_entry["dataset_detail_updated_at"] = mutation_timestamp
 
     validation = validate_registry(registry)
     if validation.get("valid") is not True:
@@ -800,6 +806,38 @@ def rename_dataset_slug(
         "renamed": True,
         "errors": [],
     }
+
+
+def update_dataset_detail_timestamp(
+    dataset_slug: str, updated_at: str, repo_root: Path | None = None
+) -> dict:
+    """Persist the canonical Dataset Detail display timestamp safely."""
+    root = Path(repo_root) if repo_root is not None else Path(__file__).parent.parent
+    registry_path = root / "registry" / "datasets.json"
+    backup_path = root / "registry" / "datasets.json.previous"
+    try:
+        registry = _load_json_file(registry_path, "registry")
+    except RuntimeError:
+        return {"updated": False, "errors": [REGISTRY_UNAVAILABLE_ERROR]}
+
+    entry = _find_dataset_entry(registry, dataset_slug)
+    if entry is None:
+        return {"updated": False, "errors": [DATASET_DETAIL_NOT_FOUND_ERROR]}
+    entry["dataset_detail_updated_at"] = updated_at
+    if validate_registry(registry).get("valid") is not True:
+        return {"updated": False, "errors": [REGISTRY_VALIDATION_FAILED_ERROR]}
+
+    try:
+        original = registry_path.read_bytes()
+        backup_path.write_bytes(original)
+        registry_path.write_bytes(_json_bytes(registry))
+    except OSError:
+        try:
+            registry_path.write_bytes(original)
+        except (OSError, UnboundLocalError):
+            pass
+        return {"updated": False, "errors": [REGISTRY_WRITE_FAILED_ERROR]}
+    return {"updated": True, "dataset_detail_updated_at": updated_at, "errors": []}
 
 
 def main() -> None:

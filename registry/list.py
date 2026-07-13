@@ -84,6 +84,7 @@ class AdminListedDataset(NamedTuple):
     tags: list
     active_release: str | None
     publication_status: str
+    dataset_detail_updated_at: str | None
 
 
 def _snapshot_overlay_fields(dataset_slug: str, repo_root: Path) -> dict:
@@ -273,5 +274,10 @@ def list_admin_datasets(registry_path: Path | None = None) -> list[AdminListedDa
             tags=metadata.get("tags", []),
             active_release=active_release if isinstance(active_release, str) else None,
             publication_status=_entry_review_status(entry),
+            dataset_detail_updated_at=(
+                entry.get("dataset_detail_updated_at")
+                if isinstance(entry.get("dataset_detail_updated_at"), str)
+                else None
+            ),
         ))
     return result

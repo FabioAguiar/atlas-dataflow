@@ -3016,7 +3016,7 @@ export default function DatasetAdminPage() {
       });
 
     return () => controller.abort();
-  }, []);
+  }, [refreshRevision]);
 
   // GET /admin/datasets (registry/list.py's list_admin_datasets, Project Spec
   // S0052): every registry-backed Dataset Detail Admin can see, including
@@ -3057,7 +3057,7 @@ export default function DatasetAdminPage() {
       });
 
     return () => controller.abort();
-  }, []);
+  }, [refreshRevision]);
 
   useEffect(() => {
     if (!selectedSlug) {
@@ -3237,7 +3237,7 @@ export default function DatasetAdminPage() {
       if (current.release_date_mode === "manual") {
         return current;
       }
-      if (current.release_date_label && current.release_date_label >= lastUpdatedDate) {
+      if (current.release_date_label === lastUpdatedDate) {
         return current;
       }
       return { ...current, release_date_label: lastUpdatedDate, release_date_mode: "auto" };
@@ -3422,6 +3422,7 @@ export default function DatasetAdminPage() {
           setDatasetQuery((current) => (current === getDatasetSelectorValue(selectedAdminDataset) ? nextDisplayTitle : current));
         }
         setLastPublishedAt(result.body.snapshot?.published_at);
+        setRefreshRevision((current) => current + 1);
       })
       .catch(() => {
         setPublicationState((current) => ({

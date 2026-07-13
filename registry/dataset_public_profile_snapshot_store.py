@@ -64,6 +64,7 @@ from registry.dataset_public_profile_store import (
     validate_profile_draft,
 )
 from registry.dataset_public_profile_validate import validate_profile_references
+from registry.update import update_dataset_detail_timestamp
 
 DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -317,6 +318,23 @@ def _publish_profile(dataset_slug: str, profile: dict, repo_root: Path) -> dict:
 
     visibility_value = _resolve_visibility(dataset_slug, repo_root)
     write_snapshot_evidence(candidate, errors, visibility_value, repo_root)
+
+    release_date_mode = display.get("release_date_mode") if isinstance(display, dict) else None
+    if release_date_mode == "manual" and isinstance(release_date, str):
+        timestamp_result = update_dataset_detail_timestamp(
+            dataset_slug, f"{release_date}T00:00:00Z", repo_root=repo_root
+        )
+        if not timestamp_result["updated"]:
+            return {
+                "published": False,
+                "path": None,
+                "snapshot": None,
+                "errors": [_err(
+                    "DATASET_DETAIL_TIMESTAMP_UPDATE_FAILED",
+                    "display.release_date_label",
+                    "The Dataset Detail update date could not be synchronized.",
+                )],
+            }
 
     return {
         "published": True,

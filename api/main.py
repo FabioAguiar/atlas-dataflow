@@ -798,9 +798,11 @@ def list_admin_datasets_route(request: Request):
     projected = []
     for dataset in datasets:
         item = dataset._asdict()
-        last_updated = None
+        last_updated = dataset.dataset_detail_updated_at
         snapshot = read_published_profile_snapshot(dataset.dataset_slug)
         if (
+            last_updated is None
+            and
             isinstance(snapshot, dict)
             and snapshot.get("active_release_at_publish_time") == dataset.active_release
         ):

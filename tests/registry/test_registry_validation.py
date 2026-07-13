@@ -435,6 +435,36 @@ def test_rename_dataset_slug_updates_only_matching_entry_dataset_slug(tmp_path):
     assert validate_registry(registry)["valid"] is True
 
 
+def test_rename_dataset_slug_persists_injected_canonical_update_timestamp(tmp_path):
+    _write_full_registry(
+        tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")]
+    )
+
+    result = rename_dataset_slug(
+        "telco-customer-churn",
+        "telco-churn-renamed",
+        repo_root=tmp_path,
+        updated_at="2026-07-12T21:30:00Z",
+    )
+
+    assert result["renamed"] is True
+    registry = _load(tmp_path / "registry" / "datasets.json")
+    assert registry["datasets"][0]["dataset_detail_updated_at"] == "2026-07-12T21:30:00Z"
+
+
+def test_registry_rejects_non_utc_dataset_detail_update_timestamp():
+    entry = _full_entry("telco-customer-churn", "release-20260616-001")
+    entry["dataset_detail_updated_at"] = "2026-07-12"
+
+    result = validate_registry({
+        "schema_version": "atlas.dataflow.registry.v1",
+        "datasets": [entry],
+    })
+
+    assert result["valid"] is False
+    assert "INVALID_DATASET_DETAIL_UPDATED_AT" in _codes(result)
+
+
 def test_rename_dataset_slug_writes_backup_before_mutating_registry(tmp_path):
     _write_full_registry(tmp_path, [_full_entry("telco-customer-churn", "release-20260616-001")])
     original_content = (tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8")

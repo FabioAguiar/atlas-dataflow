@@ -8,6 +8,7 @@ access a database, or infer state from local directories.
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 REGISTRY_SCHEMA_VERSION = "atlas.dataflow.registry.v1"
@@ -116,6 +117,25 @@ def validate_registry(registry: dict) -> dict:
                     f"Dataset entry at index {i} 'active_release' must match the format "
                     "release-YYYYMMDD-NNN or release-YYYYMMDDtHHMMSSz.",
                 ))
+
+            updated_at = entry.get("dataset_detail_updated_at")
+            if updated_at is not None:
+                try:
+                    parsed_updated_at = datetime.fromisoformat(
+                        updated_at.replace("Z", "+00:00")
+                    ) if isinstance(updated_at, str) else None
+                except ValueError:
+                    parsed_updated_at = None
+                if (
+                    parsed_updated_at is None
+                    or parsed_updated_at.tzinfo is None
+                    or not updated_at.endswith("Z")
+                ):
+                    errors.append(_err(
+                        "INVALID_DATASET_DETAIL_UPDATED_AT",
+                        f"{prefix}.dataset_detail_updated_at",
+                        f"Dataset entry at index {i} 'dataset_detail_updated_at' must be an ISO-8601 UTC timestamp.",
+                    ))
 
             metadata = entry.get("public_metadata")
             if metadata is None:

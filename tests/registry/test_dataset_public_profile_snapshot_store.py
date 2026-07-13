@@ -328,6 +328,8 @@ def test_direct_publish_preserves_release_date_override_metadata(fake_repo):
         "release_date_label": "2026-05-12",
         "release_date_mode": "manual",
     }
+    registry = json.loads((fake_repo / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    assert registry["datasets"][0]["dataset_detail_updated_at"] == "2026-05-12T00:00:00Z"
 
 
 def test_invalid_release_date_cannot_replace_snapshot(fake_repo):

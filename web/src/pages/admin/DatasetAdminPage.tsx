@@ -395,11 +395,31 @@ type CustomizationEditorState =
   | { status: "invalid"; draft: CustomizationEditorDraft; errors: CustomizationError[] }
   | { status: "unavailable"; message: string };
 
-type DragItemKind = "field" | "group";
+// Presentation-only derived placement for a field_hint: "bank" (hidden),
+// "no-subgroup" (visible, ungrouped/unresolved group), or a literal
+// group_id (visible, grouped). Never persisted directly -- always derived
+// from FieldHintDraft.hidden/group so it can never drift from the saved
+// contract shape.
+type FieldZoneKey = string;
 
-type CustomizationDragState = {
-  kind: DragItemKind;
+const FIELD_BANK_ZONE: FieldZoneKey = "bank";
+const NO_SUBGROUP_ZONE: FieldZoneKey = "no-subgroup";
+
+// Subgroup drag-and-drop/reorder state. Field drag-and-drop uses its own
+// CustomizationFieldDragState below -- the two are shaped too differently
+// (index-only vs. zone+index) to share one discriminated union usefully.
+type CustomizationGroupDragState = {
   sourceIndex: number;
+  targetIndex: number;
+  pointerX: number;
+  pointerY: number;
+  label: string;
+};
+
+type CustomizationFieldDragState = {
+  fieldName: string;
+  sourceZone: FieldZoneKey;
+  targetZone: FieldZoneKey;
   targetIndex: number;
   pointerX: number;
   pointerY: number;
@@ -437,24 +457,28 @@ function customizationDraftFromRecord(
     return keyA - keyB;
   });
 
-  return {
-    fieldHints: sortedFields.map((field) => {
-      const hint = hintMap.get(field.name);
-      return {
-        field_name: field.name,
-        display_label: hint?.display_label ?? "",
-        explanatory_copy: hint?.explanatory_copy ?? "",
-        group: hint?.group ?? "",
-        hidden: hint?.hidden ?? false,
-        required: requiredMap.get(field.name) ?? false,
-      };
-    }),
-    groups: record.groups.map((group) => ({
-      group_id: group.group_id,
-      label: group.label,
-      description: group.description ?? "",
-    })),
-  };
+  const groups = record.groups.map((group) => ({
+    group_id: group.group_id,
+    label: group.label,
+    description: group.description ?? "",
+  }));
+
+  const fieldHints = sortedFields.map((field) => {
+    const hint = hintMap.get(field.name);
+    return {
+      field_name: field.name,
+      display_label: hint?.display_label ?? "",
+      explanatory_copy: hint?.explanatory_copy ?? "",
+      group: hint?.group ?? "",
+      hidden: hint?.hidden ?? false,
+      required: requiredMap.get(field.name) ?? false,
+    };
+  });
+
+  // A previously saved record may not already satisfy the deterministic
+  // flattening rule below (e.g. it predates this builder) -- reflow on load
+  // so every loaded draft starts from the canonical macro order.
+  return { fieldHints: reflowFieldHints(fieldHints, groups), groups };
 }
 
 function customizationDraftToRecord(draft: CustomizationEditorDraft): {
@@ -500,6 +524,96 @@ function moveItemToIndex<T>(items: T[], sourceIndex: number, targetIndex: number
   const [item] = next.splice(sourceIndex, 1);
   next.splice(targetIndex, 0, item);
   return next;
+}
+
+// A field's rendered zone is fully derived from hidden/group -- never a
+// separate persisted concept -- so the bank/subgroup/no-subgroup split can
+// never drift from what customizationDraftToRecord actually saves.
+function fieldZoneKey(field: FieldHintDraft, validGroupIds: Set<string>): FieldZoneKey {
+  if (field.hidden) return FIELD_BANK_ZONE;
+  if (field.group && validGroupIds.has(field.group)) return field.group;
+  return NO_SUBGROUP_ZONE;
+}
+
+function zoneFieldEntries(draft: CustomizationEditorDraft, zone: FieldZoneKey): FieldHintDraft[] {
+  const validGroupIds = new Set(draft.groups.map((group) => group.group_id));
+  return draft.fieldHints.filter((field) => fieldZoneKey(field, validGroupIds) === zone);
+}
+
+// Keeps fieldHints ordered as: every subgroup's visible fields (in groups[]
+// order), then visible No subgroup fields, then hidden Field bank fields --
+// the deterministic flattening rule the saved display_order_hint projection
+// relies on (customizationDraftToRecord assigns display_order_hint from
+// array index). Preserves each zone's own relative order; only
+// re-partitions macro block order, so it is safe to call after every draft
+// mutation, including ones (like subgroup reorder) that don't move fields.
+function reflowFieldHints(fieldHints: FieldHintDraft[], groups: GroupDraft[]): FieldHintDraft[] {
+  const validGroupIds = new Set(groups.map((group) => group.group_id));
+  const buckets = new Map<string, FieldHintDraft[]>();
+  buckets.set(FIELD_BANK_ZONE, []);
+  buckets.set(NO_SUBGROUP_ZONE, []);
+  for (const group of groups) buckets.set(group.group_id, []);
+  for (const field of fieldHints) {
+    const zone = fieldZoneKey(field, validGroupIds);
+    buckets.get(zone)!.push(field);
+  }
+  return [
+    ...groups.flatMap((group) => buckets.get(group.group_id) ?? []),
+    ...buckets.get(NO_SUBGROUP_ZONE)!,
+    ...buckets.get(FIELD_BANK_ZONE)!,
+  ];
+}
+
+// Bank membership always wins (hidden: true, group cleared): a field
+// dropped in the bank is presentation-hidden regardless of any prior group.
+// No subgroup / subgroup membership always clears hidden: a field dropped
+// into the public layout can never retain a stale hidden flag.
+function applyFieldZonePatch(field: FieldHintDraft, zone: FieldZoneKey): FieldHintDraft {
+  if (zone === FIELD_BANK_ZONE) {
+    return { ...field, hidden: true, group: "" };
+  }
+  if (zone === NO_SUBGROUP_ZONE) {
+    return { ...field, hidden: false, group: "" };
+  }
+  return { ...field, hidden: false, group: zone };
+}
+
+// Moves a single field to a specific position within a destination zone,
+// which may be its current zone (a same-zone reorder). Every other zone's
+// relative field order is left untouched.
+function moveFieldToZone(
+  draft: CustomizationEditorDraft,
+  fieldName: string,
+  destinationZone: FieldZoneKey,
+  destinationIndex: number,
+): CustomizationEditorDraft {
+  const moved = draft.fieldHints.find((field) => field.field_name === fieldName);
+  if (!moved) {
+    return draft;
+  }
+  const patched = applyFieldZonePatch(moved, destinationZone);
+  const withoutMoved = draft.fieldHints.filter((field) => field.field_name !== fieldName);
+  const validGroupIds = new Set(draft.groups.map((group) => group.group_id));
+  const destinationZoneFields = withoutMoved.filter(
+    (field) => fieldZoneKey(field, validGroupIds) === destinationZone,
+  );
+  const clampedIndex = Math.max(0, Math.min(destinationIndex, destinationZoneFields.length));
+  const anchor = destinationZoneFields[clampedIndex];
+
+  const merged: FieldHintDraft[] = [];
+  let inserted = false;
+  for (const field of withoutMoved) {
+    if (!inserted && anchor && field.field_name === anchor.field_name) {
+      merged.push(patched);
+      inserted = true;
+    }
+    merged.push(field);
+  }
+  if (!inserted) {
+    merged.push(patched);
+  }
+
+  return { ...draft, fieldHints: reflowFieldHints(merged, draft.groups) };
 }
 
 const emptyReadOnlyData: ReadOnlyData = {
@@ -850,6 +964,73 @@ const alertStyle: CSSProperties = {
   padding: "var(--atlas-space-4)",
   color: "var(--atlas-color-text)",
   background: "var(--atlas-color-warning-muted)",
+};
+
+const fieldChipSourceStyle: CSSProperties = {
+  opacity: 0.45,
+};
+
+const fieldChipInsertionTargetStyle: CSSProperties = {
+  boxShadow: "inset 0 2px 0 0 var(--atlas-color-accent)",
+};
+
+const fieldZoneActiveStyle: CSSProperties = {
+  borderColor: "var(--atlas-color-accent)",
+  background: "var(--atlas-color-accent-muted)",
+};
+
+const subgroupControlsStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "2px",
+};
+
+const stackedIconActionButtonStyle: CSSProperties = {
+  ...iconActionButtonStyle,
+  width: "1.9rem",
+  minWidth: "1.9rem",
+  height: "1.35rem",
+  fontSize: "0.65rem",
+  lineHeight: 1,
+};
+
+const stackedIconActionButtonDisabledStyle: CSSProperties = {
+  ...stackedIconActionButtonStyle,
+  color: "var(--atlas-color-text-subtle)",
+  background: "var(--atlas-color-surface-muted)",
+  cursor: "not-allowed",
+};
+
+const cardTitleStyle: CSSProperties = {
+  margin: 0,
+  color: "var(--atlas-color-text)",
+  fontSize: "var(--atlas-text-xl)",
+  fontWeight: 800,
+};
+
+const modalBackdropStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "var(--atlas-space-5)",
+  background: "rgba(15, 23, 42, 0.55)",
+  zIndex: 2000,
+};
+
+const modalCardStyle: CSSProperties = {
+  display: "grid",
+  gap: "var(--atlas-space-4)",
+  width: "min(32rem, 100%)",
+  maxHeight: "90vh",
+  overflowY: "auto",
+};
+
+const modalActionsStyle: CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: "var(--atlas-space-3)",
 };
 
 function TabWorkspace({ children, eyebrow, helper }: { children: ReactNode; eyebrow: string; helper?: string }) {
@@ -1873,14 +2054,89 @@ function CustomizationStatusPanel({ state }: { state: CustomizationEditorState }
   return <p style={mutedTextStyle}>{state.message}</p>;
 }
 
+function FieldEditModal({
+  contractField,
+  field,
+  onCancel,
+  onSave,
+}: {
+  contractField: ContractField | undefined;
+  field: FieldHintDraft;
+  onCancel: () => void;
+  onSave: (patch: { display_label: string; explanatory_copy: string }) => void;
+}) {
+  const [displayLabel, setDisplayLabel] = useState(field.display_label);
+  const [explanatoryCopy, setExplanatoryCopy] = useState(field.explanatory_copy);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    containerRef.current?.querySelector<HTMLElement>("input, textarea")?.focus();
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      onCancel();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
+
+  return (
+    <div style={modalBackdropStyle}>
+      <div
+        aria-labelledby="field-edit-modal-title"
+        aria-modal="true"
+        className="atlas-card"
+        ref={containerRef}
+        role="dialog"
+        style={modalCardStyle}
+      >
+        <h2 id="field-edit-modal-title" style={cardTitleStyle}>
+          Edit field
+        </h2>
+        <div style={twoColumnGridStyle}>
+          <ReadOnlyField label="Contract field name" value={field.field_name} />
+          <ReadOnlyField label="Input type" value={contractField?.input_type ?? "Unknown"} />
+        </div>
+        <ReadOnlyField label="Required state" value={field.required ? "Required" : "Optional"} />
+        <TextField label="Display label" onChange={setDisplayLabel} value={displayLabel} />
+        <TextField label="Explanatory copy" multiline onChange={setExplanatoryCopy} value={explanatoryCopy} />
+        <div style={modalActionsStyle}>
+          <button onClick={onCancel} style={secondaryButtonStyle} type="button">
+            Cancel
+          </button>
+          <button
+            onClick={() => onSave({ display_label: displayLabel, explanatory_copy: explanatoryCopy })}
+            style={actionButtonStyle}
+            type="button"
+          >
+            Save field
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CustomizationEditor({
+  contractFieldsByName,
   draft,
   onUpdateDraft,
 }: {
+  contractFieldsByName: Map<string, ContractField>;
   draft: CustomizationEditorDraft;
   onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
 }) {
-  const [dragState, setDragState] = useState<CustomizationDragState | null>(null);
+  const [groupDragState, setGroupDragState] = useState<CustomizationGroupDragState | null>(null);
+  const [fieldDragState, setFieldDragState] = useState<CustomizationFieldDragState | null>(null);
+  const [fieldModalState, setFieldModalState] = useState<{ status: "closed" } | { status: "open"; fieldName: string }>(
+    { status: "closed" },
+  );
+  const chipRefs = useRef(new Map<string, HTMLDivElement>());
   // Local-only, non-schema-persisted expand/collapse affordance for group
   // cards (mirrors the executable prototype's collapse-button pattern).
   // Never read by customizationDraftToRecord and never added to
@@ -1899,21 +2155,6 @@ function CustomizationEditor({
     });
   }
 
-  function updateFieldHint(index: number, patch: Partial<FieldHintDraft>) {
-    onUpdateDraft((current) => ({
-      ...current,
-      fieldHints: current.fieldHints.map((field, i) => (i === index ? { ...field, ...patch } : field)),
-    }));
-  }
-
-  function moveFieldHint(index: number, direction: -1 | 1) {
-    onUpdateDraft((current) => ({ ...current, fieldHints: moveItem(current.fieldHints, index, direction) }));
-  }
-
-  function moveGroup(index: number, direction: -1 | 1) {
-    onUpdateDraft((current) => ({ ...current, groups: moveItem(current.groups, index, direction) }));
-  }
-
   function addGroup() {
     onUpdateDraft((current) => ({
       ...current,
@@ -1929,77 +2170,63 @@ function CustomizationEditor({
   }
 
   function removeGroup(groupId: string) {
-    onUpdateDraft((current) => ({
-      groups: current.groups.filter((group) => group.group_id !== groupId),
-      fieldHints: current.fieldHints.map((field) => (field.group === groupId ? { ...field, group: "" } : field)),
-    }));
+    onUpdateDraft((current) => {
+      const nextGroups = current.groups.filter((group) => group.group_id !== groupId);
+      const clearedFieldHints = current.fieldHints.map((field) =>
+        field.group === groupId ? { ...field, group: "" } : field,
+      );
+      return { groups: nextGroups, fieldHints: reflowFieldHints(clearedFieldHints, nextGroups) };
+    });
   }
 
-  function getTargetIndex(kind: DragItemKind, clientX: number, clientY: number, fallbackIndex: number) {
-    const element = document
-      .elementFromPoint(clientX, clientY)
-      ?.closest<HTMLElement>("[data-customization-drag-kind][data-customization-drag-index]");
-    if (!element || element.dataset.customizationDragKind !== kind) {
-      return fallbackIndex;
-    }
-    const targetIndex = Number(element.dataset.customizationDragIndex);
+  function moveSubgroup(index: number, direction: -1 | 1) {
+    onUpdateDraft((current) => {
+      const nextGroups = moveItem(current.groups, index, direction);
+      return { groups: nextGroups, fieldHints: reflowFieldHints(current.fieldHints, nextGroups) };
+    });
+  }
+
+  function getGroupTargetIndex(clientX: number, clientY: number, fallbackIndex: number) {
+    const element = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-customization-group-index]");
+    if (!element) return fallbackIndex;
+    const targetIndex = Number(element.dataset.customizationGroupIndex);
     return Number.isInteger(targetIndex) ? targetIndex : fallbackIndex;
   }
 
-  function startDrag(
-    event: ReactPointerEvent<HTMLButtonElement>,
-    kind: DragItemKind,
-    sourceIndex: number,
-    label: string,
-  ) {
+  function startGroupDrag(event: ReactPointerEvent<HTMLButtonElement>, sourceIndex: number, label: string) {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDragState({
-      kind,
-      sourceIndex,
-      targetIndex: sourceIndex,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      label,
-    });
+    setGroupDragState({ sourceIndex, targetIndex: sourceIndex, pointerX: event.clientX, pointerY: event.clientY, label });
   }
 
-  function updateDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!dragState) return;
+  function updateGroupDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!groupDragState) return;
     event.preventDefault();
-    const targetIndex = getTargetIndex(dragState.kind, event.clientX, event.clientY, dragState.targetIndex);
-    setDragState({
-      ...dragState,
-      targetIndex,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-    });
+    const targetIndex = getGroupTargetIndex(event.clientX, event.clientY, groupDragState.targetIndex);
+    setGroupDragState({ ...groupDragState, targetIndex, pointerX: event.clientX, pointerY: event.clientY });
   }
 
-  function finishDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!dragState) return;
+  function finishGroupDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!groupDragState) return;
     event.preventDefault();
-    const finalTargetIndex = getTargetIndex(dragState.kind, event.clientX, event.clientY, dragState.targetIndex);
-    const { kind, sourceIndex } = dragState;
-    setDragState(null);
-
+    const finalTargetIndex = getGroupTargetIndex(event.clientX, event.clientY, groupDragState.targetIndex);
+    const { sourceIndex } = groupDragState;
+    setGroupDragState(null);
     onUpdateDraft((current) => {
-      if (kind === "field") {
-        return { ...current, fieldHints: moveItemToIndex(current.fieldHints, sourceIndex, finalTargetIndex) };
-      }
-      return { ...current, groups: moveItemToIndex(current.groups, sourceIndex, finalTargetIndex) };
+      const nextGroups = moveItemToIndex(current.groups, sourceIndex, finalTargetIndex);
+      return { groups: nextGroups, fieldHints: reflowFieldHints(current.fieldHints, nextGroups) };
     });
   }
 
-  function cancelDrag(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!dragState) return;
+  function cancelGroupDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!groupDragState) return;
     event.preventDefault();
-    setDragState(null);
+    setGroupDragState(null);
   }
 
-  function getDragItemStyle(kind: DragItemKind, index: number): CSSProperties {
-    const isSource = dragState?.kind === kind && dragState.sourceIndex === index;
-    const isTarget = dragState?.kind === kind && dragState.targetIndex === index && dragState.sourceIndex !== index;
+  function getGroupCardStyle(index: number): CSSProperties {
+    const isSource = groupDragState?.sourceIndex === index;
+    const isTarget = groupDragState !== null && groupDragState.targetIndex === index && groupDragState.sourceIndex !== index;
     return {
       ...panelStyle,
       padding: "var(--atlas-space-3)",
@@ -2008,202 +2235,316 @@ function CustomizationEditor({
     };
   }
 
+  function resolveFieldDropTarget(
+    clientX: number,
+    clientY: number,
+    fallbackZone: FieldZoneKey,
+    fallbackIndex: number,
+  ): { zone: FieldZoneKey; index: number } {
+    const element = document.elementFromPoint(clientX, clientY);
+    const chipElement = element?.closest<HTMLElement>(
+      "[data-customization-field-zone][data-customization-field-index]",
+    );
+    if (chipElement) {
+      const zone = chipElement.dataset.customizationFieldZone ?? fallbackZone;
+      const index = Number(chipElement.dataset.customizationFieldIndex);
+      return { zone, index: Number.isInteger(index) ? index : fallbackIndex };
+    }
+    const zoneElement = element?.closest<HTMLElement>("[data-customization-drop-zone]");
+    if (zoneElement) {
+      const zone = zoneElement.dataset.customizationDropZone ?? fallbackZone;
+      return { zone, index: zoneFieldEntries(draft, zone).length };
+    }
+    return { zone: fallbackZone, index: fallbackIndex };
+  }
+
+  function startFieldDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    fieldName: string,
+    sourceZone: FieldZoneKey,
+    sourceIndex: number,
+    label: string,
+  ) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setFieldDragState({
+      fieldName,
+      sourceZone,
+      targetZone: sourceZone,
+      targetIndex: sourceIndex,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      label,
+    });
+  }
+
+  function updateFieldDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!fieldDragState) return;
+    event.preventDefault();
+    const { zone, index } = resolveFieldDropTarget(
+      event.clientX,
+      event.clientY,
+      fieldDragState.targetZone,
+      fieldDragState.targetIndex,
+    );
+    setFieldDragState({ ...fieldDragState, targetZone: zone, targetIndex: index, pointerX: event.clientX, pointerY: event.clientY });
+  }
+
+  function finishFieldDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!fieldDragState) return;
+    event.preventDefault();
+    const { zone, index } = resolveFieldDropTarget(
+      event.clientX,
+      event.clientY,
+      fieldDragState.targetZone,
+      fieldDragState.targetIndex,
+    );
+    const { fieldName } = fieldDragState;
+    setFieldDragState(null);
+    onUpdateDraft((current) => moveFieldToZone(current, fieldName, zone, index));
+  }
+
+  function cancelFieldDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!fieldDragState) return;
+    event.preventDefault();
+    setFieldDragState(null);
+  }
+
+  function openFieldModal(fieldName: string) {
+    setFieldModalState({ status: "open", fieldName });
+  }
+
+  function closeFieldModal(fieldName: string) {
+    setFieldModalState({ status: "closed" });
+    chipRefs.current.get(fieldName)?.focus();
+  }
+
+  function saveFieldModal(fieldName: string, patch: { display_label: string; explanatory_copy: string }) {
+    onUpdateDraft((current) => ({
+      ...current,
+      fieldHints: current.fieldHints.map((field) => (field.field_name === fieldName ? { ...field, ...patch } : field)),
+    }));
+    closeFieldModal(fieldName);
+  }
+
+  function renderFieldZone(zone: FieldZoneKey, ariaLabel: string, emptyHint: string) {
+    const entries = zoneFieldEntries(draft, zone);
+    const isActiveZone = fieldDragState !== null && fieldDragState.targetZone === zone;
+    return (
+      <div
+        aria-label={ariaLabel}
+        className={["dataset-admin-field-zone", isActiveZone ? "is-drop-target" : ""].filter(Boolean).join(" ")}
+        data-customization-drop-zone={zone}
+      >
+        {entries.length === 0 ? (
+          <p className="dataset-admin-field-zone__empty-hint">{emptyHint}</p>
+        ) : (
+          entries.map((field, index) => {
+            const isSource = fieldDragState?.fieldName === field.field_name;
+            const isInsertionTarget =
+              fieldDragState !== null &&
+              fieldDragState.fieldName !== field.field_name &&
+              fieldDragState.targetZone === zone &&
+              fieldDragState.targetIndex === index;
+            const attentionActive = zone === FIELD_BANK_ZONE && field.required;
+            return (
+              <div
+                className={["dataset-admin-field-chip", attentionActive ? "is-required-attention" : ""]
+                  .filter(Boolean)
+                  .join(" ")}
+                data-customization-field-index={index}
+                data-customization-field-zone={zone}
+                key={field.field_name}
+                onDoubleClick={() => openFieldModal(field.field_name)}
+                ref={(element) => {
+                  if (element) {
+                    chipRefs.current.set(field.field_name, element);
+                  } else {
+                    chipRefs.current.delete(field.field_name);
+                  }
+                }}
+                style={{
+                  ...(isSource ? fieldChipSourceStyle : {}),
+                  ...(isInsertionTarget ? fieldChipInsertionTargetStyle : {}),
+                }}
+                tabIndex={-1}
+              >
+                <button
+                  aria-label={`Drag field ${field.display_label || field.field_name}`}
+                  onPointerCancel={cancelFieldDrag}
+                  onPointerDown={(event) =>
+                    startFieldDrag(event, field.field_name, zone, index, field.display_label || field.field_name)
+                  }
+                  onPointerMove={updateFieldDrag}
+                  onPointerUp={finishFieldDrag}
+                  style={dragHandleStyle}
+                  type="button"
+                >
+                  ⋮⋮
+                </button>
+                <span className="dataset-admin-field-chip__name">{field.field_name}</span>
+                {field.required && <span style={tagStyle}>Required</span>}
+              </div>
+            );
+          })
+        )}
+      </div>
+    );
+  }
+
+  const requiredInBankCount = draft.fieldHints.filter((field) => field.required && field.hidden).length;
+  const editingField =
+    fieldModalState.status === "open"
+      ? draft.fieldHints.find((field) => field.field_name === fieldModalState.fieldName)
+      : undefined;
+
   return (
     <div className="dataset-admin-builder">
-      <section aria-label="Groups" className="dataset-admin-builder__canvas">
+      <section aria-label="Field bank" className="dataset-admin-builder__bank">
+        <div>
+          <span style={labelStyle}>Field bank</span>
+          <p style={mutedTextStyle}>
+            Fields outside the public form. Drag a chip into the public form layout to make it visible, or
+            double-click a chip to edit its presentation.
+          </p>
+        </div>
+        {requiredInBankCount > 0 && (
+          <article role="status" style={alertStyle}>
+            <strong>
+              {requiredInBankCount} required field{requiredInBankCount === 1 ? "" : "s"} still in the bank
+            </strong>
+            <p style={mutedTextStyle}>
+              Move every required field into the public form layout before saving. The backend rejects a saved
+              customization that hides a required field.
+            </p>
+          </article>
+        )}
+        {renderFieldZone(FIELD_BANK_ZONE, "Field bank fields", "Drag fields here to remove them from the public form.")}
+      </section>
+
+      <section aria-label="Public form layout" className="dataset-admin-builder__canvas">
         <div className="dataset-admin-builder__toolbar">
           <div>
-            <span style={labelStyle}>Public form layout canvas</span>
-            <p style={mutedTextStyle}>Group cards and the explicit No subgroup drop area define presentation order.</p>
+            <span style={labelStyle}>Public form layout</span>
+            <p style={mutedTextStyle}>Subgroup cards and the explicit No subgroup area define presentation order.</p>
           </div>
           <button onClick={addGroup} style={secondaryButtonStyle} type="button">
             Add group
           </button>
         </div>
-        <div className="dataset-admin-no-group-zone">
-          <strong>No subgroup</strong>
-          <span>Fields with no selected group render in the ungrouped area.</span>
-        </div>
         {draft.groups.length === 0 ? (
-          <p style={mutedTextStyle}>No groups defined. Fields without a group render ungrouped.</p>
+          <p style={mutedTextStyle}>No subgroups defined. Visible fields without a subgroup render in No subgroup below.</p>
         ) : (
           <div className="dataset-admin-builder__stack">
-            {draft.groups.map((group, index) => (
-              <div
-                className="dataset-admin-builder-card"
-                data-customization-drag-index={index}
-                data-customization-drag-kind="group"
-                key={group.group_id}
-                style={getDragItemStyle("group", index)}
-              >
-                <div className="dataset-admin-builder-card__head">
-                  <button
-                    aria-label={`Drag group ${group.label || group.group_id || index + 1}`}
-                    onPointerCancel={cancelDrag}
-                    onPointerDown={(event) => startDrag(event, "group", index, group.label || group.group_id || `Group ${index + 1}`)}
-                    onPointerMove={updateDrag}
-                    onPointerUp={finishDrag}
-                    style={dragHandleStyle}
-                    type="button"
-                  >
-                    Drag
-                  </button>
-                  <button
-                    disabled={index === 0}
-                    onClick={() => moveGroup(index, -1)}
-                    style={index === 0 ? disabledButtonStyle : secondaryButtonStyle}
-                    type="button"
-                  >
-                    Move up
-                  </button>
-                  <button
-                    disabled={index === draft.groups.length - 1}
-                    onClick={() => moveGroup(index, 1)}
-                    style={index === draft.groups.length - 1 ? disabledButtonStyle : secondaryButtonStyle}
-                    type="button"
-                  >
-                    Move down
-                  </button>
-                  <button onClick={() => removeGroup(group.group_id)} style={secondaryButtonStyle} type="button">
-                    Remove
-                  </button>
-                  <Badge>{draft.fieldHints.filter((field) => field.group === group.group_id).length} fields</Badge>
-                  <button
-                    aria-expanded={!collapsedGroupIds.has(group.group_id)}
-                    onClick={() => toggleGroupCollapsed(group.group_id)}
-                    style={secondaryButtonStyle}
-                    type="button"
-                  >
-                    {collapsedGroupIds.has(group.group_id) ? "Expand" : "Collapse"}
-                  </button>
-                </div>
-                {!collapsedGroupIds.has(group.group_id) && (
-                  <>
-                    <div style={twoColumnGridStyle}>
-                      <TextField label="Group ID" onChange={(value) => updateGroup(index, { group_id: value })} value={group.group_id} />
-                      <TextField label="Label" onChange={(value) => updateGroup(index, { label: value })} value={group.label} />
+            {draft.groups.map((group, index) => {
+              const groupLabel = group.label || group.group_id || `Group ${index + 1}`;
+              return (
+                <div
+                  className="dataset-admin-builder-card"
+                  data-customization-group-index={index}
+                  key={group.group_id}
+                  style={getGroupCardStyle(index)}
+                >
+                  <div className="dataset-admin-builder-card__head">
+                    <div style={subgroupControlsStyle}>
+                      <button
+                        aria-label={`Move subgroup ${groupLabel} up`}
+                        disabled={index === 0}
+                        onClick={() => moveSubgroup(index, -1)}
+                        style={index === 0 ? stackedIconActionButtonDisabledStyle : stackedIconActionButtonStyle}
+                        type="button"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        aria-label={`Move subgroup ${groupLabel} down`}
+                        disabled={index === draft.groups.length - 1}
+                        onClick={() => moveSubgroup(index, 1)}
+                        style={
+                          index === draft.groups.length - 1
+                            ? stackedIconActionButtonDisabledStyle
+                            : stackedIconActionButtonStyle
+                        }
+                        type="button"
+                      >
+                        ▼
+                      </button>
                     </div>
-                    <TextField
-                      label="Description"
-                      onChange={(value) => updateGroup(index, { description: value })}
-                      value={group.description}
-                    />
-                  </>
-                )}
-              </div>
-            ))}
+                    <button
+                      aria-label={`Drag group ${groupLabel}`}
+                      onPointerCancel={cancelGroupDrag}
+                      onPointerDown={(event) => startGroupDrag(event, index, groupLabel)}
+                      onPointerMove={updateGroupDrag}
+                      onPointerUp={finishGroupDrag}
+                      style={dragHandleStyle}
+                      type="button"
+                    >
+                      Drag
+                    </button>
+                    <button onClick={() => removeGroup(group.group_id)} style={secondaryButtonStyle} type="button">
+                      Remove
+                    </button>
+                    <Badge>{zoneFieldEntries(draft, group.group_id).length} fields</Badge>
+                    <button
+                      aria-expanded={!collapsedGroupIds.has(group.group_id)}
+                      onClick={() => toggleGroupCollapsed(group.group_id)}
+                      style={secondaryButtonStyle}
+                      type="button"
+                    >
+                      {collapsedGroupIds.has(group.group_id) ? "Expand" : "Collapse"}
+                    </button>
+                  </div>
+                  {!collapsedGroupIds.has(group.group_id) && (
+                    <>
+                      <div style={twoColumnGridStyle}>
+                        <TextField label="Group ID" onChange={(value) => updateGroup(index, { group_id: value })} value={group.group_id} />
+                        <TextField label="Label" onChange={(value) => updateGroup(index, { label: value })} value={group.label} />
+                      </div>
+                      <TextField
+                        label="Description"
+                        onChange={(value) => updateGroup(index, { description: value })}
+                        value={group.description}
+                      />
+                      {renderFieldZone(group.group_id, groupLabel, "Drag fields here to add them to this subgroup.")}
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
+
+        <div aria-label="No subgroup" className="dataset-admin-no-group-zone">
+          <strong>No subgroup</strong>
+          <span>Visible fields with no subgroup render here, below every subgroup card.</span>
+          {renderFieldZone(NO_SUBGROUP_ZONE, "No subgroup fields", "Drag fields here to show them without a subgroup.")}
+        </div>
       </section>
 
-      <section aria-label="Field presentation" className="dataset-admin-builder__bank">
-        <div>
-          <span style={labelStyle}>Field bank</span>
-          <p style={mutedTextStyle}>Each chip preserves its contract field and can only change public presentation metadata.</p>
-        </div>
-        {draft.fieldHints.length === 0 ? (
-          <p style={mutedTextStyle}>Contract field list unavailable.</p>
-        ) : (
-          <div className="dataset-admin-builder__stack">
-            {draft.fieldHints.map((field, index) => (
-              <div
-                className={["dataset-admin-builder-card", field.required ? "is-required" : ""].filter(Boolean).join(" ")}
-                data-customization-drag-index={index}
-                data-customization-drag-kind="field"
-                key={field.field_name}
-                style={getDragItemStyle("field", index)}
-              >
-                <div className="dataset-admin-builder-card__head">
-                  <strong>{field.field_name}</strong>
-                  {field.required && <span style={tagStyle}>required</span>}
-                  <button
-                    aria-label={`Drag field ${field.display_label || field.field_name}`}
-                    onPointerCancel={cancelDrag}
-                    onPointerDown={(event) => startDrag(event, "field", index, field.display_label || field.field_name)}
-                    onPointerMove={updateDrag}
-                    onPointerUp={finishDrag}
-                    style={dragHandleStyle}
-                    type="button"
-                  >
-                    Drag
-                  </button>
-                  <button
-                    disabled={index === 0}
-                    onClick={() => moveFieldHint(index, -1)}
-                    style={index === 0 ? disabledButtonStyle : secondaryButtonStyle}
-                    type="button"
-                  >
-                    Move up
-                  </button>
-                  <button
-                    disabled={index === draft.fieldHints.length - 1}
-                    onClick={() => moveFieldHint(index, 1)}
-                    style={index === draft.fieldHints.length - 1 ? disabledButtonStyle : secondaryButtonStyle}
-                    type="button"
-                  >
-                    Move down
-                  </button>
-                </div>
-                <div style={twoColumnGridStyle}>
-                  <TextField
-                    label="Display label"
-                    onChange={(value) => updateFieldHint(index, { display_label: value })}
-                    value={field.display_label}
-                  />
-                  <label style={fieldStyle}>
-                    <span style={labelStyle}>Group</span>
-                    <select
-                      onChange={(event) => updateFieldHint(index, { group: event.target.value })}
-                      style={inputStyle}
-                      value={field.group}
-                    >
-                      <option value="">No group</option>
-                      {draft.groups.map((group) => (
-                        <option key={group.group_id} value={group.group_id}>
-                          {group.label || group.group_id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <label style={fieldStyle}>
-                  <span style={labelStyle}>Explanatory copy</span>
-                  <textarea
-                    onChange={(event) => updateFieldHint(index, { explanatory_copy: event.target.value })}
-                    style={textareaStyle}
-                    value={field.explanatory_copy}
-                  />
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: "var(--atlas-space-2)" }}>
-                  <input
-                    checked={field.hidden}
-                    disabled={field.required}
-                    onChange={(event) => {
-                      if (field.required) return;
-                      updateFieldHint(index, { hidden: event.target.checked });
-                    }}
-                    type="checkbox"
-                  />
-                  <span style={mutedTextStyle}>
-                    {field.required ? "Required fields cannot be hidden." : "Hidden"}
-                  </span>
-                </label>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-      {dragState && (
+      {fieldDragState && (
         <div
           aria-hidden="true"
-          style={{
-            ...dragGhostStyle,
-            left: dragState.pointerX,
-            top: dragState.pointerY,
-          }}
+          style={{ ...dragGhostStyle, left: fieldDragState.pointerX, top: fieldDragState.pointerY }}
         >
-          {dragState.label}
+          {fieldDragState.label}
         </div>
+      )}
+      {groupDragState && (
+        <div
+          aria-hidden="true"
+          style={{ ...dragGhostStyle, left: groupDragState.pointerX, top: groupDragState.pointerY }}
+        >
+          {groupDragState.label}
+        </div>
+      )}
+
+      {editingField && (
+        <FieldEditModal
+          contractField={contractFieldsByName.get(editingField.field_name)}
+          field={editingField}
+          onCancel={() => closeFieldModal(editingField.field_name)}
+          onSave={(patch) => saveFieldModal(editingField.field_name, patch)}
+        />
       )}
     </div>
   );
@@ -2233,6 +2574,12 @@ function InferenceFormTab({
     customizationEditorState.status === "invalid"
       ? customizationEditorState.draft
       : null;
+  const contractFieldsByName = useMemo(
+    () => new Map(contractFields(stateValue(readOnlyData.contract)).map((field) => [field.name, field])),
+    [readOnlyData.contract],
+  );
+  const requiredInBank = draft ? draft.fieldHints.some((field) => field.required && field.hidden) : false;
+  const saveDisabled = !draft || requiredInBank;
 
   return (
     <TabWorkspace
@@ -2265,7 +2612,13 @@ function InferenceFormTab({
             >
               Load customization
             </button>
-            <button disabled={!draft} onClick={onSaveCustomization} style={!draft ? disabledButtonStyle : actionButtonStyle} type="button">
+            <button
+              disabled={saveDisabled}
+              onClick={onSaveCustomization}
+              style={saveDisabled ? disabledButtonStyle : actionButtonStyle}
+              title={requiredInBank ? "Move every required field out of the field bank before saving." : undefined}
+              type="button"
+            >
               Save customization
             </button>
           </div>
@@ -2273,7 +2626,7 @@ function InferenceFormTab({
 
         <CustomizationStatusPanel state={customizationEditorState} />
 
-        {draft && <CustomizationEditor draft={draft} onUpdateDraft={onUpdateDraft} />}
+        {draft && <CustomizationEditor contractFieldsByName={contractFieldsByName} draft={draft} onUpdateDraft={onUpdateDraft} />}
       </Card>
     </TabWorkspace>
   );
@@ -3547,6 +3900,25 @@ export default function DatasetAdminPage() {
     }
 
     const draft = customizationEditorState.draft;
+    // Client-side mirror of the backend's REQUIRED_FIELD_HIDDEN rejection
+    // (registry/predict_view_customization_validate.py): block the request
+    // entirely rather than round-tripping a save the backend is guaranteed
+    // to reject. This does not weaken or replace that backend validation --
+    // it only avoids relying on it as the sole enforcement point.
+    if (draft.fieldHints.some((field) => field.required && field.hidden)) {
+      setCustomizationEditorState({
+        status: "invalid",
+        draft,
+        errors: [
+          {
+            code: "REQUIRED_FIELD_HIDDEN",
+            field: null,
+            message: "Move every required field out of the field bank before saving.",
+          },
+        ],
+      });
+      return;
+    }
     const { field_hints, groups } = customizationDraftToRecord(draft);
     const payload = {
       schema_version: "1.0.0",

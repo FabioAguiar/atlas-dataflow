@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-13T14:26:55Z",
+  "published_at": "2026-07-13T14:41:46Z",
   "active_release_at_publish_time": "release-20260713t103826z",
   "profile": {
     "display": {
-      "title": "Telco Customer Churn3",
+      "title": "Telco Customer Churn",
       "release_date_label": "2026-07-13",
       "canonical_name_fallback": true
     },
@@ -43,7 +43,7 @@
       ]
     },
     "theme": {
-      "preset": "cyber-neon"
+      "preset": "solar-flare"
     },
     "inference_presentation": {
       "bound_predict_view_id": null

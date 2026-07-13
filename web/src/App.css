@@ -1742,18 +1742,57 @@ h1 {
   background: var(--atlas-color-surface);
 }
 
-.dataset-admin-builder-card.is-required {
-  border-color: color-mix(in srgb, var(--atlas-color-danger) 35%, var(--atlas-color-border));
-}
-
 .dataset-admin-no-group-zone {
   display: grid;
-  gap: var(--atlas-space-1);
+  gap: var(--atlas-space-2);
   border: 1px dashed var(--atlas-color-border-strong);
   border-radius: var(--atlas-radius-md);
   padding: var(--atlas-space-3);
   color: var(--atlas-color-text-muted);
   background: var(--atlas-color-surface);
+}
+
+.dataset-admin-field-zone {
+  display: grid;
+  gap: var(--atlas-space-2);
+  align-content: start;
+  min-height: 3.5rem;
+  border: 1px dashed var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-md);
+  padding: var(--atlas-space-3);
+  background: var(--atlas-color-surface);
+}
+
+.dataset-admin-field-zone.is-drop-target {
+  border-color: var(--atlas-color-accent);
+  background: var(--atlas-color-accent-muted);
+}
+
+.dataset-admin-field-zone__empty-hint {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-sm);
+}
+
+.dataset-admin-field-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--atlas-space-2);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+  padding: var(--atlas-space-2) var(--atlas-space-3);
+  background: var(--atlas-color-surface-muted);
+}
+
+.dataset-admin-field-chip.is-required-attention {
+  border-color: color-mix(in srgb, var(--atlas-color-danger) 45%, var(--atlas-color-border));
+  background: color-mix(in srgb, var(--atlas-color-danger) 8%, var(--atlas-color-surface));
+}
+
+.dataset-admin-field-chip__name {
+  flex: 1;
+  color: var(--atlas-color-text);
+  font-weight: 700;
 }
 
 .dataset-admin-result-preset-grid {

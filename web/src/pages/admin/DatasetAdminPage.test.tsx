@@ -1482,7 +1482,10 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Medium badge label"), { target: { value: "Elevated risk (edited)" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-    fireEvent.change(screen.getAllByLabelText("Display label")[0], { target: { value: "Tenure (edited)" } });
+    fireEvent.doubleClick(screen.getByText("tenure"));
+    const fieldModal = await screen.findByRole("dialog", { name: "Edit field" });
+    fireEvent.change(within(fieldModal).getByLabelText("Display label"), { target: { value: "Tenure (edited)" } });
+    fireEvent.click(within(fieldModal).getByRole("button", { name: "Save field" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
 
@@ -1558,12 +1561,9 @@ describe("DatasetAdminPage", () => {
 
     await loadDraftAndCustomization();
 
-    const groupsPanel = screen.getByLabelText("Groups");
-    const groupDragHandle = within(groupsPanel).getByRole("button", { name: "Drag group Account profile" });
+    const layoutPanel = screen.getByLabelText("Public form layout");
+    const groupDragHandle = within(layoutPanel).getByRole("button", { name: "Drag group Account profile" });
     fireEvent.pointerDown(groupDragHandle, { pointerId: 1, clientX: 12, clientY: 16 });
-    // "Account profile" also appears as a per-field group <option>, so the
-    // drag ghost (a plain aria-hidden div, not an <option>) needs filtering
-    // out from those to be found unambiguously.
     const groupGhost = screen.getAllByText("Account profile").find((el) => el.tagName !== "OPTION");
     expect(groupGhost).toBeInTheDocument();
     fireEvent.pointerUp(groupDragHandle, { pointerId: 1, clientX: 18, clientY: 24 });
@@ -1572,8 +1572,7 @@ describe("DatasetAdminPage", () => {
       expect(Element.prototype.setPointerCapture).toHaveBeenCalledWith(1);
     });
 
-    const fieldsPanel = screen.getByLabelText("Field presentation");
-    const fieldDragHandle = within(fieldsPanel).getByRole("button", { name: "Drag field Tenure" });
+    const fieldDragHandle = within(layoutPanel).getByRole("button", { name: "Drag field Tenure" });
     fireEvent.pointerDown(fieldDragHandle, { pointerId: 2, clientX: 20, clientY: 28 });
     const fieldGhost = screen.getAllByText("Tenure").find((el) => el.tagName !== "OPTION");
     expect(fieldGhost).toBeInTheDocument();
@@ -1585,16 +1584,21 @@ describe("DatasetAdminPage", () => {
   });
 
   it("persists group create/edit/remove/reorder through customization save and reload", async () => {
+    // Route every drop onto the newly created "group-3" zone -- this test
+    // only ever drags one field (tenure), into that one destination.
+    document.elementFromPoint = vi.fn(() =>
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="group-3"]'),
+    );
+
     installFetchMock({ trackCustomizationSaves: true });
     renderAdminPage();
 
     await loadDraftAndCustomization();
 
-    const groupsPanel = screen.getByLabelText("Groups");
-    const fieldsPanel = screen.getByLabelText("Field presentation");
+    const layoutPanel = screen.getByLabelText("Public form layout");
 
     fireEvent.click(screen.getByRole("button", { name: "Add group" }));
-    const removeButtonsAfterAdd = within(groupsPanel).getAllByRole("button", { name: "Remove" });
+    const removeButtonsAfterAdd = within(layoutPanel).getAllByRole("button", { name: "Remove" });
     const newGroupCard = removeButtonsAfterAdd[removeButtonsAfterAdd.length - 1].closest(
       ".dataset-admin-builder-card",
     ) as HTMLElement;
@@ -1606,16 +1610,18 @@ describe("DatasetAdminPage", () => {
 
     // The new group's group_id is deterministically "group-3"
     // (addGroup: `group-${current.groups.length + 1}` with 2 pre-existing groups).
-    const tenureCard = within(fieldsPanel).getByText("tenure").closest(".dataset-admin-builder-card") as HTMLElement;
-    fireEvent.change(within(tenureCard).getByLabelText("Group"), { target: { value: "group-3" } });
+    // Drag "tenure" out of Account profile into the newly created group.
+    const tenureDragHandle = screen.getByRole("button", { name: "Drag field Tenure" });
+    fireEvent.pointerDown(tenureDragHandle, { pointerId: 5, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(tenureDragHandle, { pointerId: 5, clientX: 0, clientY: 0 });
 
-    // Move down on the first group ("Account profile") swaps it with its
-    // neighbor ("Charges").
-    fireEvent.click(within(groupsPanel).getAllByRole("button", { name: "Move down" })[0]);
+    // The stacked down control on the first subgroup ("Account profile")
+    // swaps it with its neighbor ("Charges").
+    fireEvent.click(screen.getByRole("button", { name: "Move subgroup Account profile down" }));
 
     // Remove a different pre-existing group ("Account profile") than the one
     // just created/edited/assigned ("Support tier").
-    const accountCard = within(groupsPanel)
+    const accountCard = within(layoutPanel)
       .getByDisplayValue("Account profile")
       .closest(".dataset-admin-builder-card") as HTMLElement;
     fireEvent.click(within(accountCard).getByRole("button", { name: "Remove" }));
@@ -1628,24 +1634,17 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load customization" }));
     await screen.findByText("Customization loaded");
 
-    const reloadedGroupsPanel = screen.getByLabelText("Groups");
-    const reloadedLabels = within(reloadedGroupsPanel).getAllByLabelText("Label") as HTMLInputElement[];
+    const reloadedLayoutPanel = screen.getByLabelText("Public form layout");
+    const reloadedLabels = within(reloadedLayoutPanel).getAllByLabelText("Label") as HTMLInputElement[];
     expect(reloadedLabels.map((input) => input.value)).toEqual(["Charges", "Support tier"]);
-    const reloadedDescriptions = within(reloadedGroupsPanel).getAllByLabelText("Description") as HTMLInputElement[];
+    const reloadedDescriptions = within(reloadedLayoutPanel).getAllByLabelText("Description") as HTMLInputElement[];
     expect(reloadedDescriptions.map((input) => input.value)).toEqual([
       "Billing attributes",
       "Support-related attributes",
     ]);
 
-    const reloadedFieldsPanel = screen.getByLabelText("Field presentation");
-    const reloadedTenureCard = within(reloadedFieldsPanel)
-      .getByText("tenure")
-      .closest(".dataset-admin-builder-card") as HTMLElement;
-    expect(within(reloadedTenureCard).getByLabelText("Group")).toHaveValue("group-3");
-    const reloadedChargesCard = within(reloadedFieldsPanel)
-      .getByText("MonthlyCharges")
-      .closest(".dataset-admin-builder-card") as HTMLElement;
-    expect(within(reloadedChargesCard).getByLabelText("Group")).toHaveValue("charges");
+    expect(within(screen.getByLabelText("Support tier")).getByText("tenure")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Charges")).getByText("MonthlyCharges")).toBeInTheDocument();
   });
 
   it("isolates the group collapse affordance from the saved customization", async () => {
@@ -1654,8 +1653,8 @@ describe("DatasetAdminPage", () => {
 
     await loadDraftAndCustomization();
 
-    const groupsPanel = screen.getByLabelText("Groups");
-    const accountCard = within(groupsPanel)
+    const layoutPanel = screen.getByLabelText("Public form layout");
+    const accountCard = within(layoutPanel)
       .getByDisplayValue("Account profile")
       .closest(".dataset-admin-builder-card") as HTMLElement;
 
@@ -1664,6 +1663,7 @@ describe("DatasetAdminPage", () => {
     expect(within(accountCard).getByLabelText("Group ID")).toBeInTheDocument();
     expect(within(accountCard).getByLabelText("Label")).toBeInTheDocument();
     expect(within(accountCard).getByLabelText("Description")).toBeInTheDocument();
+    expect(within(accountCard).getByText("tenure")).toBeInTheDocument();
 
     fireEvent.click(collapseButton);
 
@@ -1672,11 +1672,13 @@ describe("DatasetAdminPage", () => {
     expect(within(accountCard).queryByLabelText("Group ID")).not.toBeInTheDocument();
     expect(within(accountCard).queryByLabelText("Label")).not.toBeInTheDocument();
     expect(within(accountCard).queryByLabelText("Description")).not.toBeInTheDocument();
+    expect(within(accountCard).queryByText("tenure")).not.toBeInTheDocument();
 
-    // The header row (drag, move, remove, field count, collapse/expand)
-    // must remain visible and functional regardless of collapsed state.
+    // The header row (stacked up/down, drag, remove, field count,
+    // collapse/expand) must remain visible and functional regardless of
+    // collapsed state.
     expect(within(accountCard).getByRole("button", { name: /^Drag group/ })).toBeInTheDocument();
-    expect(within(accountCard).getByRole("button", { name: "Move down" })).toBeInTheDocument();
+    expect(within(accountCard).getByRole("button", { name: "Move subgroup Account profile down" })).toBeInTheDocument();
     expect(within(accountCard).getByRole("button", { name: "Remove" })).toBeInTheDocument();
     expect(within(accountCard).getByText(/fields$/)).toBeInTheDocument();
 
@@ -1704,29 +1706,43 @@ describe("DatasetAdminPage", () => {
     ]);
   });
 
-  it("disables the hide checkbox for a required field and never saves it as hidden", async () => {
+  it("shows a visible attention state for a required field left in the bank, blocks saving, and never persists it as hidden", async () => {
+    document.elementFromPoint = vi.fn(() => null);
     const fetchMock = installFetchMock({ requiredFieldOverride: "tenure" });
     renderAdminPage();
 
     await loadDraftAndCustomization();
 
-    const fieldsPanel = screen.getByLabelText("Field presentation");
-    const tenureCard = within(fieldsPanel).getByText("tenure").closest(".dataset-admin-builder-card") as HTMLElement;
-    expect(within(tenureCard).getByText("required")).toBeInTheDocument();
+    const bankZone = document.querySelector<HTMLElement>('[data-customization-drop-zone="bank"]');
+    document.elementFromPoint = vi.fn(() => bankZone);
 
-    const hideCheckbox = within(tenureCard).getByRole("checkbox");
-    expect(hideCheckbox).toBeDisabled();
-    expect(hideCheckbox).not.toBeChecked();
+    const tenureDragHandle = screen.getByRole("button", { name: "Drag field Tenure" });
+    fireEvent.pointerDown(tenureDragHandle, { pointerId: 7, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(tenureDragHandle, { pointerId: 7, clientX: 0, clientY: 0 });
 
-    // Disabled inputs should not respond to interaction; attempting the click
-    // anyway (rather than only asserting the disabled attribute) guards
-    // against a regression that removes `disabled` without preserving the
-    // required-cannot-be-hidden guarantee itself.
-    fireEvent.click(hideCheckbox);
-    expect(hideCheckbox).not.toBeChecked();
+    const bankPanel = screen.getByLabelText("Field bank");
+    const tenureChip = within(bankPanel).getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    expect(tenureChip).toHaveClass("is-required-attention");
+    expect(within(tenureChip).getByText("Required")).toBeInTheDocument();
+    expect(screen.getByText(/1 required field still in the bank/i)).toBeInTheDocument();
+
+    const saveButton = screen.getByRole("button", { name: "Save customization" });
+    expect(saveButton).toBeDisabled();
+
+    // Drag tenure back out into the public form layout's No subgroup zone --
+    // required fields return to the standard chip treatment and the block
+    // clears once no required field remains in the bank.
+    const noSubgroupZone = document.querySelector<HTMLElement>('[data-customization-drop-zone="no-subgroup"]');
+    document.elementFromPoint = vi.fn(() => noSubgroupZone);
+    const tenureDragHandleAgain = within(bankPanel).getByRole("button", { name: "Drag field Tenure" });
+    fireEvent.pointerDown(tenureDragHandleAgain, { pointerId: 8, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(tenureDragHandleAgain, { pointerId: 8, clientX: 0, clientY: 0 });
+
+    expect(screen.queryByText(/required field.*still in the bank/i)).not.toBeInTheDocument();
+    expect(saveButton).not.toBeDisabled();
 
     const callsBeforeSave = fetchMock.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    fireEvent.click(saveButton);
     await screen.findByText("Customization saved.");
 
     const saveCall = fetchMock.mock.calls
@@ -1738,22 +1754,15 @@ describe("DatasetAdminPage", () => {
       );
     expect(saveCall).toBeDefined();
     const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
-      field_hints: Array<{ field_name: string; hidden?: boolean }>;
+      field_hints: Array<{ field_name: string; hidden?: boolean; group?: string }>;
     };
     const tenureHint = body.field_hints.find((hint) => hint.field_name === "tenure");
     expect(tenureHint?.hidden).toBeUndefined();
+    expect(tenureHint?.group).toBeUndefined();
   });
 
-  it("saves identical field order and display_order_hint via a button reorder and an equivalent drag reorder", async () => {
-    // jsdom does not implement elementFromPoint at all (the property is
-    // absent, not just unimplemented), so it must be assigned directly
-    // rather than wrapped with vi.spyOn, which requires the property to
-    // already exist.
-    document.elementFromPoint = vi.fn((_x: number, y: number) =>
-      document.querySelector<HTMLElement>(`[data-customization-drag-kind="field"][data-customization-drag-index="${y}"]`),
-    );
-
-    function extractSavedFieldOrder(fetchMock: ReturnType<typeof installFetchMock>, callsBeforeSave: number) {
+  it("saves identical subgroup order via a stacked up/down control reorder and an equivalent drag reorder", async () => {
+    function extractSavedGroupOrder(fetchMock: ReturnType<typeof installFetchMock>, callsBeforeSave: number) {
       const saveCall = fetchMock.mock.calls
         .slice(callsBeforeSave)
         .find(
@@ -1762,40 +1771,157 @@ describe("DatasetAdminPage", () => {
             (call[1] as RequestInit | undefined)?.method === "PUT",
         );
       const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
-        field_hints: Array<{ field_name: string; display_order_hint: number }>;
+        groups: Array<{ group_id: string }>;
       };
-      return body.field_hints.map((hint) => ({ field_name: hint.field_name, display_order_hint: hint.display_order_hint }));
+      return body.groups.map((group) => group.group_id);
     }
+
+    document.elementFromPoint = vi.fn(() => null);
 
     const buttonFetchMock = installFetchMock();
     const { unmount } = renderAdminPage();
     await loadDraftAndCustomization();
 
-    const buttonFieldsPanel = screen.getByLabelText("Field presentation");
-    const moveDownButtons = within(buttonFieldsPanel).getAllByRole("button", { name: "Move down" });
     const callsBeforeButtonSave = buttonFetchMock.mock.calls.length;
-    fireEvent.click(moveDownButtons[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Move subgroup Account profile down" }));
     fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
     await screen.findByText("Customization saved.");
-    const buttonOrder = extractSavedFieldOrder(buttonFetchMock, callsBeforeButtonSave);
+    const buttonOrder = extractSavedGroupOrder(buttonFetchMock, callsBeforeButtonSave);
 
     unmount();
+
+    // jsdom does not implement elementFromPoint at all (the property is
+    // absent, not just unimplemented), so it must be assigned directly
+    // rather than wrapped with vi.spyOn, which requires the property to
+    // already exist.
+    document.elementFromPoint = vi.fn((_x: number, y: number) =>
+      document.querySelector<HTMLElement>(`[data-customization-group-index="${y}"]`),
+    );
 
     const dragFetchMock = installFetchMock();
     renderAdminPage();
     await loadDraftAndCustomization();
 
-    const dragFieldsPanel = screen.getByLabelText("Field presentation");
-    const tenureDragHandle = within(dragFieldsPanel).getByRole("button", { name: "Drag field Tenure" });
+    const accountDragHandle = screen.getByRole("button", { name: "Drag group Account profile" });
     const callsBeforeDragSave = dragFetchMock.mock.calls.length;
-    fireEvent.pointerDown(tenureDragHandle, { pointerId: 3, clientX: 0, clientY: 0 });
-    fireEvent.pointerUp(tenureDragHandle, { pointerId: 3, clientX: 0, clientY: 1 });
+    fireEvent.pointerDown(accountDragHandle, { pointerId: 3, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(accountDragHandle, { pointerId: 3, clientX: 0, clientY: 1 });
     fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
     await screen.findByText("Customization saved.");
-    const dragOrder = extractSavedFieldOrder(dragFetchMock, callsBeforeDragSave);
+    const dragOrder = extractSavedGroupOrder(dragFetchMock, callsBeforeDragSave);
 
     expect(dragOrder).toEqual(buttonOrder);
-    expect(dragOrder.map((entry) => entry.field_name)).toEqual(["MonthlyCharges", "tenure"]);
+    expect(dragOrder).toEqual(["charges", "account"]);
+  });
+
+  it("moves fields across every zone via drag and drop, keeping each field visible exactly once with a deterministic saved order", async () => {
+    function dropOn(zone: string) {
+      document.elementFromPoint = vi.fn(() =>
+        document.querySelector<HTMLElement>(`[data-customization-drop-zone="${zone}"]`),
+      );
+    }
+
+    const fetchMock = installFetchMock({ trackCustomizationSaves: true });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    // tenure: Account profile subgroup -> Field bank (optional field, so this
+    // is an allowed pending state, not a blocked one).
+    dropOn("bank");
+    let handle = screen.getByRole("button", { name: "Drag field Tenure" });
+    fireEvent.pointerDown(handle, { pointerId: 10, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(handle, { pointerId: 10, clientX: 0, clientY: 0 });
+
+    const bankPanel = screen.getByLabelText("Field bank");
+    expect(within(bankPanel).getByText("tenure")).toBeInTheDocument();
+
+    // MonthlyCharges: Charges subgroup -> No subgroup.
+    dropOn("no-subgroup");
+    handle = screen.getByRole("button", { name: "Drag field Monthly charges" });
+    fireEvent.pointerDown(handle, { pointerId: 11, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(handle, { pointerId: 11, clientX: 0, clientY: 0 });
+
+    expect(within(screen.getByLabelText("No subgroup fields")).getByText("MonthlyCharges")).toBeInTheDocument();
+
+    // tenure: Field bank -> back into the Account profile subgroup.
+    dropOn("account");
+    handle = within(bankPanel).getByRole("button", { name: "Drag field Tenure" });
+    fireEvent.pointerDown(handle, { pointerId: 12, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(handle, { pointerId: 12, clientX: 0, clientY: 0 });
+
+    expect(within(screen.getByLabelText("Account profile")).getByText("tenure")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    await screen.findByText("Customization saved.");
+
+    const saveCall = fetchMock.mock.calls.find(
+      (call: unknown[]) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+        (call[1] as RequestInit | undefined)?.method === "PUT",
+    );
+    const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+      field_hints: Array<{ field_name: string; group?: string; hidden?: boolean; display_order_hint: number }>;
+    };
+    expect(body.field_hints).toHaveLength(2);
+    const tenureHint = body.field_hints.find((hint) => hint.field_name === "tenure");
+    const chargesHint = body.field_hints.find((hint) => hint.field_name === "MonthlyCharges");
+    expect(tenureHint?.group).toBe("account");
+    expect(tenureHint?.hidden).toBeUndefined();
+    expect(chargesHint?.group).toBeUndefined();
+    expect(chargesHint?.hidden).toBeUndefined();
+    const orderHints = body.field_hints.map((hint) => hint.display_order_hint).sort((a, b) => a - b);
+    expect(orderHints).toEqual([1, 2]);
+  });
+
+  it("renders Field bank before Public form layout in DOM order", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const bankSection = screen.getByLabelText("Field bank");
+    const layoutSection = screen.getByLabelText("Public form layout");
+    expect(
+      bankSection.compareDocumentPosition(layoutSection) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("edits a field's presentation through the double-click modal, supporting cancel, Escape, and focus restore", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    fireEvent.doubleClick(tenureChip);
+
+    let dialog = await screen.findByRole("dialog", { name: "Edit field" });
+    expect(document.activeElement).toBe(within(dialog).getByLabelText("Display label"));
+    expect(within(dialog).getByText("tenure")).toBeInTheDocument();
+    expect(within(dialog).getByText("number")).toBeInTheDocument();
+    expect(within(dialog).getByText("Optional")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Group")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Display label"), { target: { value: "Should not persist" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog", { name: "Edit field" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Should not persist")).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(tenureChip);
+
+    fireEvent.doubleClick(tenureChip);
+    await screen.findByRole("dialog", { name: "Edit field" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Edit field" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(tenureChip);
+
+    fireEvent.doubleClick(tenureChip);
+    dialog = await screen.findByRole("dialog", { name: "Edit field" });
+    fireEvent.change(within(dialog).getByLabelText("Display label"), { target: { value: "Tenure (renamed)" } });
+    fireEvent.change(within(dialog).getByLabelText("Explanatory copy"), { target: { value: "Updated copy" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save field" }));
+
+    expect(screen.queryByRole("dialog", { name: "Edit field" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(tenureChip);
   });
 
   it("shows a disabled selector, no selected dataset, and a disabled public-open action when no datasets are registered", async () => {

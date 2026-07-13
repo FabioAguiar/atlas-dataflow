@@ -30,7 +30,11 @@ import {
   projectResultCardPreview,
   toVisualizationsPayload,
 } from "../../lib/livePreviewProjection";
-import type { DatasetIconName } from "../../lib/datasetPresentation";
+import {
+  normalizeDatasetDateOnly,
+  presentDatasetOperationalTimestamp,
+  type DatasetIconName,
+} from "../../lib/datasetPresentation";
 
 // Curator-facing labels for Atlas's full controlled icon bank (see
 // contracts/dataset-public-profile.schema.json's home_card.icon enum).
@@ -1121,7 +1125,7 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     problem_summary_body: profile.display?.problem_summary_body ?? "",
     source_name: profile.display?.source_name ?? "",
     source_url: profile.display?.source_url ?? "",
-    release_date_label: normalizeDate(profile.display?.release_date_label),
+    release_date_label: normalizeDatasetDateOnly(profile.display?.release_date_label),
     release_date_mode: profile.display?.release_date_mode === "manual" ? "manual" : "auto",
     date_format: profile.display?.date_format ?? "",
     canonical_name_fallback: profile.display?.canonical_name_fallback ?? true,
@@ -1147,20 +1151,8 @@ function textValue(value: string): string | undefined {
   return trimmed || undefined;
 }
 
-function normalizeDate(value: string | null | undefined): string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return "";
-  }
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value ? "" : value;
-}
-
 function dateFromLastUpdated(value: string | null | undefined): string {
-  if (!value) {
-    return "";
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+  return presentDatasetOperationalTimestamp(value)?.localCalendarDate ?? "";
 }
 
 function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
@@ -1530,17 +1522,24 @@ function PublicContentTab({
             type="url"
             value={form.source_url}
           />
-          <TextField
-            label="Release date label"
-            onChange={(value) => {
-              const normalized = normalizeDate(value);
-              setField("release_date_label", normalized);
-              setField("release_date_mode", normalized ? "manual" : "auto");
-            }}
-            required
-            type="date"
-            value={form.release_date_label}
-          />
+          <div style={fieldStyle}>
+            <TextField
+              label="Release date label"
+              onChange={(value) => {
+                const normalized = normalizeDatasetDateOnly(value);
+                setField("release_date_label", normalized);
+                setField("release_date_mode", normalized ? "manual" : "auto");
+              }}
+              required
+              type="date"
+              value={form.release_date_label}
+            />
+            {form.release_date_mode === "manual" && (
+              <p role="status" style={mutedTextStyle}>
+                Editorial override: this public date may differ from Last updated. The operational timestamp is unchanged.
+              </p>
+            )}
+          </div>
           <label style={fieldStyle}>
             <span style={fieldLabelRowStyle}>
               Date format

@@ -48,6 +48,85 @@ export function presentHomeCardDescription(description?: string | null): string 
   return LEGACY_HOME_CARD_DESCRIPTION_FALLBACKS.has(trimmed) ? "" : trimmed;
 }
 
+export type DatasetOperationalTimestampPresentation = {
+  localizedDateTime: string;
+  localCalendarDate: string;
+};
+
+type DatasetOperationalTimestampPresentationOptions = {
+  locale?: string | string[];
+  timeZone?: string;
+};
+
+/**
+ * Projects the canonical UTC Dataset Detail mutation timestamp into the two
+ * admin-facing values that must share one local calendar interpretation.
+ * The optional timezone keeps this contract deterministic in tests; runtime
+ * callers omit it to use the browser's configured local timezone.
+ */
+export function presentDatasetOperationalTimestamp(
+  value: string | null | undefined,
+  options: DatasetOperationalTimestampPresentationOptions = {},
+): DatasetOperationalTimestampPresentation | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const timeZoneOptions = options.timeZone ? { timeZone: options.timeZone } : {};
+  const calendarParts = new Intl.DateTimeFormat("en-US-u-ca-gregory-nu-latn", {
+    ...timeZoneOptions,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(parsed);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    calendarParts.find((candidate) => candidate.type === type)?.value;
+  const year = part("year");
+  const month = part("month");
+  const day = part("day");
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return {
+    localizedDateTime: parsed.toLocaleString(options.locale, {
+      ...timeZoneOptions,
+      calendar: "gregory",
+      dateStyle: "medium",
+      timeStyle: "short",
+    }),
+    localCalendarDate: `${year}-${month}-${day}`,
+  };
+}
+
+/** Validates editorial date-only content without applying timestamp semantics. */
+export function normalizeDatasetDateOnly(value: string | null | undefined): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return "";
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1]
+    ? value
+    : "";
+}
+
 /**
  * GET /datasets (registry/list.py ListedDataset) returns only dataset_slug,
  * title, summary, domain, visibility and tags today, never problem_type. This

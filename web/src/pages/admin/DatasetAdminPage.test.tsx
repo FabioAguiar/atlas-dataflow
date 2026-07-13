@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { normalizeDatasetDateOnly, presentDatasetOperationalTimestamp } from "../../lib/datasetPresentation";
 import DatasetAdminPage from "./DatasetAdminPage";
 
 // DatasetAdminPage's Home card preview renders the shared DatasetCard
@@ -149,12 +150,14 @@ function installFetchMock(
     publishedSnapshotProfile?: typeof publicProfile;
     freshPromotionHydration?: boolean;
     lastUpdated?: string;
+    lastUpdatedAfterPublish?: string;
     releaseDate?: string;
     releaseDateMode?: "auto" | "manual";
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
   let savedCustomization: typeof customization | null = null;
+  let publishedProfile: typeof publicProfile | null = null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
@@ -166,13 +169,18 @@ function installFetchMock(
           {
             dataset_slug: datasetSlug,
             title: "Telco Customer Churn",
-            display_title: options.noExistingDraft ? null : publicProfile.display.title,
+            display_title: options.noExistingDraft
+              ? null
+              : publishedProfile?.display.title ?? publicProfile.display.title,
             summary: "Customer churn prediction dataset",
             domain: "telecom",
             tags: ["telecom"],
             active_release: "release-20260619-001",
             publication_status: "ready",
-            last_updated: options.lastUpdated ?? "2026-06-19T12:00:00Z",
+            last_updated:
+              publishedProfile && options.lastUpdatedAfterPublish
+                ? options.lastUpdatedAfterPublish
+                : options.lastUpdated ?? "2026-06-19T12:00:00Z",
           },
         ],
       });
@@ -262,6 +270,7 @@ function installFetchMock(
           : options.trackProfileDraftSaves
           ? savedProfileDraft ?? publicProfile
           : publicProfile;
+      publishedProfile = profile;
       return jsonResponse({
         published: true,
         snapshot: {
@@ -318,15 +327,16 @@ function installFetchMock(
       if (options.noExistingDraft) {
         return jsonResponse({ draft_exists: false, profile: null });
       }
-      const profile = {
-        ...publicProfile,
-        display: {
-          ...publicProfile.display,
-          release_date_label: options.releaseDate ?? publicProfile.display.release_date_label,
-          release_date_mode: options.releaseDateMode ?? publicProfile.display.release_date_mode,
-        },
-        ...(options.themePresetOverride ? { theme: { preset: options.themePresetOverride } } : {}),
-      };
+      const profile =
+        publishedProfile ?? {
+          ...publicProfile,
+          display: {
+            ...publicProfile.display,
+            release_date_label: options.releaseDate ?? publicProfile.display.release_date_label,
+            release_date_mode: options.releaseDateMode ?? publicProfile.display.release_date_mode,
+          },
+          ...(options.themePresetOverride ? { theme: { preset: options.themePresetOverride } } : {}),
+        };
       if (options.trackProfileDraftSaves) {
         savedProfileDraft = profile;
       }
@@ -399,6 +409,7 @@ describe("DatasetAdminPage", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -719,12 +730,28 @@ describe("DatasetAdminPage", () => {
     expect(within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" })).toBeEnabled();
   });
 
+  it("uses the shared local calendar projection and keeps date-only editorial values stable (Project Spec S0092)", async () => {
+    vi.stubEnv("TZ", "America/Recife");
+    installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "auto", lastUpdated: "2026-07-13T00:41:21Z" });
+    renderAdminPage();
+
+    await waitFor(() => expect(screen.getByLabelText("Release date label")).toHaveValue("2026-07-12"));
+    expect(
+      presentDatasetOperationalTimestamp("2026-07-13T00:41:21Z", { timeZone: "America/Recife" })?.localCalendarDate,
+    ).toBe("2026-07-12");
+    expect(normalizeDatasetDateOnly("2026-07-12")).toBe("2026-07-12");
+    expect(normalizeDatasetDateOnly("2026-02-30")).toBe("");
+  });
+
   it("preserves a manual release date and publishes its override metadata with normal dirty-state reset (Project Spec S0064)", async () => {
     const fetchMock = installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "manual", lastUpdated: "2026-06-21T23:15:00Z" });
     renderAdminPage();
 
     const input = await screen.findByLabelText("Release date label");
     await waitFor(() => expect(input).toHaveValue("2026-05-01"));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Editorial override: this public date may differ from Last updated. The operational timestamp is unchanged.",
+    );
     const publishButton = within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" });
     expect(publishButton).toBeDisabled();
 
@@ -738,6 +765,37 @@ describe("DatasetAdminPage", () => {
     );
     const body = JSON.parse(String((publishCall?.[1] as RequestInit).body));
     expect(body.display).toMatchObject({ release_date_label: "2026-05-12", release_date_mode: "manual" });
+    expect(body).not.toHaveProperty("dataset_detail_updated_at");
+  });
+
+  it("refreshes automatic projection from the post-publish timestamp and preserves persisted manual overrides (Project Spec S0092)", async () => {
+    vi.stubEnv("TZ", "America/Recife");
+    installFetchMock({
+      releaseDate: "2026-05-01",
+      releaseDateMode: "auto",
+      lastUpdated: "2026-07-13T00:41:21Z",
+      lastUpdatedAfterPublish: "2026-07-14T00:41:21Z",
+    });
+    renderAdminPage();
+
+    const input = await screen.findByLabelText("Release date label");
+    await waitFor(() => expect(input).toHaveValue("2026-07-12"));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Publish with a newer operational timestamp" } });
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+        name: "Publish changes",
+      }),
+    );
+    await waitFor(() => expect(input).toHaveValue("2026-07-13"));
+
+    fireEvent.change(input, { target: { value: "2026-05-12" } });
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+        name: "Publish changes",
+      }),
+    );
+    await waitFor(() => expect(input).toHaveValue("2026-05-12"));
+    expect(screen.getByText(/Editorial override/)).toHaveAttribute("role", "status");
   });
 
   it("treats clearing the release date as a reset to automatic Last updated seeding (Project Spec S0064)", async () => {

@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { presentDatasetOperationalTimestamp } from "../../lib/datasetPresentation";
 import DashboardPage from "./DashboardPage";
 
 type MockResponse = {
@@ -44,6 +45,18 @@ describe("DashboardPage", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("projects Last updated through the shared America/Recife calendar contract (Project Spec S0092)", () => {
+    expect(
+      presentDatasetOperationalTimestamp("2026-07-13T00:41:21Z", {
+        locale: "en-US",
+        timeZone: "America/Recife",
+      }),
+    ).toEqual({
+      localizedDateTime: "Jul 12, 2026, 9:41 PM",
+      localCalendarDate: "2026-07-12",
+    });
   });
 
   it("renders the design-aligned Dashboard identity before private data is loaded", () => {

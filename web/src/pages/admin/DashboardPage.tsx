@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Button, Card, EmptyState, ErrorState, StatusPill, TableRow } from "../../components/ui";
+import { presentDatasetOperationalTimestamp } from "../../lib/datasetPresentation";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -682,15 +683,7 @@ function formatCreatedAt(value: string | null): string {
     return "Not available";
   }
 
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Invalid timestamp";
-  }
-
-  return parsed.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return presentDatasetOperationalTimestamp(value)?.localizedDateTime ?? "Invalid timestamp";
 }
 
 function datasetDisplayName(value: string): string {

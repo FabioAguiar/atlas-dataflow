@@ -4,7 +4,7 @@
     {
       "schema_version": "1.0.0",
       "view_id": "churn-risk-overview",
-      "dataset_slug": "telco-customer-churn",
+      "dataset_slug": "telco-customer-churn2",
       "view_copy": {
         "heading": "Churn Risk Assessment",
         "description": "Estimate the likelihood that a telecommunications customer will cancel their service.",

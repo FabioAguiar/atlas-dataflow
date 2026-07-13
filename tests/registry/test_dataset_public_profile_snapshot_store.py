@@ -21,6 +21,7 @@ Run from the repository root:
 import json
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -316,7 +317,15 @@ def test_direct_publish_rejects_unsafe_home_card_media_references(fake_repo, uns
     assert "SCHEMA_VALIDATION_ERROR" in _codes(result)
 
 
-def test_direct_publish_preserves_release_date_override_metadata(fake_repo):
+def test_direct_publish_preserves_manual_release_date_and_uses_publish_time_operationally(fake_repo, monkeypatch):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 13, 14, 25, 30, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        "registry.dataset_public_profile_snapshot_store.datetime", FixedDateTime
+    )
     result = publish_snapshot_from_payload(
         "telco-customer-churn",
         _profile(display={"release_date_label": "2026-05-12", "release_date_mode": "manual"}),
@@ -329,7 +338,7 @@ def test_direct_publish_preserves_release_date_override_metadata(fake_repo):
         "release_date_mode": "manual",
     }
     registry = json.loads((fake_repo / "registry" / "datasets.json").read_text(encoding="utf-8"))
-    assert registry["datasets"][0]["dataset_detail_updated_at"] == "2026-05-12T00:00:00Z"
+    assert registry["datasets"][0]["dataset_detail_updated_at"] == "2026-07-13T14:25:30Z"
 
 
 def test_invalid_release_date_cannot_replace_snapshot(fake_repo):
@@ -350,6 +359,31 @@ def test_invalid_release_date_cannot_replace_snapshot(fake_repo):
     assert valid["published"] is True
     assert rejected["published"] is False
     assert "RELEASE_DATE_INVALID" in _codes(rejected)
+    assert snapshot_path.read_text(encoding="utf-8") == original
+
+
+def test_failed_operational_timestamp_update_does_not_replace_snapshot(fake_repo, monkeypatch):
+    first = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-05-12", "release_date_mode": "manual"}),
+        repo_root=fake_repo,
+    )
+    snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
+    original = snapshot_path.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(
+        "registry.dataset_public_profile_snapshot_store.update_dataset_detail_timestamp",
+        lambda *args, **kwargs: {"updated": False, "errors": [{"code": "write_failed"}]},
+    )
+    rejected = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-06-20", "release_date_mode": "manual"}),
+        repo_root=fake_repo,
+    )
+
+    assert first["published"] is True
+    assert rejected["published"] is False
+    assert "DATASET_DETAIL_TIMESTAMP_UPDATE_FAILED" in _codes(rejected)
     assert snapshot_path.read_text(encoding="utf-8") == original
 
 

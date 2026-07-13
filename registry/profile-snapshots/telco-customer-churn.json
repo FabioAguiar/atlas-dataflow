@@ -1,20 +1,17 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-13T00:16:31Z",
-  "active_release_at_publish_time": "release-20260712t210442z",
+  "published_at": "2026-07-13T00:41:21Z",
+  "active_release_at_publish_time": "release-20260713t003931z",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
-      "problem_summary_title": "dghd",
-      "problem_summary_body": "dfgdfg",
-      "release_date_label": "2026-07-11",
+      "release_date_label": "2026-07-12",
       "release_date_mode": "manual",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": "/media/home-cards/33bcfb70d99942c5b8cab007a2c279ec.jpg",
-      "short_description": "teste",
+      "background_image_ref": null,
       "primary_metric_key": null
     },
     "performance_focus": {
@@ -24,21 +21,21 @@
         {
           "score_id": "recall",
           "display_label": "Recall",
-          "value": "10",
+          "value": "0",
           "value_source": "manual",
           "order": 0
         },
         {
           "score_id": "precision",
           "display_label": "Precision",
-          "value": "20",
+          "value": "0",
           "value_source": "manual",
           "order": 1
         },
         {
           "score_id": "f1_score",
           "display_label": "F1-score",
-          "value": "30",
+          "value": "0",
           "value_source": "manual",
           "order": 2
         }

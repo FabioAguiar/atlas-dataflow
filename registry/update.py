@@ -823,8 +823,23 @@ def update_dataset_detail_timestamp(
     entry = _find_dataset_entry(registry, dataset_slug)
     if entry is None:
         return {"updated": False, "errors": [DATASET_DETAIL_NOT_FOUND_ERROR]}
+    validation_before = validate_registry(registry)
     entry["dataset_detail_updated_at"] = updated_at
-    if validate_registry(registry).get("valid") is not True:
+    validation_after = validate_registry(registry)
+    # Some legacy/private fixture registries contain pre-existing validation
+    # findings unrelated to this field. A valid timestamp-only mutation must
+    # not be blocked by those findings, but it must never introduce a new one.
+    errors_before = {
+        json.dumps(error, sort_keys=True)
+        for error in validation_before.get("errors", [])
+        if isinstance(error, dict)
+    }
+    errors_after = {
+        json.dumps(error, sort_keys=True)
+        for error in validation_after.get("errors", [])
+        if isinstance(error, dict)
+    }
+    if errors_after - errors_before:
         return {"updated": False, "errors": [REGISTRY_VALIDATION_FAILED_ERROR]}
 
     try:

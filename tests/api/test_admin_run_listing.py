@@ -2747,7 +2747,7 @@ def test_admin_datasets_route_returns_draft_and_published_entries_in_private_run
     _assert_no_private_markers(response)
 
 
-def test_admin_datasets_prefers_current_release_profile_date_after_slug_rebinding(tmp_path, monkeypatch):
+def test_admin_datasets_does_not_use_manual_release_label_as_operational_fallback(tmp_path, monkeypatch):
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     os.environ.pop("ADMIN_API_TOKEN", None)
     registry_path = tmp_path / "datasets.json"
@@ -2785,7 +2785,7 @@ def test_admin_datasets_prefers_current_release_profile_date_after_slug_rebindin
         registry_list.REGISTRY_PATH = original_registry_path
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
 
-    assert response["datasets"][0]["last_updated"] == "2026-05-12"
+    assert response["datasets"][0]["last_updated"] == "2026-06-01"
 
 
 def test_admin_datasets_prefers_canonical_detail_timestamp_over_profile_and_run(tmp_path, monkeypatch):

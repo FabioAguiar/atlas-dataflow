@@ -774,10 +774,9 @@ def list_admin_datasets_route(request: Request):
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
 
-    # Project Spec S0089: historical runs are only the final compatibility
-    # fallback.  The Dataset Detail's current, active-release-bound public
-    # profile is the stable source for its operational display date, so slug
-    # rebinding does not require rewriting immutable run metadata.
+    # Project Specs S0089/S0091: the mutable registry timestamp is the
+    # canonical operational source. Historical runs remain only a legacy
+    # fallback for entries created before that field existed.
     last_updated_by_slug: dict[str, str] = {}
     run_listing = list_admin_run_summaries()
     runs = run_listing.get("runs", []) if isinstance(run_listing, dict) else []
@@ -799,20 +798,6 @@ def list_admin_datasets_route(request: Request):
     for dataset in datasets:
         item = dataset._asdict()
         last_updated = dataset.dataset_detail_updated_at
-        snapshot = read_published_profile_snapshot(dataset.dataset_slug)
-        if (
-            last_updated is None
-            and
-            isinstance(snapshot, dict)
-            and snapshot.get("active_release_at_publish_time") == dataset.active_release
-        ):
-            profile = snapshot.get("profile")
-            display = profile.get("display") if isinstance(profile, dict) else None
-            release_date_label = (
-                display.get("release_date_label") if isinstance(display, dict) else None
-            )
-            if isinstance(release_date_label, str) and release_date_label:
-                last_updated = release_date_label
 
         # Both supported release-id families carry a deterministic UTC date.
         # Derive it without reading or modifying immutable release artifacts.

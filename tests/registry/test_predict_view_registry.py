@@ -22,6 +22,7 @@ from registry.predict_view_validate import (  # noqa: E402
     validate_predict_views,
     validate_predict_views_file,
 )
+from registry.update import MODE_CREATE_NEW_DATASET_DETAIL, run as registry_update_run  # noqa: E402
 
 VALID_DIR = Path(__file__).parent / "predict-views" / "valid"
 INVALID_DIR = Path(__file__).parent / "predict-views" / "invalid"
@@ -269,33 +270,295 @@ def test_error_messages_contain_no_filesystem_paths():
 
 
 # ---------------------------------------------------------------------------
+# registry/update.py predict-view materialization (Project Spec S0098)
+# ---------------------------------------------------------------------------
+
+_VIEW_DECLARATION_TEMPLATE = {
+    "schema_version": "1.0.0",
+    "view_id": "churn-risk-overview",
+    "dataset_slug": "telco-customer-churn",
+    "display": {"title": "Churn Risk Overview", "summary": "Estimate churn."},
+    "intent": {"prediction_goal": "Estimate churn.", "audience": "Public visitors."},
+    "binding": {"dataset_slug": "telco-customer-churn", "release": {"mode": "active"}},
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "view_metadata_defines_runtime_validation": False,
+        "view_metadata_duplicates_contract": False,
+    },
+}
+
+
+def _write_materialization_repo(
+    repo_root: Path,
+    *,
+    dataset_entries: list | None = None,
+    existing_predict_views: list | None = None,
+) -> None:
+    registry_dir = repo_root / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    (registry_dir / "datasets.json").write_text(
+        json.dumps({
+            "schema_version": "atlas.dataflow.registry.v1",
+            "datasets": dataset_entries if dataset_entries is not None else [],
+        }),
+        encoding="utf-8",
+    )
+    (registry_dir / "predict-views.json").write_text(
+        json.dumps({
+            "schema_version": "atlas.dataflow.predict-views.v1",
+            "predict_views": existing_predict_views if existing_predict_views is not None else [],
+        }),
+        encoding="utf-8",
+    )
+    (registry_dir / "predict-view-customizations.json").write_text(
+        json.dumps({
+            "schema_version": "atlas.dataflow.predict-view-customizations.v1",
+            "predict_view_customizations": [],
+        }),
+        encoding="utf-8",
+    )
+
+
+def _dataset_entry(slug: str, release_id: str) -> dict:
+    return {
+        "dataset_slug": slug,
+        "active_release": release_id,
+        "public_metadata": {
+            "title": slug, "summary": "s", "domain": "general", "visibility": "public", "tags": [],
+        },
+    }
+
+
+def _write_release(
+    repo_root: Path, release_id: str, dataset_slug: str, predict_views,
+) -> None:
+    release_dir = repo_root / "releases" / release_id
+    release_dir.mkdir(parents=True, exist_ok=True)
+    public_context = {
+        "schema_version": "1.0.0",
+        "dataset_slug": dataset_slug,
+        "title": "T",
+        "description": "D",
+        "domain": "general",
+    }
+    if predict_views is not None:
+        public_context["predict_views"] = predict_views
+    (release_dir / "public-context.json").write_text(json.dumps(public_context), encoding="utf-8")
+    (release_dir / "manifest.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+
+
+def _write_promotion_run(repo_root: Path, run_id: str, dataset_slug: str, release_id: str) -> Path:
+    run_dir = repo_root / "publisher" / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "promotion-result.json").write_text(
+        json.dumps({
+            "promotion_outcome": "promoted",
+            "candidate_identity": {"dataset_slug": dataset_slug, "release_id": release_id},
+        }),
+        encoding="utf-8",
+    )
+    return run_dir
+
+
+def _predict_views_of(repo_root: Path) -> dict:
+    return _load(repo_root / "registry" / "predict-views.json")
+
+
+def test_materialize_absent_predict_views_preserves_dataset_owned_subset(tmp_path):
+    other_view = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "other-view", "dataset_slug": "other-dataset"}
+    other_view["binding"] = {"dataset_slug": "other-dataset", "release": {"mode": "active"}}
+    _write_materialization_repo(
+        tmp_path,
+        dataset_entries=[_dataset_entry("other-dataset", "release-20260101-001")],
+        existing_predict_views=[other_view],
+    )
+    _write_release(tmp_path, "release-20260102-002", "telco-customer-churn", predict_views=None)
+    run_dir = _write_promotion_run(tmp_path, "run-absent", "telco-customer-churn", "release-20260102-002")
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert result["predict_view_materialization"] == {"declared_mode": "absent", "action": "not_declared"}
+    assert _predict_views_of(tmp_path)["predict_views"] == [other_view]
+
+
+def test_materialize_populated_declaration_creates_view_and_preserves_other_datasets(tmp_path):
+    other_view = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "other-view", "dataset_slug": "other-dataset"}
+    other_view["binding"] = {"dataset_slug": "other-dataset", "release": {"mode": "active"}}
+    _write_materialization_repo(
+        tmp_path,
+        dataset_entries=[_dataset_entry("other-dataset", "release-20260101-001")],
+        existing_predict_views=[other_view],
+    )
+    _write_release(
+        tmp_path, "release-20260102-003", "telco-customer-churn", predict_views=[_VIEW_DECLARATION_TEMPLATE]
+    )
+    run_dir = _write_promotion_run(tmp_path, "run-populated", "telco-customer-churn", "release-20260102-003")
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert result["predict_view_materialization"]["action"] == "created"
+    views = _predict_views_of(tmp_path)["predict_views"]
+    assert {v["view_id"] for v in views} == {"other-view", "churn-risk-overview"}
+    assert other_view in views
+
+
+def test_materialize_is_idempotent_on_repeated_promotion(tmp_path):
+    _write_materialization_repo(tmp_path)
+    _write_release(
+        tmp_path, "release-20260102-004", "telco-customer-churn", predict_views=[_VIEW_DECLARATION_TEMPLATE]
+    )
+    run_dir = _write_promotion_run(tmp_path, "run-idempotent", "telco-customer-churn", "release-20260102-004")
+
+    registry_update_run(str(run_dir), repo_root=tmp_path)
+    predict_views_path = tmp_path / "registry" / "predict-views.json"
+    before = predict_views_path.read_bytes()
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert result["predict_view_materialization"]["action"] == "preserved"
+    assert predict_views_path.read_bytes() == before
+
+
+def test_materialize_explicit_empty_removes_only_dataset_owned_subset(tmp_path):
+    other_view = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "other-view", "dataset_slug": "other-dataset"}
+    other_view["binding"] = {"dataset_slug": "other-dataset", "release": {"mode": "active"}}
+    _write_materialization_repo(
+        tmp_path,
+        dataset_entries=[
+            _dataset_entry("other-dataset", "release-20260101-001"),
+            _dataset_entry("telco-customer-churn", "release-20260101-999"),
+        ],
+        existing_predict_views=[other_view, _VIEW_DECLARATION_TEMPLATE],
+    )
+    _write_release(tmp_path, "release-20260102-005", "telco-customer-churn", predict_views=[])
+    run_dir = _write_promotion_run(tmp_path, "run-empty", "telco-customer-churn", "release-20260102-005")
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert result["predict_view_materialization"]["action"] == "removed"
+    views = _predict_views_of(tmp_path)["predict_views"]
+    assert {v["view_id"] for v in views} == {"other-view"}
+
+
+def test_materialize_delete_then_repromote_restores_declared_view(tmp_path):
+    _write_materialization_repo(tmp_path)
+    _write_release(
+        tmp_path, "release-20260102-006", "telco-customer-churn", predict_views=[_VIEW_DECLARATION_TEMPLATE]
+    )
+    run_dir = _write_promotion_run(tmp_path, "run-restore", "telco-customer-churn", "release-20260102-006")
+    registry_update_run(str(run_dir), repo_root=tmp_path)
+    assert _predict_views_of(tmp_path)["predict_views"] != []
+
+    # Simulate the S0082 Dataset Detail deletion cascade (owned by api/main.py,
+    # not registry/update.py): remove this dataset's predict views and its
+    # registry entry, leaving the release artifact untouched.
+    (tmp_path / "registry" / "predict-views.json").write_text(
+        json.dumps({"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "registry" / "datasets.json").write_text(
+        json.dumps({"schema_version": "atlas.dataflow.registry.v1", "datasets": []}), encoding="utf-8"
+    )
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert result["predict_view_materialization"]["action"] == "created"
+    views = _predict_views_of(tmp_path)["predict_views"]
+    assert {v["view_id"] for v in views} == {"churn-risk-overview"}
+
+
+def test_materialize_create_new_dataset_detail_mode_rebinds_to_allocated_slug(tmp_path):
+    _write_materialization_repo(
+        tmp_path,
+        dataset_entries=[_dataset_entry("telco-customer-churn", "release-20260101-999")],
+    )
+    _write_release(
+        tmp_path, "release-20260102-007", "telco-customer-churn", predict_views=[_VIEW_DECLARATION_TEMPLATE]
+    )
+    run_dir = _write_promotion_run(tmp_path, "run-newdetail", "telco-customer-churn", "release-20260102-007")
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path, mode=MODE_CREATE_NEW_DATASET_DETAIL)
+
+    assert result["allocated_dataset_slug"] == "telco-customer-churn1"
+    views = _predict_views_of(tmp_path)["predict_views"]
+    churn_view = next(v for v in views if v["view_id"] == "churn-risk-overview")
+    assert churn_view["dataset_slug"] == "telco-customer-churn1"
+    assert churn_view["binding"]["dataset_slug"] == "telco-customer-churn1"
+
+
+def test_materialize_rejects_malformed_declaration_without_any_write(tmp_path):
+    _write_materialization_repo(tmp_path)
+    _write_release(tmp_path, "release-20260102-008", "telco-customer-churn", predict_views=["not-an-object"])
+    run_dir = _write_promotion_run(tmp_path, "run-malformed", "telco-customer-churn", "release-20260102-008")
+    datasets_before = (tmp_path / "registry" / "datasets.json").read_bytes()
+    predict_views_before = (tmp_path / "registry" / "predict-views.json").read_bytes()
+
+    try:
+        registry_update_run(str(run_dir), repo_root=tmp_path)
+        raise AssertionError("expected RuntimeError for malformed predict view declaration")
+    except RuntimeError:
+        pass
+
+    assert (tmp_path / "registry" / "datasets.json").read_bytes() == datasets_before
+    assert (tmp_path / "registry" / "predict-views.json").read_bytes() == predict_views_before
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+def test_materialize_rejects_duplicate_view_id_across_datasets_without_any_write(tmp_path):
+    other_view = {**_VIEW_DECLARATION_TEMPLATE, "dataset_slug": "other-dataset"}
+    other_view["binding"] = {"dataset_slug": "other-dataset", "release": {"mode": "active"}}
+    _write_materialization_repo(
+        tmp_path,
+        dataset_entries=[_dataset_entry("other-dataset", "release-20260101-001")],
+        existing_predict_views=[other_view],
+    )
+    colliding = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "churn-risk-overview"}
+    _write_release(tmp_path, "release-20260102-009", "telco-customer-churn", predict_views=[colliding])
+    run_dir = _write_promotion_run(tmp_path, "run-collision", "telco-customer-churn", "release-20260102-009")
+    predict_views_before = (tmp_path / "registry" / "predict-views.json").read_bytes()
+
+    try:
+        registry_update_run(str(run_dir), repo_root=tmp_path)
+        raise AssertionError("expected RuntimeError for duplicate view_id")
+    except RuntimeError:
+        pass
+
+    assert (tmp_path / "registry" / "predict-views.json").read_bytes() == predict_views_before
+
+
+def test_materialize_rejects_cross_dataset_declaration_without_any_write(tmp_path):
+    _write_materialization_repo(tmp_path)
+    spoofed = {**_VIEW_DECLARATION_TEMPLATE, "dataset_slug": "someone-elses-dataset"}
+    _write_release(tmp_path, "release-20260102-010", "telco-customer-churn", predict_views=[spoofed])
+    run_dir = _write_promotion_run(tmp_path, "run-spoofed", "telco-customer-churn", "release-20260102-010")
+    predict_views_before = (tmp_path / "registry" / "predict-views.json").read_bytes()
+
+    try:
+        registry_update_run(str(run_dir), repo_root=tmp_path)
+        raise AssertionError("expected RuntimeError for cross-dataset declaration")
+    except RuntimeError:
+        pass
+
+    assert (tmp_path / "registry" / "predict-views.json").read_bytes() == predict_views_before
+
+
+def test_no_implementation_logic_hardcodes_churn_risk_overview():
+    import inspect
+
+    import registry.update as update_module
+
+    source = inspect.getsource(update_module)
+    assert "churn-risk-overview" not in source
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    tests = [
-        test_valid_predict_views_passes,
-        test_invalid_dataset_reference_rejected,
-        test_invalid_release_reference_rejected,
-        test_incompatible_contract_binding_rejected,
-        test_missing_schema_version_rejected,
-        test_invalid_schema_version_rejected,
-        test_compatible_mode_with_valid_release_id_passes,
-        test_active_mode_with_release_id_rejected,
-        test_contract_precedence_violation_rejected,
-        test_duplicate_view_id_rejected,
-        test_registry_discovery_returns_only_valid_views,
-        test_error_messages_contain_no_filesystem_paths,
-    ]
-    passed = 0
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  PASS  {t.__name__}")
-            passed += 1
-        except AssertionError as exc:
-            print(f"  FAIL  {t.__name__}: {exc}")
-            failed += 1
-    print(f"\n{passed} passed, {failed} failed")
-    sys.exit(0 if failed == 0 else 1)
+    # The materialization tests above use pytest's tmp_path fixture -- delegate
+    # to pytest itself, matching tests/registry/test_registry_validation.py's
+    # own standalone-runner convention for the same reason.
+    import pytest
+
+    raise SystemExit(pytest.main([__file__, "-v"]))

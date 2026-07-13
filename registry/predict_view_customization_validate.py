@@ -168,6 +168,67 @@ def validate_customization(customization: dict, public_contract: dict) -> dict:
     return {"valid": len(errors) == 0, "errors": errors}
 
 
+def classify_customization_compatibility(
+    view_id: str,
+    dataset_slug: str,
+    customization: dict,
+    public_contract: dict | None,
+) -> dict:
+    """
+    Classify one stored predict-view customization record's compatibility
+    with a materialized predict view and the current active release public
+    contract (Project Spec S0098).
+
+    Returns {"status": "compatible" | "incompatible", "errors": [...]}.
+    "compatible" only when the customization's own view_id and dataset_slug
+    match the materialized view exactly, public_contract was resolvable,
+    and validate_customization() reports no errors against it. Any identity
+    mismatch, an unresolved public_contract (None -- the caller could not
+    load the current active release's public contract), or a
+    validate_customization() failure is classified "incompatible" instead.
+
+    This function only classifies -- an "incompatible" result never causes
+    the stored customization to be deleted, have its fields renamed, or be
+    migrated; the caller is responsible for preserving it unchanged and
+    simply not describing it as valid current customization.
+    """
+    errors: list[dict] = []
+
+    if not isinstance(customization, dict):
+        errors.append(_err(
+            "CUSTOMIZATION_NOT_AN_OBJECT",
+            None,
+            "Customization must be a JSON object.",
+        ))
+        return {"status": "incompatible", "errors": errors}
+
+    if customization.get("view_id") != view_id:
+        errors.append(_err(
+            "CUSTOMIZATION_VIEW_ID_MISMATCH",
+            "view_id",
+            "Customization view_id does not match the materialized predict view.",
+        ))
+
+    if customization.get("dataset_slug") != dataset_slug:
+        errors.append(_err(
+            "CUSTOMIZATION_DATASET_SLUG_MISMATCH",
+            "dataset_slug",
+            "Customization dataset_slug does not match the materialized predict view's dataset.",
+        ))
+
+    if public_contract is None:
+        errors.append(_err(
+            "PUBLIC_CONTRACT_UNAVAILABLE",
+            None,
+            "The current active release public contract could not be resolved for compatibility validation.",
+        ))
+    else:
+        contract_result = validate_customization(customization, public_contract)
+        errors.extend(contract_result["errors"])
+
+    return {"status": "incompatible" if errors else "compatible", "errors": errors}
+
+
 def validate_customization_file(
     customization_path: Path,
     public_contract: dict,

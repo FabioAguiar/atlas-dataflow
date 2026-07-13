@@ -24,6 +24,7 @@ from registry.update import (  # noqa: E402
     derive_registry_action,
     remove_dataset_entry,
     rename_dataset_slug,
+    run as registry_update_run,
 )
 from registry.validate import RELEASE_ID_PATTERN, validate_registry, validate_registry_file  # noqa: E402
 
@@ -671,6 +672,66 @@ def test_rename_dataset_slug_rejects_existing_target_artifact_before_any_mutatio
     assert (drafts / f"{old_slug}.json").exists()
     assert (drafts / f"{new_slug}.json").read_text(encoding="utf-8") == target_content
     assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+# ---------------------------------------------------------------------------
+# run() predict-view materialization write-failure rollback (Project Spec S0098)
+# ---------------------------------------------------------------------------
+
+def test_run_rolls_back_dataset_registry_when_predict_views_write_fails(tmp_path):
+    dataset_slug = "telco-customer-churn"
+    release_id = "release-20260102-011"
+    _write_full_registry(tmp_path, [])
+
+    # A directory at registry/predict-views.json's path is readable as {}
+    # (tolerated as an empty predict-view registry) but not writable as a
+    # file -- this forces the predict-view write step specifically to fail
+    # with OSError, without needing to mock the filesystem.
+    (tmp_path / "registry" / "predict-views.json").mkdir()
+    (tmp_path / "registry" / "predict-view-customizations.json").write_text(
+        json.dumps({"schema_version": "atlas.dataflow.predict-view-customizations.v1", "predict_view_customizations": []}),
+        encoding="utf-8",
+    )
+
+    release_dir = tmp_path / "releases" / release_id
+    release_dir.mkdir(parents=True)
+    (release_dir / "public-context.json").write_text(
+        json.dumps({
+            "schema_version": "1.0.0", "dataset_slug": dataset_slug, "title": "T",
+            "description": "D", "domain": "general",
+            "predict_views": [{
+                "schema_version": "1.0.0", "view_id": "churn-risk-overview", "dataset_slug": dataset_slug,
+                "display": {"title": "T", "summary": "S"},
+                "intent": {"prediction_goal": "G", "audience": "A"},
+                "binding": {"dataset_slug": dataset_slug, "release": {"mode": "active"}},
+                "contract_precedence": {
+                    "canonical_contracts_are_source_of_truth": True,
+                    "view_metadata_defines_runtime_validation": False,
+                    "view_metadata_duplicates_contract": False,
+                },
+            }],
+        }),
+        encoding="utf-8",
+    )
+    (release_dir / "manifest.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+
+    run_dir = tmp_path / "publisher" / "runs" / "run-write-fail"
+    run_dir.mkdir(parents=True)
+    (run_dir / "promotion-result.json").write_text(
+        json.dumps({
+            "promotion_outcome": "promoted",
+            "candidate_identity": {"dataset_slug": dataset_slug, "release_id": release_id},
+        }),
+        encoding="utf-8",
+    )
+
+    datasets_path = tmp_path / "registry" / "datasets.json"
+    datasets_before = datasets_path.read_bytes()
+
+    with pytest.raises(RuntimeError):
+        registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert datasets_path.read_bytes() == datasets_before
 
 
 # ---------------------------------------------------------------------------

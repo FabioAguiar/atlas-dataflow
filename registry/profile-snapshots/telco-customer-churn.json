@@ -1,18 +1,16 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-13T14:41:46Z",
-  "active_release_at_publish_time": "release-20260713t103826z",
+  "published_at": "2026-07-13T17:14:23Z",
+  "active_release_at_publish_time": "release-20260713t171133z",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
-      "release_date_label": "2026-07-13",
+      "release_date_label": "2026-07-12",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "icon": "money-dollar",
-      "background_image_ref": "/media/home-cards/627bc15fc40c4d1f859adbb090bdd59a.jpg",
-      "short_description": "42",
+      "background_image_ref": "/media/home-cards/a1b08240fd2b447eb653784db17c2446.jpg",
       "primary_metric_key": null
     },
     "performance_focus": {
@@ -22,31 +20,31 @@
         {
           "score_id": "recall",
           "display_label": "Recall",
-          "value": "10",
+          "value": "0",
           "value_source": "manual",
           "order": 0
         },
         {
           "score_id": "precision",
           "display_label": "Precision",
-          "value": "20",
+          "value": "0",
           "value_source": "manual",
           "order": 1
         },
         {
           "score_id": "f1_score",
           "display_label": "F1-score",
-          "value": "30",
+          "value": "0",
           "value_source": "manual",
           "order": 2
         }
       ]
     },
     "theme": {
-      "preset": "solar-flare"
+      "preset": "monochrome-dark"
     },
     "inference_presentation": {
-      "bound_predict_view_id": null
+      "bound_predict_view_id": "churn-risk-overview"
     },
     "result_card": {
       "badge_preset": "risk",

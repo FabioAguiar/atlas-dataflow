@@ -694,6 +694,120 @@ def test_promoted_run_becomes_repromotable_after_registry_entry_removed(tmp_path
         admin_runs._REPO_ROOT = original_repo_root
 
 
+def test_promote_admin_run_materializes_declared_predict_views_and_restores_after_dataset_deletion(tmp_path):
+    """Project Spec S0098: registry/update.py's existing activation transaction
+    (invoked by promote_admin_run(), not a second promotion endpoint) must
+    materialize a promoted release's declared predict views, preserve an
+    unrelated dataset's views, and restore them after the S0082 deletion
+    cascade removes the Dataset Detail and its owned views without touching
+    the release artifact.
+    """
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    dataset_slug = "predict-view-dataset"
+    release_id = "release-20260710t120000z"
+    run_dir = _write_promotable_run(
+        root,
+        repo_root,
+        "promote-with-view",
+        dataset_slug,
+        release_id,
+        registry_entries=[
+            {
+                "dataset_slug": "unrelated-dataset",
+                "active_release": "release-20260101-001",
+                "public_metadata": {
+                    "title": "Unrelated", "summary": "s", "domain": "general", "visibility": "public", "tags": [],
+                },
+            }
+        ],
+    )
+
+    candidate_context_path = (
+        repo_root / "releases" / "candidates" / dataset_slug / release_id / "public-context.json"
+    )
+    candidate_context = json.loads(candidate_context_path.read_text(encoding="utf-8"))
+    candidate_context["predict_views"] = [
+        {
+            "schema_version": "1.0.0",
+            "view_id": "fixture-view",
+            "dataset_slug": dataset_slug,
+            "display": {"title": "Fixture View", "summary": "A fixture predict view."},
+            "intent": {"prediction_goal": "Demonstrate materialization.", "audience": "Fixture."},
+            "binding": {"dataset_slug": dataset_slug, "release": {"mode": "active"}},
+            "contract_precedence": {
+                "canonical_contracts_are_source_of_truth": True,
+                "view_metadata_defines_runtime_validation": False,
+                "view_metadata_duplicates_contract": False,
+            },
+        }
+    ]
+    _write_json(candidate_context_path, candidate_context)
+
+    unrelated_view = {
+        "schema_version": "1.0.0",
+        "view_id": "unrelated-view",
+        "dataset_slug": "unrelated-dataset",
+        "display": {"title": "T", "summary": "S"},
+        "intent": {"prediction_goal": "G", "audience": "A"},
+        "binding": {"dataset_slug": "unrelated-dataset", "release": {"mode": "active"}},
+        "contract_precedence": {
+            "canonical_contracts_are_source_of_truth": True,
+            "view_metadata_defines_runtime_validation": False,
+            "view_metadata_duplicates_contract": False,
+        },
+    }
+    predict_views_path = repo_root / "registry" / "predict-views.json"
+    _write_json(
+        predict_views_path,
+        {"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": [unrelated_view]},
+    )
+    _write_json(
+        repo_root / "registry" / "predict-view-customizations.json",
+        {"schema_version": "atlas.dataflow.predict-view-customizations.v1", "predict_view_customizations": []},
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        first = admin_runs.promote_admin_run("promote-with-view")
+        assert first["promoted"] is True
+
+        materialized = json.loads(predict_views_path.read_text())
+        view_ids = {v["view_id"] for v in materialized["predict_views"]}
+        assert view_ids == {"unrelated-view", "fixture-view"}
+        fixture_view = next(v for v in materialized["predict_views"] if v["view_id"] == "fixture-view")
+        assert fixture_view["dataset_slug"] == dataset_slug
+        assert unrelated_view in materialized["predict_views"]
+
+        # Simulate api/main.py's S0082 deletion cascade (owned by that route,
+        # not registry/update.py): remove this dataset's predict views, then
+        # remove its registry entry.
+        retained = [v for v in materialized["predict_views"] if v.get("dataset_slug") != dataset_slug]
+        _write_json(
+            predict_views_path,
+            {"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": retained},
+        )
+        remove_result = registry_update.remove_dataset_entry(dataset_slug, repo_root=repo_root)
+        assert remove_result["removed"] is True
+        after_delete = json.loads(predict_views_path.read_text())
+        assert {v["view_id"] for v in after_delete["predict_views"]} == {"unrelated-view"}
+
+        second = admin_runs.promote_admin_run("promote-with-view")
+        assert second["promoted"] is True
+        assert second["registry_action"] == "created"
+
+        restored = json.loads(predict_views_path.read_text())
+        assert {v["view_id"] for v in restored["predict_views"]} == {"unrelated-view", "fixture-view"}
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
 # ---------------------------------------------------------------------------
 # remove_admin_run: happy path and rejection states
 # ---------------------------------------------------------------------------

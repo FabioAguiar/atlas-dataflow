@@ -57,6 +57,121 @@
       "minLength": 1,
       "title": "Long Narrative",
       "description": "Optional public-safe extended narrative for richer dataset context pages. Must not include internal evidence, run details, or operational traceability."
+    },
+    "predict_views": {
+      "type": "array",
+      "title": "Declared Predict Views",
+      "description": "Optional Project Spec S0098 declaration of governed predict views owned by this dataset, materialized into registry/predict-views.json during registry activation. Absent means this release does not manage predict-view registry state and the existing dataset-owned view subset is preserved. An empty array is an explicit declaration that this dataset currently has no predict views, and removes only this dataset's current view subset. A populated array replaces only this dataset's current view subset with the declared, validated set. Each item is public-safe presentation and intent metadata only -- it must not duplicate runtime feature definitions, validation rules, input domains, model behavior, or inference payload semantics. The declared item's dataset_slug/binding.dataset_slug are normalized to the final allocated public dataset slug at materialization time and are not required to anticipate slug allocation.",
+      "items": {
+        "$ref": "#/definitions/declared_predict_view"
+      }
+    }
+  },
+  "definitions": {
+    "declared_predict_view": {
+      "type": "object",
+      "title": "Declared Predict View",
+      "description": "Minimum governed predict view declaration, structurally aligned with contracts/predict-view.schema.json. The materialization step in registry/update.py is the authoritative validator (registry/predict_view_validate.py's validate_predict_views) for the final, dataset-slug-normalized record.",
+      "required": [
+        "schema_version",
+        "view_id",
+        "dataset_slug",
+        "display",
+        "intent",
+        "binding",
+        "contract_precedence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "view_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "minLength": 1
+        },
+        "dataset_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "minLength": 1
+        },
+        "display": {
+          "type": "object",
+          "required": ["title", "summary"],
+          "additionalProperties": false,
+          "properties": {
+            "title": {"type": "string", "minLength": 1},
+            "summary": {"type": "string", "minLength": 1},
+            "description": {"type": "string", "minLength": 1},
+            "tags": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1},
+              "uniqueItems": true
+            }
+          }
+        },
+        "intent": {
+          "type": "object",
+          "required": ["prediction_goal", "audience"],
+          "additionalProperties": false,
+          "properties": {
+            "prediction_goal": {"type": "string", "minLength": 1},
+            "audience": {"type": "string", "minLength": 1},
+            "usage_notes": {"type": "string", "minLength": 1}
+          }
+        },
+        "binding": {
+          "type": "object",
+          "required": ["dataset_slug", "release"],
+          "additionalProperties": false,
+          "properties": {
+            "dataset_slug": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "minLength": 1
+            },
+            "release": {
+              "type": "object",
+              "required": ["mode"],
+              "additionalProperties": false,
+              "properties": {
+                "mode": {"type": "string", "enum": ["active", "compatible"]},
+                "release_id": {
+                  "type": "string",
+                  "pattern": "^release-[0-9]{8}-[0-9]{3}$"
+                }
+              }
+            }
+          }
+        },
+        "contract_precedence": {
+          "type": "object",
+          "required": [
+            "canonical_contracts_are_source_of_truth",
+            "view_metadata_defines_runtime_validation",
+            "view_metadata_duplicates_contract"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "canonical_contracts_are_source_of_truth": {"type": "boolean", "const": true},
+            "view_metadata_defines_runtime_validation": {"type": "boolean", "const": false},
+            "view_metadata_duplicates_contract": {"type": "boolean", "const": false}
+          }
+        }
+      },
+      "not": {
+        "anyOf": [
+          {"required": ["features"]},
+          {"required": ["validation_rules"]},
+          {"required": ["input_semantics"]},
+          {"required": ["domain_constraints"]},
+          {"required": ["business_logic"]},
+          {"required": ["runtime_contract"]},
+          {"required": ["public_contract"]}
+        ]
+      }
     }
   }
 }

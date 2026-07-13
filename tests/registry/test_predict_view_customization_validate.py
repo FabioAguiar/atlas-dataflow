@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from registry.predict_view_customization_validate import (  # noqa: E402
+    classify_customization_compatibility,
     validate_customization,
     validate_customization_file,
 )
@@ -255,6 +256,73 @@ def test_hidden_required_field_produces_required_field_hidden_explicit():
 
 
 # ---------------------------------------------------------------------------
+# classify_customization_compatibility (Project Spec S0098)
+# ---------------------------------------------------------------------------
+
+_VALID_CUSTOMIZATION = {
+    "schema_version": "1.0.0",
+    "view_id": "churn-risk-overview",
+    "dataset_slug": "telco-customer-churn",
+    "field_hints": [{"field_name": "tenure", "display_order_hint": 1}],
+    "groups": [],
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "customization_defines_runtime_validation": False,
+        "customization_duplicates_contract": False,
+    },
+}
+
+
+def test_classify_compatible_customization():
+    result = classify_customization_compatibility(
+        "churn-risk-overview", "telco-customer-churn", _VALID_CUSTOMIZATION, _MOCK_PUBLIC_CONTRACT
+    )
+    assert result == {"status": "compatible", "errors": []}
+
+
+def test_classify_incompatible_when_field_reference_unknown():
+    customization = {**_VALID_CUSTOMIZATION, "field_hints": [{"field_name": "nonexistent_field"}]}
+    result = classify_customization_compatibility(
+        "churn-risk-overview", "telco-customer-churn", customization, _MOCK_PUBLIC_CONTRACT
+    )
+    assert result["status"] == "incompatible"
+    assert "UNKNOWN_FIELD_REFERENCE" in _codes(result)
+
+
+def test_classify_incompatible_when_view_id_identity_mismatches():
+    result = classify_customization_compatibility(
+        "some-other-view", "telco-customer-churn", _VALID_CUSTOMIZATION, _MOCK_PUBLIC_CONTRACT
+    )
+    assert result["status"] == "incompatible"
+    assert "CUSTOMIZATION_VIEW_ID_MISMATCH" in _codes(result)
+
+
+def test_classify_incompatible_when_dataset_slug_identity_mismatches():
+    result = classify_customization_compatibility(
+        "churn-risk-overview", "some-other-dataset", _VALID_CUSTOMIZATION, _MOCK_PUBLIC_CONTRACT
+    )
+    assert result["status"] == "incompatible"
+    assert "CUSTOMIZATION_DATASET_SLUG_MISMATCH" in _codes(result)
+
+
+def test_classify_incompatible_when_public_contract_unavailable():
+    result = classify_customization_compatibility(
+        "churn-risk-overview", "telco-customer-churn", _VALID_CUSTOMIZATION, None
+    )
+    assert result["status"] == "incompatible"
+    assert "PUBLIC_CONTRACT_UNAVAILABLE" in _codes(result)
+
+
+def test_classify_never_mutates_the_customization_it_classifies():
+    customization = json.loads(json.dumps(_VALID_CUSTOMIZATION))
+    before = json.loads(json.dumps(customization))
+    classify_customization_compatibility(
+        "churn-risk-overview", "telco-customer-churn", customization, None
+    )
+    assert customization == before
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 
@@ -272,6 +340,12 @@ if __name__ == "__main__":
         test_error_messages_contain_no_filesystem_paths,
         test_hidden_optional_field_passes_validate_customization,
         test_hidden_required_field_produces_required_field_hidden_explicit,
+        test_classify_compatible_customization,
+        test_classify_incompatible_when_field_reference_unknown,
+        test_classify_incompatible_when_view_id_identity_mismatches,
+        test_classify_incompatible_when_dataset_slug_identity_mismatches,
+        test_classify_incompatible_when_public_contract_unavailable,
+        test_classify_never_mutates_the_customization_it_classifies,
     ]
     passed = 0
     failed = 0

@@ -53,6 +53,22 @@ publisher/runs/, contracts, notebooks, model artifacts, or support-root files.
 Invalid/colliding slugs and existing target artifacts are rejected before any
 write, while write failures trigger best-effort restoration of every involved
 file.
+
+Project Spec S0098 adds predict-view materialization to this module's own
+registry activation transaction, once the final public dataset slug is
+known: the promoted release's public-context.json's optional `predict_views`
+declaration is read (absent preserves the dataset-owned subset already in
+registry/predict-views.json; an explicit empty array removes it; a populated
+array replaces it) and, when it changes anything, validated as part of a
+complete temporary predict-view registry (validate_predict_views) before
+either registry/datasets.json or registry/predict-views.json is written --
+both writes share one rollback boundary, so a predict-view validation
+failure leaves both files exactly as they were. A best-effort, read-only
+classification of this dataset's stored predict-view customizations against
+the just-promoted release's public contract (registry/predict_view_
+customization_validate.classify_customization_compatibility) is also
+returned, without ever rewriting, deleting, or migrating a stored
+customization here.
 """
 
 import json
@@ -64,7 +80,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from registry.predict_view_validate import validate_predict_views
+from registry.predict_view_customization_validate import classify_customization_compatibility
+from registry.predict_view_validate import PREDICT_VIEWS_SCHEMA_VERSION, validate_predict_views
 from registry.validate import RELEASE_ID_PATTERN, validate_registry
 
 
@@ -401,6 +418,251 @@ def _apply_create_new_dataset_detail(
     return entry, True, allocated_slug
 
 
+def _normalize_declared_view(raw_view: object, base_dataset_slug: str, final_dataset_slug: str) -> dict:
+    """Return a deep copy of one declared predict view, rebound to final_dataset_slug.
+
+    Rejects (RuntimeError, before any write) a non-object record or a record
+    that declares a dataset_slug/binding.dataset_slug other than
+    base_dataset_slug -- the promotion's own pre-allocation candidate slug,
+    i.e. the identity the declaring dataset-context.json is actually allowed
+    to speak for. view_id is never altered here; only dataset_slug and
+    binding.dataset_slug are rewritten to final_dataset_slug, so
+    MODE_CREATE_NEW_DATASET_DETAIL's numbered slug allocation is reflected
+    without ever changing the declared view's stable identity.
+    """
+    if not isinstance(raw_view, dict):
+        raise RuntimeError(
+            "Registry update halted: a declared predict view is not an object."
+        )
+
+    declared_dataset_slug = raw_view.get("dataset_slug")
+    if declared_dataset_slug is not None and declared_dataset_slug != base_dataset_slug:
+        raise RuntimeError(
+            "Registry update halted: a declared predict view's dataset_slug "
+            "does not match the promoted dataset."
+        )
+
+    binding = raw_view.get("binding")
+    if binding is not None:
+        if not isinstance(binding, dict):
+            raise RuntimeError(
+                "Registry update halted: a declared predict view has an invalid binding."
+            )
+        declared_binding_slug = binding.get("dataset_slug")
+        if declared_binding_slug is not None and declared_binding_slug != base_dataset_slug:
+            raise RuntimeError(
+                "Registry update halted: a declared predict view binding.dataset_slug "
+                "does not match the promoted dataset."
+            )
+
+    normalized = json.loads(json.dumps(raw_view))
+    normalized["dataset_slug"] = final_dataset_slug
+    if isinstance(normalized.get("binding"), dict):
+        normalized["binding"]["dataset_slug"] = final_dataset_slug
+    return normalized
+
+
+def _materialize_predict_views(
+    repo_root: Path,
+    release_dir: Path,
+    base_dataset_slug: str,
+    final_dataset_slug: str,
+    known_dataset_slugs: set,
+) -> dict:
+    """Resolve this promotion's predict-view materialization in-memory only.
+
+    Reads the promoted release's immutable public-context.json and the
+    current registry/predict-views.json, distinguishes absent/empty/populated
+    `predict_views`, normalizes and validates a complete temporary merged
+    registry (this dataset's declared subset plus every other dataset's
+    entries preserved verbatim) with validate_predict_views(), and returns a
+    plan -- it never writes anything itself. Raises RuntimeError on any
+    malformed declaration, invalid binding, dataset mismatch, duplicate
+    view_id, or post-merge validation failure; callers must treat that as a
+    full-transaction abort (no write of any kind).
+
+    Returns {"declared_mode": "absent"|"empty"|"populated",
+    "action": "not_declared"|"preserved"|"created"|"updated"|"removed",
+    "rewrite_needed": bool, "final_registry": dict|None,
+    "view_ids_after": set[str]} -- final_registry is populated only when
+    rewrite_needed is True, and view_ids_after is always this dataset's
+    resulting owned view_id set (unchanged from the current registry when
+    declared_mode is "absent").
+    """
+    public_context = _read_optional_json_object(release_dir / "public-context.json")
+
+    predict_views_path = repo_root / "registry" / "predict-views.json"
+    # Tolerant, like the release's own public-context.json read above: a
+    # missing/unreadable/malformed registry/predict-views.json is treated as
+    # an empty predict-view registry rather than aborting the promotion --
+    # this file is expected to always exist in the real repository, but a
+    # fixture/test repo_root that has not created it yet must not be forced
+    # to just to promote a release with no predict-view concerns at all.
+    existing_registry = _read_optional_json_object(predict_views_path)
+    existing_views = existing_registry.get("predict_views")
+    if not isinstance(existing_views, list):
+        existing_views = []
+
+    current_dataset_views = [
+        view for view in existing_views
+        if isinstance(view, dict) and view.get("dataset_slug") == final_dataset_slug
+    ]
+
+    if "predict_views" not in public_context:
+        return {
+            "declared_mode": "absent",
+            "action": "not_declared",
+            "rewrite_needed": False,
+            "final_registry": None,
+            "view_ids_after": {
+                view.get("view_id") for view in current_dataset_views if isinstance(view.get("view_id"), str)
+            },
+        }
+
+    raw_declared = public_context.get("predict_views")
+    if not isinstance(raw_declared, list):
+        raise RuntimeError(
+            "Registry update halted: predict_views must be an array when present."
+        )
+
+    declared_mode = "empty" if not raw_declared else "populated"
+    normalized_declared = (
+        []
+        if declared_mode == "empty"
+        else [_normalize_declared_view(raw_view, base_dataset_slug, final_dataset_slug) for raw_view in raw_declared]
+    )
+
+    other_dataset_views = [
+        view for view in existing_views
+        if not (isinstance(view, dict) and view.get("dataset_slug") == final_dataset_slug)
+    ]
+    first_target_index = next(
+        (
+            i for i, view in enumerate(existing_views)
+            if isinstance(view, dict) and view.get("dataset_slug") == final_dataset_slug
+        ),
+        None,
+    )
+    if first_target_index is None:
+        final_views = other_dataset_views + normalized_declared
+    else:
+        insert_at = sum(
+            1 for view in existing_views[:first_target_index]
+            if not (isinstance(view, dict) and view.get("dataset_slug") == final_dataset_slug)
+        )
+        final_views = other_dataset_views[:insert_at] + normalized_declared + other_dataset_views[insert_at:]
+
+    final_registry = {
+        "schema_version": existing_registry.get("schema_version", PREDICT_VIEWS_SCHEMA_VERSION),
+        "predict_views": final_views,
+    }
+
+    validation = validate_predict_views(final_registry, known_dataset_slugs=known_dataset_slugs)
+    if validation.get("valid") is not True:
+        errors = validation.get("errors") or []
+        first_error = errors[0] if errors else {}
+        message = first_error.get("message") or "Materialized predict views registry is not valid."
+        raise RuntimeError(message)
+
+    rewrite_needed = final_views != existing_views
+    current_ids = {view.get("view_id") for view in current_dataset_views if isinstance(view.get("view_id"), str)}
+    new_ids = {view.get("view_id") for view in normalized_declared if isinstance(view.get("view_id"), str)}
+
+    if not rewrite_needed:
+        action = "preserved"
+    elif not new_ids and current_ids:
+        action = "removed"
+    elif new_ids and not current_ids:
+        action = "created"
+    else:
+        action = "updated"
+
+    return {
+        "declared_mode": declared_mode,
+        "action": action,
+        "rewrite_needed": rewrite_needed,
+        "final_registry": final_registry if rewrite_needed else None,
+        "view_ids_after": new_ids,
+    }
+
+
+def _load_public_contract_for_classification(release_id: str, repo_root: Path):
+    """Best-effort load of the just-promoted release's public contract.
+
+    Returns None if the api layer or the contract itself is unavailable --
+    a matching customization is then classified "incompatible" rather than
+    raising, since compatibility can never be confirmed without it. This is
+    the only place registry/update.py reaches into the api/ layer, and only
+    ever with an already-known release_id it just promoted; it never
+    resolves a dataset_slug to a release itself.
+    """
+    api_root = str(repo_root / "api")
+    if api_root not in sys.path:
+        sys.path.insert(0, api_root)
+    try:
+        from public_contract_loader import PublicContractUnavailableError, load_public_contract
+    except ImportError:
+        return None
+    try:
+        return load_public_contract(release_id, releases_root=repo_root / "releases")
+    except PublicContractUnavailableError:
+        return None
+
+
+def _classify_dataset_customizations(
+    repo_root: Path,
+    dataset_slug: str,
+    materialized_view_ids: set,
+    release_id: str,
+) -> list:
+    """Reduced, read-only classification of dataset_slug's stored predict-view
+    customizations against the just-promoted release's active public
+    contract (Project Spec S0098). Never mutates
+    registry/predict-view-customizations.json.
+
+    Returns a list of {"view_id": str, "status": "absent"|"compatible"|
+    "incompatible"|"unmaterialized"} entries: "absent" is a materialized
+    view with no stored customization; "unmaterialized" is a stored
+    customization whose view_id is not in materialized_view_ids -- excluded
+    from automatic binding decisions, never deleted, rewritten, or migrated
+    here.
+    """
+    customizations_data = _read_optional_json_object(
+        repo_root / "registry" / "predict-view-customizations.json"
+    )
+    customizations = customizations_data.get("predict_view_customizations")
+    if not isinstance(customizations, list):
+        customizations = []
+
+    dataset_customizations = [
+        c for c in customizations if isinstance(c, dict) and c.get("dataset_slug") == dataset_slug
+    ]
+
+    public_contract = None
+    contract_loaded = False
+    report: list[dict] = []
+
+    for view_id in sorted(vid for vid in materialized_view_ids if isinstance(vid, str)):
+        matching = next((c for c in dataset_customizations if c.get("view_id") == view_id), None)
+        if matching is None:
+            report.append({"view_id": view_id, "status": "absent"})
+            continue
+        if not contract_loaded:
+            public_contract = _load_public_contract_for_classification(release_id, repo_root)
+            contract_loaded = True
+        classification = classify_customization_compatibility(
+            view_id, dataset_slug, matching, public_contract
+        )
+        report.append({"view_id": view_id, "status": classification["status"]})
+
+    for customization in dataset_customizations:
+        view_id = customization.get("view_id") if isinstance(customization, dict) else None
+        if isinstance(view_id, str) and view_id not in materialized_view_ids:
+            report.append({"view_id": view_id, "status": "unmaterialized"})
+
+    return report
+
+
 def run(
     result_path_or_run_dir: str,
     repo_root: Path | None = None,
@@ -469,17 +731,71 @@ def run(
         message = first_error.get("message") or "Updated registry is not valid."
         raise RuntimeError(message)
 
-    shutil.copy2(registry_path, backup_path)
-    registry_path.write_text(
-        json.dumps(registry, indent=2, ensure_ascii=False),
-        encoding="utf-8",
+    # Project Spec S0098: resolve predict-view materialization in-memory and
+    # validate it as a complete temporary registry before anything is
+    # written. A failure here (malformed declaration, invalid binding,
+    # dataset mismatch, duplicate view_id, or post-merge validation failure)
+    # raises and leaves both registry/datasets.json and
+    # registry/predict-views.json byte-for-byte untouched, since neither has
+    # been written yet at this point.
+    known_dataset_slugs = {
+        e.get("dataset_slug")
+        for e in registry.get("datasets", [])
+        if isinstance(e, dict) and isinstance(e.get("dataset_slug"), str)
+    }
+    materialization = _materialize_predict_views(
+        repo_root=repo_root,
+        release_dir=release_dir,
+        base_dataset_slug=dataset_slug,
+        final_dataset_slug=allocated_slug,
+        known_dataset_slugs=known_dataset_slugs,
     )
+    customization_classification = _classify_dataset_customizations(
+        repo_root=repo_root,
+        dataset_slug=allocated_slug,
+        materialized_view_ids=materialization["view_ids_after"],
+        release_id=release_id,
+    )
+
+    predict_views_path = repo_root / "registry" / "predict-views.json"
+    predict_views_backup_path = repo_root / "registry" / "predict-views.json.previous"
+    predict_views_rewrite = materialization["rewrite_needed"]
+    predict_views_existed = predict_views_path.is_file()
+
+    originals: dict[Path, bytes | None] = {registry_path: registry_path.read_bytes()}
+    if predict_views_rewrite:
+        originals[predict_views_path] = predict_views_path.read_bytes() if predict_views_existed else None
+
+    try:
+        shutil.copy2(registry_path, backup_path)
+        registry_path.write_text(
+            json.dumps(registry, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        if predict_views_rewrite:
+            if predict_views_existed:
+                shutil.copy2(predict_views_path, predict_views_backup_path)
+            predict_views_path.write_text(
+                json.dumps(materialization["final_registry"], indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+    except OSError:
+        for path, original in originals.items():
+            try:
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(original)
+            except OSError:
+                pass
+        raise RuntimeError("Registry update halted: the registry could not be written.")
 
     previous_display = previous_active_release_id if previous_active_release_id else "none"
     print(f"previous_active_release: {previous_display}")
     print(f"new_active_release: {release_id}")
     print(f"dataset_slug: {dataset_slug}")
     print(f"allocated_dataset_slug: {allocated_slug}")
+    print(f"predict_view_materialization_action: {materialization['action']}")
 
     return {
         "dataset_slug": dataset_slug,
@@ -489,6 +805,11 @@ def run(
         "update_applied": True,
         "backup_path": str(backup_path),
         "dataset_entry_created": created,
+        "predict_view_materialization": {
+            "declared_mode": materialization["declared_mode"],
+            "action": materialization["action"],
+        },
+        "predict_view_customization_classification": customization_classification,
     }
 
 

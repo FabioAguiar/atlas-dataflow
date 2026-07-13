@@ -3302,6 +3302,11 @@ export default function DatasetAdminPage() {
   const [refreshRevision, setRefreshRevision] = useState(0);
   const loadedDatasetSlugRef = useRef("");
   const canonicalDateBySlugRef = useRef<Record<string, string>>({});
+  // Project Spec S0098: tracks which selectedSlug the deterministic
+  // predict-view rebind default has already been applied for, so it runs
+  // exactly once per dataset selection rather than fighting a later manual
+  // unbind/rebind edit on every background refresh.
+  const predictViewRebindAppliedSlugRef = useRef<string | null>(null);
   const draftFormRef = useRef(draftForm);
   const draftStateRef = useRef(draftState);
   draftFormRef.current = draftForm;
@@ -3403,6 +3408,11 @@ export default function DatasetAdminPage() {
       setCustomizationEditorState(emptyCustomizationEditorState);
       setPublicationState(emptyPublicationState);
       setLastPublishedAt(undefined);
+      // Project Spec S0098: the deterministic predict-view rebind default
+      // below applies at most once per dataset selection; switching to a
+      // different (or reselecting the same) Dataset Detail must be able to
+      // re-evaluate it.
+      predictViewRebindAppliedSlugRef.current = null;
     }
     loadedDatasetSlugRef.current = selectedSlug;
 
@@ -3517,6 +3527,49 @@ export default function DatasetAdminPage() {
 
     return () => controller.abort();
   }, [selectedSlug, refreshRevision]);
+
+  // Project Spec S0098: deterministic Dataset Admin authoring rebinding.
+  // Runs only after hydration has resolved bound_predict_view_id from the
+  // real profile (draftState.status === "ready", set by the effect above)
+  // and the dataset-owned eligible views list has arrived
+  // (readOnlyData.views.status === "ready"), so this never races or
+  // overwrites the profile-driven setDraftForm(formFromProfile(...)) call.
+  // Eligible views come only from this dataset's own GET /datasets/{slug}/views
+  // response, so a view belonging to another dataset is never selectable
+  // here. Applies at most once per dataset selection (see
+  // predictViewRebindAppliedSlugRef, reset on dataset switch above) so it
+  // never re-fights a later manual unbind/rebind edit on a background
+  // refresh. This only ever adjusts bound_predict_view_id in the editable
+  // draft form state -- it never calls the API and never touches the
+  // published snapshot, so it participates in the existing dirty-state and
+  // Publish changes flow exactly like any other manual field edit.
+  useEffect(() => {
+    if (!selectedSlug || draftState.status !== "ready") {
+      return;
+    }
+    if (readOnlyData.views.status !== "ready") {
+      return;
+    }
+    if (predictViewRebindAppliedSlugRef.current === selectedSlug) {
+      return;
+    }
+    predictViewRebindAppliedSlugRef.current = selectedSlug;
+
+    const eligibleViewIds = (stateValue(readOnlyData.views) ?? [])
+      .map((view) => view.view_id)
+      .filter((viewId): viewId is string => Boolean(viewId));
+
+    setDraftForm((current) => {
+      if (current.bound_predict_view_id && eligibleViewIds.includes(current.bound_predict_view_id)) {
+        return current;
+      }
+      const nextBinding = eligibleViewIds.length === 1 ? eligibleViewIds[0] : "";
+      if (current.bound_predict_view_id === nextBinding) {
+        return current;
+      }
+      return { ...current, bound_predict_view_id: nextBinding };
+    });
+  }, [selectedSlug, draftState.status, readOnlyData.views]);
 
   const datasets = state.status === "ready" ? state.datasets : [];
   const selectedDataset = useMemo(

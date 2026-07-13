@@ -157,6 +157,16 @@ function installFetchMock(
     lastUpdatedAfterPublish?: string;
     releaseDate?: string;
     releaseDateMode?: "auto" | "manual";
+    // Project Spec S0098: overrides the dataset-owned eligible predict views
+    // GET /datasets/{slug}/views returns. Defaults to the shared single-view
+    // fixture ([{ view_id: viewId, ... }]) every other test relies on.
+    viewsOverride?: Array<{ view_id: string; display?: { title?: string } }>;
+    // Project Spec S0098: overrides the profile draft's
+    // inference_presentation.bound_predict_view_id independently of the
+    // shared publicProfile fixture (which always carries the valid viewId),
+    // for exercising a stale-binding rebind scenario. Only applied when an
+    // existing draft/profile is returned (ignored with noExistingDraft).
+    boundPredictViewIdOverride?: string;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -254,7 +264,9 @@ function installFetchMock(
       return jsonResponse({ visualizations: {} });
     }
     if (url.endsWith(`/datasets/${datasetSlug}/views`)) {
-      return jsonResponse({ views: [{ view_id: viewId, display: { title: "Churn risk overview" } }] });
+      return jsonResponse({
+        views: options.viewsOverride ?? [{ view_id: viewId, display: { title: "Churn risk overview" } }],
+      });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/publish`) && init?.method === "PUT") {
       if (options.rejectPublish) {
@@ -348,6 +360,9 @@ function installFetchMock(
             release_date_mode: options.releaseDateMode ?? publicProfile.display.release_date_mode,
           },
           ...(options.themePresetOverride ? { theme: { preset: options.themePresetOverride } } : {}),
+          ...(options.boundPredictViewIdOverride !== undefined
+            ? { inference_presentation: { bound_predict_view_id: options.boundPredictViewIdOverride } }
+            : {}),
         };
       if (options.trackProfileDraftSaves) {
         savedProfileDraft = profile;
@@ -2335,5 +2350,100 @@ describe("DatasetAdminPage", () => {
       await screen.findByText("Public Content changes could not be published. Open the Publishing tab for details."),
     ).toBeInTheDocument();
     expect(forbiddenDraftTermsPresent()).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Project Spec S0098: deterministic predict-view authoring rebinding
+  // -------------------------------------------------------------------------
+
+  it("preserves a currently valid bound_predict_view_id instead of overriding it", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    expect(await screen.findByLabelText("Bound predict view")).toHaveValue(viewId);
+  });
+
+  it("deterministically selects the sole eligible predict view when no binding exists yet", async () => {
+    installFetchMock({ noExistingDraft: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Bound predict view")).toHaveValue(viewId));
+  });
+
+  it("repairs a stale bound_predict_view_id by selecting the sole eligible view", async () => {
+    // A stale id can legitimately be another dataset's view_id left behind by
+    // an earlier rename/rebind -- GET /datasets/{slug}/views already scopes
+    // eligible views to this dataset server-side, so it is simply absent
+    // from the eligible list either way, and the rebind default must repair
+    // it the same as any other stale reference (never select it, never
+    // leave it bound).
+    installFetchMock({ boundPredictViewIdOverride: "some-other-datasets-view" });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Bound predict view")).toHaveValue(viewId));
+    const options = within(screen.getByLabelText("Bound predict view")).getAllByRole("option");
+    expect(options.map((option) => (option as HTMLOptionElement).value)).not.toContain("some-other-datasets-view");
+  });
+
+  it("keeps the predict view unbound when zero eligible views exist", async () => {
+    installFetchMock({ noExistingDraft: true, viewsOverride: [] });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    await screen.findByLabelText("Bound predict view");
+    expect(screen.getByLabelText("Bound predict view")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Load customization" })).toBeDisabled();
+  });
+
+  it("requires an explicit user choice when multiple eligible views exist and no valid binding exists", async () => {
+    installFetchMock({
+      noExistingDraft: true,
+      viewsOverride: [
+        { view_id: "churn-risk-overview", display: { title: "Churn Risk Overview" } },
+        { view_id: "retention-outlook", display: { title: "Retention Outlook" } },
+      ],
+    });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    await screen.findByLabelText("Bound predict view");
+    expect(screen.getByLabelText("Bound predict view")).toHaveValue("");
+  });
+
+  it("participates in the existing dirty-state and Publish changes flow once deterministically bound", async () => {
+    // bound_predict_view_id is part of the whole-profile comparison the
+    // Publishing tab's own Publish changes button gates on
+    // (hasPublishableChanges), not the workspace toolbar's narrower
+    // publishable-fields subset -- so this exercises that button.
+    installFetchMock({ noExistingDraft: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await waitFor(() => expect(screen.getByLabelText("Bound predict view")).toHaveValue(viewId));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const publishButton = within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" });
+
+    // The deterministic default is a draft-only change until the operator
+    // explicitly publishes -- never an implicit mutation of the published
+    // snapshot merely from page load.
+    await waitFor(() => expect(publishButton).not.toBeDisabled());
+
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(within(screen.getByRole("tabpanel")).getByText(/Published/)).toBeInTheDocument());
   });
 });

@@ -1,0 +1,140 @@
+{
+  "boundary_confirmations": {
+    "absolute_paths_embedded": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "parent_traversal_embedded": false,
+    "raw_dataset_embedded": false,
+    "release_relative_paths_only": true,
+    "runtime_payload_validation_duplicated": false,
+    "training_internals_required_at_runtime": false
+  },
+  "bundle_identity": {
+    "artifact_kind": "inference_bundle",
+    "bundle_id": "telco-customer-churn-inference-bundle-20260713T155808Z",
+    "created_at": "2026-07-13T15:58:08+00:00"
+  },
+  "compatibility_constraints": {
+    "requires_contract_versions": {
+      "execution_contract": "execution_contract.v1",
+      "public_contract": "1.0.0",
+      "runtime_contract": "1.0.0"
+    },
+    "requires_feature_order_match": true,
+    "requires_hash_match": true,
+    "requires_release_relative_paths": true,
+    "requires_supported_loader": true,
+    "requires_supported_serialization": true
+  },
+  "contract_references": {
+    "execution_contract": {
+      "contract_version": "execution_contract.v1",
+      "path": "contracts/telco-customer-churn/execution-contract.json",
+      "sha256": "fdb47bbaf99486a44750d952cc29aab89c0ae4352ed8f711c60beeb89d8f360d"
+    },
+    "public_contract": {
+      "contract_version": "1.0.0",
+      "path": "contracts/telco-customer-churn/public-contract.json",
+      "sha256": "2bf6a70e26ec7ff6c81b3339f09924d8373533633310b42b944356f26a07e26c"
+    },
+    "runtime_contract": {
+      "contract_version": "1.0.0",
+      "path": "contracts/telco-customer-churn/runtime-contract.json",
+      "sha256": "e3284130d71d823e7c16ab7e86b00a9f0ddc0221ed778974971b4a797943a2d4"
+    }
+  },
+  "contract_version": "inference_bundle.v1",
+  "dataset_context": {
+    "dataset_context_reference": {
+      "path": "contracts/telco-customer-churn/dataset-context.json",
+      "sha256": "cf6eeb15c2741ca0b9e2e1919e92e00cc69e861bbcb3741b9390401970025d8a"
+    },
+    "dataset_slug": "telco-customer-churn"
+  },
+  "feature_order": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+  ],
+  "input_schema": {
+    "payload_shape": "runtime_contract_features_object",
+    "runtime_contract_reference": "contract_references.runtime_contract"
+  },
+  "model_artifact": {
+    "path": "pipeline/training-runs/telco-customer-churn/train-20260713T155808Z/model.pkl",
+    "sha256": "ec2eb1127b5489449195629f8cbb5500291002fae0f633f99324a77e29bf8282",
+    "source_training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260713T155808Z/training-parameter-record.json"
+  },
+  "output_schema": {
+    "class_labels": [
+      "No",
+      "Yes"
+    ],
+    "prediction_key": "prediction",
+    "prediction_type": "string",
+    "probability_output": true
+  },
+  "prepared_dataset": {
+    "prepared_dataset_reference": {
+      "path": "pipeline/prepared/telco-customer-churn/prepared-data.csv",
+      "sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88"
+    },
+    "prepared_dataset_sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88"
+  },
+  "preprocessing": {
+    "categorical_encoding_policy": "onehot",
+    "missing_value_policy": {},
+    "numeric_handling": "standardize",
+    "source": "execution_contract_and_training_parameter_record",
+    "transformations": [
+      "passthrough"
+    ]
+  },
+  "release_context": {
+    "release_id": "release-20260713-001",
+    "release_package_reference": "predictions/bundle.json"
+  },
+  "runtime_execution": {
+    "loader_strategy": "joblib_sklearn_predict",
+    "model_family": "gradient_boosting",
+    "prediction_interface": "predict",
+    "serialization_format": "joblib"
+  },
+  "training_evidence": {
+    "model_selection_evidence": {
+      "contract_version": "model-selection-evidence.v1",
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260713T155808Z/model-selection-evidence.json",
+      "sha256": "0fd18e64885bf2f89b1c402ac6a31d2a1fbc59af6aefd61c02911e2dd18a12f6"
+    },
+    "training_metrics": {
+      "contract_version": "training-metrics.v1",
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260713T155808Z/metrics.json",
+      "sha256": "47f4156480248cf3f35634424dd5599576720ac802cbeb9c4660e4907dd0c24a"
+    },
+    "training_parameter_record": {
+      "contract_version": "training-parameter-record.v1",
+      "path": "pipeline/training-runs/telco-customer-churn/train-20260713T155808Z/training-parameter-record.json",
+      "sha256": "7a862237bc46b68d8bb93dcc6da5a81fee409aea5d01677c92941e00b694456f"
+    },
+    "training_run_identity": {
+      "dataset_slug": "telco-customer-churn",
+      "run_id": "train-20260713T155808Z"
+    }
+  }
+}

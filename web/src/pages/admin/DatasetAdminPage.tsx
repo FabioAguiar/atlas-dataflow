@@ -1243,10 +1243,9 @@ function sameProfile(left: ProfileDraft | null, right: ProfileDraft | null): boo
   return stableJson(normalizedLeft) === stableJson(normalizedRight);
 }
 
-// Fields observed by the workspace Publish changes action. Home-card media
-// joins the original Public Content subset so a successful upload/clear is
-// immediately publishable without requiring an unrelated text edit.
-type PublicContentFields = Pick<
+// Publishable fields observed by the workspace Publish changes action across
+// Dataset Detail tabs. This deliberately excludes transient editor state.
+type WorkspacePublishFields = Pick<
   DraftForm,
   | "display_title"
   | "display_subtitle"
@@ -1262,9 +1261,10 @@ type PublicContentFields = Pick<
   | "primary_metric_key"
   | "performance_focus"
   | "background_image_ref"
+  | "theme_preset"
 >;
 
-function publicContentFields(form: DraftForm): PublicContentFields {
+function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
   return {
     display_title: form.display_title,
     display_subtitle: form.display_subtitle,
@@ -1280,11 +1280,14 @@ function publicContentFields(form: DraftForm): PublicContentFields {
     primary_metric_key: form.primary_metric_key,
     performance_focus: form.performance_focus,
     background_image_ref: form.background_image_ref,
+    theme_preset: isDatasetThemePresetId(form.theme_preset)
+      ? form.theme_preset
+      : DEFAULT_DATASET_THEME_PRESET,
   };
 }
 
-function samePublicContent(left: DraftForm, right: DraftForm): boolean {
-  return stableJson(publicContentFields(left)) === stableJson(publicContentFields(right));
+function sameWorkspacePublishFields(left: DraftForm, right: DraftForm): boolean {
+  return stableJson(workspacePublishFields(left)) === stableJson(workspacePublishFields(right));
 }
 
 function backendDraftProfile(draftState: DraftState): ProfileDraft | null {
@@ -1789,29 +1792,27 @@ function ThemePresetTab({
 }) {
   return (
     <div className="dataset-admin-tab-workspace">
-      <Card className="dataset-admin-config-card">
-        <div className="dataset-admin-theme-grid">
-          {DATASET_THEME_PRESETS.map((preset) => {
-            const selected = form.theme_preset === preset.id;
-            return (
-              <button
-                aria-pressed={selected}
-                className={["dataset-admin-theme-card", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
-                key={preset.id}
-                onClick={() => setField("theme_preset", preset.id)}
-                type="button"
-              >
-                <span className="dataset-admin-theme-card__swatches" aria-hidden="true">
-                  {preset.swatches.map((color) => (
-                    <span key={color} style={{ background: color }} />
-                  ))}
-                </span>
-                <strong>{preset.label}</strong>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
+      <div className="dataset-admin-theme-grid">
+        {DATASET_THEME_PRESETS.map((preset) => {
+          const selected = form.theme_preset === preset.id;
+          return (
+            <button
+              aria-pressed={selected}
+              className={["dataset-admin-theme-card", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
+              key={preset.id}
+              onClick={() => setField("theme_preset", preset.id)}
+              type="button"
+            >
+              <span className="dataset-admin-theme-card__swatches" aria-hidden="true">
+                {preset.swatches.map((color) => (
+                  <span key={color} style={{ background: color }} />
+                ))}
+              </span>
+              <strong>{preset.label}</strong>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -3219,12 +3220,11 @@ export default function DatasetAdminPage() {
   }, [selectedSlug, lastUpdatedDate, draftState.status]);
   // The workspace toolbar's Publish changes snapshot (Project Spec S0058):
   // the normalized current saved/published form state for the selected
-  // Dataset Detail's Public Content fields, or -- when no backend draft/
+  // Dataset Detail's workspace-publishable fields, or -- when no backend draft/
   // profile exists yet -- the same blank-form-with-seeded-title baseline the
-  // canonicalDisplayTitle effect above establishes. Scoped to Public Content
-  // only; Metadata & Card/Theme Preset/etc. keep using the whole-profile
-  // comparison above for the Publishing tab's own (unchanged) lifecycle.
-  const publicContentSnapshotForm: DraftForm =
+  // canonicalDisplayTitle effect above establishes. The Publishing tab keeps
+  // using the whole-profile comparison above for its own lifecycle.
+  const workspacePublishSnapshotForm: DraftForm =
     hasBackendDraftProfile && lastBackendDraft
       ? { ...formFromProfile(lastBackendDraft, selectedSlug), release_date_label: lastUpdatedDate }
       : {
@@ -3232,13 +3232,13 @@ export default function DatasetAdminPage() {
           display_title: canonicalDisplayTitle,
           release_date_label: lastUpdatedDate,
         };
-  const hasUnpublishedPublicContentChanges =
-    Boolean(selectedSlug) && !samePublicContent(draftForm, publicContentSnapshotForm);
+  const hasUnpublishedWorkspaceChanges =
+    Boolean(selectedSlug) && !sameWorkspacePublishFields(draftForm, workspacePublishSnapshotForm);
   const toolbarPublishBusy =
     draftState.status === "loading" ||
     publicationState.status === "publishing" ||
     publicationState.status === "saving_visibility";
-  const toolbarPublishDisabled = !selectedSlug || !hasUnpublishedPublicContentChanges || toolbarPublishBusy;
+  const toolbarPublishDisabled = !selectedSlug || !hasUnpublishedWorkspaceChanges || toolbarPublishBusy;
   const toolbarPublishError =
     draftState.status === "invalid"
       ? "Public Content changes could not be saved. Open the Publishing tab for details."

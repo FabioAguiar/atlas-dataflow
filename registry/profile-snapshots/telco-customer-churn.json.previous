@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-13T12:23:39Z",
+  "published_at": "2026-07-13T14:26:50Z",
   "active_release_at_publish_time": "release-20260713t103826z",
   "profile": {
     "display": {
@@ -10,6 +10,7 @@
       "canonical_name_fallback": true
     },
     "home_card": {
+      "icon": "money-dollar",
       "background_image_ref": "/media/home-cards/627bc15fc40c4d1f859adbb090bdd59a.jpg",
       "short_description": "42",
       "primary_metric_key": null
@@ -42,7 +43,7 @@
       ]
     },
     "theme": {
-      "preset": "atlas-green"
+      "preset": "electric-magenta"
     },
     "inference_presentation": {
       "bound_predict_view_id": null

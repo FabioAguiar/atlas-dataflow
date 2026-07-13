@@ -1084,6 +1084,10 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
     const themePanel = screen.getByRole("tabpanel");
+    const themeWorkspace = themePanel.querySelector(".dataset-admin-tab-workspace");
+    expect(themeWorkspace).toBeInTheDocument();
+    expect(themeWorkspace?.querySelector(":scope > .dataset-admin-theme-grid")).toBeInTheDocument();
+    expect(themeWorkspace?.querySelector(".dataset-admin-config-card")).not.toBeInTheDocument();
     const themeButtons = within(themePanel).getAllByRole("button");
     expect(themeButtons).toHaveLength(30);
     expect(themeButtons.map((button) => button.textContent)).toEqual(
@@ -1115,6 +1119,75 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("button", { name: /Value band/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Severity/ })).toBeDisabled();
 
+  });
+
+  it("tracks Theme Preset selection in the workspace toolbar and publishes it directly", async () => {
+    const fetchMock = installFetchMock();
+    renderAdminPage();
+    await loadDraftOnly();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    let atlasGreen = screen.getByRole("button", { name: "Atlas Green" });
+    let oceanBlue = screen.getByRole("button", { name: "Ocean Blue" });
+    fireEvent.click(oceanBlue);
+    expect(oceanBlue).toHaveAttribute("aria-pressed", "true");
+    expect(publishButton).toBeEnabled();
+
+    fireEvent.click(atlasGreen);
+    expect(publishButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Another workspace edit" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    atlasGreen = screen.getByRole("button", { name: "Atlas Green" });
+    oceanBlue = screen.getByRole("button", { name: "Ocean Blue" });
+    fireEvent.click(oceanBlue);
+    fireEvent.click(atlasGreen);
+    expect(publishButton).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: publicProfile.display.subtitle } });
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    oceanBlue = screen.getByRole("button", { name: "Ocean Blue" });
+    fireEvent.click(oceanBlue);
+    fireEvent.click(publishButton);
+
+    await waitFor(() => expect(publishButton).toBeDisabled());
+    expect(oceanBlue).toHaveAttribute("aria-pressed", "true");
+
+    const publishCall = fetchMock.mock.calls.find((call: unknown[]) =>
+      String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`),
+    );
+    const body = JSON.parse(String((publishCall?.[1] as RequestInit).body)) as { theme?: { preset?: string } };
+    expect(body.theme?.preset).toBe("ocean-blue");
+    expect(
+      fetchMock.mock.calls.find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("keeps a failed Theme Preset publication selected and actionable in the workspace toolbar", async () => {
+    installFetchMock({ rejectPublish: true });
+    renderAdminPage();
+    await loadDraftOnly();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    const oceanBlue = screen.getByRole("button", { name: "Ocean Blue" });
+    fireEvent.click(oceanBlue);
+    fireEvent.click(publishButton);
+
+    await screen.findByText("Public Content changes could not be published. Open the Publishing tab for details.");
+    expect(oceanBlue).toHaveAttribute("aria-pressed", "true");
+    expect(publishButton).toBeEnabled();
   });
 
   it.each([

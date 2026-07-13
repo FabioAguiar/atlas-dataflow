@@ -1646,7 +1646,6 @@ h1 {
 
 .dataset-admin-theme-card,
 .dataset-admin-result-preset-card {
-  min-height: 8rem;
   display: grid;
   align-content: start;
   gap: var(--atlas-space-2);
@@ -1658,6 +1657,10 @@ h1 {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.dataset-admin-result-preset-card {
+  min-height: 8rem;
 }
 
 .dataset-admin-theme-card.is-selected,

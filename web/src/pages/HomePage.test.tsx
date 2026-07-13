@@ -3,6 +3,12 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  DATASET_THEME_PRESETS,
+  DATASET_THEME_TOKEN_NAMES,
+  datasetThemeStyle,
+  resolveDatasetThemePreset,
+} from "../lib/datasetPresentation";
 import HomePage from "./HomePage";
 
 type MockResponse = {
@@ -30,6 +36,7 @@ type DatasetListingFixture = {
   home_card_icon?: string | null;
   home_card_media_ref?: string | null;
   short_description?: string | null;
+  theme_preset?: string | null;
 };
 
 // Mirrors the real GET /datasets response envelope confirmed at
@@ -127,6 +134,41 @@ describe("HomePage dataset-count states", () => {
     expect(screen.getByText("Synthetic Demo Dataset Two")).toBeInTheDocument();
     expect(screen.getByText("Synthetic Demo Dataset Three")).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: /Explore dataset/ })).toHaveLength(3);
+  });
+});
+
+describe("shared dataset theme rendering contract", () => {
+  it("defines every semantic token for all 30 controlled presets and falls back closed", () => {
+    expect(DATASET_THEME_PRESETS).toHaveLength(30);
+    for (const preset of DATASET_THEME_PRESETS) {
+      expect(Object.keys(preset.tokens).sort()).toEqual([...DATASET_THEME_TOKEN_NAMES].sort());
+      expect(Object.values(preset.tokens).every(Boolean)).toBe(true);
+    }
+
+    expect(resolveDatasetThemePreset(undefined).id).toBe("atlas-green");
+    expect(resolveDatasetThemePreset("").id).toBe("atlas-green");
+    expect(resolveDatasetThemePreset("custom-rainbow").id).toBe("atlas-green");
+    expect(datasetThemeStyle("monochrome-dark")["--dataset-theme-canvas"])
+      .not.toBe(datasetThemeStyle("atlas-green")["--dataset-theme-canvas"]);
+    expect(datasetThemeStyle("cyber-neon")["--dataset-theme-chart-secondary"])
+      .not.toBe(datasetThemeStyle("ice-blue")["--dataset-theme-chart-secondary"]);
+  });
+
+  it("scopes different published themes to sibling Home cards without leaking to the grid", async () => {
+    installDatasetsFetchMock([
+      { dataset_slug: "ocean", title: "Ocean dataset", summary: "Ocean", domain: "demo", visibility: "public", tags: [], theme_preset: "ocean-blue" },
+      { dataset_slug: "terminal", title: "Terminal dataset", summary: "Terminal", domain: "demo", visibility: "public", tags: [], theme_preset: "retro-terminal" },
+      { dataset_slug: "fallback", title: "Fallback dataset", summary: "Fallback", domain: "demo", visibility: "public", tags: [], theme_preset: "unsupported" },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Ocean dataset");
+    const cards = Array.from(container.querySelectorAll<HTMLElement>(".dataset-card"));
+
+    expect(cards.map((card) => card.dataset.themePreset)).toEqual(["ocean-blue", "retro-terminal", "atlas-green"]);
+    expect(cards[0].style.getPropertyValue("--dataset-theme-canvas"))
+      .not.toBe(cards[1].style.getPropertyValue("--dataset-theme-canvas"));
+    expect(container.querySelector(".featured-datasets__grid")).not.toHaveAttribute("data-theme-preset");
   });
 });
 

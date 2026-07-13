@@ -2,6 +2,6 @@
   "schema_version": "0.1.0",
   "dataset_slug": "telco-customer-churn",
   "theme": {
-    "preset": "midnight-purple"
+    "preset": "custom-rainbow"
   }
 }

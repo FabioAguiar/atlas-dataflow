@@ -385,16 +385,23 @@ h1 {
   gap: var(--atlas-space-6);
 }
 
-/*
- * Theme-preset visual scope: connects a dataset's theme.preset draft field
- * to a bounded, explicit CSS scope. The profile schema currently enumerates
- * only "atlas-green", so this scope re-asserts the existing default tokens
- * rather than introducing a visual change -- it establishes the wiring
- * mechanism. Add another [data-theme-preset="..."] block only when the
- * schema enumerates an additional supported preset.
- */
-[data-theme-preset="atlas-green"] {
-  --atlas-color-accent: var(--atlas-color-accent);
+/* Dataset themes are deliberately local: their concrete values are resolved
+ * from the controlled catalog and attached only to a dataset surface. */
+.dataset-theme-scope {
+  --atlas-color-canvas: var(--dataset-theme-canvas);
+  --atlas-color-surface: var(--dataset-theme-surface);
+  --atlas-color-surface-muted: var(--dataset-theme-surface-muted);
+  --atlas-color-text: var(--dataset-theme-text);
+  --atlas-color-text-muted: var(--dataset-theme-text-muted);
+  --atlas-color-text-subtle: var(--dataset-theme-text-muted);
+  --atlas-color-border: var(--dataset-theme-border);
+  --atlas-color-border-strong: var(--dataset-theme-border-strong);
+  --atlas-color-accent: var(--dataset-theme-accent);
+  --atlas-color-accent-strong: var(--dataset-theme-accent-strong);
+  --atlas-color-accent-muted: var(--dataset-theme-accent-muted);
+  --atlas-focus-ring: 0 0 0 3px var(--dataset-theme-focus-ring);
+
+  color: var(--dataset-theme-text);
 }
 
 .dataset-card {
@@ -404,6 +411,8 @@ h1 {
   min-height: 100%;
   padding: var(--atlas-space-6);
   border-color: var(--atlas-color-border);
+  color: var(--atlas-color-text);
+  background: var(--atlas-color-surface);
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
@@ -506,9 +515,44 @@ h1 {
   font-weight: 700;
 }
 
+.dataset-card__badge {
+  border-color: var(--atlas-color-border-strong);
+  color: var(--atlas-color-accent-strong);
+  background: var(--atlas-color-accent-muted);
+}
+
 .dataset-detail {
   display: grid;
   gap: var(--atlas-space-8);
+}
+
+.dataset-detail.dataset-theme-scope {
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-lg);
+  padding: var(--atlas-space-6);
+  background: var(--atlas-color-canvas);
+}
+
+.dataset-theme-scope h1,
+.dataset-theme-scope h2,
+.dataset-theme-scope h3,
+.dataset-theme-scope h4 {
+  color: var(--atlas-color-text);
+}
+
+.dataset-theme-scope [role="tab"] {
+  color: var(--atlas-color-text-muted);
+}
+
+.dataset-theme-scope [role="tab"][aria-selected="true"] {
+  border-color: var(--atlas-color-border-strong);
+  color: var(--atlas-color-accent-strong);
+  background: var(--atlas-color-accent-muted);
+}
+
+.dataset-theme-scope :is(a, button, input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: var(--atlas-focus-ring);
 }
 
 .dataset-detail-header {
@@ -625,6 +669,14 @@ h1 {
   max-width: 42rem;
   color: var(--atlas-color-text-muted);
   line-height: var(--atlas-line-relaxed);
+}
+
+.dataset-detail-overview__problem-summary,
+.performance-summary,
+.dataset-detail-visualization {
+  border-color: var(--atlas-color-border);
+  color: var(--atlas-color-text);
+  background: var(--atlas-color-surface);
 }
 
 .performance-summary h3 {
@@ -1614,7 +1666,6 @@ h1 {
   box-shadow: inset 0 0 0 1px var(--atlas-color-accent);
 }
 
-.dataset-admin-theme-card.is-locked,
 .dataset-admin-result-preset-card.is-locked {
   color: var(--atlas-color-text-muted);
   background: var(--atlas-color-surface-muted);
@@ -1912,6 +1963,11 @@ h1 {
   border: 1px solid var(--atlas-color-border-strong);
   border-radius: var(--atlas-radius-lg);
   padding: var(--atlas-space-4);
+  background: var(--atlas-color-canvas);
+}
+
+.dataset-admin-preview-stage.dataset-theme-scope {
+  border-color: var(--atlas-color-border-strong);
   background: var(--atlas-color-canvas);
 }
 

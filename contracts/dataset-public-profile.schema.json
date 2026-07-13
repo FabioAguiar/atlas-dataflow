@@ -195,12 +195,43 @@
     "theme": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Optional selected visual theme preset for the dataset's public presentation. Constrained to a small closed set of presets actually supported by the frontend's design tokens; must not accept arbitrary strings, hex colors, or raw CSS.",
+      "description": "Optional selected visual theme preset for the dataset's public presentation. Constrained to the frontend's controlled authoring catalog; must not accept arbitrary strings, hex colors, or raw CSS.",
       "properties": {
         "preset": {
           "type": "string",
-          "enum": ["atlas-green"],
-          "description": "Optional selected theme preset identifier. Constrained to the single preset currently supported by the frontend's design-token set; extend only alongside an actual additional supported preset."
+          "enum": [
+            "atlas-green",
+            "ocean-blue",
+            "violet-insight",
+            "amber-signal",
+            "slate-ops",
+            "rose-review",
+            "teal-flow",
+            "indigo-lab",
+            "graphite",
+            "citrus",
+            "coral",
+            "skyline",
+            "plum",
+            "neutral-light",
+            "midnight-cyan",
+            "emerald-noir",
+            "solar-flare",
+            "electric-magenta",
+            "neon-lime",
+            "aurora",
+            "deep-sea",
+            "desert-sand",
+            "forest-moss",
+            "ice-blue",
+            "crimson-night",
+            "copper-circuit",
+            "lavender-mist",
+            "monochrome-dark",
+            "retro-terminal",
+            "cyber-neon"
+          ],
+          "description": "Optional selected theme preset identifier. Constrained to the controlled frontend catalog; arbitrary theme names, colors, and CSS are rejected."
         }
       }
     },

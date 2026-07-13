@@ -12,6 +12,7 @@ import InferenceForm, { ContractPayload } from "../components/InferenceForm/Infe
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 import PredictViewList, { PredictViewItem } from "../components/PredictViewList/PredictViewList";
+import { datasetThemeStyle, resolveDatasetThemePreset } from "../lib/datasetPresentation";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -43,6 +44,7 @@ type PublicContextPayload = {
   release_date_label?: string | null;
   primary_metric_key?: string | null;
   performance_focus?: PerformanceFocus | null;
+  theme_preset?: string | null;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -422,6 +424,7 @@ export default function DatasetPage() {
   }
 
   const context = contextState.status === "ready" ? contextState.data : null;
+  const resolvedTheme = resolveDatasetThemePreset(context?.theme_preset);
 
   const curatedTitle = context?.display_title || state.data.display_title;
   const datasetTitle = curatedTitle || context?.title || state.data.title;
@@ -503,7 +506,11 @@ export default function DatasetPage() {
   );
 
   return (
-    <div className="dataset-detail">
+    <div
+      className="dataset-detail dataset-theme-scope"
+      data-theme-preset={resolvedTheme.id}
+      style={datasetThemeStyle(resolvedTheme.id)}
+    >
       <DatasetDetailHeader
         analysisType={analysisType}
         datasetTitle={datasetTitle}

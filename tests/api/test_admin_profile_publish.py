@@ -269,6 +269,21 @@ def test_publish_profile_succeeds_after_draft_saved():
         assert result["snapshot"]["active_release_at_publish_time"] == "release-20260101-001"
 
 
+def test_publish_preserves_supported_theme_preset_without_translation():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        profile = {**_VALID_PROFILE, "theme": {"preset": "monochrome-dark"}}
+        _real_create_draft("example-dataset", profile, repo_root=fake_repo)
+        original = _install_isolated_publish(fake_repo)
+        try:
+            result = admin_profile_publish.publish_profile("example-dataset")
+        finally:
+            _restore_publish(original)
+
+        assert result["published"] is True
+        assert result["snapshot"]["profile"]["theme"]["preset"] == "monochrome-dark"
+
+
 # ---------------------------------------------------------------------------
 # PUT /admin/datasets/{dataset_slug}/publish: access-control boundary
 # ---------------------------------------------------------------------------

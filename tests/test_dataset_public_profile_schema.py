@@ -6,6 +6,9 @@ import jsonschema
 
 REPO_ROOT = Path(__file__).parent.parent
 SCHEMA_PATH = REPO_ROOT / "contracts" / "dataset-public-profile.schema.json"
+SNAPSHOT_SCHEMA_PATH = (
+    REPO_ROOT / "contracts" / "dataset-public-profile-snapshot.schema.json"
+)
 VALID_EXAMPLE_PATH = (
     REPO_ROOT / "contracts" / "examples" / "dataset-public-profile.example.json"
 )
@@ -28,6 +31,15 @@ INVALID_UNSUPPORTED_ICON_PATH = (
     / "invalid-dataset-public-profile-unsupported-icon.example.json"
 )
 
+THEME_PRESET_IDS = [
+    "atlas-green", "ocean-blue", "violet-insight", "amber-signal", "slate-ops",
+    "rose-review", "teal-flow", "indigo-lab", "graphite", "citrus", "coral",
+    "skyline", "plum", "neutral-light", "midnight-cyan", "emerald-noir",
+    "solar-flare", "electric-magenta", "neon-lime", "aurora", "deep-sea",
+    "desert-sand", "forest-moss", "ice-blue", "crimson-night", "copper-circuit",
+    "lavender-mist", "monochrome-dark", "retro-terminal", "cyber-neon",
+]
+
 
 def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -36,6 +48,35 @@ def _load_json(path: Path) -> dict:
 def test_schema_is_valid_draft7():
     schema = _load_json(SCHEMA_PATH)
     jsonschema.Draft7Validator.check_schema(schema)
+
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    jsonschema.Draft7Validator.check_schema(snapshot_schema)
+
+
+def test_draft_and_snapshot_theme_catalogs_are_exact_and_accept_every_preset():
+    draft_schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    draft_enum = draft_schema["definitions"]["theme"]["properties"]["preset"]["enum"]
+    snapshot_enum = snapshot_schema["definitions"]["theme"]["properties"]["preset"]["enum"]
+
+    assert draft_enum == THEME_PRESET_IDS
+    assert snapshot_enum == THEME_PRESET_IDS
+
+    for preset_id in THEME_PRESET_IDS:
+        jsonschema.validate(
+            {"schema_version": "0.1.0", "dataset_slug": "example-dataset", "theme": {"preset": preset_id}},
+            draft_schema,
+        )
+        jsonschema.validate(
+            {
+                "schema_version": "0.1.0",
+                "dataset_slug": "example-dataset",
+                "published_at": "2026-07-13T12:00:00Z",
+                "active_release_at_publish_time": "release-20260713-001",
+                "profile": {"theme": {"preset": preset_id}},
+            },
+            snapshot_schema,
+        )
 
 
 def test_valid_dataset_public_profile_example_matches_schema():
@@ -69,9 +110,19 @@ def test_dataset_public_profile_rejects_unsupported_theme():
 
     assert errors
     assert any(
-        "is not one of" in error.message or "midnight-purple" in error.message
+        "is not one of" in error.message or "custom-rainbow" in error.message
         for error in errors
     )
+
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    invalid_snapshot = {
+        "schema_version": "0.1.0",
+        "dataset_slug": "telco-customer-churn",
+        "published_at": "2026-07-13T12:00:00Z",
+        "active_release_at_publish_time": "release-20260713-001",
+        "profile": {"theme": example["theme"]},
+    }
+    assert list(jsonschema.Draft7Validator(snapshot_schema).iter_errors(invalid_snapshot))
 
 
 def test_dataset_public_profile_rejects_unsupported_icon():

@@ -1,7 +1,15 @@
 import type { ReactElement } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Card } from "../ui";
-import { getDatasetIcon, getProblemTypeLabel, isSafeHomeCardMediaReference, presentHomeCardDescription, type DatasetIconName } from "../../lib/datasetPresentation";
+import {
+  datasetThemeStyle,
+  getDatasetIcon,
+  getProblemTypeLabel,
+  isSafeHomeCardMediaReference,
+  presentHomeCardDescription,
+  resolveDatasetThemePreset,
+  type DatasetIconName,
+} from "../../lib/datasetPresentation";
 
 type DatasetCardProps = {
   slug: string;
@@ -12,6 +20,7 @@ type DatasetCardProps = {
   problemType?: string;
   iconOverride?: DatasetIconName;
   mediaRef?: string | null;
+  themePreset?: string | null;
 };
 
 function TelecomIcon() {
@@ -82,14 +91,20 @@ export default function DatasetCard({
   problemType,
   iconOverride,
   mediaRef,
+  themePreset,
 }: DatasetCardProps) {
   const icon = iconOverride ?? getDatasetIcon(domain, tags);
   const analysisLabel = getProblemTypeLabel(problemType);
   const safeMediaRef = isSafeHomeCardMediaReference(mediaRef) ? mediaRef : null;
   const description = presentHomeCardDescription(summary);
+  const resolvedTheme = resolveDatasetThemePreset(themePreset);
 
   return (
-    <Card className={["dataset-card", safeMediaRef ? "dataset-card--image" : ""].filter(Boolean).join(" ")}>
+    <Card
+      className={["dataset-card", "dataset-theme-scope", safeMediaRef ? "dataset-card--image" : ""].filter(Boolean).join(" ")}
+      data-theme-preset={resolvedTheme.id}
+      style={datasetThemeStyle(resolvedTheme.id)}
+    >
       <Link
         to={`/dataset/${slug}`}
         className="dataset-card__link-overlay"

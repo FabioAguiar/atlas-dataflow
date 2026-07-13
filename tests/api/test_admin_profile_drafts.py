@@ -167,6 +167,24 @@ def test_save_updates_existing_draft_in_place():
         assert read_back["profile"] == updated_profile
 
 
+def test_save_round_trips_supported_theme_presets_unchanged():
+    presets = ("ocean-blue", "ice-blue", "monochrome-dark", "cyber-neon")
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        originals = _install_isolated_store(fake_repo)
+        try:
+            for preset_id in presets:
+                profile = {**_VALID_PROFILE, "theme": {"preset": preset_id}}
+                result = admin_profile_drafts.save_profile_draft("example-dataset", profile)
+                read_back = admin_profile_drafts.read_profile_draft("example-dataset")
+
+                assert result["saved"] is True
+                assert result["profile"]["theme"]["preset"] == preset_id
+                assert read_back["profile"]["theme"]["preset"] == preset_id
+        finally:
+            _restore_store(originals)
+
+
 def test_save_rejects_dataset_slug_mismatch_without_saving():
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = _build_fake_repo(Path(tmp))

@@ -31,9 +31,14 @@ import {
   toVisualizationsPayload,
 } from "../../lib/livePreviewProjection";
 import {
+  DATASET_THEME_PRESETS,
+  DEFAULT_DATASET_THEME_PRESET,
+  datasetThemeStyle,
+  isDatasetThemePresetId,
   normalizeDatasetDateOnly,
   presentDatasetOperationalTimestamp,
   type DatasetIconName,
+  type DatasetThemePresetId,
 } from "../../lib/datasetPresentation";
 
 // Curator-facing labels for Atlas's full controlled icon bank (see
@@ -76,23 +81,6 @@ const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> =
   { value: "flask", label: "Flask" },
   { value: "cpu-chip", label: "CPU chip" },
 ];
-
-const THEME_PRESET_CARDS = [
-  { label: "Atlas Green", value: "atlas-green", swatches: ["#2f6f4e", "#e8f2ec", "#ffffff"], available: true },
-  { label: "Ocean Blue", value: "ocean-blue", swatches: ["#2563eb", "#dbeafe", "#ffffff"], available: false },
-  { label: "Violet Insight", value: "violet-insight", swatches: ["#6d28d9", "#ede9fe", "#ffffff"], available: false },
-  { label: "Amber Signal", value: "amber-signal", swatches: ["#b45309", "#fef3c7", "#ffffff"], available: false },
-  { label: "Slate Ops", value: "slate-ops", swatches: ["#334155", "#e2e8f0", "#ffffff"], available: false },
-  { label: "Rose Review", value: "rose-review", swatches: ["#be123c", "#ffe4e6", "#ffffff"], available: false },
-  { label: "Teal Flow", value: "teal-flow", swatches: ["#0f766e", "#ccfbf1", "#ffffff"], available: false },
-  { label: "Indigo Lab", value: "indigo-lab", swatches: ["#4338ca", "#e0e7ff", "#ffffff"], available: false },
-  { label: "Graphite", value: "graphite", swatches: ["#27272a", "#e4e4e7", "#ffffff"], available: false },
-  { label: "Citrus", value: "citrus", swatches: ["#65a30d", "#ecfccb", "#ffffff"], available: false },
-  { label: "Coral", value: "coral", swatches: ["#c2410c", "#ffedd5", "#ffffff"], available: false },
-  { label: "Skyline", value: "skyline", swatches: ["#0284c7", "#e0f2fe", "#ffffff"], available: false },
-  { label: "Plum", value: "plum", swatches: ["#86198f", "#fae8ff", "#ffffff"], available: false },
-  { label: "Neutral Light", value: "neutral-light", swatches: ["#525252", "#f5f5f5", "#ffffff"], available: false },
-] as const;
 
 const RESULT_PRESET_CARDS = [
   { label: "Risk", value: "risk", samples: ["High risk", "Medium risk", "Low risk"], available: true },
@@ -177,7 +165,7 @@ type ProfileDraft = {
   };
   performance_focus?: PerformanceFocus | null;
   theme?: {
-    preset?: "atlas-green";
+    preset?: DatasetThemePresetId;
   };
   inference_presentation?: {
     bound_predict_view_id?: string | null;
@@ -256,7 +244,7 @@ type DraftForm = {
   short_description: string;
   primary_metric_key: string;
   performance_focus: PerformanceFocusDraft;
-  theme_preset: "" | "atlas-green";
+  theme_preset: DatasetThemePresetId;
   bound_predict_view_id: string;
   probability_label: string;
   submit_button_label: string;
@@ -1086,7 +1074,7 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     short_description: "",
     primary_metric_key: "",
     performance_focus: defaultPerformanceFocus(),
-    theme_preset: "atlas-green",
+    theme_preset: DEFAULT_DATASET_THEME_PRESET,
     bound_predict_view_id: "",
     probability_label: "",
     submit_button_label: "",
@@ -1131,7 +1119,9 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     short_description: profile.home_card?.short_description ?? "",
     primary_metric_key: profile.home_card?.primary_metric_key ?? "",
     performance_focus: performanceFocus,
-    theme_preset: profile.theme?.preset ?? "atlas-green",
+    theme_preset: isDatasetThemePresetId(profile.theme?.preset)
+      ? profile.theme.preset
+      : DEFAULT_DATASET_THEME_PRESET,
     bound_predict_view_id: profile.inference_presentation?.bound_predict_view_id ?? "",
     probability_label: profile.result_card?.probability_label ?? "",
     submit_button_label: profile.result_card?.submit_button_label ?? "",
@@ -1688,6 +1678,7 @@ function MetadataCardTab({
               )}
               mediaRef={form.background_image_ref}
               summary={form.short_description}
+              themePreset={form.theme_preset}
             />
             <TextField label="Home card description" multiline onChange={(value) => setField("short_description", value)} rows={3} value={form.short_description} />
           </Card>
@@ -1797,40 +1788,17 @@ function ThemePresetTab({
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
 }) {
   return (
-    <TabWorkspace eyebrow="Theme Preset" helper="The current schema supports only Atlas Green; other prototype presets are locked.">
+    <div className="dataset-admin-tab-workspace">
       <Card className="dataset-admin-config-card">
-        <label className="dataset-admin-native-select">
-          <span style={labelStyle}>Theme preset</span>
-        <select
-          onChange={(event) => setField("theme_preset", event.target.value as DraftForm["theme_preset"])}
-          style={inputStyle}
-          value={form.theme_preset}
-        >
-          <option value="">No curated theme</option>
-          <option value="atlas-green">Atlas Green</option>
-        </select>
-      </label>
         <div className="dataset-admin-theme-grid">
-          {THEME_PRESET_CARDS.map((preset) => {
-            const selected = String(form.theme_preset) === preset.value;
+          {DATASET_THEME_PRESETS.map((preset) => {
+            const selected = form.theme_preset === preset.id;
             return (
               <button
-                aria-disabled={!preset.available}
-                aria-pressed={preset.available ? selected : undefined}
-                className={[
-                  "dataset-admin-theme-card",
-                  selected ? "is-selected" : "",
-                  !preset.available ? "is-locked" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                disabled={!preset.available}
-                key={preset.value}
-                onClick={() => {
-                  if (preset.available) {
-                    setField("theme_preset", preset.value as DraftForm["theme_preset"]);
-                  }
-                }}
+                aria-pressed={selected}
+                className={["dataset-admin-theme-card", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
+                key={preset.id}
+                onClick={() => setField("theme_preset", preset.id)}
                 type="button"
               >
                 <span className="dataset-admin-theme-card__swatches" aria-hidden="true">
@@ -1839,14 +1807,12 @@ function ThemePresetTab({
                   ))}
                 </span>
                 <strong>{preset.label}</strong>
-                <span>{preset.available ? "Selectable schema preset" : "Locked until schema support exists"}</span>
-                {!preset.available ? <Badge>Locked</Badge> : null}
               </button>
             );
           })}
         </div>
       </Card>
-    </TabWorkspace>
+    </div>
   );
 }
 
@@ -2811,7 +2777,11 @@ function LivePreviewTab({
           </button>
         ))}
       </div>
-      <div className="dataset-admin-preview-stage" data-theme-preset={form.theme_preset || "atlas-green"}>
+      <div
+        className="dataset-admin-preview-stage dataset-theme-scope"
+        data-theme-preset={form.theme_preset}
+        style={datasetThemeStyle(form.theme_preset)}
+      >
         {previewMode === "card" && (
           <article className="dataset-admin-preview-panel dataset-admin-preview-panel--card" aria-label="Home Card preview">
             <DatasetCard
@@ -2833,6 +2803,7 @@ function LivePreviewTab({
                 stateValue(readOnlyData.context),
               )}
               mediaRef={form.background_image_ref}
+              themePreset={form.theme_preset}
             />
           </article>
         )}

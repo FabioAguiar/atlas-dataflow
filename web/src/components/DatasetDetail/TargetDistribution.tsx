@@ -36,6 +36,9 @@ type TargetDistributionProps = {
 const TARGET_DISTRIBUTION_ID = "target_distribution";
 const TARGET_DISTRIBUTION_TITLE = "target distribution";
 const EMPTY_MESSAGE = "This visualization has not been generated yet for this release.";
+const CHART_PRIMARY = "var(--dataset-theme-chart-primary)";
+const CHART_SECONDARY = "var(--dataset-theme-chart-secondary)";
+const CHART_GRID = "var(--dataset-theme-chart-grid)";
 
 function matchesTargetDistribution(chart: VisualizationChart): boolean {
   if (chart.id === TARGET_DISTRIBUTION_ID) {
@@ -48,22 +51,22 @@ function renderChart(chart: VisualizationChart) {
   if (chart.type === "bar") {
     return (
       <BarChart data={chart.data}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="name" />
-        <YAxis />
-        <Tooltip />
-        <Bar dataKey="value" fill="#4f46e5" />
+        <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" />
+        <XAxis dataKey="name" stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
+        <YAxis stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
+        <Tooltip contentStyle={{ background: "var(--dataset-theme-surface)", borderColor: CHART_GRID, color: "var(--dataset-theme-text)" }} />
+        <Bar dataKey="value" fill={CHART_PRIMARY} />
       </BarChart>
     );
   }
 
   return (
     <LineChart data={chart.data}>
-      <CartesianGrid strokeDasharray="3 3" />
-      <XAxis dataKey="name" />
-      <YAxis />
-      <Tooltip />
-      <Line type="monotone" dataKey="value" stroke="#4f46e5" dot={false} />
+      <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" />
+      <XAxis dataKey="name" stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
+      <YAxis stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
+      <Tooltip contentStyle={{ background: "var(--dataset-theme-surface)", borderColor: CHART_GRID, color: "var(--dataset-theme-text)" }} />
+      <Line type="monotone" dataKey="value" stroke={CHART_PRIMARY} dot={{ fill: CHART_SECONDARY }} />
     </LineChart>
   );
 }
@@ -75,7 +78,13 @@ export default function TargetDistribution({ visualizations }: TargetDistributio
     <Card className="dataset-detail-visualization">
       <h3>Target Distribution</h3>
       {chart ? (
-        <div className="dataset-detail-visualization__chart" aria-label={chart.title ?? "Target Distribution"}>
+        <div
+          className="dataset-detail-visualization__chart"
+          aria-label={chart.title ?? "Target Distribution"}
+          data-chart-grid={CHART_GRID}
+          data-chart-primary={CHART_PRIMARY}
+          data-chart-secondary={CHART_SECONDARY}
+        >
           <ResponsiveContainer width="100%" height={300}>
             {renderChart(chart)}
           </ResponsiveContainer>

@@ -219,8 +219,39 @@
       "properties": {
         "preset": {
           "type": "string",
-          "enum": ["atlas-green"],
-          "description": "Optional selected theme preset identifier."
+          "enum": [
+            "atlas-green",
+            "ocean-blue",
+            "violet-insight",
+            "amber-signal",
+            "slate-ops",
+            "rose-review",
+            "teal-flow",
+            "indigo-lab",
+            "graphite",
+            "citrus",
+            "coral",
+            "skyline",
+            "plum",
+            "neutral-light",
+            "midnight-cyan",
+            "emerald-noir",
+            "solar-flare",
+            "electric-magenta",
+            "neon-lime",
+            "aurora",
+            "deep-sea",
+            "desert-sand",
+            "forest-moss",
+            "ice-blue",
+            "crimson-night",
+            "copper-circuit",
+            "lavender-mist",
+            "monochrome-dark",
+            "retro-terminal",
+            "cyber-neon"
+          ],
+          "description": "Optional selected theme preset identifier from the controlled frontend catalog."
         }
       }
     },

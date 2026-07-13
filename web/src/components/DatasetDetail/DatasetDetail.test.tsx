@@ -4,6 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { DatasetDetailHeader, DatasetDetailTabs, PerformanceSummary, type DatasetDetailMetadataItem } from ".";
+import FeatureImportance from "./FeatureImportance";
+import TargetDistribution from "./TargetDistribution";
 
 function renderHeader(metadata: DatasetDetailMetadataItem[]) {
   return render(
@@ -100,5 +102,30 @@ describe("DatasetDetailTabs tab switching (M42-04)", () => {
     expect(inferenceTab).toHaveAttribute("aria-selected", "true");
     expect(overviewPanel).toHaveAttribute("hidden");
     expect(inferencePanel).not.toHaveAttribute("hidden");
+  });
+});
+
+describe("Dataset Detail semantic chart colors", () => {
+  it("passes scoped primary, secondary, and grid variables to both active chart surfaces", () => {
+    const visualizations = {
+      charts: [
+        { id: "target_distribution", type: "bar" as const, data: [{ name: "No", value: 10 }] },
+        { id: "feature_importance", type: "line" as const, data: [{ name: "tenure", value: 0.7 }] },
+      ],
+    };
+
+    render(
+      <>
+        <TargetDistribution visualizations={visualizations} />
+        <FeatureImportance visualizations={visualizations} />
+      </>,
+    );
+
+    for (const name of ["Target Distribution", "Feature Importance"]) {
+      const chart = screen.getByLabelText(name);
+      expect(chart).toHaveAttribute("data-chart-primary", "var(--dataset-theme-chart-primary)");
+      expect(chart).toHaveAttribute("data-chart-secondary", "var(--dataset-theme-chart-secondary)");
+      expect(chart).toHaveAttribute("data-chart-grid", "var(--dataset-theme-chart-grid)");
+    }
   });
 });

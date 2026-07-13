@@ -44,6 +44,7 @@ const contextPayload = {
 };
 
 type ContextPayloadFixture = typeof contextPayload & {
+  theme_preset?: string | null;
   performance_focus?: {
     focus_id: "overall_discrimination" | "positive_class_detection" | "balanced_classification" | "probability_quality" | "operational_decision";
     highlighted_score_id: string;
@@ -145,6 +146,22 @@ afterEach(() => {
 });
 
 describe("DatasetPage synthetic-slug rendering", () => {
+  it("hydrates the published detail theme and falls back for an unsupported context value", async () => {
+    installDatasetPageFetchMock({ ...contextPayload, theme_preset: "crimson-night" });
+    const { container } = renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    const detail = container.querySelector<HTMLElement>(".dataset-detail")!;
+    expect(detail).toHaveAttribute("data-theme-preset", "crimson-night");
+    expect(detail.style.getPropertyValue("--dataset-theme-canvas")).toBe("#160b17");
+
+    cleanup();
+    installDatasetPageFetchMock({ ...contextPayload, theme_preset: "custom-rainbow" });
+    const fallbackRender = renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(fallbackRender.container.querySelector(".dataset-detail")).toHaveAttribute("data-theme-preset", "atlas-green");
+  });
+
   it("renders the correct title, metadata, and badge for a synthetic, non-Telco/Bank dataset_slug", async () => {
     installDatasetPageFetchMock();
 

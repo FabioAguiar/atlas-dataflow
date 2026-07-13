@@ -19,7 +19,7 @@
     "primary_metric_key": "auc_roc"
   },
   "theme": {
-    "preset": "atlas-green"
+    "preset": "cyber-neon"
   },
   "inference_presentation": {
     "bound_predict_view_id": null

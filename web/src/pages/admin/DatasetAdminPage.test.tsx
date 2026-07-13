@@ -3,7 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { normalizeDatasetDateOnly, presentDatasetOperationalTimestamp } from "../../lib/datasetPresentation";
+import {
+  DATASET_THEME_PRESETS,
+  normalizeDatasetDateOnly,
+  presentDatasetOperationalTimestamp,
+} from "../../lib/datasetPresentation";
 import DatasetAdminPage from "./DatasetAdminPage";
 
 // DatasetAdminPage's Home card preview renders the shared DatasetCard
@@ -969,7 +973,7 @@ describe("DatasetAdminPage", () => {
     expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
-    fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
+    fireEvent.click(screen.getByRole("button", { name: "Atlas Green" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     // Differs from the last saved backend draft (ocean-blue), which takes
@@ -1012,7 +1016,7 @@ describe("DatasetAdminPage", () => {
       "flask",
       "cpu-chip",
     ];
-    const SCHEMA_SUPPORTED_THEME_PRESETS = ["atlas-green"];
+    const SCHEMA_SUPPORTED_THEME_PRESETS = DATASET_THEME_PRESETS.map((preset) => preset.id);
     const SCHEMA_SUPPORTED_BADGE_PRESETS = ["risk"];
 
     const fetchMock = installFetchMock();
@@ -1026,7 +1030,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Balanced Accuracy value"), { target: { value: "0.81" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
-    fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cyber Neon" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
     fireEvent.change(screen.getByLabelText("Badge preset"), { target: { value: "risk" } });
@@ -1065,26 +1069,43 @@ describe("DatasetAdminPage", () => {
       highlighted_score_id: "balanced_accuracy",
     });
     expect(body.performance_focus?.visible_scores?.[0]).toMatchObject({ score_id: "balanced_accuracy", value: "0.81" });
-    expect(body.theme?.preset).toBe("atlas-green");
+    expect(body.theme?.preset).toBe("cyber-neon");
     expect(SCHEMA_SUPPORTED_THEME_PRESETS).toContain(body.theme?.preset);
     expect(body.result_card?.badge_preset).toBe("risk");
     expect(SCHEMA_SUPPORTED_BADGE_PRESETS).toContain(body.result_card?.badge_preset);
     expect(body.result_card?.badge_labels?.high).toBe("Severe risk");
   });
 
-  it("cannot select or persist theme/result-card preset values outside the schema-supported set", async () => {
+  it("renders the exact enabled card-only theme catalog while preserving Result Card locks", async () => {
     installFetchMock();
     renderAdminPage();
 
     await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
-    const themeSelect = screen.getByLabelText("Theme preset") as HTMLSelectElement;
-    const themeOptionValues = Array.from(themeSelect.options).map((option) => option.value);
-    expect(themeOptionValues).toEqual(["", "atlas-green"]);
-    expect(screen.getByRole("button", { name: /Atlas Green/ })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /Ocean Blue/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Neutral Light/ })).toBeDisabled();
+    const themePanel = screen.getByRole("tabpanel");
+    const themeButtons = within(themePanel).getAllByRole("button");
+    expect(themeButtons).toHaveLength(30);
+    expect(themeButtons.map((button) => button.textContent)).toEqual(
+      DATASET_THEME_PRESETS.map((preset) => preset.label),
+    );
+    themeButtons.forEach((button) => {
+      expect(button).toBeEnabled();
+      expect(button).toHaveAttribute("aria-pressed");
+      expect(button).not.toHaveAttribute("aria-disabled");
+    });
+    expect(within(themePanel).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(themePanel).queryByText("Theme Preset")).not.toBeInTheDocument();
+    expect(within(themePanel).queryByText("Selectable schema preset")).not.toBeInTheDocument();
+    expect(within(themePanel).queryByText("Locked until schema support exists")).not.toBeInTheDocument();
+    expect(within(themePanel).queryByText("Locked")).not.toBeInTheDocument();
+
+    for (const preset of DATASET_THEME_PRESETS) {
+      fireEvent.click(within(themePanel).getByRole("button", { name: preset.label }));
+      const selected = themeButtons.filter((button) => button.getAttribute("aria-pressed") === "true");
+      expect(selected).toHaveLength(1);
+      expect(selected[0]).toHaveAccessibleName(preset.label);
+    }
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
     const badgeSelect = screen.getByLabelText("Badge preset") as HTMLSelectElement;
@@ -1094,15 +1115,55 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("button", { name: /Value band/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Severity/ })).toBeDisabled();
 
-    // The 13 additional design-proposed theme presets and 4 additional design-proposed
-    // result-card badge presets are visible only as disabled cards; they are not rendered
-    // as select options at all. There is no DOM control path through which a user could
-    // select them, and DraftForm's
-    // theme_preset/badge_preset fields are typed as closed unions ("" | "atlas-green" and
-    // "" | "risk"), so setField can never be called with an out-of-schema value from these
-    // controls. profileFromForm only ever writes profile.theme/result_card.badge_preset from
-    // these same two closed-union fields, so an unsupported preset can never reach a save
-    // payload through this form.
+  });
+
+  it.each([
+    ["Ocean Blue", "ocean-blue"],
+    ["Ice Blue", "ice-blue"],
+    ["Monochrome Dark", "monochrome-dark"],
+    ["Cyber Neon", "cyber-neon"],
+  ])("saves %s through the generic profile.theme.preset payload", async (label, presetId) => {
+    const fetchMock = installFetchMock({ trackProfileDraftSaves: true });
+    renderAdminPage();
+    await loadDraftOnly();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const callsBeforeSave = fetchMock.mock.calls.length;
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
+    await screen.findByTestId("dataset-admin-draft-saved");
+
+    const saveCall = fetchMock.mock.calls.slice(callsBeforeSave).find(
+      (call: unknown[]) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) &&
+        (call[1] as RequestInit | undefined)?.method === "PUT",
+    );
+    const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as { theme?: { preset?: string } };
+    expect(body.theme?.preset).toBe(presetId);
+  });
+
+  it("rehydrates a supported saved preset as the single selected card", async () => {
+    installFetchMock({ themePresetOverride: "ice-blue" });
+    renderAdminPage();
+    await loadDraftOnly();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    expect(screen.getByRole("button", { name: "Ice Blue" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("button", { pressed: true })).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing", { noExistingDraft: true }],
+    ["unknown", { themePresetOverride: "custom-rainbow" }],
+  ])("falls back an %s profile preset to Atlas Green", async (_case, options) => {
+    installFetchMock(options);
+    renderAdminPage();
+    await loadDraftOnly();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
+    expect(screen.getByRole("button", { name: "Atlas Green" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "custom-rainbow" })).not.toBeInTheDocument();
   });
 
   it("replaces the obsolete image-reference control with a controlled upload tile", async () => {
@@ -1311,15 +1372,10 @@ describe("DatasetAdminPage", () => {
   });
 
   it("updates each Live Preview mode's rendered output when a fed draft or customization field is edited", async () => {
-    // theme.preset is seeded as "ocean-blue" (a real named preset -- see
-    // THEME_PRESET_CARDS -- but not currently selectable through the Theme
-    // Preset tab's own controls) and metrics.evaluation.metrics is seeded
+    // theme.preset is seeded as "ocean-blue" and metrics.evaluation.metrics is seeded
     // with a "precision" key (absent from the shared default fixture)
     // specifically so this test can prove genuine reactivity for theme and
-    // primary-metric highlighting. DraftForm.theme_preset is typed as a
-    // closed "" | "atlas-green" union whose only two values both render the
-    // Live Preview stage's data-theme-preset attribute identically (via the
-    // `form.theme_preset || "atlas-green"` fallback), and the shared metrics
+    // primary-metric highlighting. The shared metrics
     // fixture's only alternate key ("accuracy") is not recognized by
     // PerformanceSummary's SCORE_ORDER -- editing to either of those "real"
     // default-fixture alternatives would collapse back to the pre-edit
@@ -1335,6 +1391,10 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Date format"), { target: { value: "yyyy-mm-dd" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+    expect(container.querySelector(".dataset-admin-preview-card .dataset-card")).toHaveAttribute(
+      "data-theme-preset",
+      "ocean-blue",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Bank building" }));
     fireEvent.change(screen.getByLabelText("Home card description"), {
       target: { value: "Edited home card description" },
@@ -1343,7 +1403,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Highlighted score value"), { target: { value: "0.81" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
-    fireEvent.change(screen.getByLabelText("Theme preset"), { target: { value: "atlas-green" } });
+    fireEvent.click(screen.getByRole("button", { name: "Atlas Green" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
     fireEvent.change(screen.getByLabelText("Medium badge label"), { target: { value: "Elevated risk (edited)" } });
@@ -1361,6 +1421,8 @@ describe("DatasetAdminPage", () => {
       "data-theme-preset",
       "atlas-green",
     );
+    expect((container.querySelector(".dataset-admin-preview-stage") as HTMLElement).style.getPropertyValue("--dataset-theme-accent"))
+      .toBe("#2f6f4e");
 
     // Detail preview sub-tabs (e.g. separating this Theme/token view from the
     // Result Card and Inference Form sub-panels rendered below it) remain a

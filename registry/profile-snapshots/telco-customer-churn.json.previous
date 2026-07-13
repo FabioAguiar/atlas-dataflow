@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0.0",
-  "dataset_slug": "telco-customer-churn2",
-  "published_at": "2026-07-13T10:39:18Z",
+  "dataset_slug": "telco-customer-churn",
+  "published_at": "2026-07-13T10:59:12Z",
   "active_release_at_publish_time": "release-20260713t103826z",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
-      "release_date_label": "2026-07-13",
+      "release_date_label": "2026-07-14",
       "release_date_mode": "manual",
       "canonical_name_fallback": true
     },

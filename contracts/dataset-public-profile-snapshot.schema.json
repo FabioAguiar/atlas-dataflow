@@ -130,12 +130,12 @@
           "type": "string",
           "format": "date",
           "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-          "description": "Optional public release date normalized to YYYY-MM-DD."
+          "description": "Optional public release date projected from the canonical Dataset Detail timestamp and normalized to YYYY-MM-DD."
         },
         "release_date_mode": {
           "type": "string",
           "enum": ["auto", "manual"],
-          "description": "Whether the release date follows Dataset Detail Last updated automatically or is an explicit operator override."
+          "description": "Deprecated compatibility field for existing snapshots. New snapshots omit it and it has no date-authority semantics."
         },
         "date_format": {
           "type": "string",

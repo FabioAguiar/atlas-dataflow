@@ -56,11 +56,13 @@ file.
 """
 
 import json
+import os
 import re
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from registry.predict_view_validate import validate_predict_views
 from registry.validate import RELEASE_ID_PATTERN, validate_registry
@@ -99,6 +101,16 @@ REGISTRY_WRITE_FAILED_ERROR = {
     "code": "REGISTRY_WRITE_FAILED",
     "field": None,
     "message": "The registry could not be written.",
+}
+DATASET_DETAIL_DATE_INVALID_ERROR = {
+    "code": "DATASET_DETAIL_DATE_INVALID",
+    "field": "display.release_date_label",
+    "message": "Release date must be a valid calendar date in YYYY-MM-DD format.",
+}
+DATASET_DETAIL_TIMEZONE_INVALID_ERROR = {
+    "code": "DATASET_DETAIL_TIMEZONE_INVALID",
+    "field": "display.release_date_label",
+    "message": "The Dataset Detail date could not be converted safely.",
 }
 
 # Project Spec S0051: reduced, sanitized errors for rename_dataset_slug().
@@ -853,6 +865,97 @@ def update_dataset_detail_timestamp(
             pass
         return {"updated": False, "errors": [REGISTRY_WRITE_FAILED_ERROR]}
     return {"updated": True, "dataset_detail_updated_at": updated_at, "errors": []}
+
+
+def derive_dataset_detail_timestamp_for_date(
+    dataset_slug: str,
+    selected_date: str | None,
+    repo_root: Path | None = None,
+    fallback_now: datetime | None = None,
+    time_zone: str | None = None,
+) -> dict:
+    """Derive one canonical UTC timestamp after replacing its local date.
+
+    The registry value supplies the time-of-day. For legacy entries without a
+    canonical timestamp, backend current time is the single fallback. The
+    timezone is controlled by ATLAS_DATASET_TIME_ZONE/TZ (UTC by default),
+    while tests and callers may pass an explicit IANA name.
+    """
+    root = Path(repo_root) if repo_root is not None else Path(__file__).parent.parent
+    try:
+        registry = _load_json_file(root / "registry" / "datasets.json", "registry")
+    except RuntimeError:
+        return {"derived": False, "errors": [REGISTRY_UNAVAILABLE_ERROR]}
+
+    entry = _find_dataset_entry(registry, dataset_slug)
+    if entry is None:
+        return {"derived": False, "errors": [DATASET_DETAIL_NOT_FOUND_ERROR]}
+
+    if selected_date is not None:
+        try:
+            parsed_date = date.fromisoformat(selected_date)
+            if parsed_date.isoformat() != selected_date:
+                raise ValueError
+        except (TypeError, ValueError):
+            return {"derived": False, "errors": [DATASET_DETAIL_DATE_INVALID_ERROR]}
+    else:
+        parsed_date = None
+
+    zone_name = time_zone or os.environ.get("ATLAS_DATASET_TIME_ZONE") or os.environ.get("TZ") or "UTC"
+    try:
+        zone = ZoneInfo(zone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return {"derived": False, "errors": [DATASET_DETAIL_TIMEZONE_INVALID_ERROR]}
+
+    current_value = entry.get("dataset_detail_updated_at")
+    try:
+        if isinstance(current_value, str) and current_value:
+            source = datetime.fromisoformat(current_value.replace("Z", "+00:00"))
+            if source.tzinfo is None:
+                raise ValueError
+            source = source.astimezone(timezone.utc)
+        else:
+            source = fallback_now or datetime.now(timezone.utc)
+            if source.tzinfo is None:
+                source = source.replace(tzinfo=timezone.utc)
+            source = source.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return {"derived": False, "errors": [DATASET_DETAIL_TIMEZONE_INVALID_ERROR]}
+
+    local_source = source.astimezone(zone)
+    target_date = parsed_date or local_source.date()
+    components = (
+        target_date.year,
+        target_date.month,
+        target_date.day,
+        local_source.hour,
+        local_source.minute,
+        local_source.second,
+        local_source.microsecond,
+    )
+    candidates = [datetime(*components, tzinfo=zone, fold=fold) for fold in (0, 1)]
+    valid_candidates = []
+    for candidate in candidates:
+        round_trip = candidate.astimezone(timezone.utc).astimezone(zone)
+        if (
+            round_trip.date() == target_date
+            and round_trip.time().replace(tzinfo=None) == candidate.time().replace(tzinfo=None)
+        ):
+            valid_candidates.append(candidate)
+
+    if not valid_candidates or (
+        len(valid_candidates) == 2
+        and valid_candidates[0].utcoffset() != valid_candidates[1].utcoffset()
+    ):
+        return {"derived": False, "errors": [DATASET_DETAIL_TIMEZONE_INVALID_ERROR]}
+
+    canonical = valid_candidates[0].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "derived": True,
+        "dataset_detail_updated_at": canonical,
+        "local_calendar_date": target_date.isoformat(),
+        "errors": [],
+    }
 
 
 def main() -> None:

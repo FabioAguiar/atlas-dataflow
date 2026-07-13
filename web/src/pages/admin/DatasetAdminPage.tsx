@@ -249,7 +249,6 @@ type DraftForm = {
   source_name: string;
   source_url: string;
   release_date_label: string;
-  release_date_mode: "auto" | "manual";
   date_format: "" | "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd";
   canonical_name_fallback: boolean;
   home_card_icon: "" | DatasetIconName;
@@ -1080,7 +1079,6 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     source_name: "",
     source_url: "",
     release_date_label: "",
-    release_date_mode: "auto",
     date_format: "",
     canonical_name_fallback: true,
     home_card_icon: "",
@@ -1126,7 +1124,6 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     source_name: profile.display?.source_name ?? "",
     source_url: profile.display?.source_url ?? "",
     release_date_label: normalizeDatasetDateOnly(profile.display?.release_date_label),
-    release_date_mode: profile.display?.release_date_mode === "manual" ? "manual" : "auto",
     date_format: profile.display?.date_format ?? "",
     canonical_name_fallback: profile.display?.canonical_name_fallback ?? true,
     home_card_icon: profile.home_card?.icon ?? "",
@@ -1155,6 +1152,17 @@ function dateFromLastUpdated(value: string | null | undefined): string {
   return presentDatasetOperationalTimestamp(value)?.localCalendarDate ?? "";
 }
 
+function profileWithCanonicalReleaseDate(profile: ProfileDraft | null, canonicalDate: string): ProfileDraft | null {
+  if (!profile || !canonicalDate) {
+    return profile;
+  }
+  const { release_date_mode: _legacyMode, ...display } = profile.display ?? {};
+  return {
+    ...profile,
+    display: { ...display, release_date_label: canonicalDate },
+  };
+}
+
 function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   const profile: ProfileDraft = {
     schema_version: form.schema_version.trim() || "1.0.0",
@@ -1169,7 +1177,6 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   display.source_name = textValue(form.source_name);
   display.source_url = textValue(form.source_url);
   display.release_date_label = textValue(form.release_date_label);
-  display.release_date_mode = form.release_date_mode;
   if (form.date_format) {
     display.date_format = form.date_format;
   }
@@ -1258,7 +1265,6 @@ type PublicContentFields = Pick<
   | "source_name"
   | "source_url"
   | "release_date_label"
-  | "release_date_mode"
   | "date_format"
   | "canonical_name_fallback"
   | "home_card_icon"
@@ -1277,7 +1283,6 @@ function publicContentFields(form: DraftForm): PublicContentFields {
     source_name: form.source_name,
     source_url: form.source_url,
     release_date_label: form.release_date_label,
-    release_date_mode: form.release_date_mode,
     date_format: form.date_format,
     canonical_name_fallback: form.canonical_name_fallback,
     home_card_icon: form.home_card_icon,
@@ -1528,17 +1533,11 @@ function PublicContentTab({
               onChange={(value) => {
                 const normalized = normalizeDatasetDateOnly(value);
                 setField("release_date_label", normalized);
-                setField("release_date_mode", normalized ? "manual" : "auto");
               }}
               required
               type="date"
               value={form.release_date_label}
             />
-            {form.release_date_mode === "manual" && (
-              <p role="status" style={mutedTextStyle}>
-                Editorial override: this public date may differ from Last updated. The operational timestamp is unchanged.
-              </p>
-            )}
           </div>
           <label style={fieldStyle}>
             <span style={fieldLabelRowStyle}>
@@ -2977,6 +2976,7 @@ export default function DatasetAdminPage() {
   const [lastPublishedAt, setLastPublishedAt] = useState<string | undefined>(undefined);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const loadedDatasetSlugRef = useRef("");
+  const canonicalDateBySlugRef = useRef<Record<string, string>>({});
   const draftFormRef = useRef(draftForm);
   const draftStateRef = useRef(draftState);
   draftFormRef.current = draftForm;
@@ -3047,6 +3047,9 @@ export default function DatasetAdminPage() {
           return;
         }
 
+        canonicalDateBySlugRef.current = Object.fromEntries(
+          data.datasets.map((dataset) => [dataset.dataset_slug, dateFromLastUpdated(dataset.last_updated)]),
+        );
         setAdminDatasetsState({ status: "ready", datasets: data.datasets });
       })
       .catch((err: Error) => {
@@ -3149,17 +3152,21 @@ export default function DatasetAdminPage() {
         if (!data) {
           return;
         }
-        const publishedProfile = profileFromSnapshot(data.published_snapshot, selectedSlug);
+        const canonicalDate = canonicalDateBySlugRef.current[selectedSlug] ?? "";
+        const publishedProfile = profileWithCanonicalReleaseDate(
+          profileFromSnapshot(data.published_snapshot, selectedSlug),
+          canonicalDate,
+        );
         // S0084 responses explicitly bind hydration to the live release. A
         // fresh baseline must not fall back to a same-slug private draft,
         // which may also be residue from an older Dataset Detail lifecycle.
         // The legacy fallback remains only for older backend responses that
         // do not yet expose profile_hydration.
-        const hydrationProfile = data.profile_hydration
+        const hydrationProfile = profileWithCanonicalReleaseDate(data.profile_hydration
           ? data.profile_hydration.source === "current_release_snapshot"
             ? publishedProfile
             : null
-          : publishedProfile ?? data.profile;
+          : publishedProfile ?? data.profile, canonicalDate);
         const previousProfile = backendDraftProfile(draftStateRef.current);
         const currentProfile = profileFromForm(draftFormRef.current, selectedSlug);
         const hasDirtyFields = Boolean(previousProfile && !sameProfile(currentProfile, previousProfile));
@@ -3233,15 +3240,12 @@ export default function DatasetAdminPage() {
       return;
     }
     setDraftForm((current) => {
-      if (current.release_date_mode === "manual") {
-        return current;
-      }
       if (current.release_date_label === lastUpdatedDate) {
         return current;
       }
-      return { ...current, release_date_label: lastUpdatedDate, release_date_mode: "auto" };
+      return { ...current, release_date_label: lastUpdatedDate };
     });
-  }, [selectedSlug, lastUpdatedDate, draftState.status, draftForm.release_date_label, draftForm.release_date_mode]);
+  }, [selectedSlug, lastUpdatedDate, draftState.status]);
   // The workspace toolbar's Publish changes snapshot (Project Spec S0058):
   // the normalized current saved/published form state for the selected
   // Dataset Detail's Public Content fields, or -- when no backend draft/
@@ -3251,12 +3255,11 @@ export default function DatasetAdminPage() {
   // comparison above for the Publishing tab's own (unchanged) lifecycle.
   const publicContentSnapshotForm: DraftForm =
     hasBackendDraftProfile && lastBackendDraft
-      ? formFromProfile(lastBackendDraft, selectedSlug)
+      ? { ...formFromProfile(lastBackendDraft, selectedSlug), release_date_label: lastUpdatedDate }
       : {
           ...emptyDraftForm(selectedSlug),
           display_title: canonicalDisplayTitle,
           release_date_label: lastUpdatedDate,
-          release_date_mode: "auto",
         };
   const hasUnpublishedPublicContentChanges =
     Boolean(selectedSlug) && !samePublicContent(draftForm, publicContentSnapshotForm);
@@ -3360,7 +3363,10 @@ export default function DatasetAdminPage() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(profileToPublish),
+      body: JSON.stringify({
+        ...profileToPublish,
+        dataset_detail_time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }),
     })
       .then((response) => {
         if (response.status === 404) {

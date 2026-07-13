@@ -64,7 +64,10 @@ from registry.dataset_public_profile_store import (
     validate_profile_draft,
 )
 from registry.dataset_public_profile_validate import validate_profile_references
-from registry.update import update_dataset_detail_timestamp
+from registry.update import (
+    derive_dataset_detail_timestamp_for_date,
+    update_dataset_detail_timestamp,
+)
 
 DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -180,9 +183,23 @@ def _load_release_metrics(dataset_slug: str, active_release: str, repo_root: Pat
 
 
 def _build_snapshot_candidate(
-    draft: dict, dataset_slug: str, active_release: str, published_at: str
+    draft: dict,
+    dataset_slug: str,
+    active_release: str,
+    published_at: str,
+    release_date_label: str,
 ) -> dict:
     profile = {field: draft[field] for field in _PROFILE_FIELDS if field in draft}
+    display = profile.get("display")
+    if isinstance(display, dict):
+        display = dict(display)
+    else:
+        display = {}
+    # Legacy artifacts remain schema-readable, but new snapshots never carry
+    # release_date_mode and never trust an editorial label as date authority.
+    display.pop("release_date_mode", None)
+    display["release_date_label"] = release_date_label
+    profile["display"] = display
     candidate = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "dataset_slug": dataset_slug,
@@ -239,7 +256,12 @@ def _validate_snapshot_candidate(candidate: dict, repo_root: Path) -> list:
     return errors
 
 
-def _publish_profile(dataset_slug: str, profile: dict, repo_root: Path) -> dict:
+def _publish_profile(
+    dataset_slug: str,
+    profile: dict,
+    repo_root: Path,
+    time_zone: str | None = None,
+) -> dict:
     """
     Shared validate-then-write flow for a candidate profile (either the
     persisted draft, via publish_snapshot, or an admin-submitted payload,
@@ -266,8 +288,13 @@ def _publish_profile(dataset_slug: str, profile: dict, repo_root: Path) -> dict:
             )],
         }
 
+    sanitized_profile = dict(profile)
     display = profile.get("display")
-    release_date = display.get("release_date_label") if isinstance(display, dict) else None
+    sanitized_display = dict(display) if isinstance(display, dict) else None
+    release_date = sanitized_display.get("release_date_label") if sanitized_display is not None else None
+    if sanitized_display is not None:
+        sanitized_display.pop("release_date_mode", None)
+        sanitized_profile["display"] = sanitized_display
     if release_date is not None:
         try:
             if not isinstance(release_date, str) or date.fromisoformat(release_date).isoformat() != release_date:
@@ -284,7 +311,7 @@ def _publish_profile(dataset_slug: str, profile: dict, repo_root: Path) -> dict:
                 )],
             }
 
-    draft_validation = validate_profile_draft(profile, repo_root)
+    draft_validation = validate_profile_draft(sanitized_profile, repo_root)
     if not draft_validation["valid"]:
         return {"published": False, "path": None, "snapshot": None, "errors": draft_validation["errors"]}
 
@@ -302,19 +329,40 @@ def _publish_profile(dataset_slug: str, profile: dict, repo_root: Path) -> dict:
         }
 
     published_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    candidate = _build_snapshot_candidate(profile, dataset_slug, active_release, published_at)
+    timestamp_derivation = derive_dataset_detail_timestamp_for_date(
+        dataset_slug,
+        release_date,
+        repo_root=repo_root,
+        fallback_now=datetime.fromisoformat(published_at.replace("Z", "+00:00")),
+        time_zone=time_zone,
+    )
+    if not timestamp_derivation["derived"]:
+        return {
+            "published": False,
+            "path": None,
+            "snapshot": None,
+            "errors": timestamp_derivation["errors"],
+        }
+
+    candidate = _build_snapshot_candidate(
+        sanitized_profile,
+        dataset_slug,
+        active_release,
+        published_at,
+        timestamp_derivation["local_calendar_date"],
+    )
 
     errors = _validate_snapshot_candidate(candidate, repo_root)
     if errors:
         return {"published": False, "path": None, "snapshot": None, "errors": errors}
 
-    # Project Spec S0091: publishing is an operational mutation. Its actual
-    # backend time is independent from the optional editorial release label.
-    # Persist it only after every publish validation has passed and before
-    # replacing the public snapshot, so a timestamp failure leaves the prior
-    # published state untouched.
+    # S0093: persist the backend-derived canonical timestamp only after all
+    # profile/snapshot validation succeeds. The public label above is merely
+    # the local calendar projection of this exact value.
     timestamp_result = update_dataset_detail_timestamp(
-        dataset_slug, published_at, repo_root=repo_root
+        dataset_slug,
+        timestamp_derivation["dataset_detail_updated_at"],
+        repo_root=repo_root,
     )
     if not timestamp_result["updated"]:
         return {
@@ -389,7 +437,12 @@ def publish_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:
     return _publish_profile(dataset_slug, draft, repo_root)
 
 
-def publish_snapshot_from_payload(dataset_slug: str, profile: dict, repo_root: Path | None = None) -> dict:
+def publish_snapshot_from_payload(
+    dataset_slug: str,
+    profile: dict,
+    repo_root: Path | None = None,
+    time_zone: str | None = None,
+) -> dict:
     """
     Validate an admin-submitted profile payload and publish it directly as
     a deterministic published profile snapshot, without reading or
@@ -413,7 +466,7 @@ def publish_snapshot_from_payload(dataset_slug: str, profile: dict, repo_root: P
     repo_root = _resolve_repo_root(repo_root)
     _snapshot_path(dataset_slug, repo_root)
 
-    return _publish_profile(dataset_slug, profile, repo_root)
+    return _publish_profile(dataset_slug, profile, repo_root, time_zone=time_zone)
 
 
 def get_snapshot(dataset_slug: str, repo_root: Path | None = None) -> dict:

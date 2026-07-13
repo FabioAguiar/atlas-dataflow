@@ -317,28 +317,41 @@ def test_direct_publish_rejects_unsafe_home_card_media_references(fake_repo, uns
     assert "SCHEMA_VALIDATION_ERROR" in _codes(result)
 
 
-def test_direct_publish_preserves_manual_release_date_and_uses_publish_time_operationally(fake_repo, monkeypatch):
-    class FixedDateTime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return cls(2026, 7, 13, 14, 25, 30, tzinfo=timezone.utc)
+def test_direct_publish_replaces_canonical_local_date_and_drops_legacy_mode(fake_repo, monkeypatch):
+    registry = json.loads((fake_repo / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    registry["datasets"][0]["dataset_detail_updated_at"] = "2026-07-13T10:39:32Z"
+    _write_datasets_registry(fake_repo, registry)
+    monkeypatch.setenv("TZ", "America/Recife")
 
-    monkeypatch.setattr(
-        "registry.dataset_public_profile_snapshot_store.datetime", FixedDateTime
-    )
     result = publish_snapshot_from_payload(
         "telco-customer-churn",
-        _profile(display={"release_date_label": "2026-05-12", "release_date_mode": "manual"}),
+        _profile(display={"release_date_label": "2026-07-10", "release_date_mode": "manual"}),
         repo_root=fake_repo,
     )
 
     assert result["published"] is True
-    assert result["snapshot"]["profile"]["display"] == {
-        "release_date_label": "2026-05-12",
-        "release_date_mode": "manual",
-    }
+    assert result["snapshot"]["profile"]["display"] == {"release_date_label": "2026-07-10"}
     registry = json.loads((fake_repo / "registry" / "datasets.json").read_text(encoding="utf-8"))
-    assert registry["datasets"][0]["dataset_detail_updated_at"] == "2026-07-13T14:25:30Z"
+    assert registry["datasets"][0]["dataset_detail_updated_at"] == "2026-07-10T10:39:32Z"
+
+
+def test_direct_publish_without_canonical_timestamp_uses_backend_time_of_day(fake_repo, monkeypatch):
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 13, 0, 41, 21, tzinfo=timezone.utc)
+
+    monkeypatch.setenv("TZ", "America/Recife")
+    monkeypatch.setattr("registry.dataset_public_profile_snapshot_store.datetime", FixedDateTime)
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-07-10"}),
+        repo_root=fake_repo,
+    )
+
+    assert result["published"] is True
+    registry = json.loads((fake_repo / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    assert registry["datasets"][0]["dataset_detail_updated_at"] == "2026-07-11T00:41:21Z"
 
 
 def test_invalid_release_date_cannot_replace_snapshot(fake_repo):
@@ -360,6 +373,31 @@ def test_invalid_release_date_cannot_replace_snapshot(fake_repo):
     assert rejected["published"] is False
     assert "RELEASE_DATE_INVALID" in _codes(rejected)
     assert snapshot_path.read_text(encoding="utf-8") == original
+
+
+def test_invalid_timezone_cannot_mutate_canonical_timestamp_or_replace_snapshot(fake_repo):
+    first = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-05-12"}),
+        repo_root=fake_repo,
+        time_zone="America/Recife",
+    )
+    snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
+    original_snapshot = snapshot_path.read_text(encoding="utf-8")
+    original_registry = (fake_repo / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    rejected = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(display={"release_date_label": "2026-06-20"}),
+        repo_root=fake_repo,
+        time_zone="Not/A-Timezone",
+    )
+
+    assert first["published"] is True
+    assert rejected["published"] is False
+    assert "DATASET_DETAIL_TIMEZONE_INVALID" in _codes(rejected)
+    assert snapshot_path.read_text(encoding="utf-8") == original_snapshot
+    assert (fake_repo / "registry" / "datasets.json").read_text(encoding="utf-8") == original_registry
 
 
 def test_failed_operational_timestamp_update_does_not_replace_snapshot(fake_repo, monkeypatch):

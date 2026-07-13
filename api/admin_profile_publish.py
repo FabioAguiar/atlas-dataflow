@@ -291,7 +291,16 @@ def publish_profile_payload(dataset_slug: str, profile: dict) -> dict:
     "errors": [...]}. Raises ValueError if dataset_slug is missing or does
     not match the required pattern.
     """
-    result = publish_snapshot_from_payload(dataset_slug, profile)
+    # Dataset Admin sends the browser's IANA timezone as transient mutation
+    # context. It is removed before schema validation/persistence, so it can
+    # never become another profile field or date authority.
+    candidate = dict(profile)
+    time_zone = candidate.pop("dataset_detail_time_zone", None)
+    result = publish_snapshot_from_payload(
+        dataset_slug,
+        candidate,
+        time_zone=time_zone if isinstance(time_zone, str) else None,
+    )
 
     return {
         "dataset_slug": dataset_slug,

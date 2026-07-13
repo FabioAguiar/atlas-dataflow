@@ -158,6 +158,7 @@ function installFetchMock(
   let savedProfileDraft: typeof publicProfile | null = null;
   let savedCustomization: typeof customization | null = null;
   let publishedProfile: typeof publicProfile | null = null;
+  let canonicalTimestampAfterPublish: string | null = null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
@@ -178,7 +179,9 @@ function installFetchMock(
             active_release: "release-20260619-001",
             publication_status: "ready",
             last_updated:
-              publishedProfile && options.lastUpdatedAfterPublish
+              canonicalTimestampAfterPublish
+                ? canonicalTimestampAfterPublish
+                : publishedProfile && options.lastUpdatedAfterPublish
                 ? options.lastUpdatedAfterPublish
                 : options.lastUpdated ?? "2026-06-19T12:00:00Z",
           },
@@ -264,13 +267,18 @@ function installFetchMock(
       // backend's publish_snapshot_from_payload behavior -- the published
       // snapshot must reflect exactly the current form payload submitted by
       // Publish changes, not a stale stored draft.
-      const profile =
+      const submittedProfile = (
         typeof init.body === "string"
-          ? (JSON.parse(init.body) as typeof publicProfile)
+          ? JSON.parse(init.body)
           : options.trackProfileDraftSaves
           ? savedProfileDraft ?? publicProfile
-          : publicProfile;
+          : publicProfile
+      ) as typeof publicProfile & { dataset_detail_time_zone?: string };
+      const { dataset_detail_time_zone: _timeZone, ...profile } = submittedProfile;
       publishedProfile = profile;
+      if (profile.display.release_date_label) {
+        canonicalTimestampAfterPublish = `${profile.display.release_date_label}T03:00:00Z`;
+      }
       return jsonResponse({
         published: true,
         snapshot: {
@@ -727,7 +735,7 @@ describe("DatasetAdminPage", () => {
     const input = await screen.findByLabelText("Release date label");
     await waitFor(() => expect(input).toHaveValue("2026-06-21"));
     expect(input).toHaveAttribute("type", "date");
-    expect(within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    expect(within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" })).toBeDisabled();
   });
 
   it("uses the shared local calendar projection and keeps date-only editorial values stable (Project Spec S0092)", async () => {
@@ -743,15 +751,14 @@ describe("DatasetAdminPage", () => {
     expect(normalizeDatasetDateOnly("2026-02-30")).toBe("");
   });
 
-  it("preserves a manual release date and publishes its override metadata with normal dirty-state reset (Project Spec S0064)", async () => {
+  it("ignores a legacy manual mode and publishes the canonical date without override metadata (Project Spec S0093)", async () => {
     const fetchMock = installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "manual", lastUpdated: "2026-06-21T23:15:00Z" });
     renderAdminPage();
 
     const input = await screen.findByLabelText("Release date label");
-    await waitFor(() => expect(input).toHaveValue("2026-05-01"));
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Editorial override: this public date may differ from Last updated. The operational timestamp is unchanged.",
-    );
+    await waitFor(() => expect(input).toHaveValue("2026-06-21"));
+    await screen.findByTestId("dataset-admin-draft-ready");
+    expect(screen.queryByText(/Editorial override/)).not.toBeInTheDocument();
     const publishButton = within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", { name: "Publish changes" });
     expect(publishButton).toBeDisabled();
 
@@ -764,48 +771,41 @@ describe("DatasetAdminPage", () => {
       String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`),
     );
     const body = JSON.parse(String((publishCall?.[1] as RequestInit).body));
-    expect(body.display).toMatchObject({ release_date_label: "2026-05-12", release_date_mode: "manual" });
+    expect(body.display).toMatchObject({ release_date_label: "2026-05-12" });
+    expect(body.display).not.toHaveProperty("release_date_mode");
     expect(body).not.toHaveProperty("dataset_detail_updated_at");
+    expect(body.dataset_detail_time_zone).toEqual(expect.any(String));
   });
 
-  it("refreshes automatic projection from the post-publish timestamp and preserves persisted manual overrides (Project Spec S0092)", async () => {
+  it("refetches the canonical projection after a release-date mutation (Project Spec S0093)", async () => {
     vi.stubEnv("TZ", "America/Recife");
     installFetchMock({
       releaseDate: "2026-05-01",
       releaseDateMode: "auto",
       lastUpdated: "2026-07-13T00:41:21Z",
-      lastUpdatedAfterPublish: "2026-07-14T00:41:21Z",
     });
     renderAdminPage();
 
     const input = await screen.findByLabelText("Release date label");
     await waitFor(() => expect(input).toHaveValue("2026-07-12"));
-    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Publish with a newer operational timestamp" } });
+    fireEvent.change(input, { target: { value: "2026-07-10" } });
     fireEvent.click(
       within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
         name: "Publish changes",
       }),
     );
-    await waitFor(() => expect(input).toHaveValue("2026-07-13"));
-
-    fireEvent.change(input, { target: { value: "2026-05-12" } });
-    fireEvent.click(
-      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
-        name: "Publish changes",
-      }),
-    );
-    await waitFor(() => expect(input).toHaveValue("2026-05-12"));
-    expect(screen.getByText(/Editorial override/)).toHaveAttribute("role", "status");
+    await waitFor(() => expect(input).toHaveValue("2026-07-10"));
+    expect(screen.queryByText(/Editorial override/)).not.toBeInTheDocument();
   });
 
-  it("treats clearing the release date as a reset to automatic Last updated seeding (Project Spec S0064)", async () => {
+  it("keeps a cleared date as an invalid pending edit instead of inventing a browser timestamp (Project Spec S0093)", async () => {
     installFetchMock({ releaseDate: "2026-05-01", releaseDateMode: "manual", lastUpdated: "2026-06-21T23:15:00Z" });
     renderAdminPage();
 
     const input = await screen.findByLabelText("Release date label");
-    await waitFor(() => expect(input).toHaveValue("2026-05-01"));
-    fireEvent.change(input, { target: { value: "" } });
     await waitFor(() => expect(input).toHaveValue("2026-06-21"));
+    fireEvent.change(input, { target: { value: "" } });
+    expect(input).toHaveValue("");
   });
 
   it("keeps the workspace toolbar's Publish changes button disabled for a Dataset Detail with no saved draft until the seeded Display title is actually edited (Project Spec S0058)", async () => {

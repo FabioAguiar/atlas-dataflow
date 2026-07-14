@@ -638,6 +638,20 @@ def _build_release_candidate(
                 "required": True,
                 "media_type": "application/json",
             },
+            # Project Spec S0099: a distinct manifest-visible role for the
+            # public contract, separate from the "contracts" (runtime) role
+            # above -- previously the physical file was copied into the
+            # candidate directory (_PUBLIC_ARTIFACT_MAPPINGS) but never
+            # declared as its own artifact_roles entry, so
+            # publisher/manifest.py had no role to read it from and the
+            # active release manifest never carried a public_contract
+            # artifact at all.
+            "public_contract": {
+                "role": "public_contract",
+                "path": "contracts/public-contract.json",
+                "required": True,
+                "media_type": "application/json",
+            },
             "predictive_bundle": {
                 "role": "predictive_bundle",
                 "path": "predictions/bundle.json",
@@ -682,6 +696,7 @@ def _build_release_candidate(
             "completeness_validation": {
                 "required_artifact_roles": [
                     "contracts",
+                    "public_contract",
                     "predictive_bundle",
                     "metrics",
                     "model_card",

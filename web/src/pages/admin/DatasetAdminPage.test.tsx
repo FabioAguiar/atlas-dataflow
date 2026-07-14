@@ -167,12 +167,36 @@ function installFetchMock(
     // for exercising a stale-binding rebind scenario. Only applied when an
     // existing draft/profile is returned (ignored with noExistingDraft).
     boundPredictViewIdOverride?: string;
+    // Project Spec S0099: the customization GET endpoint reports absence
+    // (no stored record) instead of the shared compatible customization
+    // fixture.
+    customizationAbsent?: boolean;
+    // Project Spec S0099: the customization GET endpoint reports the shared
+    // customization fixture as incompatible with the current public
+    // contract (a historical record that no longer matches), instead of
+    // applying it as a compatible overlay.
+    customizationIncompatible?: boolean;
+    // Project Spec S0099: the customization GET endpoint responds with a
+    // transport failure (non-ok response) once, to exercise the
+    // unavailable-state Retry control. Automatically cleared after the
+    // first GET so a subsequent automatic reload (triggered by Retry)
+    // succeeds normally.
+    customizationLoadFailsOnce?: boolean;
+    // Project Spec S0099: the first customization GET response never
+    // resolves on its own -- the caller must invoke the resolver function
+    // exposed on the returned fetch mock's releaseDeferredCustomizationLoad
+    // property to let it settle. Exercises stale-request protection when
+    // the request identity changes while a request is still in flight.
+    customizationLoadDeferredOnce?: boolean;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
   let savedCustomization: typeof customization | null = null;
   let publishedProfile: typeof publicProfile | null = null;
   let canonicalTimestampAfterPublish: string | null = null;
+  let customizationLoadFailurePending = options.customizationLoadFailsOnce ?? false;
+  let customizationLoadDeferredPending = options.customizationLoadDeferredOnce ?? false;
+  let releaseDeferredCustomizationLoad: (() => void) | null = null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
@@ -394,17 +418,67 @@ function installFetchMock(
       return jsonResponse({ saved: true, customization });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`)) {
-      if (options.trackCustomizationSaves && savedCustomization) {
-        return jsonResponse({ customization_exists: true, customization: savedCustomization });
+      if (customizationLoadDeferredPending) {
+        customizationLoadDeferredPending = false;
+        return new Promise<MockResponse>((resolve) => {
+          releaseDeferredCustomizationLoad = () =>
+            resolve(
+              jsonResponse({
+                customization_exists: true,
+                compatibility_status: "compatible",
+                customization,
+                errors: [],
+              }),
+            );
+        });
       }
-      return jsonResponse({ customization_exists: true, customization });
+      if (customizationLoadFailurePending) {
+        customizationLoadFailurePending = false;
+        return jsonResponse({}, 500);
+      }
+      // A locally tracked save (trackCustomizationSaves) always reflects
+      // the most current persisted state, so it takes precedence over the
+      // static customizationAbsent/customizationIncompatible fixtures,
+      // which describe the state only before any save happens this test.
+      if (options.trackCustomizationSaves && savedCustomization) {
+        return jsonResponse({
+          customization_exists: true,
+          compatibility_status: "compatible",
+          customization: savedCustomization,
+          errors: [],
+        });
+      }
+      if (options.customizationAbsent) {
+        return jsonResponse({
+          customization_exists: false,
+          compatibility_status: "absent",
+          customization: null,
+          errors: [],
+        });
+      }
+      if (options.customizationIncompatible) {
+        return jsonResponse({
+          customization_exists: true,
+          compatibility_status: "incompatible",
+          customization: null,
+          errors: [{ code: "UNKNOWN_FIELD_REFERENCE", field: "field_hints[0].field_name", message: "Unknown field." }],
+        });
+      }
+      return jsonResponse({
+        customization_exists: true,
+        compatibility_status: "compatible",
+        customization,
+        errors: [],
+      });
     }
 
     return jsonResponse({}, 404);
   });
 
   vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
+  return Object.assign(fetchMock, {
+    releaseDeferredCustomizationLoad: () => releaseDeferredCustomizationLoad?.(),
+  });
 }
 
 async function loadDraftOnly() {
@@ -415,12 +489,12 @@ async function loadDraftOnly() {
 }
 
 async function loadDraftAndCustomization() {
+  // Project Spec S0099: the Inference Form builder now bootstraps
+  // automatically once a dataset, bound predict view, and public contract
+  // are all ready -- no "Load customization" click is required or exists
+  // in the normal path.
   await loadDraftOnly();
   fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-  fireEvent.click(screen.getByRole("button", { name: "Load customization" }));
-  // Same fix as loadDraftOnly above: CustomizationStatusPanel's "ready"
-  // branch renders "Customization loaded" with no trailing period (see
-  // DatasetAdminPage.tsx line ~1551).
   expect(await screen.findByText("Customization loaded")).toBeInTheDocument();
 }
 
@@ -1605,58 +1679,86 @@ describe("DatasetAdminPage", () => {
       document.querySelector<HTMLElement>('[data-customization-drop-zone="group-3"]'),
     );
 
-    installFetchMock({ trackCustomizationSaves: true });
+    // A second eligible view keeps the S0100 governed multi-view select
+    // available -- used only as the mechanism to force a genuine reload
+    // (unbind/rebind) below, proving the reload reflects real persisted
+    // state rather than only the in-memory draft.
+    installFetchMock({
+      trackCustomizationSaves: true,
+      viewsOverride: [
+        { view_id: viewId, display: { title: "Churn risk overview" } },
+        { view_id: "retention-outlook", display: { title: "Retention Outlook" } },
+      ],
+    });
     renderAdminPage();
 
     await loadDraftAndCustomization();
 
     const layoutPanel = screen.getByLabelText("Public form layout");
 
-    fireEvent.click(screen.getByRole("button", { name: "Add group" }));
-    const removeButtonsAfterAdd = within(layoutPanel).getAllByRole("button", { name: "Remove" });
-    const newGroupCard = removeButtonsAfterAdd[removeButtonsAfterAdd.length - 1].closest(
-      ".dataset-admin-builder-card",
-    ) as HTMLElement;
+    // Project Spec S0100: "Add group" is now "Add subgroup", and the new
+    // card's metadata (Label/Description/Remove) is hidden until its
+    // on-demand "Edit" panel is opened -- no "Remove" button exists in the
+    // normal collapsed header to locate the new card by anymore.
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    const cardsAfterAdd = layoutPanel.querySelectorAll(".dataset-admin-builder-card");
+    const newGroupCard = cardsAfterAdd[cardsAfterAdd.length - 1] as HTMLElement;
 
+    fireEvent.click(within(newGroupCard).getByRole("button", { name: "Edit" }));
     fireEvent.change(within(newGroupCard).getByLabelText("Label"), { target: { value: "Support tier" } });
     fireEvent.change(within(newGroupCard).getByLabelText("Description"), {
       target: { value: "Support-related attributes" },
     });
+    fireEvent.click(within(newGroupCard).getByRole("button", { name: "Save subgroup" }));
 
     // The new group's group_id is deterministically "group-3"
-    // (addGroup: `group-${current.groups.length + 1}` with 2 pre-existing groups).
+    // (`group-${current.groups.length + 1}` with 2 pre-existing groups).
     // Drag "tenure" out of Account profile into the newly created group.
     const tenureDragHandle = screen.getByRole("button", { name: "Drag field Tenure" });
     fireEvent.pointerDown(tenureDragHandle, { pointerId: 5, clientX: 0, clientY: 0 });
     fireEvent.pointerUp(tenureDragHandle, { pointerId: 5, clientX: 0, clientY: 0 });
+
+    // Project Spec S0100: Save subgroup commits the label/description into
+    // the shared draft immediately, so Live Preview (fed from that same
+    // draft) reflects it before the overall "Save customization" persists
+    // anything to the backend (InferenceForm only renders a subgroup once it
+    // has a member, so this check comes after the drag above).
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    expect(screen.getByText("Support tier")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
     // The stacked down control on the first subgroup ("Account profile")
     // swaps it with its neighbor ("Charges").
     fireEvent.click(screen.getByRole("button", { name: "Move subgroup Account profile down" }));
 
     // Remove a different pre-existing group ("Account profile") than the one
-    // just created/edited/assigned ("Support tier").
-    const accountCard = within(layoutPanel)
-      .getByDisplayValue("Account profile")
-      .closest(".dataset-admin-builder-card") as HTMLElement;
-    fireEvent.click(within(accountCard).getByRole("button", { name: "Remove" }));
+    // just created/edited/assigned ("Support tier"). "Remove subgroup" is a
+    // secondary action inside that card's own Edit panel.
+    const accountCard = screen.getByText("Account profile").closest(".dataset-admin-builder-card") as HTMLElement;
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Edit" }));
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Remove subgroup" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
     await screen.findByText("Customization saved.");
 
-    // A real reload, not just a payload assertion: click "Load customization"
-    // again and verify the re-rendered editor reflects all five edits.
-    fireEvent.click(screen.getByRole("button", { name: "Load customization" }));
+    // A real reload, not just a payload assertion: unbind and rebind the
+    // predict view via the (still-available, multi-view) select, which
+    // re-triggers the automatic bootstrap fetch (there is no manual "Load
+    // customization" control), and verify the re-rendered editor reflects
+    // all five edits.
+    fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: viewId } });
     await screen.findByText("Customization loaded");
 
     const reloadedLayoutPanel = screen.getByLabelText("Public form layout");
-    const reloadedLabels = within(reloadedLayoutPanel).getAllByLabelText("Label") as HTMLInputElement[];
-    expect(reloadedLabels.map((input) => input.value)).toEqual(["Charges", "Support tier"]);
-    const reloadedDescriptions = within(reloadedLayoutPanel).getAllByLabelText("Description") as HTMLInputElement[];
-    expect(reloadedDescriptions.map((input) => input.value)).toEqual([
-      "Billing attributes",
-      "Support-related attributes",
+    const reloadedCards = Array.from(reloadedLayoutPanel.querySelectorAll(".dataset-admin-builder-card"));
+    expect(reloadedCards.map((card) => card.querySelector("strong")?.textContent)).toEqual([
+      "Charges",
+      "Support tier",
     ]);
+    expect(
+      reloadedCards.map((card) => card.querySelector(".dataset-admin-subgroup-header__helper")?.textContent),
+    ).toEqual(["Billing attributes", "Support-related attributes"]);
 
     expect(within(screen.getByLabelText("Support tier")).getByText("tenure")).toBeInTheDocument();
     expect(within(screen.getByLabelText("Charges")).getByText("MonthlyCharges")).toBeInTheDocument();
@@ -1668,17 +1770,29 @@ describe("DatasetAdminPage", () => {
 
     await loadDraftAndCustomization();
 
-    const layoutPanel = screen.getByLabelText("Public form layout");
-    const accountCard = within(layoutPanel)
-      .getByDisplayValue("Account profile")
-      .closest(".dataset-admin-builder-card") as HTMLElement;
+    const accountCard = screen.getByText("Account profile").closest(".dataset-admin-builder-card") as HTMLElement;
 
+    // Project Spec S0100: the subgroup metadata edit panel is closed by
+    // default and independent of collapse/expand -- Group ID/Label/
+    // Description are never shown until "Edit" is activated.
     const collapseButton = within(accountCard).getByRole("button", { name: "Collapse" });
     expect(collapseButton).toHaveAttribute("aria-expanded", "true");
-    expect(within(accountCard).getByLabelText("Group ID")).toBeInTheDocument();
-    expect(within(accountCard).getByLabelText("Label")).toBeInTheDocument();
-    expect(within(accountCard).getByLabelText("Description")).toBeInTheDocument();
+    expect(within(accountCard).queryByLabelText("Group ID")).not.toBeInTheDocument();
+    expect(within(accountCard).queryByLabelText("Label")).not.toBeInTheDocument();
+    expect(within(accountCard).queryByLabelText("Description")).not.toBeInTheDocument();
     expect(within(accountCard).getByText("tenure")).toBeInTheDocument();
+
+    // Activating Edit reveals the metadata fields seeded from the current
+    // group; Cancel discards any local change without mutating the draft.
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Edit" }));
+    expect(within(accountCard).getByLabelText("Group ID")).toHaveValue("account");
+    expect(within(accountCard).getByLabelText("Label")).toHaveValue("Account profile");
+    expect(within(accountCard).getByLabelText("Description")).toHaveValue("Account attributes");
+    fireEvent.change(within(accountCard).getByLabelText("Label"), { target: { value: "Should not persist" } });
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Cancel" }));
+    expect(within(accountCard).queryByLabelText("Label")).not.toBeInTheDocument();
+    expect(screen.getByText("Account profile")).toBeInTheDocument();
+    expect(screen.queryByText("Should not persist")).not.toBeInTheDocument();
 
     fireEvent.click(collapseButton);
 
@@ -1689,13 +1803,16 @@ describe("DatasetAdminPage", () => {
     expect(within(accountCard).queryByLabelText("Description")).not.toBeInTheDocument();
     expect(within(accountCard).queryByText("tenure")).not.toBeInTheDocument();
 
-    // The header row (stacked up/down, drag, remove, field count,
+    // The header row (stacked up/down, drag, field count, edit,
     // collapse/expand) must remain visible and functional regardless of
-    // collapsed state.
+    // collapsed state. "Remove subgroup" is a secondary action inside the
+    // Edit panel now, not the collapsed header.
     expect(within(accountCard).getByRole("button", { name: /^Drag group/ })).toBeInTheDocument();
     expect(within(accountCard).getByRole("button", { name: "Move subgroup Account profile down" })).toBeInTheDocument();
-    expect(within(accountCard).getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    expect(within(accountCard).getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(within(accountCard).getByText(/fields$/)).toBeInTheDocument();
+
+    fireEvent.click(expandButton);
 
     const callsBeforeSave = fetchMock.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
@@ -1898,6 +2015,40 @@ describe("DatasetAdminPage", () => {
     expect(
       bankSection.compareDocumentPosition(layoutSection) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("starts the Inference Form tab directly with a compact action row and no repeated tab shell or extra outer card (Project Spec S0100)", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tabPanel = screen.getByRole("tabpanel");
+    // No repeated tab-level eyebrow/title/subtitle/scope badge above the
+    // builder (unlike tabs that still use the TabWorkspace eyebrow wrapper).
+    expect(within(tabPanel).queryByText("Inference Form")).not.toBeInTheDocument();
+    expect(
+      within(tabPanel).queryByText(
+        "Organize presentation for the bound predict view while contract fields and validation stay authoritative.",
+      ),
+    ).not.toBeInTheDocument();
+
+    // The compact action row contains exactly the two normal-path actions.
+    const actionRow = screen.getByRole("button", { name: "Add subgroup" }).closest(".dataset-admin-builder-actions") as HTMLElement;
+    expect(within(actionRow).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Add subgroup",
+      "Save customization",
+    ]);
+
+    // The builder is not wrapped in an additional full card around the two
+    // columns (no atlas-card ancestor between the action row and the tab
+    // panel root).
+    expect(actionRow.closest(".atlas-card")).toBeNull();
+
+    // No visible text node "Drag" anywhere in a subgroup header -- only the
+    // accessible name carries that word; the visible glyph is an icon.
+    const subgroupHead = document.querySelector(".dataset-admin-builder-card__head") as HTMLElement;
+    expect(subgroupHead.textContent).not.toContain("Drag");
+    expect(within(subgroupHead).getByRole("button", { name: /^Drag group/ })).toBeInTheDocument();
   });
 
   it("edits a field's presentation through the double-click modal, supporting cancel, Escape, and focus restore", async () => {
@@ -2357,13 +2508,18 @@ describe("DatasetAdminPage", () => {
   // -------------------------------------------------------------------------
 
   it("preserves a currently valid bound_predict_view_id instead of overriding it", async () => {
+    // Project Spec S0100: the normal (single-eligible-view) path never shows
+    // the manual "Bound predict view" select -- the resolved view renders as
+    // compact read-only context instead, so this now asserts that badge
+    // rather than a select value.
     installFetchMock();
     renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
-    expect(await screen.findByLabelText("Bound predict view")).toHaveValue(viewId);
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(await screen.findByText("Churn risk overview")).toBeInTheDocument();
   });
 
   it("deterministically selects the sole eligible predict view when no binding exists yet", async () => {
@@ -2373,7 +2529,8 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
-    await waitFor(() => expect(screen.getByLabelText("Bound predict view")).toHaveValue(viewId));
+    await waitFor(() => expect(screen.getByText("Churn risk overview")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
   });
 
   it("repairs a stale bound_predict_view_id by selecting the sole eligible view", async () => {
@@ -2382,16 +2539,18 @@ describe("DatasetAdminPage", () => {
     // eligible views to this dataset server-side, so it is simply absent
     // from the eligible list either way, and the rebind default must repair
     // it the same as any other stale reference (never select it, never
-    // leave it bound).
+    // leave it bound). The now-hidden normal-path select can no longer be
+    // inspected for the stale option directly, but the badge showing the
+    // correctly-resolved sole eligible view proves the stale id was never
+    // selected.
     installFetchMock({ boundPredictViewIdOverride: "some-other-datasets-view" });
     renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
-    await waitFor(() => expect(screen.getByLabelText("Bound predict view")).toHaveValue(viewId));
-    const options = within(screen.getByLabelText("Bound predict view")).getAllByRole("option");
-    expect(options.map((option) => (option as HTMLOptionElement).value)).not.toContain("some-other-datasets-view");
+    await waitFor(() => expect(screen.getByText("Churn risk overview")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
   });
 
   it("keeps the predict view unbound when zero eligible views exist", async () => {
@@ -2401,9 +2560,12 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
-    await screen.findByLabelText("Bound predict view");
-    expect(screen.getByLabelText("Bound predict view")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Load customization" })).toBeDisabled();
+    // Project Spec S0100: with zero eligible predict views, there is no
+    // select to render at all -- an explicit governed blocked state instead
+    // of a visible-but-empty selector.
+    expect(await screen.findByText("No predict view bound")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save customization" })).toBeDisabled();
   });
 
   it("requires an explicit user choice when multiple eligible views exist and no valid binding exists", async () => {
@@ -2433,7 +2595,7 @@ describe("DatasetAdminPage", () => {
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-    await waitFor(() => expect(screen.getByLabelText("Bound predict view")).toHaveValue(viewId));
+    await waitFor(() => expect(screen.getByText("Churn risk overview")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     const publishButton = within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" });
@@ -2445,5 +2607,160 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(publishButton);
     await waitFor(() => expect(within(screen.getByRole("tabpanel")).getByText(/Published/)).toBeInTheDocument());
+  });
+
+  // -------------------------------------------------------------------------
+  // Project Spec S0099: contract-driven automatic bootstrap and
+  // compatibility-aware customization overlay
+  // -------------------------------------------------------------------------
+
+  it("automatically reaches a rendered builder on tab entry with no Load customization control anywhere on the page", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await loadDraftAndCustomization();
+
+    expect(screen.queryByRole("button", { name: "Load customization" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Public form layout")).toBeInTheDocument();
+  });
+
+  it("builds a clean contract-derived draft when no customization exists (absence bootstrap)", async () => {
+    installFetchMock({ customizationAbsent: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    expect(await screen.findByText("No customization yet")).toBeInTheDocument();
+    const layoutPanel = screen.getByLabelText("Public form layout");
+    // Every canonical contract field renders visible and ungrouped, with no
+    // customization-supplied label/copy -- the "no-subgroup" zone is where
+    // an unhidden, ungrouped field renders.
+    const noSubgroupZone = document.querySelector('[data-customization-drop-zone="no-subgroup"]') as HTMLElement;
+    expect(within(noSubgroupZone).getByText("tenure")).toBeInTheDocument();
+    expect(within(noSubgroupZone).getByText("MonthlyCharges")).toBeInTheDocument();
+    expect(within(layoutPanel).queryByText("Tenure")).not.toBeInTheDocument();
+  });
+
+  it("does not persist a customization merely by opening the tab", async () => {
+    const fetchMock = installFetchMock({ customizationAbsent: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await screen.findByText("No customization yet");
+
+    expect(
+      fetchMock.mock.calls.some(
+        (call) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores an incompatible historical customization, renders the clean contract-derived builder, and shows a sanitized warning", async () => {
+    installFetchMock({ customizationIncompatible: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    expect(await screen.findByText("Historical customization not applied")).toBeInTheDocument();
+    // Raw registry error internals (codes, field paths) must never surface
+    // verbatim in the operator-facing warning panel.
+    expect(screen.queryByText(/UNKNOWN_FIELD_REFERENCE/)).not.toBeInTheDocument();
+
+    const layoutPanel = screen.getByLabelText("Public form layout");
+    const noSubgroupZone = document.querySelector('[data-customization-drop-zone="no-subgroup"]') as HTMLElement;
+    expect(within(noSubgroupZone).getByText("tenure")).toBeInTheDocument();
+    expect(within(layoutPanel).queryByText("Tenure")).not.toBeInTheDocument();
+
+    // The builder is not blocked -- a new customization can still be saved.
+    expect(screen.getByRole("button", { name: "Save customization" })).not.toBeDisabled();
+  });
+
+  it("shows a Retry control only after an actual load failure, and Retry recovers the builder", async () => {
+    installFetchMock({ customizationLoadFailsOnce: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    expect(await screen.findByText("Customization unavailable")).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+
+    fireEvent.click(retryButton);
+
+    expect(await screen.findByText("Customization loaded")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
+  it("ignores a late customization response from a superseded dataset/view selection", async () => {
+    // Project Spec S0100 hides the "Bound predict view" select for the
+    // normal single-eligible-view path -- keep it visible here (a second
+    // eligible view makes this the governed multi-view case) purely as the
+    // test mechanism to force the identity change this test needs; the
+    // underlying AbortController/monotonic-request-identity behavior being
+    // proven is unchanged.
+    const fetchMock = installFetchMock({
+      customizationLoadDeferredOnce: true,
+      viewsOverride: [
+        { view_id: viewId, display: { title: "Churn risk overview" } },
+        { view_id: "retention-outlook", display: { title: "Retention Outlook" } },
+      ],
+    });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await screen.findByText("Loading customization...");
+
+    // Unbind the view while the first request is still pending -- this must
+    // become the current, no-longer-loading state; the still-pending
+    // response must never resolve into the current draft afterward.
+    fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: "" } });
+    expect(await screen.findByText("No predict view bound")).toBeInTheDocument();
+
+    fetchMock.releaseDeferredCustomizationLoad();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByText("No predict view bound")).toBeInTheDocument();
+    expect(screen.queryByText("Customization loaded")).not.toBeInTheDocument();
+  });
+
+  it("keeps automatic reload consistent after a successful save", async () => {
+    // See the note above -- a second eligible view keeps the governed select
+    // available as the mechanism to force a genuine reload.
+    const fetchMock = installFetchMock({
+      customizationAbsent: true,
+      trackCustomizationSaves: true,
+      viewsOverride: [
+        { view_id: viewId, display: { title: "Churn risk overview" } },
+        { view_id: "retention-outlook", display: { title: "Retention Outlook" } },
+      ],
+    });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await screen.findByText("No customization yet");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
+    await screen.findByText("Customization saved.");
+
+    // Force a genuine reload via identity change (no manual reload control
+    // exists) and confirm the automatically reloaded state matches what the
+    // save already produced -- a compatible overlay, not an absence.
+    fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: viewId } });
+    expect(await screen.findByText("Customization loaded")).toBeInTheDocument();
+
+    const putCalls = fetchMock.mock.calls.filter(
+      (call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+        (call[1] as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(putCalls).toHaveLength(1);
   });
 });

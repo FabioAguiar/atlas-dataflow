@@ -707,6 +707,56 @@ def test_manifest_verify_detects_hash_mismatch(tmp_path):
     assert any(e["code"] == "MANIFEST_HASH_MISMATCH" for e in errors)
 
 
+# --- S0099: manifest role reference safety ---
+#
+# publisher/manifest.py's own required_hash_coverage.validation_policy has
+# always declared unsafe_reference_rejects: true, but generate_manifest()
+# never actually enforced it until now. A distinct "public_contract" manifest
+# role (matching api/public_contract_loader.py's already-existing
+# _PUBLIC_CONTRACT_ROLE expectation) is a real, disclosed gap this spec
+# cannot close here: publisher/release-manifest.schema.json's artifact_role /
+# required_artifact_role enums and required_artifact_role_list's fixed
+# minItems==maxItems==7 do not include "public_contract", and that schema
+# file is outside this implementation's allowed_edit_paths -- adding the role
+# to _REQUIRED_ROLES without a schema change would make _validate_manifest_schema
+# reject every generated manifest, which is not an acceptable way to "add" the
+# role. See pipeline/assemble_candidate.py's own release-candidate.json
+# artifact_roles.public_contract entry (tests/test_m22_prepare_candidate.py)
+# for the part of this acceptance criterion that could be delivered.
+
+
+def test_manifest_rejects_unsafe_role_reference(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    candidate_json_path = _candidate_dir(tmp_repo) / "release-candidate.json"
+    candidate = json.loads(candidate_json_path.read_text())
+    candidate["artifact_roles"]["contracts"]["path"] = "../../../etc/passwd"
+    candidate_json_path.write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Manifest generation failed"):
+        manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert not (run_dir / "manifest.json").exists()
+
+
+def test_manifest_rejects_absolute_role_reference(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    candidate_json_path = _candidate_dir(tmp_repo) / "release-candidate.json"
+    candidate = json.loads(candidate_json_path.read_text())
+    candidate["artifact_roles"]["metrics"]["path"] = "/etc/passwd"
+    candidate_json_path.write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Manifest generation failed"):
+        manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert not (run_dir / "manifest.json").exists()
+
+
 # --- S0034: Telco publisher-validation run materialization ---
 
 TELCO_DATASET_SLUG = "telco-customer-churn"

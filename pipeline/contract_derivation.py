@@ -179,6 +179,25 @@ def _check_safety(public_contract):
     return violations
 
 
+def unresolved_select_features(public_contract):
+    """Return the names of every input_type: select feature that has no
+    safe options projection (Project Spec S0099).
+
+    A select feature with no "options" key is schema-valid (options is an
+    optional, present-only-when-derivable field), but it is not a fully
+    configured select control -- the web experience must fall back to an
+    unguided input for it rather than rendering an empty or invented option
+    list. This condition is never invented or silently ignored here; it is
+    only detected and named so a caller (derive_projections.derive) can
+    report it explicitly instead of it passing through unremarked.
+    """
+    return [
+        feature["name"]
+        for feature in public_contract.get("features", [])
+        if feature.get("input_type") == "select" and "options" not in feature
+    ]
+
+
 def _rejection(reason, rejection_phase, source_contract_ref, input_path):
     return {
         "status": "rejected",

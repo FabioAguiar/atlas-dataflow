@@ -6,9 +6,9 @@
     "dataset_title": "Telco Customer Churn"
   },
   "release_identity": {
-    "release_id": "release-20260713t171133z",
+    "release_id": "release-20260714t123223z",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-07-13T17:11:33Z"
+    "created_at": "2026-07-14T12:32:23Z"
   },
   "artifacts": [
     {
@@ -21,19 +21,19 @@
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "6081aa788756f25a9abfad16528cea93426b8cbc8b12ec710ec73b60e4f3916d"
+      "hash_value": "669c6e90f288845799981fde2225bb6fa215c62cc6e93347854b1e158db9d9f5"
     },
     {
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "f9781909454becdaa4fe2f45b43e0f3739e92b5b3a4f2bb045c816662218902b"
+      "hash_value": "3ffcba143ca370f52b9e66d5a01f496256e2cc4344684ae05c332a9f55806a21"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "b5ea57b8d52b5548d4daf17514771164870db1c73c2af77a25ca6f9367aa7bb1"
+      "hash_value": "806322b23728d23eb363f5152f807fb79e5c2875d7136c277aef8c444a673883"
     },
     {
       "role": "public_context",
@@ -45,13 +45,13 @@
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "c7c4885eaf0d102b24e58db5e30ec5844c86ab675d5fb69fa7f260dc4d3cc160"
+      "hash_value": "25058068dae3491fdc05e8b236253676c450369113431108e82215b97a56c22d"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "3e08ea338d57c1d859b0d18619ece4bc2cfc3631588e7276300570841ef941fc"
+      "hash_value": "5b3856a8117cc8a07f772d6d9c78b032d04f421a30b6e495c696437c05bfa7f3"
     }
   ],
   "required_hash_coverage": {

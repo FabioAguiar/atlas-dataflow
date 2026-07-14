@@ -46,9 +46,11 @@ from pipeline.contract_derivation import (
     _check_safety,
     _derive_public_contract,
     _fresh_label,  # noqa: F401 — re-exported for downstream consumers
+    unresolved_select_features,
 )
 
 RUNTIME_CONTRACT_SCHEMA_VERSION = "1.0.0"
+PROJECTION_EVIDENCE_SCHEMA_VERSION = "1.0.0"
 
 
 class DerivationFailed(Exception):
@@ -177,9 +179,28 @@ def derive(
     output_dir.mkdir(parents=True, exist_ok=True)
     runtime_out = output_dir / "runtime-contract.json"
     public_out = output_dir / "public-contract.json"
+    evidence_out = output_dir / "projection-evidence.json"
 
     runtime_out.write_text(json.dumps(runtime_contract, indent=2), encoding="utf-8")
     public_out.write_text(json.dumps(public_contract, indent=2), encoding="utf-8")
+
+    # Project Spec S0099: explicit, deterministic evidence of projection
+    # sufficiency -- never silently discarded. runtime_feature_names/
+    # public_feature_names prove feature-identity parity across all three
+    # contract layers (execution feature_columns -> runtime -> public) by
+    # construction of the projection above, not by a separate re-check.
+    # unresolved_select_features names every select field this derivation
+    # could not attach safe canonical options to, so a select-without-options
+    # is a reported, explicitly supported condition rather than a silently
+    # incomplete control.
+    evidence = {
+        "schema_version": PROJECTION_EVIDENCE_SCHEMA_VERSION,
+        "execution_feature_columns": list(feature_columns),
+        "runtime_feature_names": [f["name"] for f in runtime_features],
+        "public_feature_names": [f["name"] for f in public_contract["features"]],
+        "unresolved_select_features": unresolved_select_features(public_contract),
+    }
+    evidence_out.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:

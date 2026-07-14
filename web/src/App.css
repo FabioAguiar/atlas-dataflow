@@ -1693,24 +1693,83 @@ h1 {
   max-width: 20rem;
 }
 
-.dataset-admin-builder-shell {
-  gap: var(--atlas-space-5);
+.dataset-admin-inference-workspace {
+  gap: var(--atlas-space-4);
 }
 
 .dataset-admin-builder-actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--atlas-space-4);
+  gap: var(--atlas-space-3);
   border-bottom: 1px solid var(--atlas-color-border);
   padding-bottom: var(--atlas-space-4);
+}
+
+.dataset-admin-builder-actions__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--atlas-space-2);
+}
+
+.dataset-admin-bound-view-badge {
+  color: var(--atlas-color-accent-strong);
+  background: var(--atlas-color-accent-muted);
+}
+
+.dataset-admin-inline-status {
+  margin: 0;
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+}
+
+.dataset-admin-exceptional-notice {
+  display: grid;
+  gap: var(--atlas-space-1);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+  padding: var(--atlas-space-3) var(--atlas-space-4);
+  color: var(--atlas-color-text);
+  font-size: var(--atlas-text-sm);
+  background: var(--atlas-color-surface);
+}
+
+.dataset-admin-exceptional-notice strong {
+  color: var(--atlas-color-text);
+}
+
+.dataset-admin-exceptional-notice__text {
+  margin: 0;
+  color: var(--atlas-color-text-muted);
+  line-height: var(--atlas-line-normal);
+}
+
+.dataset-admin-exceptional-notice__list {
+  margin: 0;
+  padding-left: var(--atlas-space-5);
+}
+
+.dataset-admin-exceptional-notice--info {
+  border-color: var(--atlas-color-info);
+  background: var(--atlas-color-info-muted);
+}
+
+.dataset-admin-exceptional-notice--warning {
+  border-color: var(--atlas-color-warning);
+  background: var(--atlas-color-warning-muted);
+}
+
+.dataset-admin-exceptional-notice--danger {
+  border-color: var(--atlas-color-danger);
+  background: var(--atlas-color-danger-muted);
 }
 
 .dataset-admin-builder {
   display: grid;
   gap: var(--atlas-space-4);
-  grid-template-columns: minmax(18rem, 0.85fr) minmax(20rem, 1.15fr);
+  grid-template-columns: minmax(16rem, 0.85fr) minmax(20rem, 1.15fr);
   align-items: start;
 }
 
@@ -1718,18 +1777,45 @@ h1 {
 .dataset-admin-builder__bank {
   display: grid;
   gap: var(--atlas-space-3);
+  min-width: 0;
   border: 1px solid var(--atlas-color-border);
   border-radius: var(--atlas-radius-lg);
   padding: var(--atlas-space-4);
   background: var(--atlas-color-surface-muted);
 }
 
-.dataset-admin-builder__toolbar,
+.dataset-admin-builder__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--atlas-space-2);
+}
+
+.dataset-admin-builder__heading-text {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.dataset-admin-builder__title {
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dataset-admin-builder__subtitle {
+  margin: 0;
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+  line-height: var(--atlas-line-normal);
+}
+
 .dataset-admin-builder-card__head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: var(--atlas-space-2);
 }
 
@@ -1740,6 +1826,101 @@ h1 {
 
 .dataset-admin-builder-card {
   background: var(--atlas-color-surface);
+}
+
+.dataset-admin-subgroup-header__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dataset-admin-subgroup-header__stack-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.2rem;
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-sm);
+  color: var(--atlas-color-accent-strong);
+  font-size: 0.65rem;
+  line-height: 1;
+  background: var(--atlas-color-surface);
+  cursor: pointer;
+}
+
+.dataset-admin-subgroup-header__stack-btn:disabled {
+  color: var(--atlas-color-text-subtle);
+  background: var(--atlas-color-surface-muted);
+  cursor: not-allowed;
+}
+
+.dataset-admin-subgroup-header__drag,
+.dataset-admin-field-chip__drag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid transparent;
+  border-radius: var(--atlas-radius-sm);
+  color: var(--atlas-color-text-subtle);
+  font-size: 0.85rem;
+  line-height: 1;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+
+.dataset-admin-subgroup-header__drag:hover,
+.dataset-admin-field-chip__drag:hover,
+.dataset-admin-subgroup-header__drag:focus-visible,
+.dataset-admin-field-chip__drag:focus-visible {
+  color: var(--atlas-color-accent-strong);
+  background: var(--atlas-color-accent-muted);
+}
+
+.dataset-admin-subgroup-header__title {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 8rem;
+  flex: 1;
+}
+
+.dataset-admin-subgroup-header__title strong {
+  color: var(--atlas-color-text);
+}
+
+.dataset-admin-subgroup-header__helper {
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+}
+
+.dataset-admin-subgroup-edit-panel {
+  display: grid;
+  gap: var(--atlas-space-3);
+  margin-top: var(--atlas-space-3);
+  border-top: 1px dashed var(--atlas-color-border-strong);
+  padding-top: var(--atlas-space-3);
+}
+
+.dataset-admin-subgroup-edit-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--atlas-space-2);
+}
+
+.dataset-admin-subgroup-edit-panel__remove {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+  color: var(--atlas-color-danger, #b42318);
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .dataset-admin-no-group-zone {
@@ -1753,9 +1934,10 @@ h1 {
 }
 
 .dataset-admin-field-zone {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   gap: var(--atlas-space-2);
-  align-content: start;
   min-height: 3.5rem;
   border: 1px dashed var(--atlas-color-border-strong);
   border-radius: var(--atlas-radius-md);
@@ -1775,12 +1957,13 @@ h1 {
 }
 
 .dataset-admin-field-chip {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: var(--atlas-space-2);
+  gap: var(--atlas-space-1);
+  height: auto;
   border: 1px solid var(--atlas-color-border);
-  border-radius: var(--atlas-radius-md);
-  padding: var(--atlas-space-2) var(--atlas-space-3);
+  border-radius: var(--atlas-radius-pill);
+  padding: 0.3rem var(--atlas-space-2);
   background: var(--atlas-color-surface-muted);
 }
 
@@ -1790,9 +1973,19 @@ h1 {
 }
 
 .dataset-admin-field-chip__name {
-  flex: 1;
   color: var(--atlas-color-text);
+  font-size: var(--atlas-text-sm);
   font-weight: 700;
+}
+
+.dataset-admin-field-chip__tag {
+  border: 1px solid var(--atlas-color-border);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-xs);
+  font-weight: 800;
+  background: var(--atlas-color-surface);
 }
 
 .dataset-admin-result-preset-grid {
@@ -2076,9 +2269,17 @@ h1 {
 
   .dataset-admin-card-grid--split,
   .dataset-admin-metadata-layout,
-  .dataset-admin-builder,
   .dataset-admin-publishing-layout {
     grid-template-columns: 1fr;
+  }
+
+  /* Project Spec S0100: the Field bank | Public form layout workspace must
+     stay two columns through the 1360x768 compact-desktop baseline -- only
+     narrower widths (tablet/mobile) stack it -- so it is deliberately kept
+     out of the single-column list above. */
+  .dataset-admin-builder {
+    grid-template-columns: minmax(14rem, 0.8fr) minmax(16rem, 1.2fr);
+    gap: var(--atlas-space-3);
   }
 
   .dataset-admin-header-actions {
@@ -2116,6 +2317,14 @@ h1 {
 
   .dataset-admin-result-preset-grid {
     grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  }
+}
+
+/* Project Spec S0100: narrower-than-compact-desktop widths stack Field bank
+   above Public form layout, preserving bank-before-canvas DOM/visual order. */
+@media (max-width: 960px) {
+  .dataset-admin-builder {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -30,6 +30,22 @@ _REQUIRED_ROLES = (
     "candidate_metadata",
 )
 
+# Project Spec S0099 gap, disclosed rather than worked around: a distinct
+# "public_contract" manifest artifact role (matching
+# api/public_contract_loader.py's already-existing _PUBLIC_CONTRACT_ROLE
+# expectation) cannot be added to _REQUIRED_ROLES here without also editing
+# publisher/release-manifest.schema.json's closed artifact_role /
+# required_artifact_role enums and required_artifact_role_list's fixed
+# minItems==maxItems==7 -- neither of which is in this spec's
+# allowed_edit_paths. Adding "public_contract" to _REQUIRED_ROLES without
+# that schema change makes every generated manifest fail
+# _validate_manifest_schema below (weakening validation to work around this
+# is explicitly out of scope). pipeline/assemble_candidate.py still declares
+# a distinct "public_contract" artifact_roles entry in release-candidate.json
+# (real, inert groundwork, not schema-validated anywhere today) so a future,
+# separately authorized change to the two release-candidate/release-manifest
+# schemas can wire it through with no further release-candidate-side work.
+
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
@@ -119,12 +135,24 @@ def _sha256_file(path: Path) -> tuple:
         )]
 
 
+def _unsafe_role_reference(role_path_str: str, candidate_dir: Path) -> bool:
+    """True when role_path_str is absolute, contains parent-traversal
+    segments, or resolves outside candidate_dir (Project Spec S0099)."""
+    path = Path(role_path_str)
+    if path.is_absolute() or ".." in path.parts:
+        return True
+    resolved = (candidate_dir / path).resolve()
+    return not resolved.is_relative_to(candidate_dir.resolve())
+
+
 def generate_manifest(candidate_dir: Path) -> tuple:
     """
     Generate a release manifest from a validated candidate directory.
 
     Returns (manifest, errors). Halts without writing if any artifact file
-    is unreadable during hash calculation.
+    is unreadable during hash calculation, or if any role reference is
+    unsafe (Project Spec S0099 -- enforces the manifest's own long-declared
+    but previously unenforced validation_policy.unsafe_reference_rejects).
     """
     candidate_json_path = candidate_dir / _CANDIDATE_FILENAME
     candidate, errors = _load_json_file(candidate_json_path, "candidate_json")
@@ -159,6 +187,14 @@ def generate_manifest(candidate_dir: Path) -> tuple:
             )]
 
         role_path_str: str = role_def["path"]
+
+        if _unsafe_role_reference(role_path_str, candidate_dir):
+            return None, [_err(
+                "ARTIFACT_ROLE_UNSAFE_REFERENCE",
+                f"artifact_roles.{role}.path",
+                f"Artifact role '{role}' has an unsafe reference.",
+            )]
+
         artifact_file = candidate_dir / role_path_str
 
         hash_value, hash_errors = _sha256_file(artifact_file)

@@ -386,14 +386,49 @@ type CustomizationError = {
   message?: string;
 };
 
+// Project Spec S0099: the manual "Load customization" gate is replaced by an
+// automatic, contract-driven bootstrap keyed on
+// (selected dataset slug, resolved bound predict view id, active-release
+// public contract readiness). Absence, compatibility, incompatibility, and
+// transport failure are distinct, testable states rather than one
+// ambiguous "idle" -- "ready_base" (no stored customization, or the public
+// contract could not be resolved for compatibility classification) and
+// "ready_overlaid" (a compatible stored customization was applied) both
+// render the S0097 builder from a real draft; "incompatible_overlay_ignored"
+// also renders the builder from a clean contract-derived draft, but carries
+// the historical customization's sanitized errors for a concise warning
+// instead of applying it.
 type CustomizationEditorState =
   | { status: "no_view_bound" }
-  | { status: "idle"; message: string }
+  | { status: "contract_unavailable" }
   | { status: "loading" }
-  | { status: "ready"; draft: CustomizationEditorDraft; recordExists: boolean }
+  | { status: "ready_base"; draft: CustomizationEditorDraft; recordExists: boolean }
+  | { status: "ready_overlaid"; draft: CustomizationEditorDraft; recordExists: boolean }
+  | {
+      status: "incompatible_overlay_ignored";
+      draft: CustomizationEditorDraft;
+      recordExists: boolean;
+      errors: CustomizationError[];
+    }
+  | { status: "saving"; draft: CustomizationEditorDraft }
   | { status: "saved"; draft: CustomizationEditorDraft }
   | { status: "invalid"; draft: CustomizationEditorDraft; errors: CustomizationError[] }
   | { status: "unavailable"; message: string };
+
+// Every status whose draft the S0097 builder/Live Preview can render.
+function customizationDraftOf(state: CustomizationEditorState): CustomizationEditorDraft | null {
+  switch (state.status) {
+    case "ready_base":
+    case "ready_overlaid":
+    case "incompatible_overlay_ignored":
+    case "saving":
+    case "saved":
+    case "invalid":
+      return state.draft;
+    default:
+      return null;
+  }
+}
 
 // Presentation-only derived placement for a field_hint: "bank" (hidden),
 // "no-subgroup" (visible, ungrouped/unresolved group), or a literal
@@ -843,13 +878,6 @@ const mutedTextStyle: CSSProperties = {
   color: "var(--atlas-color-text-muted)",
 };
 
-const buttonRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: "var(--atlas-space-2)",
-  alignItems: "center",
-};
-
 const actionButtonStyle: CSSProperties = {
   minHeight: "2.5rem",
   border: "1px solid var(--atlas-color-accent)",
@@ -914,12 +942,6 @@ const workspaceToolbarStyle: CSSProperties = {
   gap: "var(--atlas-space-3)",
 };
 
-const dragHandleStyle: CSSProperties = {
-  ...secondaryButtonStyle,
-  cursor: "grab",
-  touchAction: "none",
-};
-
 const dragSourceStyle: CSSProperties = {
   opacity: 0.45,
   outline: "2px solid var(--atlas-color-accent)",
@@ -946,16 +968,6 @@ const dragGhostStyle: CSSProperties = {
   fontWeight: 800,
 };
 
-const tagStyle: CSSProperties = {
-  border: "1px solid var(--atlas-color-border)",
-  borderRadius: "999px",
-  padding: "0.25rem 0.65rem",
-  color: "var(--atlas-color-text-muted)",
-  fontSize: "var(--atlas-text-xs)",
-  fontWeight: 800,
-  background: "var(--atlas-color-surface)",
-};
-
 const alertStyle: CSSProperties = {
   display: "grid",
   gap: "var(--atlas-space-2)",
@@ -977,28 +989,6 @@ const fieldChipInsertionTargetStyle: CSSProperties = {
 const fieldZoneActiveStyle: CSSProperties = {
   borderColor: "var(--atlas-color-accent)",
   background: "var(--atlas-color-accent-muted)",
-};
-
-const subgroupControlsStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "2px",
-};
-
-const stackedIconActionButtonStyle: CSSProperties = {
-  ...iconActionButtonStyle,
-  width: "1.9rem",
-  minWidth: "1.9rem",
-  height: "1.35rem",
-  fontSize: "0.65rem",
-  lineHeight: 1,
-};
-
-const stackedIconActionButtonDisabledStyle: CSSProperties = {
-  ...stackedIconActionButtonStyle,
-  color: "var(--atlas-color-text-subtle)",
-  background: "var(--atlas-color-surface-muted)",
-  cursor: "not-allowed",
 };
 
 const cardTitleStyle: CSSProperties = {
@@ -1998,26 +1988,72 @@ function ThemePresetTab({
   );
 }
 
-function CustomizationStatusPanel({ state }: { state: CustomizationEditorState }) {
+function CustomizationStatusPanel({
+  state,
+  onRetry,
+  hasEligibleViews,
+}: {
+  state: CustomizationEditorState;
+  onRetry: () => void;
+  hasEligibleViews: boolean;
+}) {
   if (state.status === "no_view_bound") {
     return (
-      <article role="status" style={alertStyle}>
+      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--warning" role="status">
         <strong>No predict view bound</strong>
-        <p style={mutedTextStyle}>Bind a predict view above, then load its customization.</p>
-      </article>
-    );
-  }
-  if (state.status === "ready") {
-    return (
-      <article style={readOnlyFieldStyle}>
-        <strong>{state.recordExists ? "Customization loaded" : "No customization yet"}</strong>
-        <p style={mutedTextStyle}>
-          {state.recordExists
-            ? "Editable fields were populated from the existing customization record."
-            : "Saving will create a customization record for this predict view."}
+        <p className="dataset-admin-exceptional-notice__text">
+          {hasEligibleViews
+            ? "Choose a predict view above to build its Inference Form."
+            : "No predict views are available for this dataset yet."}
         </p>
       </article>
     );
+  }
+  if (state.status === "contract_unavailable") {
+    return (
+      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--warning" role="status">
+        <strong>Public contract unavailable</strong>
+        <p className="dataset-admin-exceptional-notice__text">
+          The active release public contract could not be loaded, so a form cannot be built yet.
+        </p>
+      </article>
+    );
+  }
+  if (state.status === "ready_base") {
+    return (
+      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--info">
+        <strong>No customization yet</strong>
+        <p className="dataset-admin-exceptional-notice__text">
+          Showing the default form built from the current public contract. Saving will create a customization
+          record for this predict view.
+        </p>
+      </article>
+    );
+  }
+  if (state.status === "ready_overlaid") {
+    return (
+      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--info">
+        <strong>Customization loaded</strong>
+        <p className="dataset-admin-exceptional-notice__text">
+          Editable fields were populated from the existing customization record.
+        </p>
+      </article>
+    );
+  }
+  if (state.status === "incompatible_overlay_ignored") {
+    return (
+      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--warning" role="status">
+        <strong>Historical customization not applied</strong>
+        <p className="dataset-admin-exceptional-notice__text">
+          A previously saved customization no longer matches the current public contract, so it was not applied.
+          Showing the default form built from the current contract instead. Saving here replaces the historical
+          record.
+        </p>
+      </article>
+    );
+  }
+  if (state.status === "saving") {
+    return <p className="dataset-admin-inline-status">Saving customization...</p>;
   }
   if (state.status === "saved") {
     return (
@@ -2028,9 +2064,9 @@ function CustomizationStatusPanel({ state }: { state: CustomizationEditorState }
   }
   if (state.status === "invalid") {
     return (
-      <article role="status" style={alertStyle}>
+      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--danger" role="status">
         <strong>Customization rejected by backend validation</strong>
-        <ul style={{ margin: 0, paddingLeft: "var(--atlas-space-5)" }}>
+        <ul className="dataset-admin-exceptional-notice__list">
           {state.errors.map((error, index) => (
             <li key={`${error.code ?? "error"}-${error.field ?? "field"}-${index}`}>
               {[error.field, error.code, error.message].filter(Boolean).join(" - ")}
@@ -2042,16 +2078,16 @@ function CustomizationStatusPanel({ state }: { state: CustomizationEditorState }
   }
   if (state.status === "unavailable") {
     return (
-      <article role="status" style={alertStyle}>
+      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--danger" role="status">
         <strong>Customization unavailable</strong>
-        <p style={mutedTextStyle}>{state.message}</p>
+        <p className="dataset-admin-exceptional-notice__text">{state.message}</p>
+        <button onClick={onRetry} style={secondaryButtonStyle} type="button">
+          Retry
+        </button>
       </article>
     );
   }
-  if (state.status === "loading") {
-    return <p style={mutedTextStyle}>Loading customization...</p>;
-  }
-  return <p style={mutedTextStyle}>{state.message}</p>;
+  return <p className="dataset-admin-inline-status">Loading customization...</p>;
 }
 
 function FieldEditModal({
@@ -2142,6 +2178,12 @@ function CustomizationEditor({
   // Never read by customizationDraftToRecord and never added to
   // CustomizationEditorDraft/GroupDraft, so it cannot leak into saved state.
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
+  // On-demand subgroup metadata editing (Project Spec S0100): closed by
+  // default, buffered in local state so Cancel can restore the pre-edit
+  // values without ever having mutated the shared draft, and Save subgroup
+  // is the only path that commits via updateGroup.
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [groupEditDraft, setGroupEditDraft] = useState<GroupDraft | null>(null);
 
   function toggleGroupCollapsed(groupId: string) {
     setCollapsedGroupIds((current) => {
@@ -2155,11 +2197,23 @@ function CustomizationEditor({
     });
   }
 
-  function addGroup() {
-    onUpdateDraft((current) => ({
-      ...current,
-      groups: [...current.groups, { group_id: `group-${current.groups.length + 1}`, label: "", description: "" }],
-    }));
+  function openGroupEdit(group: GroupDraft) {
+    setEditingGroupId(group.group_id);
+    setGroupEditDraft({ ...group });
+  }
+
+  function cancelGroupEdit() {
+    setEditingGroupId(null);
+    setGroupEditDraft(null);
+  }
+
+  function saveGroupEdit() {
+    if (!groupEditDraft || !editingGroupId) return;
+    updateGroup(
+      draft.groups.findIndex((group) => group.group_id === editingGroupId),
+      groupEditDraft,
+    );
+    cancelGroupEdit();
   }
 
   function updateGroup(index: number, patch: Partial<GroupDraft>) {
@@ -2371,19 +2425,19 @@ function CustomizationEditor({
               >
                 <button
                   aria-label={`Drag field ${field.display_label || field.field_name}`}
+                  className="dataset-admin-field-chip__drag"
                   onPointerCancel={cancelFieldDrag}
                   onPointerDown={(event) =>
                     startFieldDrag(event, field.field_name, zone, index, field.display_label || field.field_name)
                   }
                   onPointerMove={updateFieldDrag}
                   onPointerUp={finishFieldDrag}
-                  style={dragHandleStyle}
                   type="button"
                 >
                   ⋮⋮
                 </button>
                 <span className="dataset-admin-field-chip__name">{field.field_name}</span>
-                {field.required && <span style={tagStyle}>Required</span>}
+                {field.required && <span className="dataset-admin-field-chip__tag">Required</span>}
               </div>
             );
           })
@@ -2393,6 +2447,9 @@ function CustomizationEditor({
   }
 
   const requiredInBankCount = draft.fieldHints.filter((field) => field.required && field.hidden).length;
+  const bankCount = zoneFieldEntries(draft, FIELD_BANK_ZONE).length;
+  const visibleCount = draft.fieldHints.length - bankCount;
+  const noSubgroupCount = zoneFieldEntries(draft, NO_SUBGROUP_ZONE).length;
   const editingField =
     fieldModalState.status === "open"
       ? draft.fieldHints.find((field) => field.field_name === fieldModalState.fieldName)
@@ -2401,19 +2458,24 @@ function CustomizationEditor({
   return (
     <div className="dataset-admin-builder">
       <section aria-label="Field bank" className="dataset-admin-builder__bank">
-        <div>
-          <span style={labelStyle}>Field bank</span>
-          <p style={mutedTextStyle}>
-            Fields outside the public form. Drag a chip into the public form layout to make it visible, or
-            double-click a chip to edit its presentation.
-          </p>
+        <div className="dataset-admin-builder__heading">
+          <div className="dataset-admin-builder__heading-text">
+            <span className="dataset-admin-builder__title">Field bank</span>
+            <p className="dataset-admin-builder__subtitle">
+              Fields outside the public form. Drag a chip into the public form layout to make it visible, or
+              double-click a chip to edit its presentation.
+            </p>
+          </div>
+          <Badge>
+            {bankCount} available
+          </Badge>
         </div>
         {requiredInBankCount > 0 && (
-          <article role="status" style={alertStyle}>
+          <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--danger" role="status">
             <strong>
               {requiredInBankCount} required field{requiredInBankCount === 1 ? "" : "s"} still in the bank
             </strong>
-            <p style={mutedTextStyle}>
+            <p className="dataset-admin-exceptional-notice__text">
               Move every required field into the public form layout before saving. The backend rejects a saved
               customization that hides a required field.
             </p>
@@ -2423,21 +2485,26 @@ function CustomizationEditor({
       </section>
 
       <section aria-label="Public form layout" className="dataset-admin-builder__canvas">
-        <div className="dataset-admin-builder__toolbar">
-          <div>
-            <span style={labelStyle}>Public form layout</span>
-            <p style={mutedTextStyle}>Subgroup cards and the explicit No subgroup area define presentation order.</p>
+        <div className="dataset-admin-builder__heading">
+          <div className="dataset-admin-builder__heading-text">
+            <span className="dataset-admin-builder__title">Public form layout</span>
+            <p className="dataset-admin-builder__subtitle">
+              Subgroup cards and the explicit No subgroup area define presentation order.
+            </p>
           </div>
-          <button onClick={addGroup} style={secondaryButtonStyle} type="button">
-            Add group
-          </button>
+          <Badge>
+            {visibleCount} visible
+          </Badge>
         </div>
         {draft.groups.length === 0 ? (
-          <p style={mutedTextStyle}>No subgroups defined. Visible fields without a subgroup render in No subgroup below.</p>
+          <p className="dataset-admin-builder__subtitle">
+            No subgroups defined. Visible fields without a subgroup render in No subgroup below.
+          </p>
         ) : (
           <div className="dataset-admin-builder__stack">
             {draft.groups.map((group, index) => {
               const groupLabel = group.label || group.group_id || `Group ${index + 1}`;
+              const isEditing = editingGroupId === group.group_id;
               return (
                 <div
                   className="dataset-admin-builder-card"
@@ -2446,25 +2513,21 @@ function CustomizationEditor({
                   style={getGroupCardStyle(index)}
                 >
                   <div className="dataset-admin-builder-card__head">
-                    <div style={subgroupControlsStyle}>
+                    <div className="dataset-admin-subgroup-header__stack">
                       <button
                         aria-label={`Move subgroup ${groupLabel} up`}
+                        className="dataset-admin-subgroup-header__stack-btn"
                         disabled={index === 0}
                         onClick={() => moveSubgroup(index, -1)}
-                        style={index === 0 ? stackedIconActionButtonDisabledStyle : stackedIconActionButtonStyle}
                         type="button"
                       >
                         ▲
                       </button>
                       <button
                         aria-label={`Move subgroup ${groupLabel} down`}
+                        className="dataset-admin-subgroup-header__stack-btn"
                         disabled={index === draft.groups.length - 1}
                         onClick={() => moveSubgroup(index, 1)}
-                        style={
-                          index === draft.groups.length - 1
-                            ? stackedIconActionButtonDisabledStyle
-                            : stackedIconActionButtonStyle
-                        }
                         type="button"
                       >
                         ▼
@@ -2472,42 +2535,79 @@ function CustomizationEditor({
                     </div>
                     <button
                       aria-label={`Drag group ${groupLabel}`}
+                      className="dataset-admin-subgroup-header__drag"
                       onPointerCancel={cancelGroupDrag}
                       onPointerDown={(event) => startGroupDrag(event, index, groupLabel)}
                       onPointerMove={updateGroupDrag}
                       onPointerUp={finishGroupDrag}
-                      style={dragHandleStyle}
                       type="button"
                     >
-                      Drag
+                      ⋮⋮
                     </button>
-                    <button onClick={() => removeGroup(group.group_id)} style={secondaryButtonStyle} type="button">
-                      Remove
-                    </button>
+                    <div className="dataset-admin-subgroup-header__title">
+                      <strong>{groupLabel}</strong>
+                      {group.description && (
+                        <span className="dataset-admin-subgroup-header__helper">{group.description}</span>
+                      )}
+                    </div>
                     <Badge>{zoneFieldEntries(draft, group.group_id).length} fields</Badge>
                     <button
+                      className="atlas-button atlas-button--secondary"
+                      onClick={() => (isEditing ? cancelGroupEdit() : openGroupEdit(group))}
+                      type="button"
+                    >
+                      Edit
+                    </button>
+                    <button
                       aria-expanded={!collapsedGroupIds.has(group.group_id)}
+                      className="atlas-button atlas-button--secondary"
                       onClick={() => toggleGroupCollapsed(group.group_id)}
-                      style={secondaryButtonStyle}
                       type="button"
                     >
                       {collapsedGroupIds.has(group.group_id) ? "Expand" : "Collapse"}
                     </button>
                   </div>
-                  {!collapsedGroupIds.has(group.group_id) && (
-                    <>
+                  {isEditing && groupEditDraft && (
+                    <div className="dataset-admin-subgroup-edit-panel">
                       <div style={twoColumnGridStyle}>
-                        <TextField label="Group ID" onChange={(value) => updateGroup(index, { group_id: value })} value={group.group_id} />
-                        <TextField label="Label" onChange={(value) => updateGroup(index, { label: value })} value={group.label} />
+                        <TextField
+                          label="Group ID"
+                          onChange={(value) => setGroupEditDraft((current) => (current ? { ...current, group_id: value } : current))}
+                          value={groupEditDraft.group_id}
+                        />
+                        <TextField
+                          label="Label"
+                          onChange={(value) => setGroupEditDraft((current) => (current ? { ...current, label: value } : current))}
+                          value={groupEditDraft.label}
+                        />
                       </div>
                       <TextField
                         label="Description"
-                        onChange={(value) => updateGroup(index, { description: value })}
-                        value={group.description}
+                        onChange={(value) => setGroupEditDraft((current) => (current ? { ...current, description: value } : current))}
+                        value={groupEditDraft.description}
                       />
-                      {renderFieldZone(group.group_id, groupLabel, "Drag fields here to add them to this subgroup.")}
-                    </>
+                      <div className="dataset-admin-subgroup-edit-panel__actions">
+                        <button className="atlas-button atlas-button--secondary" onClick={cancelGroupEdit} type="button">
+                          Cancel
+                        </button>
+                        <button className="atlas-button" onClick={saveGroupEdit} type="button">
+                          Save subgroup
+                        </button>
+                        <button
+                          className="dataset-admin-subgroup-edit-panel__remove"
+                          onClick={() => {
+                            removeGroup(group.group_id);
+                            cancelGroupEdit();
+                          }}
+                          type="button"
+                        >
+                          Remove subgroup
+                        </button>
+                      </div>
+                    </div>
                   )}
+                  {!collapsedGroupIds.has(group.group_id) &&
+                    renderFieldZone(group.group_id, groupLabel, "Drag fields here to add them to this subgroup.")}
                 </div>
               );
             })}
@@ -2515,8 +2615,15 @@ function CustomizationEditor({
         )}
 
         <div aria-label="No subgroup" className="dataset-admin-no-group-zone">
-          <strong>No subgroup</strong>
-          <span>Visible fields with no subgroup render here, below every subgroup card.</span>
+          <div className="dataset-admin-builder__heading">
+            <div className="dataset-admin-builder__heading-text">
+              <strong>No subgroup</strong>
+              <span className="dataset-admin-builder__subtitle">
+                Visible fields with no subgroup render here, below every subgroup card.
+              </span>
+            </div>
+            <Badge>{noSubgroupCount} fields</Badge>
+          </div>
           {renderFieldZone(NO_SUBGROUP_ZONE, "No subgroup fields", "Drag fields here to show them without a subgroup.")}
         </div>
       </section>
@@ -2555,7 +2662,7 @@ function InferenceFormTab({
   setField,
   readOnlyData,
   customizationEditorState,
-  onLoadCustomization,
+  onRetryCustomization,
   onSaveCustomization,
   onUpdateDraft,
 }: {
@@ -2563,72 +2670,85 @@ function InferenceFormTab({
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
   readOnlyData: ReadOnlyData;
   customizationEditorState: CustomizationEditorState;
-  onLoadCustomization: () => void;
+  onRetryCustomization: () => void;
   onSaveCustomization: () => void;
   onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
 }) {
   const views = stateValue(readOnlyData.views) ?? [];
-  const draft =
-    customizationEditorState.status === "ready" ||
-    customizationEditorState.status === "saved" ||
-    customizationEditorState.status === "invalid"
-      ? customizationEditorState.draft
-      : null;
+  const draft = customizationDraftOf(customizationEditorState);
   const contractFieldsByName = useMemo(
     () => new Map(contractFields(stateValue(readOnlyData.contract)).map((field) => [field.name, field])),
     [readOnlyData.contract],
   );
   const requiredInBank = draft ? draft.fieldHints.some((field) => field.required && field.hidden) : false;
-  const saveDisabled = !draft || requiredInBank;
+  const saveDisabled = !draft || requiredInBank || customizationEditorState.status === "saving";
+
+  // Project Spec S0100: the normal path (the common, single-eligible-view
+  // dataset shape every current fixture and real dataset uses) never shows a
+  // manual predict-view selector -- the resolved view renders as compact
+  // read-only context instead. The select only reappears for the genuine
+  // governed multi-view choice S0099 already defines; S0100 does not invent
+  // a second selection flow or a normal-path rebind control.
+  const boundViewId = form.bound_predict_view_id;
+  const boundView = views.find((view) => view.view_id === boundViewId);
+  const showBoundViewSelect = views.length > 1;
+
+  function handleAddSubgroup() {
+    onUpdateDraft((current) => ({
+      ...current,
+      groups: [...current.groups, { group_id: `group-${current.groups.length + 1}`, label: "", description: "" }],
+    }));
+  }
 
   return (
-    <TabWorkspace
-      eyebrow="Inference Form"
-      helper="Organize presentation for the bound predict view while contract fields and validation stay authoritative."
-    >
-      <Card className="dataset-admin-config-card dataset-admin-builder-shell">
-        <div className="dataset-admin-builder-actions">
-          <FormRow helpText="Load a predict view before editing its public form layout." htmlFor="bound-predict-view" label="Bound predict view">
-            <select
-              id="bound-predict-view"
-              onChange={(event) => setField("bound_predict_view_id", event.target.value)}
-              style={inputStyle}
-              value={form.bound_predict_view_id}
-            >
-              <option value="">No bound view</option>
-              {views.map((view) => (
-                <option key={view.view_id} value={view.view_id}>
-                  {view.display?.title || view.view_id}
-                </option>
-              ))}
-            </select>
-          </FormRow>
-          <div style={buttonRowStyle}>
-            <button
-              disabled={!form.bound_predict_view_id}
-              onClick={onLoadCustomization}
-              style={!form.bound_predict_view_id ? disabledButtonStyle : secondaryButtonStyle}
-              type="button"
-            >
-              Load customization
-            </button>
-            <button
-              disabled={saveDisabled}
-              onClick={onSaveCustomization}
-              style={saveDisabled ? disabledButtonStyle : actionButtonStyle}
-              title={requiredInBank ? "Move every required field out of the field bank before saving." : undefined}
-              type="button"
-            >
-              Save customization
-            </button>
-          </div>
+    <div className="dataset-admin-tab-workspace dataset-admin-inference-workspace">
+      <div className="dataset-admin-builder-actions">
+        <div className="dataset-admin-builder-actions__group">
+          <button className="atlas-button atlas-button--secondary" onClick={handleAddSubgroup} type="button">
+            Add subgroup
+          </button>
+          <button
+            className="atlas-button"
+            disabled={saveDisabled}
+            onClick={onSaveCustomization}
+            title={requiredInBank ? "Move every required field out of the field bank before saving." : undefined}
+            type="button"
+          >
+            Save customization
+          </button>
         </div>
-
-        <CustomizationStatusPanel state={customizationEditorState} />
-
-        {draft && <CustomizationEditor contractFieldsByName={contractFieldsByName} draft={draft} onUpdateDraft={onUpdateDraft} />}
-      </Card>
-    </TabWorkspace>
+        {boundViewId && !showBoundViewSelect && (
+          <Badge className="dataset-admin-bound-view-badge">{boundView?.display?.title || boundViewId}</Badge>
+        )}
+      </div>
+      {showBoundViewSelect && (
+        <FormRow
+          helpText="Multiple predict views are eligible for this dataset. Choose one to build its Inference Form."
+          htmlFor="bound-predict-view"
+          label="Bound predict view"
+        >
+          <select
+            id="bound-predict-view"
+            onChange={(event) => setField("bound_predict_view_id", event.target.value)}
+            style={inputStyle}
+            value={form.bound_predict_view_id}
+          >
+            <option value="">No bound view</option>
+            {views.map((view) => (
+              <option key={view.view_id} value={view.view_id}>
+                {view.display?.title || view.view_id}
+              </option>
+            ))}
+          </select>
+        </FormRow>
+      )}
+      <CustomizationStatusPanel
+        hasEligibleViews={views.length > 0}
+        onRetry={onRetryCustomization}
+        state={customizationEditorState}
+      />
+      {draft && <CustomizationEditor contractFieldsByName={contractFieldsByName} draft={draft} onUpdateDraft={onUpdateDraft} />}
+    </div>
   );
 }
 
@@ -3041,12 +3161,7 @@ function FormLayoutLivePreview({
   customizationEditorState: CustomizationEditorState;
 }) {
   const contract = stateValue(readOnlyData.contract);
-  const draft =
-    customizationEditorState.status === "ready" ||
-    customizationEditorState.status === "saved" ||
-    customizationEditorState.status === "invalid"
-      ? customizationEditorState.draft
-      : null;
+  const draft = customizationDraftOf(customizationEditorState);
 
   if (!contract) {
     return <p style={mutedTextStyle}>Contract fields are unavailable for this dataset.</p>;
@@ -3188,7 +3303,7 @@ function renderSelectedTab(
   draftState: DraftState,
   selectedSlug: string,
   customizationEditorState: CustomizationEditorState,
-  onLoadCustomization: () => void,
+  onRetryCustomization: () => void,
   onPreviewDraft: () => void,
   onPublish: () => void,
   onSaveDraft: () => void,
@@ -3228,7 +3343,7 @@ function renderSelectedTab(
         <InferenceFormTab
           customizationEditorState={customizationEditorState}
           form={form}
-          onLoadCustomization={onLoadCustomization}
+          onRetryCustomization={onRetryCustomization}
           onSaveCustomization={onSaveCustomization}
           onUpdateDraft={onUpdateCustomizationDraft}
           readOnlyData={readOnlyData}
@@ -3890,69 +4005,135 @@ export default function DatasetAdminPage() {
       });
   }
 
+  // Project Spec S0099: contract-driven automatic bootstrap, replacing the
+  // former manual "Load customization" gate. Keyed on the request identity
+  // (selected dataset slug + resolved bound predict view id) and the
+  // already-loaded public contract's own readiness. An AbortController
+  // cancels a real in-flight request on cleanup; customizationRequestRef is
+  // a second, independent guard against a late response from a superseded
+  // identity applying itself (real fetch mocks in tests do not honor
+  // AbortSignal, so this ref is the operative protection there). Bumping
+  // customizationRetryNonce re-runs this effect without any identity
+  // actually changing, powering the unavailable-state Retry control.
+  const customizationRequestRef = useRef(0);
+  const [customizationRetryNonce, setCustomizationRetryNonce] = useState(0);
+
   useEffect(() => {
-    if (!boundPredictViewId) {
+    // Bump the request identity on every effect run, regardless of which
+    // branch below is taken -- this invalidates any still-in-flight
+    // previous request's requestId comparison even when the new state is
+    // "no_view_bound"/"contract_unavailable" rather than a fresh fetch, so
+    // a late response from a superseded selection can never apply itself
+    // after the identity has already moved on.
+    const requestId = customizationRequestRef.current + 1;
+    customizationRequestRef.current = requestId;
+
+    if (!selectedSlug || !boundPredictViewId) {
       setCustomizationEditorState({ status: "no_view_bound" });
       return;
     }
-    setCustomizationEditorState({
-      status: "idle",
-      message: "Load the customization for the bound predict view from the private admin API.",
-    });
-  }, [boundPredictViewId]);
 
-  function loadCustomization() {
-    if (!selectedSlug || !boundPredictViewId) {
+    const contractState = readOnlyData.contract;
+    if (contractState.status === "unavailable") {
+      setCustomizationEditorState({ status: "contract_unavailable" });
+      return;
+    }
+    if (contractState.status !== "ready") {
+      setCustomizationEditorState({ status: "loading" });
       return;
     }
 
-    const contractState = stateValue(readOnlyData.contract);
-    const fields = contractFields(contractState);
+    const fields = contractFields(contractState.data);
+    const controller = new AbortController();
 
     setCustomizationEditorState({ status: "loading" });
+
+    type CustomizationReadResponse = {
+      customization_exists: boolean;
+      compatibility_status: "absent" | "compatible" | "incompatible";
+      customization: PredictViewCustomization | null;
+      errors?: CustomizationError[];
+    };
+    type CustomizationLoadResult = { data: CustomizationReadResponse } | { transportFailed: true } | null;
+
     fetch(
       `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
+      { signal: controller.signal },
     )
-      .then((response) => {
-        if (response.status === 404) {
-          setCustomizationEditorState({
-            status: "unavailable",
-            message: "Customization endpoint unavailable for this private admin session. Confirm API configuration.",
-          });
-          return null;
+      .then((response): Promise<CustomizationLoadResult> => {
+        if (customizationRequestRef.current !== requestId) {
+          return Promise.resolve(null);
         }
         if (!response.ok) {
-          setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded from the private admin API." });
-          return null;
+          return Promise.resolve({ transportFailed: true });
         }
-        return response.json() as Promise<{
-          customization_exists: boolean;
-          customization: PredictViewCustomization | null;
-        }>;
+        return response.json().then((data: CustomizationReadResponse) => ({ data }));
       })
-      .then((data) => {
-        if (!data) {
+      .then((result) => {
+        if (!result || customizationRequestRef.current !== requestId) {
           return;
         }
-        const draft = data.customization
-          ? customizationDraftFromRecord(data.customization, fields)
-          : emptyCustomizationDraft(fields);
-        setCustomizationEditorState({ status: "ready", draft, recordExists: data.customization_exists });
+        if ("transportFailed" in result) {
+          setCustomizationEditorState({
+            status: "unavailable",
+            message: "Customization could not be loaded from the private admin API.",
+          });
+          return;
+        }
+        const { data } = result;
+        if (data.compatibility_status === "compatible" && data.customization) {
+          setCustomizationEditorState({
+            status: "ready_overlaid",
+            draft: customizationDraftFromRecord(data.customization, fields),
+            recordExists: true,
+          });
+          return;
+        }
+        if (data.compatibility_status === "incompatible") {
+          setCustomizationEditorState({
+            status: "incompatible_overlay_ignored",
+            draft: emptyCustomizationDraft(fields),
+            recordExists: data.customization_exists,
+            errors: data.errors ?? [],
+          });
+          return;
+        }
+        setCustomizationEditorState({
+          status: "ready_base",
+          draft: emptyCustomizationDraft(fields),
+          recordExists: false,
+        });
       })
-      .catch(() => {
-        setCustomizationEditorState({ status: "unavailable", message: "Customization could not be loaded. Check private admin API reachability." });
+      .catch((err: Error) => {
+        if (err.name === "AbortError" || customizationRequestRef.current !== requestId) {
+          return;
+        }
+        setCustomizationEditorState({
+          status: "unavailable",
+          message: "Customization could not be loaded. Check private admin API reachability.",
+        });
       });
+
+    return () => controller.abort();
+  }, [selectedSlug, boundPredictViewId, readOnlyData.contract, customizationRetryNonce]);
+
+  // Shown only by CustomizationStatusPanel's "unavailable" branch (an actual
+  // load failure) -- never a required normal-path action.
+  function retryCustomization() {
+    setCustomizationRetryNonce((current) => current + 1);
   }
 
   function saveCustomization() {
     if (!selectedSlug || !boundPredictViewId) {
       return;
     }
-    if (customizationEditorState.status !== "ready" && customizationEditorState.status !== "saved" && customizationEditorState.status !== "invalid") {
+    if (customizationEditorState.status === "saving") {
       return;
     }
-
-    const draft = customizationEditorState.draft;
+    const draft = customizationDraftOf(customizationEditorState);
+    if (!draft) {
+      return;
+    }
     // Client-side mirror of the backend's REQUIRED_FIELD_HIDDEN rejection
     // (registry/predict_view_customization_validate.py): block the request
     // entirely rather than round-tripping a save the backend is guaranteed
@@ -3985,6 +4166,8 @@ export default function DatasetAdminPage() {
         customization_duplicates_contract: false,
       },
     };
+
+    setCustomizationEditorState({ status: "saving", draft });
 
     fetch(
       `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
@@ -4033,11 +4216,14 @@ export default function DatasetAdminPage() {
 
   function updateCustomizationDraft(updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) {
     setCustomizationEditorState((current) => {
-      if (current.status === "ready") {
-        return { status: "ready", draft: updater(current.draft), recordExists: current.recordExists };
+      if (current.status === "ready_base" || current.status === "ready_overlaid") {
+        return { status: current.status, draft: updater(current.draft), recordExists: current.recordExists };
+      }
+      if (current.status === "incompatible_overlay_ignored") {
+        return { ...current, draft: updater(current.draft) };
       }
       if (current.status === "saved" || current.status === "invalid") {
-        return { status: "ready", draft: updater(current.draft), recordExists: true };
+        return { status: "ready_overlaid", draft: updater(current.draft), recordExists: true };
       }
       return current;
     });
@@ -4139,7 +4325,7 @@ export default function DatasetAdminPage() {
             draftState,
             selectedSlug,
             customizationEditorState,
-            loadCustomization,
+            retryCustomization,
             () => setSelectedTab("live-preview"),
             publishChanges,
             // Publishing tab's own Save draft button passes its onClick

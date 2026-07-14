@@ -209,6 +209,74 @@ def test_boolean_feature_has_no_domain_constraints(tmp_path):
     assert "domain_constraints" not in loan_feature
 
 
+def test_runtime_feature_identities_and_order_equal_execution_feature_columns(tmp_path):
+    """Project Spec S0099: the runtime projection must include every
+    execution_contract.feature_columns entry, in the same order, with no
+    silent exclusion mechanism -- there is no governed-exclusion path today,
+    so this equality must hold unconditionally."""
+    contract = _valid_contract(
+        feature_columns=["loan", "age", "job"],
+        feature_definitions={
+            "age": {"type": "numeric", "domain_constraints": {"min": 18, "max": 95}},
+            "job": {"type": "categorical", "domain_constraints": {"values": ["admin", "blue-collar"]}},
+            "loan": {"type": "boolean"},
+        },
+        required_columns=["loan", "age", "job"],
+    )
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    runtime = json.loads((out_dir / "runtime-contract.json").read_text())
+    assert [f["name"] for f in runtime["features"]] == ["loan", "age", "job"]
+
+
+def test_public_feature_identities_and_order_equal_runtime_feature_identities(tmp_path):
+    """Project Spec S0099: the public projection must contain exactly the
+    runtime feature identities, in the same order -- no filtering, reorder,
+    or invented feature happens between the two layers."""
+    contract = _valid_contract(
+        feature_columns=["loan", "age", "job"],
+        feature_definitions={
+            "age": {"type": "numeric", "domain_constraints": {"min": 18, "max": 95}},
+            "job": {"type": "categorical", "domain_constraints": {"values": ["admin", "blue-collar"]}},
+            "loan": {"type": "boolean"},
+        },
+        required_columns=["loan", "age", "job"],
+    )
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    runtime = json.loads((out_dir / "runtime-contract.json").read_text())
+    public = json.loads((out_dir / "public-contract.json").read_text())
+    assert [f["name"] for f in public["features"]] == [f["name"] for f in runtime["features"]]
+
+
+def test_projection_evidence_reports_unresolved_select_features(tmp_path):
+    """Project Spec S0099: a select-type feature with no canonical
+    domain_constraints.values must be named explicitly in
+    projection-evidence.json, not silently treated as a fully configured
+    select control -- and a feature with real values must never appear in
+    that list."""
+    contract = _valid_contract(
+        feature_columns=["job", "housing"],
+        feature_definitions={
+            "job": {"type": "categorical", "domain_constraints": {"values": ["admin", "technician"]}},
+            "housing": {"type": "categorical"},
+        },
+        required_columns=["job", "housing"],
+    )
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+
+    evidence = json.loads((out_dir / "projection-evidence.json").read_text())
+    assert evidence["schema_version"] == "1.0.0"
+    assert evidence["execution_feature_columns"] == ["job", "housing"]
+    assert evidence["runtime_feature_names"] == ["job", "housing"]
+    assert evidence["public_feature_names"] == ["job", "housing"]
+    assert evidence["unresolved_select_features"] == ["housing"]
+
+
 def test_derivation_is_deterministic(tmp_path):
     """The same execution contract always produces identical runtime and public contract outputs."""
     contract_path = _write_json(tmp_path, "contract.json", _valid_contract())
@@ -385,6 +453,41 @@ def test_real_telco_execution_contract_projects_to_valid_runtime_and_public_cont
 
     public_by_name = {f["name"]: f for f in public["features"]}
     assert public_by_name["SeniorCitizen"]["input_type"] == "checkbox"
+
+
+@pytest.mark.skipif(
+    not TELCO_EXECUTION_CONTRACT_PATH.exists(),
+    reason="Telco execution contract not yet materialized on disk",
+)
+def test_real_telco_execution_contract_categorical_features_lack_canonical_options(tmp_path):
+    """KNOWN, DISCLOSED CONDITION (Project Spec S0099): the real, current
+    Telco execution contract's categorical feature_definitions (gender,
+    MultipleLines, InternetService, OnlineSecurity, OnlineBackup,
+    DeviceProtection, TechSupport, StreamingTV, StreamingMovies, Contract,
+    PaymentMethod) declare no domain_constraints at all, so re-deriving
+    today's public contract in memory (never written back to the
+    repository) correctly reports every one of them in
+    projection-evidence.json's unresolved_select_features -- a real,
+    reportable, not-invented gap in the source execution contract data, not
+    a projection defect. Per this spec's own scope boundary, correcting
+    contracts/telco-customer-churn/execution-contract.json is out of this
+    implementation's allowed_edit_paths; this test only proves the
+    projection pipeline surfaces the condition explicitly instead of
+    silently rendering a misleading fully-configured select control."""
+    out_dir = tmp_path / "telco-out"
+    derive(TELCO_EXECUTION_CONTRACT_PATH, out_dir, repo_root=REPO_ROOT)
+
+    execution_contract = json.loads(TELCO_EXECUTION_CONTRACT_PATH.read_text(encoding="utf-8"))
+    expected_unresolved = sorted(
+        name
+        for name, defn in execution_contract["feature_definitions"].items()
+        if defn.get("type") == "categorical" and not defn.get("domain_constraints", {}).get("values")
+        and name in execution_contract["feature_columns"]
+    )
+    assert expected_unresolved, "expected at least one real Telco categorical feature with no domain_constraints"
+
+    evidence = json.loads((out_dir / "projection-evidence.json").read_text(encoding="utf-8"))
+    assert sorted(evidence["unresolved_select_features"]) == expected_unresolved
 
 
 @pytest.mark.skipif(

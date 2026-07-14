@@ -1022,3 +1022,91 @@ def test_materialize_verified_prepared_dataset_writes_csv_and_training_ready_met
     by_id = {row["customerID"]: row for row in rows}
     assert by_id["C1"]["TotalCharges"] == "0.0"
     assert by_id["C3"]["TotalCharges"] == "0.0"
+
+
+# ---------------------------------------------------------------------------
+# S0099: release-level public_contract candidate assembly artifact
+#
+# pipeline/assemble_candidate.py's release-candidate.json previously declared
+# an "artifact_roles.contracts" entry pointing only at
+# contracts/runtime-contract.json -- the physical contracts/public-contract.json
+# file was already copied into the assembled candidate directory
+# (_PUBLIC_ARTIFACT_MAPPINGS), but no distinct manifest-visible role existed
+# for it, so publisher/manifest.py (and, downstream, api/public_contract_loader.py)
+# had no declared role to read it from. These tests prove the assembled
+# release-candidate.json now declares a distinct "public_contract" role.
+# ---------------------------------------------------------------------------
+
+from pipeline import assemble_candidate  # noqa: E402
+
+S0099_DATASET_SLUG = "s0099-style-dataset"
+S0099_TRAINING_RUN_ID = "train-20260714T000000Z"
+
+
+def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
+    dataset_slug = S0099_DATASET_SLUG
+    run_id = S0099_TRAINING_RUN_ID
+    references = {
+        "discovery_evidence": f"pipeline/evidence/{dataset_slug}/discovery-evidence.json",
+        "execution_contract": f"contracts/{dataset_slug}/execution-contract.json",
+        "runtime_contract": f"contracts/{dataset_slug}/runtime-contract.json",
+        "public_contract": f"contracts/{dataset_slug}/public-contract.json",
+        "preparation_recipe": f"pipeline/evidence/{dataset_slug}/preparation-recipe.json",
+        "prepared_data_metadata": f"pipeline/prepared/{dataset_slug}/prepared-data-metadata.json",
+        "training_parameter_record": (
+            f"pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json"
+        ),
+        "model_artifact": f"pipeline/training-runs/{dataset_slug}/{run_id}/model.pkl",
+        "training_metrics": f"pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json",
+        "model_card": f"pipeline/training-runs/{dataset_slug}/{run_id}/model-card.json",
+        "public_context": f"contracts/{dataset_slug}/dataset-context.json",
+        "inference_bundle": f"contracts/{dataset_slug}/inference-bundle.json",
+    }
+    for role, relative_path in references.items():
+        path = repo_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if role == "model_artifact":
+            path.write_bytes(b"not-a-real-model-but-real-bytes")
+        else:
+            path.write_text(
+                json.dumps({"role": role, "contract_version": f"{role}.v1", "schema_version": f"{role}.v1"}),
+                encoding="utf-8",
+            )
+    return references
+
+
+def test_assembled_release_candidate_declares_distinct_public_contract_role(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    release_id = assemble_candidate.derive_deterministic_release_id(S0099_TRAINING_RUN_ID)
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0099_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0099_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0099-test-input",
+    )
+
+    assert result["status"] == "accepted", result
+    candidate_dir = Path(result["candidate_dir"])
+    release_candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    artifact_roles = release_candidate["artifact_roles"]
+
+    assert "public_contract" in artifact_roles
+    assert artifact_roles["public_contract"]["path"] == "contracts/public-contract.json"
+    assert artifact_roles["public_contract"]["path"] != artifact_roles["contracts"]["path"]
+    assert artifact_roles["public_contract"]["required"] is True
+    assert "public_contract" in release_candidate["candidate_metadata"]["completeness_validation"][
+        "required_artifact_roles"
+    ]
+    # The physical file itself must also be present -- the role declaration
+    # is additive to, not a replacement for, the existing artifact copy.
+    assert (candidate_dir / "contracts" / "public-contract.json").is_file()
+    assert (candidate_dir / "contracts" / "runtime-contract.json").is_file()

@@ -1,0 +1,74 @@
+{
+  "schema_version": "manifest-input.v1",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "dataset_title": "Telco Customer Churn"
+  },
+  "release_identity": {
+    "release_id": "release-20260714t123223z",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-07-14T12:32:23Z"
+  },
+  "source_run": {
+    "run_id": "train-20260714T123223Z",
+    "producer": "notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb",
+    "created_at": "2026-07-14T12:32:23Z"
+  },
+  "candidate_mapping": {
+    "candidate_layout_schema": "pipeline/candidate-layout.schema.json",
+    "publisher_release_candidate_schema": "publisher/release-candidate.schema.json",
+    "publisher_release_manifest_schema": "publisher/release-manifest.schema.json",
+    "publisher_validation_schema": "publisher/validation/release-candidate-validation.schema.json",
+    "role_mappings": [
+      {
+        "input_role": "promoted_contracts",
+        "candidate_role": "contracts",
+        "publisher_role": "contracts",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "training_metrics",
+        "candidate_role": "metrics",
+        "publisher_role": "metrics",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "model_card",
+        "candidate_role": "model_card",
+        "publisher_role": "model_card",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "public_context",
+        "candidate_role": "public_context",
+        "publisher_role": "public_context",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "inference_bundle",
+        "candidate_role": "predictive_bundle",
+        "publisher_role": "predictive_bundle",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "prepared_data_metadata",
+        "candidate_role": "candidate_metadata",
+        "publisher_role": "candidate_metadata",
+        "mapping_requirement": "must_map_to_candidate_artifact_role"
+      },
+      {
+        "input_role": "visualization_references",
+        "candidate_role": "visualizations",
+        "publisher_role": "visualizations",
+        "mapping_requirement": "optional_when_available"
+      },
+      {
+        "input_role": "internal_evidence_references",
+        "candidate_role": "build_evidence",
+        "publisher_role": null,
+        "mapping_requirement": "must_remain_internal_evidence"
+      }
+    ]
+  },
+  "generated_by": "pipeline/assemble_candidate.py"
+}

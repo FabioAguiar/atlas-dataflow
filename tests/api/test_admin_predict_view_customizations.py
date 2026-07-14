@@ -139,8 +139,88 @@ def test_read_missing_customization_returns_deterministic_absence():
             "dataset_slug": "telco-customer-churn",
             "view_id": "churn-risk-overview",
             "customization_exists": False,
+            "compatibility_status": "absent",
             "customization": None,
+            "errors": [],
         }
+
+
+def test_read_compatible_customization_returns_compatibility_status_compatible():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.save_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview", dict(_VALID_CUSTOMIZATION)
+            )
+            result = admin_predict_view_customizations.read_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview"
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["customization_exists"] is True
+        assert result["compatibility_status"] == "compatible"
+        assert result["customization"] == _VALID_CUSTOMIZATION
+        assert result["errors"] == []
+
+
+def test_read_incompatible_customization_returns_compatibility_status_incompatible_without_deleting_it():
+    # Project Spec S0099: simulates the active release public contract
+    # changing after the customization was saved -- the stored record still
+    # references "tenure", which no longer exists in the new contract.
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.save_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview", dict(_VALID_CUSTOMIZATION)
+            )
+            admin_predict_view_customizations.load_public_contract = (
+                lambda active_release: {"features": [{"name": "MonthlyCharges", "optional": True}]}
+            )
+            result = admin_predict_view_customizations.read_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview"
+            )
+            registry_file = fake_repo / "registry" / "predict-view-customizations.json"
+            stored = json.loads(registry_file.read_text())
+        finally:
+            _restore_store(originals)
+
+        assert result["customization_exists"] is True
+        assert result["compatibility_status"] == "incompatible"
+        assert result["customization"] is None
+        assert any(error["code"] == "UNKNOWN_FIELD_REFERENCE" for error in result["errors"])
+        # The stored record itself must remain untouched -- an incompatible
+        # classification never deletes, rewrites, or migrates it.
+        assert stored["predict_view_customizations"][0]["field_hints"][0]["field_name"] == "tenure"
+
+
+def test_read_returns_incompatible_when_public_contract_unavailable():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.save_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview", dict(_VALID_CUSTOMIZATION)
+            )
+
+            def _raise(active_release):
+                raise admin_predict_view_customizations.PublicContractUnavailableError("unavailable")
+
+            admin_predict_view_customizations.load_public_contract = _raise
+            result = admin_predict_view_customizations.read_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview"
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["compatibility_status"] == "incompatible"
+        assert result["customization"] is None
+        assert any(error["code"] == "PUBLIC_CONTRACT_UNAVAILABLE" for error in result["errors"])
 
 
 def test_save_creates_customization_transparently_when_none_exists():
@@ -287,7 +367,9 @@ def test_get_route_returns_absence_for_missing_customization_in_private_runtime_
         "dataset_slug": "telco-customer-churn",
         "view_id": "churn-risk-overview",
         "customization_exists": False,
+        "compatibility_status": "absent",
         "customization": None,
+        "errors": [],
     }
 
 
@@ -316,6 +398,7 @@ def test_put_then_get_route_round_trip_in_private_runtime_without_token_header()
     assert put_response["saved"] is True
     assert put_response["customization"] == _VALID_CUSTOMIZATION
     assert get_response["customization_exists"] is True
+    assert get_response["compatibility_status"] == "compatible"
     assert get_response["customization"] == _VALID_CUSTOMIZATION
 
 

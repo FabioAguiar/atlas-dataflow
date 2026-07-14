@@ -23,6 +23,16 @@ for admin-auth denial. On save, when no record exists yet for the
 of surfacing the persistence module's create/update distinction to the admin
 caller.
 
+Project Spec S0099: the read path also resolves the selected dataset's active
+release public contract and classifies any stored customization against it
+via registry.predict_view_customization_validate.classify_customization_compatibility,
+so the caller (the Dataset Admin Inference Form automatic bootstrap) can build
+a contract-driven base draft without an explicit "Load customization" action.
+The reduced compatibility_status ("absent" | "compatible" | "incompatible")
+never exposes the classifier's own field-level errors for an absent record,
+and an incompatible record is never returned as "customization" -- it stays
+persisted in the registry unchanged, only its sanitized errors are surfaced.
+
 All three functions propagate ValueError from the persistence module's
 view_id/dataset_slug validation unchanged; the calling route is responsible
 for translating it into a sanitized HTTP response.
@@ -36,6 +46,7 @@ from registry.predict_view_customization_store import (
     update_customization,
     validate_identifiers,
 )
+from registry.predict_view_customization_validate import classify_customization_compatibility
 from registry.resolve import (
     DatasetUnavailableError,
     RegistryInvalidError,
@@ -47,10 +58,31 @@ _UPDATE_NOT_FOUND_FOR_UPDATE_CODE = "CUSTOMIZATION_NOT_FOUND_FOR_UPDATE"
 _PUBLIC_CONTRACT_UNAVAILABLE_CODE = "PUBLIC_CONTRACT_UNAVAILABLE"
 
 
+def _resolved_public_contract(dataset_slug: str) -> dict | None:
+    """Resolve dataset_slug's active release public contract, or None if it
+    cannot be resolved right now. Never raises -- an unresolved contract is a
+    legitimate, reportable compatibility outcome, not a caller error."""
+    try:
+        resolved = resolve_dataset(dataset_slug)
+        return load_public_contract(resolved.active_release)
+    except (DatasetUnavailableError, ReleaseUnavailableError, RegistryInvalidError, PublicContractUnavailableError):
+        return None
+
+
 def read_predict_view_customization(dataset_slug: str, view_id: str) -> dict:
     """
     Return {"dataset_slug": str, "view_id": str, "customization_exists": bool,
-    "customization": dict|None}.
+    "compatibility_status": "absent"|"compatible"|"incompatible",
+    "customization": dict|None, "errors": [...]}.
+
+    "customization" is populated only when compatibility_status is
+    "compatible" -- an "incompatible" stored record is classified but never
+    returned as an applicable overlay, and its errors (the classifier's own
+    sanitized {code, field, message} entries, or a single
+    PUBLIC_CONTRACT_UNAVAILABLE entry when the active release public contract
+    itself could not be resolved) are returned instead. An absent record
+    returns compatibility_status "absent" with no errors, distinguishing it
+    from every incompatible-record outcome.
 
     Raises ValueError if view_id or dataset_slug is missing or does not match
     the required pattern.
@@ -62,14 +94,33 @@ def read_predict_view_customization(dataset_slug: str, view_id: str) -> dict:
             "dataset_slug": dataset_slug,
             "view_id": view_id,
             "customization_exists": False,
+            "compatibility_status": "absent",
             "customization": None,
+            "errors": [],
+        }
+
+    public_contract = _resolved_public_contract(dataset_slug)
+    classification = classify_customization_compatibility(
+        view_id, dataset_slug, customization, public_contract
+    )
+
+    if classification["status"] != "compatible":
+        return {
+            "dataset_slug": dataset_slug,
+            "view_id": view_id,
+            "customization_exists": True,
+            "compatibility_status": "incompatible",
+            "customization": None,
+            "errors": classification["errors"],
         }
 
     return {
         "dataset_slug": dataset_slug,
         "view_id": view_id,
         "customization_exists": True,
+        "compatibility_status": "compatible",
         "customization": customization,
+        "errors": [],
     }
 
 

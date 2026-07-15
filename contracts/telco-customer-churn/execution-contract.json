@@ -51,7 +51,13 @@
   ],
   "feature_definitions": {
     "gender": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "Female",
+          "Male"
+        ]
+      }
     },
     "SeniorCitizen": {
       "type": "boolean"
@@ -73,37 +79,108 @@
       "type": "boolean"
     },
     "MultipleLines": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No phone service",
+          "Yes"
+        ]
+      }
     },
     "InternetService": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "DSL",
+          "Fiber optic",
+          "No"
+        ]
+      }
     },
     "OnlineSecurity": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
     },
     "OnlineBackup": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
     },
     "DeviceProtection": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
     },
     "TechSupport": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
     },
     "StreamingTV": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
     },
     "StreamingMovies": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "No",
+          "No internet service",
+          "Yes"
+        ]
+      }
     },
     "Contract": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "Month-to-month",
+          "One year",
+          "Two year"
+        ]
+      }
     },
     "PaperlessBilling": {
       "type": "boolean"
     },
     "PaymentMethod": {
-      "type": "categorical"
+      "type": "categorical",
+      "domain_constraints": {
+        "values": [
+          "Bank transfer (automatic)",
+          "Credit card (automatic)",
+          "Electronic check",
+          "Mailed check"
+        ]
+      }
     },
     "MonthlyCharges": {
       "type": "numeric",

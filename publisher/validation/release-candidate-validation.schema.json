@@ -98,6 +98,7 @@
       "additionalProperties": false,
       "required": [
         "contracts",
+        "public_contract",
         "predictive_bundle",
         "metrics",
         "model_card",
@@ -107,6 +108,9 @@
       ],
       "properties": {
         "contracts": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "public_contract": {
           "$ref": "#/$defs/artifact_role_result"
         },
         "predictive_bundle": {
@@ -175,6 +179,7 @@
       "additionalProperties": false,
       "required": [
         "contracts",
+        "public_contract",
         "manifest_input",
         "metrics",
         "model_card",
@@ -182,6 +187,9 @@
       ],
       "properties": {
         "contracts": {
+          "$ref": "#/$defs/schema_compatibility_result"
+        },
+        "public_contract": {
           "$ref": "#/$defs/schema_compatibility_result"
         },
         "manifest_input": {
@@ -488,6 +496,7 @@
       "type": "string",
       "enum": [
         "contracts",
+        "public_contract",
         "predictive_bundle",
         "metrics",
         "model_card",
@@ -498,8 +507,8 @@
     },
     "required_artifact_role_list": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 8,
+      "maxItems": 8,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/required_artifact_role"
@@ -508,6 +517,11 @@
         {
           "contains": {
             "const": "contracts"
+          }
+        },
+        {
+          "contains": {
+            "const": "public_contract"
           }
         },
         {
@@ -761,6 +775,7 @@
             "model_bundle_mismatch",
             "evidence_link_unsafe",
             "contract_schema_incompatible",
+            "public_contract_schema_incompatible",
             "manifest_input_schema_incompatible",
             "metrics_schema_incompatible",
             "model_card_schema_incompatible",

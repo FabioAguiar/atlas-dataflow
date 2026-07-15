@@ -23,6 +23,14 @@ These symbols must not be redeclared here (constraint-05).
 RUNTIME_CONTRACT_SCHEMA_VERSION is parallel to PUBLIC_CONTRACT_SCHEMA_VERSION in
 pipeline/contract_derivation.py, both fixed to '1.0.0' (decision-03, first-cycle
 versioning assumption consistent with contracts/bank-marketing/runtime-contract.json).
+
+Project Spec S0102: closed-select sufficiency is a governed readiness
+condition, not merely reported evidence. `derive()` raises `DerivationFailed`
+-- writing no output files at all -- when any public feature with
+input_type "select" has no non-empty options array, so an incomplete select
+control can never be silently written as part of a release-ready public
+contract. `unresolved_select_features` remains fully observable through the
+raised exception's error messages.
 """
 
 from __future__ import annotations
@@ -175,6 +183,25 @@ def derive(
         msgs = [e.message for e in public_errors]
         raise DerivationFailed([f"derived public contract failed schema validation (pipeline bug): {m}" for m in msgs])
 
+    # Step 7b — closed-select sufficiency is a governed readiness condition
+    # (Project Spec S0102), not merely reported evidence: a public feature
+    # with input_type "select" must have a non-empty options array before
+    # this projection is considered form-ready. unresolved_select_features
+    # remains fully observable via this exception's error messages, but no
+    # runtime/public contract or evidence is written to output_dir while any
+    # closed select remains unresolved -- an incomplete select control must
+    # never be silently promoted to a release-ready public contract.
+    unresolved = unresolved_select_features(public_contract)
+    if unresolved:
+        raise DerivationFailed(
+            [
+                f"closed categorical feature {name!r} has input_type 'select' but no "
+                "non-empty options; unresolved closed selects block form-readiness "
+                "and must not be projected as release-ready"
+                for name in unresolved
+            ]
+        )
+
     # Step 8 — write outputs.
     output_dir.mkdir(parents=True, exist_ok=True)
     runtime_out = output_dir / "runtime-contract.json"
@@ -198,7 +225,7 @@ def derive(
         "execution_feature_columns": list(feature_columns),
         "runtime_feature_names": [f["name"] for f in runtime_features],
         "public_feature_names": [f["name"] for f in public_contract["features"]],
-        "unresolved_select_features": unresolved_select_features(public_contract),
+        "unresolved_select_features": unresolved,
     }
     evidence_out.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
 

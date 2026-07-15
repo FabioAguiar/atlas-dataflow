@@ -13,6 +13,7 @@ RELEASE_VERSION = "2026.06.19"
 
 REQUIRED_ROLES = (
     "contracts",
+    "public_contract",
     "predictive_bundle",
     "metrics",
     "model_card",
@@ -31,7 +32,30 @@ def _candidate_dir(tmp_path: Path) -> Path:
     return tmp_path / "releases" / "candidates" / DATASET_SLUG / RELEASE_ID
 
 
+def _valid_public_contract_payload(**overrides) -> dict:
+    payload = {
+        "schema_version": "1.0.0",
+        "features": [
+            {
+                "name": "example_feature",
+                "label": "Example Feature",
+                "input_type": "number",
+                "optional": False,
+                "display_order": 1,
+            }
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _artifact_payload(role: str, **overrides) -> dict:
+    if role == "public_contract":
+        # A real contracts/public-contract.schema.json instance
+        # (additionalProperties: false) -- cannot carry the generic
+        # dataset_identity/role/etc keys the other roles use below
+        # (Project Spec S0101).
+        return _valid_public_contract_payload(**overrides)
     payload = {
         "role": role,
         "dataset_identity": {"dataset_slug": DATASET_SLUG},
@@ -211,6 +235,136 @@ def test_cross_artifact_validation_rejects_non_real_required_artifact(
     assert result["role_results"]["metrics"]["status"] == "incomplete"
 
 
+# --- S0101: public_contract as the eighth required publisher artifact role ---
+
+
+def test_public_contract_accepts_a_conformant_candidate(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert result["role_results"]["public_contract"]["status"] == "present"
+    assert result["schema_compatibility"]["public_contract"] == {"checked": True, "compatible": True}
+
+
+def test_public_contract_missing_role_definition_is_rejected(tmp_path):
+    candidate_dir = _candidate_dir(tmp_path)
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+
+    artifact_roles = {}
+    for role in REQUIRED_ROLES:
+        if role == "public_contract":
+            continue
+        role_path = f"artifacts/{role}.json"
+        artifact_roles[role] = {"role": role, "path": role_path, "required": True}
+        _write_json(candidate_dir / role_path, _artifact_payload(role))
+
+    candidate = {
+        "schema_version": "release-candidate.v1",
+        "candidate_kind": "release_candidate",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG, "dataset_title": "Example Dataset"},
+        "release_identity": {
+            "release_id": RELEASE_ID,
+            "release_version": RELEASE_VERSION,
+            "created_at": "2026-06-19T00:00:00Z",
+        },
+        "source_run": {"run_id": "test-run", "producer": "pytest", "created_at": "2026-06-19T00:00:00Z"},
+        "artifact_roles": artifact_roles,
+        "candidate_metadata": {
+            "assembled_by": "pytest",
+            "assembled_at": "2026-06-19T00:00:00Z",
+            "intended_publisher_action": "validate_candidate",
+            "completeness_validation": {
+                "required_artifact_roles": [r for r in REQUIRED_ROLES if r != "public_contract"],
+                "hash_policy": "publisher_calculates_hashes",
+                "manifest_policy": "publisher_generates_manifest",
+            },
+        },
+        "state_boundaries": {
+            "pipeline_run_is_publishable": False,
+            "candidate_is_published_release": False,
+            "promotion_required": True,
+            "registry_update_allowed_in_candidate": False,
+            "public_upload_required": False,
+            "web_administration_required": False,
+            "database_publication_management_required": False,
+            "runtime_consumes_temporary_pipeline_output": False,
+        },
+    }
+    _write_json(candidate_dir / "release-candidate.json", candidate)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "missing_public_contract" in _rejection_codes(result)
+    assert result["role_results"]["public_contract"]["status"] == "missing"
+
+
+def test_public_contract_unsafe_reference_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    candidate["artifact_roles"]["public_contract"]["path"] = "../../../etc/passwd"
+    _write_json(candidate_dir / "release-candidate.json", candidate)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "unsafe_candidate_artifact" in _rejection_codes(result)
+    assert result["role_results"]["public_contract"]["status"] == "unsafe"
+    assert result["role_results"]["public_contract"]["artifact_reference"] is None
+
+
+def test_public_contract_absolute_reference_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    candidate["artifact_roles"]["public_contract"]["path"] = "/etc/passwd"
+    _write_json(candidate_dir / "release-candidate.json", candidate)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "unsafe_candidate_artifact" in _rejection_codes(result)
+
+
+def test_public_contract_invalid_json_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    artifact_path = candidate_dir / "artifacts" / "public_contract.json"
+    artifact_path.write_text("{not valid json", encoding="utf-8")
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "public_contract_schema_incompatible" in _rejection_codes(result)
+    assert result["schema_compatibility"]["public_contract"]["compatible"] is False
+
+
+def test_public_contract_schema_incompatible_payload_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "public_contract": {"schema_version": "1.0.0", "features": [], "extra_field": "not allowed"},
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "public_contract_schema_incompatible" in _rejection_codes(result)
+    assert result["schema_compatibility"]["public_contract"]["compatible"] is False
+
+
+def test_public_contract_missing_file_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    (candidate_dir / "artifacts" / "public_contract.json").unlink()
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "missing_public_contract" in _rejection_codes(result)
+    assert result["role_results"]["public_contract"]["status"] == "missing"
+
+
 # --- Release-candidate-input assembly from a governed training run (Project Spec S0032) ---
 #
 # These tests exercise pipeline/assemble_candidate.py's build_release_candidate_input,
@@ -250,6 +404,13 @@ def _write_s0032_governed_artifacts(repo_root: Path, *, omit_role: str | None = 
             path = repo_root / relative_path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"not-a-real-model-but-real-bytes")
+        elif role == "public_contract":
+            # Must be a real contracts/public-contract.schema.json instance
+            # (additionalProperties: false), not the generic
+            # role/contract_version placeholder used below (Project Spec
+            # S0101 -- publisher/validate.py now validates this role for
+            # real against that schema).
+            _write_json(repo_root / relative_path, _valid_public_contract_payload())
         else:
             _write_json(
                 repo_root / relative_path,

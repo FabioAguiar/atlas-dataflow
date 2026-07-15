@@ -251,17 +251,44 @@ def test_public_feature_identities_and_order_equal_runtime_feature_identities(tm
     assert [f["name"] for f in public["features"]] == [f["name"] for f in runtime["features"]]
 
 
-def test_projection_evidence_reports_unresolved_select_features(tmp_path):
-    """Project Spec S0099: a select-type feature with no canonical
-    domain_constraints.values must be named explicitly in
-    projection-evidence.json, not silently treated as a fully configured
-    select control -- and a feature with real values must never appear in
-    that list."""
+def test_unresolved_closed_select_blocks_derivation_and_writes_no_output(tmp_path):
+    """Project Spec S0102: a select-type feature with no canonical
+    domain_constraints.values is a closed categorical control that is not
+    yet form-ready -- derive() must raise DerivationFailed naming it
+    explicitly (observability preserved through the exception) rather than
+    silently writing a public contract with an incomplete select control.
+    A feature with real values must never be named. No output file is
+    written to out_dir at all."""
     contract = _valid_contract(
         feature_columns=["job", "housing"],
         feature_definitions={
             "job": {"type": "categorical", "domain_constraints": {"values": ["admin", "technician"]}},
             "housing": {"type": "categorical"},
+        },
+        required_columns=["job", "housing"],
+    )
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    with pytest.raises(DerivationFailed) as exc_info:
+        derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    errors = exc_info.value.errors
+    assert any("housing" in e for e in errors)
+    assert not any("job" in e for e in errors)
+    assert not (out_dir / "runtime-contract.json").exists()
+    assert not (out_dir / "public-contract.json").exists()
+    assert not (out_dir / "projection-evidence.json").exists()
+
+
+def test_form_ready_projection_reports_empty_unresolved_select_features(tmp_path):
+    """Project Spec S0102: once every closed select has canonical options,
+    derive() succeeds and projection-evidence.json's unresolved_select_features
+    is empty -- the positive, form-ready counterpart to the blocking test
+    above."""
+    contract = _valid_contract(
+        feature_columns=["job", "housing"],
+        feature_definitions={
+            "job": {"type": "categorical", "domain_constraints": {"values": ["admin", "technician"]}},
+            "housing": {"type": "categorical", "domain_constraints": {"values": ["own", "rent"]}},
         },
         required_columns=["job", "housing"],
     )
@@ -274,7 +301,7 @@ def test_projection_evidence_reports_unresolved_select_features(tmp_path):
     assert evidence["execution_feature_columns"] == ["job", "housing"]
     assert evidence["runtime_feature_names"] == ["job", "housing"]
     assert evidence["public_feature_names"] == ["job", "housing"]
-    assert evidence["unresolved_select_features"] == ["housing"]
+    assert evidence["unresolved_select_features"] == []
 
 
 def test_derivation_is_deterministic(tmp_path):
@@ -459,35 +486,41 @@ def test_real_telco_execution_contract_projects_to_valid_runtime_and_public_cont
     not TELCO_EXECUTION_CONTRACT_PATH.exists(),
     reason="Telco execution contract not yet materialized on disk",
 )
-def test_real_telco_execution_contract_categorical_features_lack_canonical_options(tmp_path):
-    """KNOWN, DISCLOSED CONDITION (Project Spec S0099): the real, current
-    Telco execution contract's categorical feature_definitions (gender,
-    MultipleLines, InternetService, OnlineSecurity, OnlineBackup,
-    DeviceProtection, TechSupport, StreamingTV, StreamingMovies, Contract,
-    PaymentMethod) declare no domain_constraints at all, so re-deriving
-    today's public contract in memory (never written back to the
-    repository) correctly reports every one of them in
-    projection-evidence.json's unresolved_select_features -- a real,
-    reportable, not-invented gap in the source execution contract data, not
-    a projection defect. Per this spec's own scope boundary, correcting
-    contracts/telco-customer-churn/execution-contract.json is out of this
-    implementation's allowed_edit_paths; this test only proves the
-    projection pipeline surfaces the condition explicitly instead of
-    silently rendering a misleading fully-configured select control."""
+def test_real_telco_execution_contract_categorical_features_have_canonical_options(tmp_path):
+    """Project Spec S0102 resolves the S0099-disclosed gap this test used to
+    document: the real, current Telco execution contract's categorical
+    feature_definitions (gender, MultipleLines, InternetService,
+    OnlineSecurity, OnlineBackup, DeviceProtection, TechSupport, StreamingTV,
+    StreamingMovies, Contract, PaymentMethod) now each carry a reviewed,
+    approved, non-empty domain_constraints.values list, materialized from the
+    Telco notebook's reviewed categorical_domain_intent declarations. Every
+    one of them must therefore project to a real, non-empty options array,
+    and projection-evidence.json's unresolved_select_features must be empty."""
     out_dir = tmp_path / "telco-out"
     derive(TELCO_EXECUTION_CONTRACT_PATH, out_dir, repo_root=REPO_ROOT)
 
     execution_contract = json.loads(TELCO_EXECUTION_CONTRACT_PATH.read_text(encoding="utf-8"))
-    expected_unresolved = sorted(
+    categorical_feature_names = sorted(
         name
         for name, defn in execution_contract["feature_definitions"].items()
-        if defn.get("type") == "categorical" and not defn.get("domain_constraints", {}).get("values")
-        and name in execution_contract["feature_columns"]
+        if defn.get("type") == "categorical" and name in execution_contract["feature_columns"]
     )
-    assert expected_unresolved, "expected at least one real Telco categorical feature with no domain_constraints"
+    assert categorical_feature_names, "expected at least one real Telco categorical feature"
+    for name in categorical_feature_names:
+        values = execution_contract["feature_definitions"][name].get("domain_constraints", {}).get("values")
+        assert values, (
+            f"{name}: expected a reviewed, approved, non-empty domain_constraints.values "
+            "list on the real Telco execution contract"
+        )
+
+    public = json.loads((out_dir / "public-contract.json").read_text(encoding="utf-8"))
+    public_by_name = {f["name"]: f for f in public["features"]}
+    for name in categorical_feature_names:
+        expected_values = execution_contract["feature_definitions"][name]["domain_constraints"]["values"]
+        assert [option["value"] for option in public_by_name[name]["options"]] == expected_values
 
     evidence = json.loads((out_dir / "projection-evidence.json").read_text(encoding="utf-8"))
-    assert sorted(evidence["unresolved_select_features"]) == expected_unresolved
+    assert evidence["unresolved_select_features"] == []
 
 
 @pytest.mark.skipif(
@@ -497,20 +530,17 @@ def test_real_telco_execution_contract_categorical_features_lack_canonical_optio
 def test_real_telco_runtime_and_public_contracts_materialized_on_disk_are_valid():
     """The actual committed contracts/telco-customer-churn/runtime-contract.json
     and public-contract.json artifacts validate against their schemas and
-    exclude customerID/TotalCharges.
+    exclude customerID.
 
-    KNOWN, DISCLOSED DIVERGENCE (as of Project Spec S0028's execution-contract
-    fix): these two committed files were last (re)materialized while
-    TotalCharges was still `inferred_pending_review` and were deliberately
-    NOT regenerated when contracts/telco-customer-churn/execution-contract.json
-    was updated to include TotalCharges as an approved feature -- runtime/
-    public contract regeneration is API/UI-facing and out of scope for that
-    fix. This test therefore intentionally continues to assert the current,
-    still-excluding, on-disk reality, which no longer matches what
+    Project Spec S0102 regenerated these two files through the governed
+    notebook/pipeline workflow (never a manual edit) from the current
+    execution contract, so they now reflect TotalCharges' already-approved
+    (Project Spec S0028) blank-value review status, consistent with what
     test_real_telco_execution_contract_projects_to_valid_runtime_and_public_contracts
-    proves the live execution contract would now project. Regenerating these
-    two files to include TotalCharges (and updating this test to match)
-    requires a separate, explicitly authorized implementation request."""
+    proves the execution contract projects: TotalCharges is included, not
+    excluded. This test's own presence in this spec's allowed_edit_paths is
+    exactly the "separate, explicitly authorized implementation request" the
+    prior version of this test's docstring anticipated."""
     runtime = json.loads(TELCO_RUNTIME_CONTRACT_PATH.read_text(encoding="utf-8"))
     public = json.loads(TELCO_PUBLIC_CONTRACT_PATH.read_text(encoding="utf-8"))
 
@@ -521,8 +551,8 @@ def test_real_telco_runtime_and_public_contracts_materialized_on_disk_are_valid(
     public_names = {f["name"] for f in public["features"]}
     assert "customerID" not in runtime_names
     assert "customerID" not in public_names
-    assert "TotalCharges" not in runtime_names
-    assert "TotalCharges" not in public_names
+    assert "TotalCharges" in runtime_names
+    assert "TotalCharges" in public_names
 
 
 @pytest.mark.skipif(

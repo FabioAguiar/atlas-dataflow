@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.contract_derivation import (
     _build_execution_contract,
     _unresolved_review_columns,
+    _validate_categorical_domain_declaration,
     materialize_execution_contract,
 )
 
@@ -244,6 +245,7 @@ def _modeling_intent(
     dataset_slug: str = "campaign-response",
     initial_feature_candidates: list | None = None,
     identifier_and_ignored_columns: list | None = None,
+    categorical_domain_intent: list | None = None,
 ) -> dict:
     if initial_feature_candidates is None:
         initial_feature_candidates = ["age", "channel", "opted_in", "last_contact_days"]
@@ -268,6 +270,7 @@ def _modeling_intent(
         },
         "identifier_and_ignored_columns": identifier_and_ignored_columns,
         "initial_feature_candidates": initial_feature_candidates,
+        "categorical_domain_intent": list(categorical_domain_intent or []),
     }
 
 
@@ -428,6 +431,146 @@ def test_unresolved_review_columns_ignores_resolved_transformations():
     assert pending == {"last_contact_days": "inferred_pending_review"}
 
 
+# ---------------------------------------------------------------------------
+# Categorical-domain materialization (Project Spec S0102)
+# ---------------------------------------------------------------------------
+
+
+def _approved_channel_declaration(values=("email", "sms", "call")) -> dict:
+    return {
+        "name": "channel",
+        "accepted_values": list(values),
+        "review_status": "approved",
+        "source_basis": "Reviewed authoring basis; bounded cardinality.",
+        "closed_for_inference": True,
+    }
+
+
+def test_approved_categorical_domain_is_materialized_into_domain_constraints():
+    modeling_intent = _modeling_intent(
+        categorical_domain_intent=[_approved_channel_declaration()]
+    )
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence(), None)
+    assert contract["feature_definitions"]["channel"]["domain_constraints"] == {
+        "values": ["email", "sms", "call"]
+    }
+
+
+def test_pending_review_categorical_domain_is_not_materialized():
+    pending = _approved_channel_declaration()
+    pending["review_status"] = "pending_review"
+    modeling_intent = _modeling_intent(categorical_domain_intent=[pending])
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence(), None)
+    assert "domain_constraints" not in contract["feature_definitions"]["channel"]
+
+
+def test_duplicate_accepted_values_are_rejected_not_materialized():
+    duplicated = _approved_channel_declaration(values=("email", "email", "sms"))
+    modeling_intent = _modeling_intent(categorical_domain_intent=[duplicated])
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence(), None)
+    assert "domain_constraints" not in contract["feature_definitions"]["channel"]
+
+
+def test_blank_accepted_value_is_rejected_not_materialized():
+    blank = _approved_channel_declaration(values=("email", "  "))
+    modeling_intent = _modeling_intent(categorical_domain_intent=[blank])
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence(), None)
+    assert "domain_constraints" not in contract["feature_definitions"]["channel"]
+
+
+def test_declaration_for_unknown_feature_is_rejected():
+    unknown = _approved_channel_declaration()
+    unknown["name"] = "not_a_real_column"
+    modeling_intent = _modeling_intent(categorical_domain_intent=[unknown])
+    # Must not raise -- an unknown-feature declaration is a normal rejected outcome.
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence(), None)
+    assert "not_a_real_column" not in contract["feature_definitions"]
+
+
+def test_declaration_for_numeric_feature_is_rejected_as_type_incompatible():
+    type_incompatible = _approved_channel_declaration()
+    type_incompatible["name"] = "age"  # age is numeric, not categorical
+    modeling_intent = _modeling_intent(categorical_domain_intent=[type_incompatible])
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence(), None)
+    assert "domain_constraints" not in contract["feature_definitions"]["age"] or (
+        set(contract["feature_definitions"]["age"]["domain_constraints"].keys()) == {"min", "max"}
+    )
+
+
+def test_declaration_for_boolean_feature_is_rejected_as_type_incompatible():
+    type_incompatible = _approved_channel_declaration()
+    type_incompatible["name"] = "opted_in"  # opted_in is boolean, not categorical
+    modeling_intent = _modeling_intent(categorical_domain_intent=[type_incompatible])
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence(), None)
+    assert "domain_constraints" not in contract["feature_definitions"]["opted_in"]
+
+
+def test_validate_categorical_domain_declaration_accepts_approved_categorical():
+    feature_columns = ["channel"]
+    feature_definitions = {"channel": {"type": "categorical"}}
+    values, reason = _validate_categorical_domain_declaration(
+        _approved_channel_declaration(), feature_columns, feature_definitions
+    )
+    assert values == ["email", "sms", "call"]
+    assert reason is None
+
+
+def test_validate_categorical_domain_declaration_names_rejection_reason():
+    feature_columns = ["channel"]
+    feature_definitions = {"channel": {"type": "categorical"}}
+    pending = _approved_channel_declaration()
+    pending["review_status"] = "pending_review"
+    values, reason = _validate_categorical_domain_declaration(
+        pending, feature_columns, feature_definitions
+    )
+    assert values is None
+    assert "channel" in reason
+
+
+def test_materialize_execution_contract_evidence_reports_categorical_domain_coverage(tmp_path):
+    schema_dir = tmp_path / "contracts"
+    schema_dir.mkdir()
+    (schema_dir / "execution-contract.schema.json").write_text(
+        SCHEMA_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    pending = _approved_channel_declaration()
+    modeling_intent = _modeling_intent(categorical_domain_intent=[pending])
+
+    result = materialize_execution_contract(
+        modeling_intent,
+        _discovery_evidence(),
+        output_relative_path="contracts/campaign-response/execution-contract.json",
+        repo_root=tmp_path,
+        preparation_recipe=_preparation_recipe(),
+    )
+    evidence = result["execution_contract_materialization_evidence"]
+    coverage = evidence["categorical_domain_materialization"]
+    assert coverage["approved_categorical_domains"] == ["channel"]
+    assert coverage["unresolved_categorical_features"] == []
+    assert coverage["rejected_categorical_domain_declarations"] == []
+    assert coverage["values_inferred_during_materialization"] is False
+
+
+def test_materialize_execution_contract_evidence_names_unresolved_categorical_feature(tmp_path):
+    schema_dir = tmp_path / "contracts"
+    schema_dir.mkdir()
+    (schema_dir / "execution-contract.schema.json").write_text(
+        SCHEMA_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    result = materialize_execution_contract(
+        _modeling_intent(),
+        _discovery_evidence(),
+        output_relative_path="contracts/campaign-response/execution-contract.json",
+        repo_root=tmp_path,
+        preparation_recipe=_preparation_recipe(),
+    )
+    coverage = result["execution_contract_materialization_evidence"]["categorical_domain_materialization"]
+    assert coverage["approved_categorical_domains"] == []
+    assert coverage["unresolved_categorical_features"] == ["channel"]
+
+
 @pytest.mark.skipif(
     not TELCO_EXECUTION_CONTRACT_PATH.exists(),
     reason="Telco execution contract not yet materialized on disk",
@@ -488,3 +631,54 @@ def test_real_telco_execution_contract_includes_total_charges_once_approved():
             "approved into the official contract"
         )
         assert "TotalCharges" in contract["ignored_columns"]
+
+
+TELCO_EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_PATH = (
+    REPO_ROOT
+    / "pipeline"
+    / "evidence"
+    / "telco-customer-churn"
+    / "execution-contract-materialization-evidence.json"
+)
+
+# Project Spec S0102: the real, active Telco categorical feature set, as
+# determined from the current execution contract rather than trusted
+# blindly from the spec's own illustrative list.
+_TELCO_CATEGORICAL_FEATURE_NAMES = sorted(
+    name
+    for name, defn in _load_json(TELCO_EXECUTION_CONTRACT_PATH)["feature_definitions"].items()
+    if defn.get("type") == "categorical"
+) if TELCO_EXECUTION_CONTRACT_PATH.exists() else []
+
+
+@pytest.mark.skipif(
+    not TELCO_EXECUTION_CONTRACT_PATH.exists(),
+    reason="Telco execution contract not yet materialized on disk",
+)
+def test_real_telco_execution_contract_every_active_categorical_feature_has_approved_domain():
+    """Project Spec S0102: every active Telco categorical feature must carry
+    a reviewed, approved, non-empty domain_constraints.values list on the
+    real, materialized execution contract -- no unresolved closed selects
+    remain."""
+    contract = _load_json(TELCO_EXECUTION_CONTRACT_PATH)
+    assert _TELCO_CATEGORICAL_FEATURE_NAMES, "expected at least one real Telco categorical feature"
+    for name in _TELCO_CATEGORICAL_FEATURE_NAMES:
+        values = contract["feature_definitions"][name].get("domain_constraints", {}).get("values")
+        assert values, f"{name}: expected a non-empty domain_constraints.values list"
+        assert len(set(values)) == len(values), f"{name}: accepted values must not contain duplicates"
+
+
+@pytest.mark.skipif(
+    not TELCO_EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_PATH.exists(),
+    reason="Telco execution contract materialization evidence not yet written to disk",
+)
+def test_real_telco_execution_contract_materialization_evidence_reports_full_categorical_coverage():
+    """Project Spec S0102: the real materialization evidence must name every
+    active Telco categorical feature as approved, with no unresolved
+    categorical features and no rejected declarations, and must confirm no
+    values were inferred during materialization."""
+    evidence = _load_json(TELCO_EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_PATH)
+    coverage = evidence["categorical_domain_materialization"]
+    assert sorted(coverage["approved_categorical_domains"]) == _TELCO_CATEGORICAL_FEATURE_NAMES
+    assert coverage["unresolved_categorical_features"] == []
+    assert coverage["values_inferred_during_materialization"] is False

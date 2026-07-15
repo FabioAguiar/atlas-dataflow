@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pipeline.discovery_evidence import (
+    build_categorical_domain_declaration,
     build_dataset_modeling_intent,
     materialize_dataset_modeling_intent,
     materialize_discovery_evidence,
@@ -673,3 +674,29 @@ def test_materialize_dataset_modeling_intent_excludes_identifier_from_features_a
         "reduced_and_sanitized": True,
     }
     assert not any(materialized["modeling_intent_boundary_confirmations"].values())
+
+
+def test_materialize_dataset_modeling_intent_preserves_categorical_domain_intent_traceability(
+    tmp_path,
+):
+    """Project Spec S0102: reviewed categorical_domain_intent declarations
+    built into the modeling intent survive materialization/persistence
+    verbatim, exactly like every other reviewed field on this artifact."""
+    tmp_repo = tmp_path / "repo"
+    tmp_repo.mkdir()
+
+    declaration = build_categorical_domain_declaration(
+        name="SeniorCitizen",
+        accepted_values=["0", "1"],
+        review_status="approved",
+        source_basis="Reviewed authoring basis; cardinality 2.",
+    )
+    modeling_intent = _telco_shaped_modeling_intent(categorical_domain_intent=[declaration])
+
+    materialized = materialize_dataset_modeling_intent(
+        modeling_intent,
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+    )
+
+    assert materialized["categorical_domain_intent"] == [declaration]

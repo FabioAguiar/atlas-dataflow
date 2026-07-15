@@ -1160,6 +1160,206 @@ def test_real_route_select_projected_categorical_value_domain_validation():
 
 
 # ---------------------------------------------------------------------------
+# S0101: GET /datasets/{dataset_slug}/contract loads the manifest-declared
+# public_contract role from a promoted release. api_main.load_public_contract
+# and api_main.PublicContractUnavailableError are api/public_contract_loader.py
+# re-exports (read-only reference for this spec -- see M27-03 tests above,
+# which already exercise this function against the real releases root).
+# ---------------------------------------------------------------------------
+
+import hashlib as _s0101_hashlib  # noqa: E402
+
+_S0101_VALID_PUBLIC_CONTRACT = {
+    "schema_version": "1.0.0",
+    "features": [
+        {
+            "name": "example_feature",
+            "label": "Example Feature",
+            "input_type": "number",
+            "optional": False,
+            "display_order": 1,
+        }
+    ],
+}
+
+
+def _s0101_write_release(release_dir: Path, *, artifacts: list) -> None:
+    release_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {"schema_version": "release-manifest.v1", "manifest_kind": "release_manifest", "artifacts": artifacts}
+    (release_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _s0101_write_artifact_file(release_dir: Path, relative_path: str, data: dict) -> str:
+    path = release_dir / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(data)
+    path.write_text(content, encoding="utf-8")
+    return _s0101_hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def test_public_contract_endpoint_loads_promoted_contract_distinct_from_runtime_contract():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0101-001"
+        _s0101_write_artifact_file(release_dir, "contracts/runtime-contract.json", {"runtime": True})
+        _s0101_write_artifact_file(release_dir, "contracts/public-contract.json", _S0101_VALID_PUBLIC_CONTRACT)
+        _s0101_write_release(
+            release_dir,
+            artifacts=[
+                {"role": "contracts", "reference": "contracts/runtime-contract.json"},
+                {"role": "public_contract", "reference": "contracts/public-contract.json"},
+            ],
+        )
+
+        original_resolve_dataset = api_main.resolve_dataset
+        original_load_public_contract = api_main.load_public_contract
+        try:
+            api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0101-001"
+            )
+            api_main.load_public_contract = (
+                lambda active_release: original_load_public_contract(active_release, releases_root=releases_root)
+            )
+
+            response = api_main.get_public_contract("example-dataset")
+
+            assert response == {
+                "dataset_slug": "example-dataset",
+                "contract": _S0101_VALID_PUBLIC_CONTRACT,
+            }
+        finally:
+            api_main.resolve_dataset = original_resolve_dataset
+            api_main.load_public_contract = original_load_public_contract
+
+
+def test_public_contract_endpoint_returns_public_contract_unavailable_when_role_absent_from_manifest():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0101-002"
+        _s0101_write_artifact_file(release_dir, "contracts/runtime-contract.json", {"runtime": True})
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "contracts", "reference": "contracts/runtime-contract.json"}],
+        )
+
+        original_resolve_dataset = api_main.resolve_dataset
+        original_load_public_contract = api_main.load_public_contract
+        try:
+            api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0101-002"
+            )
+            api_main.load_public_contract = (
+                lambda active_release: original_load_public_contract(active_release, releases_root=releases_root)
+            )
+
+            response = api_main.get_public_contract("example-dataset")
+
+            assert response.status_code == 503
+            payload = _response_json(response)
+            assert payload["error_code"] == "PUBLIC_CONTRACT_UNAVAILABLE"
+            _assert_no_internal_public_exposure(payload)
+        finally:
+            api_main.resolve_dataset = original_resolve_dataset
+            api_main.load_public_contract = original_load_public_contract
+
+
+def test_public_contract_endpoint_rejects_reference_identical_to_runtime_contract():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0101-003"
+        _s0101_write_artifact_file(release_dir, "contracts/runtime-contract.json", {"runtime": True})
+        _s0101_write_release(
+            release_dir,
+            artifacts=[
+                {"role": "contracts", "reference": "contracts/runtime-contract.json"},
+                {"role": "public_contract", "reference": "contracts/runtime-contract.json"},
+            ],
+        )
+
+        original_resolve_dataset = api_main.resolve_dataset
+        original_load_public_contract = api_main.load_public_contract
+        try:
+            api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0101-003"
+            )
+            api_main.load_public_contract = (
+                lambda active_release: original_load_public_contract(active_release, releases_root=releases_root)
+            )
+
+            response = api_main.get_public_contract("example-dataset")
+
+            assert response.status_code == 503
+            assert _response_json(response)["error_code"] == "PUBLIC_CONTRACT_UNAVAILABLE"
+        finally:
+            api_main.resolve_dataset = original_resolve_dataset
+            api_main.load_public_contract = original_load_public_contract
+
+
+def test_public_contract_loader_rejects_reference_escaping_release_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0101-004"
+        _s0101_write_release(
+            release_dir,
+            artifacts=[
+                {"role": "contracts", "reference": "contracts/runtime-contract.json"},
+                {"role": "public_contract", "reference": "../../etc/passwd"},
+            ],
+        )
+
+        raised = False
+        try:
+            api_main.load_public_contract("release-s0101-004", releases_root=releases_root)
+        except api_main.PublicContractUnavailableError:
+            raised = True
+        assert raised, "Expected PublicContractUnavailableError for an escaping reference"
+
+
+def test_public_contract_loader_rejects_missing_reference_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0101-005"
+        _s0101_write_release(
+            release_dir,
+            artifacts=[
+                {"role": "contracts", "reference": "contracts/runtime-contract.json"},
+                {"role": "public_contract", "reference": "contracts/public-contract.json"},
+            ],
+        )
+
+        raised = False
+        try:
+            api_main.load_public_contract("release-s0101-005", releases_root=releases_root)
+        except api_main.PublicContractUnavailableError:
+            raised = True
+        assert raised, "Expected PublicContractUnavailableError for a missing referenced file"
+
+
+def test_public_contract_loader_does_not_fall_back_to_repository_level_contract():
+    """No fallback to contracts/{dataset_slug}/public-contract.json in the
+    repository: only the active release's manifest-declared public_contract
+    role is ever consulted (Project Spec S0101)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        # A release manifest with no artifacts at all -- the loader must
+        # never reach into REPO_ROOT/contracts/telco-customer-churn/
+        # public-contract.json (which is a real, valid file) as a fallback.
+        release_dir = releases_root / "release-s0101-006"
+        release_dir.mkdir(parents=True, exist_ok=True)
+        (release_dir / "manifest.json").write_text(
+            json.dumps({"schema_version": "release-manifest.v1", "manifest_kind": "release_manifest", "artifacts": []}),
+            encoding="utf-8",
+        )
+
+        raised = False
+        try:
+            api_main.load_public_contract("release-s0101-006", releases_root=releases_root)
+        except api_main.PublicContractUnavailableError:
+            raised = True
+        assert raised, "Expected PublicContractUnavailableError with no repository-level fallback"
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 

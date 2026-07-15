@@ -3,7 +3,7 @@ Publisher release manifest generator.
 
 Reads a validation result from publisher/runs/{run_id}/validation-result.json,
 gates on promotion_gate.promotion_allowed: true, calculates SHA-256 hashes for
-all 7 required artifact role files in the validated release candidate, assembles
+all 8 required artifact role files in the validated release candidate, assembles
 a release manifest conforming to publisher/release-manifest.schema.json, and
 writes it to publisher/runs/{run_id}/manifest.json (same run directory).
 
@@ -22,6 +22,7 @@ _CANDIDATE_FILENAME = "release-candidate.json"
 
 _REQUIRED_ROLES = (
     "contracts",
+    "public_contract",
     "predictive_bundle",
     "metrics",
     "model_card",
@@ -29,22 +30,6 @@ _REQUIRED_ROLES = (
     "manifest_input",
     "candidate_metadata",
 )
-
-# Project Spec S0099 gap, disclosed rather than worked around: a distinct
-# "public_contract" manifest artifact role (matching
-# api/public_contract_loader.py's already-existing _PUBLIC_CONTRACT_ROLE
-# expectation) cannot be added to _REQUIRED_ROLES here without also editing
-# publisher/release-manifest.schema.json's closed artifact_role /
-# required_artifact_role enums and required_artifact_role_list's fixed
-# minItems==maxItems==7 -- neither of which is in this spec's
-# allowed_edit_paths. Adding "public_contract" to _REQUIRED_ROLES without
-# that schema change makes every generated manifest fail
-# _validate_manifest_schema below (weakening validation to work around this
-# is explicitly out of scope). pipeline/assemble_candidate.py still declares
-# a distinct "public_contract" artifact_roles entry in release-candidate.json
-# (real, inert groundwork, not schema-validated anywhere today) so a future,
-# separately authorized change to the two release-candidate/release-manifest
-# schemas can wire it through with no further release-candidate-side work.
 
 
 def _err(code: str, field: str | None, message: str) -> dict:

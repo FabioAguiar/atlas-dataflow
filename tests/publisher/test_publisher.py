@@ -22,6 +22,7 @@ RELEASE_VERSION = "2026.06.19"
 
 REQUIRED_ROLES = (
     "contracts",
+    "public_contract",
     "predictive_bundle",
     "metrics",
     "model_card",
@@ -36,6 +37,7 @@ def _copy_publisher_contracts(tmp_repo: Path) -> None:
         "publisher/release-candidate.operational-note.json",
         "publisher/release-manifest.schema.json",
         "publisher/evidence/publication-validation-evidence.schema.json",
+        "contracts/public-contract.schema.json",
     ):
         src = REPO_ROOT / relative
         dst = tmp_repo / relative
@@ -88,6 +90,23 @@ def _role_path(role: str) -> str:
 
 
 def _artifact_payload(role: str) -> dict:
+    if role == "public_contract":
+        # A real contracts/public-contract.schema.json instance
+        # (additionalProperties: false) -- cannot carry the generic
+        # dataset_identity/role/etc keys the other roles use below
+        # (Project Spec S0101).
+        return {
+            "schema_version": "1.0.0",
+            "features": [
+                {
+                    "name": "example_feature",
+                    "label": "Example Feature",
+                    "input_type": "number",
+                    "optional": False,
+                    "display_order": 1,
+                }
+            ],
+        }
     payload = {
         "role": role,
         "dataset_identity": {"dataset_slug": DATASET_SLUG},
@@ -556,7 +575,11 @@ def test_synchronized_promotion_result_validates_against_schema_for_both_release
             artifact_path = candidate_dir / _role_path(role)
             artifact_path.parent.mkdir(parents=True, exist_ok=True)
             payload = _artifact_payload(role)
-            payload["release_identity"] = {"release_id": release_id}
+            if role != "public_contract":
+                # The real public-contract schema is additionalProperties:
+                # false (schema_version + features only) and cannot carry
+                # this override key (Project Spec S0101).
+                payload["release_identity"] = {"release_id": release_id}
             artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         candidate = {
             "schema_version": "release-candidate.v1",
@@ -711,18 +734,7 @@ def test_manifest_verify_detects_hash_mismatch(tmp_path):
 #
 # publisher/manifest.py's own required_hash_coverage.validation_policy has
 # always declared unsafe_reference_rejects: true, but generate_manifest()
-# never actually enforced it until now. A distinct "public_contract" manifest
-# role (matching api/public_contract_loader.py's already-existing
-# _PUBLIC_CONTRACT_ROLE expectation) is a real, disclosed gap this spec
-# cannot close here: publisher/release-manifest.schema.json's artifact_role /
-# required_artifact_role enums and required_artifact_role_list's fixed
-# minItems==maxItems==7 do not include "public_contract", and that schema
-# file is outside this implementation's allowed_edit_paths -- adding the role
-# to _REQUIRED_ROLES without a schema change would make _validate_manifest_schema
-# reject every generated manifest, which is not an acceptable way to "add" the
-# role. See pipeline/assemble_candidate.py's own release-candidate.json
-# artifact_roles.public_contract entry (tests/test_m22_prepare_candidate.py)
-# for the part of this acceptance criterion that could be delivered.
+# never actually enforced it until now.
 
 
 def test_manifest_rejects_unsafe_role_reference(tmp_path):
@@ -757,6 +769,55 @@ def test_manifest_rejects_absolute_role_reference(tmp_path):
     assert not (run_dir / "manifest.json").exists()
 
 
+# --- S0101: public_contract as the eighth required publisher artifact role ---
+
+
+def test_public_contract_is_manifest_hashed_and_promoted_distinctly_from_contracts(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    candidate_dir = _candidate_dir(tmp_repo)
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+    assert validation_result["validation_outcome"] == "accepted"
+    assert validation_result["required_artifact_role_results"]["public_contract"]["status"] == "present"
+    assert validation_result["schema_compatibility"]["public_contract"]["compatible"] is True
+
+    run_dir = _latest_run_dir(tmp_repo)
+    manifest_result = manifest.run(str(run_dir), repo_root=tmp_repo)
+    manifest_roles = {a["role"]: a for a in manifest_result["artifacts"]}
+    assert "public_contract" in manifest_roles
+    assert manifest_roles["public_contract"]["reference"] != manifest_roles["contracts"]["reference"]
+    assert "public_contract" in manifest_result["required_hash_coverage"]["required_artifact_roles"]
+
+    promotion_result = promote.run(str(run_dir), repo_root=tmp_repo)
+    assert promotion_result["promotion_outcome"] == "promoted"
+
+    release_dir = tmp_repo / "releases" / RELEASE_ID
+    promoted_public_contract = release_dir / manifest_roles["public_contract"]["reference"]
+    promoted_runtime_contract = release_dir / manifest_roles["contracts"]["reference"]
+    assert promoted_public_contract.is_file()
+    assert promoted_runtime_contract.is_file()
+    assert promoted_public_contract != promoted_runtime_contract
+
+    valid, errors = manifest.verify(release_dir / "manifest.json", release_dir)
+    assert valid is True
+    assert errors == []
+
+
+def test_candidate_missing_public_contract_is_rejected(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo, missing_role="public_contract")
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert validation_result["promotion_gate"]["promotion_allowed"] is False
+    assert any(
+        r["code"] == "missing_public_contract"
+        for r in validation_result["rejection"]["reasons"]
+    )
+
+
 # --- S0034: Telco publisher-validation run materialization ---
 
 TELCO_DATASET_SLUG = "telco-customer-churn"
@@ -774,23 +835,39 @@ def _write_telco_release_candidate(tmp_repo: Path, missing_role: str | None = No
         if role == missing_role:
             continue
 
-        payload = {
-            "role": role,
-            "dataset_identity": {"dataset_slug": TELCO_DATASET_SLUG},
-            "release_identity": {"release_id": TELCO_RELEASE_ID},
-            "availability_status": "real_dataflow_artifact",
-            "placeholder_policy": {
-                "fixtures_allowed": False,
-                "placeholders_allowed": False,
-                "missing_required_behavior": "reject",
-            },
-        }
-        if role in {"metrics", "model_card", "predictive_bundle"}:
-            payload["model_id"] = "telco-model-001"
-        if role == "predictive_bundle":
-            payload["runtime_contract_ref"] = "artifacts/contracts.json"
-        if role == "public_context":
-            payload["public_projection"] = {"safe_for_public": True}
+        if role == "public_contract":
+            # A real contracts/public-contract.schema.json instance
+            # (additionalProperties: false) -- Project Spec S0101.
+            payload = {
+                "schema_version": "1.0.0",
+                "features": [
+                    {
+                        "name": "tenure",
+                        "label": "Tenure",
+                        "input_type": "number",
+                        "optional": False,
+                        "display_order": 1,
+                    }
+                ],
+            }
+        else:
+            payload = {
+                "role": role,
+                "dataset_identity": {"dataset_slug": TELCO_DATASET_SLUG},
+                "release_identity": {"release_id": TELCO_RELEASE_ID},
+                "availability_status": "real_dataflow_artifact",
+                "placeholder_policy": {
+                    "fixtures_allowed": False,
+                    "placeholders_allowed": False,
+                    "missing_required_behavior": "reject",
+                },
+            }
+            if role in {"metrics", "model_card", "predictive_bundle"}:
+                payload["model_id"] = "telco-model-001"
+            if role == "predictive_bundle":
+                payload["runtime_contract_ref"] = "artifacts/contracts.json"
+            if role == "public_context":
+                payload["public_projection"] = {"safe_for_public": True}
 
         artifact_path = candidate_dir / role_path
         artifact_path.parent.mkdir(parents=True, exist_ok=True)

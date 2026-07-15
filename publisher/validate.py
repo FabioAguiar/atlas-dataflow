@@ -19,9 +19,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _CANDIDATE_FILENAME = "release-candidate.json"
+_DEFAULT_REPO_ROOT = Path(__file__).parent.parent
+_PUBLIC_CONTRACT_ROLE = "public_contract"
 
 _REQUIRED_ROLES = (
     "contracts",
+    "public_contract",
     "predictive_bundle",
     "metrics",
     "model_card",
@@ -32,6 +35,7 @@ _REQUIRED_ROLES = (
 
 _SCHEMA_COMPAT_ROLES = frozenset({
     "contracts",
+    "public_contract",
     "manifest_input",
     "metrics",
     "model_card",
@@ -40,6 +44,7 @@ _SCHEMA_COMPAT_ROLES = frozenset({
 
 _MISSING_ROLE_CODE = {
     "contracts": "missing_runtime_contract",
+    "public_contract": "missing_public_contract",
     "predictive_bundle": "missing_predictive_bundle",
     "metrics": "missing_metrics",
     "model_card": "missing_model_card",
@@ -50,6 +55,7 @@ _MISSING_ROLE_CODE = {
 
 _SCHEMA_INCOMPAT_CODE = {
     "contracts": "contract_schema_incompatible",
+    "public_contract": "public_contract_schema_incompatible",
     "manifest_input": "manifest_input_schema_incompatible",
     "metrics": "metrics_schema_incompatible",
     "model_card": "model_card_schema_incompatible",
@@ -209,6 +215,41 @@ def _reference_value(data: dict, reference_key: str) -> str | None:
     )
 
 
+def _unsafe_candidate_reference(role_path_str: str, candidate_dir: Path) -> bool:
+    """True when role_path_str is absolute, contains parent-traversal
+    segments, or resolves outside candidate_dir. Mirrors
+    publisher.manifest._unsafe_role_reference (Project Spec S0101): the
+    public_contract role must be rejected at validation time, before
+    promotion_gate can ever become true, not only later at manifest
+    generation."""
+    path = Path(role_path_str)
+    if path.is_absolute() or ".." in path.parts:
+        return True
+    resolved = (candidate_dir / path).resolve()
+    return not resolved.is_relative_to(candidate_dir.resolve())
+
+
+def _public_contract_conforms_to_schema(data: dict, repo_root: Path) -> bool:
+    """Validate a parsed public_contract artifact against the
+    repository-authoritative contracts/public-contract.schema.json (Project
+    Spec S0101). Fails closed on any missing schema, unreadable schema, or
+    missing jsonschema dependency -- matching
+    pipeline/contract_derivation.py's existing fail-safe convention for this
+    same schema, rather than silently skipping the check."""
+    try:
+        import jsonschema
+    except ImportError:
+        return False
+    schema = _load_json_if_possible(repo_root / "contracts" / "public-contract.schema.json")
+    if schema is None:
+        return False
+    try:
+        jsonschema.Draft7Validator(schema).validate(data)
+    except (jsonschema.ValidationError, jsonschema.SchemaError):
+        return False
+    return True
+
+
 def _load_operational_note(repo_root: Path) -> dict:
     note_path = repo_root / "publisher" / "release-candidate.operational-note.json"
     try:
@@ -235,7 +276,7 @@ def _load_operational_note(repo_root: Path) -> dict:
         }
 
 
-def validate_candidate(candidate: dict, candidate_dir: Path) -> dict:
+def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | None = None) -> dict:
     """
     Validate a loaded release candidate dict.
 
@@ -245,7 +286,12 @@ def validate_candidate(candidate: dict, candidate_dir: Path) -> dict:
 
     Errors are deterministic and sanitized: no filesystem paths, secrets,
     or internal operational details in any message.
+
+    repo_root defaults to the real repository root when not supplied. It is
+    used only to locate contracts/public-contract.schema.json for the
+    public_contract role's schema-compatibility check (Project Spec S0101).
     """
+    resolved_repo_root = Path(repo_root) if repo_root is not None else _DEFAULT_REPO_ROOT
     errors: list[dict] = []
     rejection_reasons: list[dict] = []
 
@@ -320,6 +366,23 @@ def validate_candidate(candidate: dict, candidate_dir: Path) -> dict:
             continue
 
         role_path_str: str = role_def["path"]
+
+        if role == _PUBLIC_CONTRACT_ROLE and _unsafe_candidate_reference(role_path_str, candidate_dir):
+            reason = _rejection_reason(
+                "unsafe_candidate_artifact",
+                f"Required artifact role '{role}' has an unsafe reference.",
+                role,
+            )
+            rejection_reasons.append(reason)
+            role_results[role] = {
+                "role": role,
+                "status": "unsafe",
+                "required": True,
+                "artifact_reference": None,
+                "reason": reason,
+            }
+            continue
+
         artifact_file = candidate_dir / role_path_str
         if not artifact_file.is_file():
             reason = _rejection_reason(
@@ -403,9 +466,10 @@ def validate_candidate(candidate: dict, candidate_dir: Path) -> dict:
     if id_mismatch_reasons:
         identifier_consistency["mismatch_reasons"] = id_mismatch_reasons
 
-    # --- Schema compatibility (JSON validity, 5 roles) ---
+    # --- Schema compatibility (JSON validity, 6 roles; public_contract also
+    # gets real JSON Schema validation below, not just parseability) ---
     schema_compatibility: dict[str, dict] = {}
-    for role in ("contracts", "manifest_input", "metrics", "model_card", "candidate_metadata"):
+    for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "candidate_metadata"):
         rr = role_results.get(role, {})
         if rr.get("status") != "present":
             schema_compatibility[role] = {"checked": False, "compatible": False}
@@ -413,14 +477,13 @@ def validate_candidate(candidate: dict, candidate_dir: Path) -> dict:
 
         artifact_ref = rr.get("artifact_reference", "")
         artifact_file = candidate_dir / artifact_ref
+        incompat_code = _SCHEMA_INCOMPAT_CODE.get(role, "contract_schema_incompatible")
         try:
             raw = artifact_file.read_text(encoding="utf-8").strip()
             if not raw:
                 raise ValueError("empty file")
-            json.loads(raw)
-            schema_compatibility[role] = {"checked": True, "compatible": True}
+            parsed_artifact = json.loads(raw)
         except (OSError, ValueError, json.JSONDecodeError):
-            incompat_code = _SCHEMA_INCOMPAT_CODE.get(role, "contract_schema_incompatible")
             reason = _rejection_reason(
                 incompat_code,
                 f"Artifact file for role '{role}' is not parseable as valid non-empty JSON.",
@@ -432,6 +495,28 @@ def validate_candidate(candidate: dict, candidate_dir: Path) -> dict:
                 "compatible": False,
                 "reason": reason,
             }
+            continue
+
+        if role == _PUBLIC_CONTRACT_ROLE and not isinstance(parsed_artifact, dict):
+            parsed_artifact = None
+        if role == _PUBLIC_CONTRACT_ROLE and (
+            parsed_artifact is None
+            or not _public_contract_conforms_to_schema(parsed_artifact, resolved_repo_root)
+        ):
+            reason = _rejection_reason(
+                incompat_code,
+                "Artifact for role 'public_contract' does not conform to the public contract schema.",
+                role,
+            )
+            rejection_reasons.append(reason)
+            schema_compatibility[role] = {
+                "checked": True,
+                "compatible": False,
+                "reason": reason,
+            }
+            continue
+
+        schema_compatibility[role] = {"checked": True, "compatible": True}
 
     json_artifacts: dict[str, dict] = {}
     for role in _JSON_COMPAT_ROLES:
@@ -663,7 +748,7 @@ def _empty_validation_result(errors: list[dict], candidate_dir: Path) -> dict:
         },
         "schema_compatibility": {
             role: {"checked": False, "compatible": False}
-            for role in ("contracts", "manifest_input", "metrics", "model_card", "candidate_metadata")
+            for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "candidate_metadata")
         },
         "cross_artifact_consistency": {
             "checked": False,
@@ -687,7 +772,7 @@ def _empty_validation_result(errors: list[dict], candidate_dir: Path) -> dict:
     }
 
 
-def validate_candidate_file(candidate_dir: Path) -> dict:
+def validate_candidate_file(candidate_dir: Path, repo_root: Path | None = None) -> dict:
     """Load the release candidate JSON from a candidate directory and validate it."""
     candidate_json_path = candidate_dir / _CANDIDATE_FILENAME
     try:
@@ -712,7 +797,7 @@ def validate_candidate_file(candidate_dir: Path) -> dict:
             )],
             candidate_dir,
         )
-    return validate_candidate(candidate, candidate_dir)
+    return validate_candidate(candidate, candidate_dir, repo_root=repo_root)
 
 
 def _build_validation_result(validation: dict) -> dict:
@@ -740,7 +825,7 @@ def _build_validation_result(validation: dict) -> dict:
                 "artifact_reference": None,
             }
 
-    for role in ("contracts", "manifest_input", "metrics", "model_card", "candidate_metadata"):
+    for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "candidate_metadata"):
         if role not in schema_compatibility:
             schema_compatibility[role] = {"checked": False, "compatible": False}
 
@@ -837,7 +922,7 @@ def run(candidate_dir_path: str, repo_root: Path | None = None) -> dict:
     if not candidate_dir.is_dir():
         raise ValueError("Candidate directory does not exist or is not a directory.")
 
-    validation = validate_candidate_file(candidate_dir)
+    validation = validate_candidate_file(candidate_dir, repo_root=repo_root)
     result = _build_validation_result(validation)
 
     run_id = "validate-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

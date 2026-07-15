@@ -369,3 +369,185 @@ def test_no_extra_fields_in_execution_contract(tmp_path: Path) -> None:
     forbidden_keys = {"validation_hint", "review_status", "known_values", "review_note", "inferred_type"}
     for key in forbidden_keys:
         assert key not in result, f"auxiliary field '{key}' must not appear in execution contract"
+
+
+# ---------------------------------------------------------------------------
+# S0101: public_contract release manifest, validation, and promotion
+# integrity -- generic manifest-driven promotion of the eighth required
+# publisher artifact role, distinct from this file's other tests above
+# (pipeline.promote_contract's human-facing-contract -> execution-contract
+# promotion, an unrelated pipeline that happens to share the word
+# "promotion").
+# ---------------------------------------------------------------------------
+
+from publisher import manifest as publisher_manifest  # noqa: E402
+from publisher import promote as publisher_promote  # noqa: E402
+from publisher import validate as publisher_validate  # noqa: E402
+
+_S0101_DATASET_SLUG = "contract-promotion-dataset"
+_S0101_RELEASE_ID = "release-20260714-001"
+_S0101_REQUIRED_ROLES = (
+    "contracts",
+    "public_contract",
+    "predictive_bundle",
+    "metrics",
+    "model_card",
+    "public_context",
+    "manifest_input",
+    "candidate_metadata",
+)
+
+
+def _s0101_write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _s0101_artifact_payload(role: str) -> dict:
+    if role == "public_contract":
+        return {
+            "schema_version": "1.0.0",
+            "features": [
+                {
+                    "name": "example_feature",
+                    "label": "Example Feature",
+                    "input_type": "number",
+                    "optional": False,
+                    "display_order": 1,
+                }
+            ],
+        }
+    payload = {
+        "role": role,
+        "dataset_identity": {"dataset_slug": _S0101_DATASET_SLUG},
+        "release_identity": {"release_id": _S0101_RELEASE_ID},
+        "availability_status": "real_dataflow_artifact",
+        "placeholder_policy": {
+            "fixtures_allowed": False,
+            "placeholders_allowed": False,
+            "missing_required_behavior": "reject",
+        },
+    }
+    if role in {"metrics", "model_card", "predictive_bundle"}:
+        payload["model_id"] = "contract-promotion-model-001"
+    if role == "predictive_bundle":
+        payload["runtime_contract_ref"] = "artifacts/contracts.json"
+    if role == "public_context":
+        payload["public_projection"] = {"safe_for_public": True}
+    return payload
+
+
+def _s0101_prepare_tmp_repo(tmp_path: Path) -> tuple[Path, Path]:
+    tmp_repo = tmp_path / "repo"
+    for relative in (
+        "publisher/release-candidate.operational-note.json",
+        "publisher/release-manifest.schema.json",
+        "contracts/public-contract.schema.json",
+    ):
+        src = REPO_ROOT / relative
+        dst = tmp_repo / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+
+    candidate_dir = tmp_repo / "releases" / "candidates" / _S0101_DATASET_SLUG / _S0101_RELEASE_ID
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    artifact_roles = {}
+    for role in _S0101_REQUIRED_ROLES:
+        role_path = f"artifacts/{role}.json"
+        artifact_roles[role] = {"role": role, "path": role_path, "required": True}
+        _s0101_write_json(candidate_dir / role_path, _s0101_artifact_payload(role))
+
+    candidate = {
+        "schema_version": "release-candidate.v1",
+        "candidate_kind": "release_candidate",
+        "dataset_identity": {"dataset_slug": _S0101_DATASET_SLUG, "dataset_title": "Contract Promotion Dataset"},
+        "release_identity": {
+            "release_id": _S0101_RELEASE_ID,
+            "release_version": "1.0.0",
+            "created_at": "2026-07-14T00:00:00Z",
+        },
+        "source_run": {"run_id": "test-run", "producer": "pytest", "created_at": "2026-07-14T00:00:00Z"},
+        "artifact_roles": artifact_roles,
+        "candidate_metadata": {
+            "assembled_by": "pytest",
+            "assembled_at": "2026-07-14T00:00:00Z",
+            "intended_publisher_action": "validate_candidate",
+            "completeness_validation": {
+                "required_artifact_roles": list(_S0101_REQUIRED_ROLES),
+                "hash_policy": "publisher_calculates_hashes",
+                "manifest_policy": "publisher_generates_manifest",
+            },
+        },
+        "state_boundaries": {
+            "pipeline_run_is_publishable": False,
+            "candidate_is_published_release": False,
+            "promotion_required": True,
+            "registry_update_allowed_in_candidate": False,
+            "public_upload_required": False,
+            "web_administration_required": False,
+            "database_publication_management_required": False,
+            "runtime_consumes_temporary_pipeline_output": False,
+        },
+    }
+    _s0101_write_json(candidate_dir / "release-candidate.json", candidate)
+    return tmp_repo, candidate_dir
+
+
+def test_promotion_copies_public_contract_and_no_undeclared_files(tmp_path: Path) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    publisher_validate.run(str(candidate_dir), repo_root=tmp_repo)
+    run_dirs = sorted((tmp_repo / "publisher" / "runs").iterdir())
+    run_dir = run_dirs[-1]
+    manifest_result = publisher_manifest.run(str(run_dir), repo_root=tmp_repo)
+    promotion_result = publisher_promote.run(str(run_dir), repo_root=tmp_repo)
+
+    assert promotion_result["promotion_outcome"] == "promoted"
+
+    release_dir = tmp_repo / "releases" / _S0101_RELEASE_ID
+    manifest_references = {a["role"]: a["reference"] for a in manifest_result["artifacts"]}
+    assert manifest_references["public_contract"] != manifest_references["contracts"]
+
+    declared_files = {release_dir / ref for ref in manifest_references.values()}
+    declared_files.add(release_dir / "manifest.json")
+    actual_files = {p for p in release_dir.rglob("*") if p.is_file()}
+    assert actual_files == declared_files, "promotion must copy exactly the manifest-declared files"
+
+    promoted_public_contract = release_dir / manifest_references["public_contract"]
+    assert promoted_public_contract.is_file()
+    promoted_data = json.loads(promoted_public_contract.read_text(encoding="utf-8"))
+    assert promoted_data["schema_version"] == "1.0.0"
+    assert promoted_data["features"]
+
+
+def test_promoted_public_contract_hash_matches_manifest_and_verification_passes(tmp_path: Path) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    publisher_validate.run(str(candidate_dir), repo_root=tmp_repo)
+    run_dirs = sorted((tmp_repo / "publisher" / "runs").iterdir())
+    run_dir = run_dirs[-1]
+    publisher_manifest.run(str(run_dir), repo_root=tmp_repo)
+    publisher_promote.run(str(run_dir), repo_root=tmp_repo)
+
+    release_dir = tmp_repo / "releases" / _S0101_RELEASE_ID
+    valid, errors = publisher_manifest.verify(release_dir / "manifest.json", release_dir)
+    assert valid is True
+    assert errors == []
+
+
+def test_manifest_generation_is_deterministic_for_public_contract(tmp_path: Path) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    result_1 = publisher_validate.validate_candidate_file(candidate_dir, repo_root=tmp_repo)
+    result_2 = publisher_validate.validate_candidate_file(candidate_dir, repo_root=tmp_repo)
+    assert result_1["role_results"]["public_contract"]["status"] == "present"
+    assert result_2["role_results"]["public_contract"]["status"] == "present"
+
+    manifest_1, errors_1 = publisher_manifest.generate_manifest(candidate_dir)
+    manifest_2, errors_2 = publisher_manifest.generate_manifest(candidate_dir)
+    assert errors_1 == []
+    assert errors_2 == []
+
+    hashes_1 = {a["role"]: a["hash_value"] for a in manifest_1["artifacts"]}
+    hashes_2 = {a["role"]: a["hash_value"] for a in manifest_2["artifacts"]}
+    assert hashes_1["public_contract"] == hashes_2["public_contract"]

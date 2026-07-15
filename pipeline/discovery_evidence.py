@@ -505,6 +505,60 @@ def authoring_helper_evidence_policy() -> dict[str, bool]:
 _MODELING_INTENT_CONTRACT_VERSION = "dataset_modeling_intent.v1"
 _MODELING_INTENT_DEFAULT_TYPE_INTENT = "requires_review"
 
+# Project Spec S0102: recognised review statuses for a single reviewed
+# categorical-domain declaration. "approved" is the only status that may be
+# promoted into execution policy by contract_derivation._build_execution_contract;
+# "pending_review" keeps a declaration visible as an unresolved review item
+# without ever silently becoming an accepted inference domain.
+CATEGORICAL_DOMAIN_REVIEW_STATUSES = frozenset({"approved", "pending_review"})
+
+
+def build_categorical_domain_declaration(
+    name: str,
+    accepted_values: Sequence[str],
+    review_status: str,
+    source_basis: str,
+    closed_for_inference: bool = True,
+) -> dict[str, Any]:
+    """Build a single reviewed categorical-domain declaration entry (Project Spec S0102).
+
+    This is deliberately not the same thing as an observed/reduced sample --
+    `accepted_values` here is asserted by the caller as the explicitly
+    reviewed, canonical accepted domain for `name`, not merely whatever was
+    observed in a dataset sample. Raises ValueError on a malformed
+    declaration (missing name, unrecognised review_status, empty/blank/
+    non-string/duplicate accepted_values) rather than silently accepting an
+    ambiguous one. Approval to actually promote this declaration into
+    execution policy is decided later, at execution-contract materialization,
+    from `review_status == "approved"` alone -- this builder does not decide
+    approval itself.
+    """
+    if not name or not isinstance(name, str):
+        raise ValueError(
+            "categorical domain declaration requires a non-empty string feature name"
+        )
+    if review_status not in CATEGORICAL_DOMAIN_REVIEW_STATUSES:
+        raise ValueError(
+            f"{name}: review_status must be one of "
+            f"{sorted(CATEGORICAL_DOMAIN_REVIEW_STATUSES)}, got {review_status!r}"
+        )
+    values = list(accepted_values)
+    if not values:
+        raise ValueError(f"{name}: accepted_values must be non-empty")
+    if any(not isinstance(v, str) or v.strip() == "" for v in values):
+        raise ValueError(f"{name}: accepted_values must be non-blank strings")
+    if len(set(values)) != len(values):
+        raise ValueError(f"{name}: accepted_values must not contain duplicate values")
+
+    return {
+        "name": name,
+        "accepted_values": values,
+        "review_status": review_status,
+        "source_basis": source_basis,
+        "closed_for_inference": bool(closed_for_inference),
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -536,6 +590,7 @@ def build_dataset_modeling_intent(
     split_policy_candidate: dict[str, Any] | None = None,
     open_questions: Sequence[str] | None = None,
     reduced_discovery_evidence_ref: str | None = None,
+    categorical_domain_intent: Sequence[dict[str, Any]] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build a `dataset_modeling_intent.v1` authoring-intent object.
@@ -548,6 +603,14 @@ def build_dataset_modeling_intent(
     columns via `derive_feature_candidates`; a column's coarse type intent
     defaults to `"requires_review"` unless explicitly overridden, so ambiguous
     fields are never silently coerced.
+
+    `categorical_domain_intent` (Project Spec S0102) is an optional sequence
+    of reviewed categorical-domain declarations, each built via
+    `build_categorical_domain_declaration` above. Only entries with
+    `review_status == "approved"` may later be promoted into execution
+    policy by `contract_derivation._build_execution_contract` -- this builder
+    only carries the declarations forward verbatim, it never approves or
+    rejects one itself.
     """
     feature_candidates = derive_feature_candidates(
         columns, target_column=target_column, identifier_columns=identifier_columns
@@ -594,6 +657,7 @@ def build_dataset_modeling_intent(
         "metric_candidates": list(metric_candidates or []),
         "split_policy_candidate": split_policy_candidate,
         "open_questions": list(open_questions or []),
+        "categorical_domain_intent": [dict(entry) for entry in (categorical_domain_intent or [])],
         "modeling_intent_boundary_confirmations": dict(
             MODELING_INTENT_BOUNDARY_CONFIRMATIONS
         ),

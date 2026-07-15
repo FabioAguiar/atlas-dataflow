@@ -40,6 +40,16 @@ authoring-intent object (Project Spec S0013,
 ignored_columns, feature type) where the modeling intent already supports
 it, but is never itself an execution contract — unresolved review items stay
 visible instead of being converted into accepted execution policy.
+
+`_build_execution_contract` (Project Spec S0024, updated by S0102) also
+materializes any reviewed, approved `categorical_domain_intent` declarations
+from the modeling intent into `feature_definitions[name].domain_constraints.values`.
+Only declarations with `review_status == "approved"` for an active
+categorical feature are ever applied; every other declaration is left
+unresolved/rejected and named explicitly in the companion
+`execution_contract_materialization_evidence.v1`'s
+`categorical_domain_materialization` section rather than silently
+approved or silently dropped.
 """
 
 import argparse
@@ -434,6 +444,48 @@ _POLICY_DEFAULT_FIELDS = (
 )
 
 
+CATEGORICAL_DOMAIN_APPROVED_STATUS = "approved"
+
+
+def _validate_categorical_domain_declaration(
+    entry: dict[str, Any],
+    feature_columns: list[str],
+    feature_definitions: dict[str, Any],
+) -> tuple[list[str] | None, str | None]:
+    """Validate a single reviewed categorical-domain declaration (Project Spec S0102).
+
+    Returns `(values, None)` when `entry` is a well-formed, approved
+    declaration for an active categorical feature; returns `(None, reason)`
+    otherwise. Never raises -- an invalid or unresolved declaration is a
+    normal, reportable outcome (rejected/unresolved), not an exceptional one.
+    Re-validates the declaration's own shape independently of
+    `pipeline.discovery_evidence.build_categorical_domain_declaration`, since
+    a hand-built `dataset_modeling_intent` (e.g. in tests, or an unreviewed
+    upstream artifact) may not have gone through that builder.
+    """
+    name = entry.get("name")
+    if not name or not isinstance(name, str):
+        return None, "declaration is missing a valid, non-empty feature name"
+    if name not in feature_columns:
+        return None, f"{name}: not an active feature column (ignored, target, or unknown column)"
+    feature_type = feature_definitions.get(name, {}).get("type")
+    if feature_type != "categorical":
+        return None, f"{name}: declared feature type is {feature_type!r}, not categorical"
+    if entry.get("review_status") != CATEGORICAL_DOMAIN_APPROVED_STATUS:
+        return None, (
+            f"{name}: review_status is {entry.get('review_status')!r}, not "
+            f"{CATEGORICAL_DOMAIN_APPROVED_STATUS!r}"
+        )
+    values = entry.get("accepted_values")
+    if not values or not isinstance(values, list):
+        return None, f"{name}: accepted_values must be a non-empty list"
+    if any(not isinstance(v, str) or v.strip() == "" for v in values):
+        return None, f"{name}: accepted_values must be non-blank strings"
+    if len(set(values)) != len(values):
+        return None, f"{name}: accepted_values must not contain duplicate values"
+    return list(values), None
+
+
 def _unresolved_review_columns(preparation_recipe: dict[str, Any] | None) -> dict[str, str]:
     """Columns with a missing-value-handling transformation whose
     review_status is not 'explicit'/'inferred_approved'.
@@ -527,6 +579,19 @@ def _build_execution_contract(
             optional_columns.append(name)
         else:
             required_columns.append(name)
+
+    # Project Spec S0102: materialize approved, reviewed categorical-domain
+    # declarations into feature_definitions[name].domain_constraints.values.
+    # An invalid or unapproved declaration is never applied -- it is simply
+    # not materialized here; the accompanying materialization evidence (see
+    # _build_execution_contract_materialization_evidence) independently
+    # re-derives and names every rejected/unresolved case for disclosure.
+    for entry in modeling_intent.get("categorical_domain_intent") or []:
+        values, _rejection_reason = _validate_categorical_domain_declaration(
+            entry, feature_columns, feature_definitions
+        )
+        if values is not None:
+            feature_definitions[entry["name"]]["domain_constraints"] = {"values": values}
 
     seed = (discovery_evidence.get("generation_settings") or {}).get("seed")
 
@@ -627,6 +692,39 @@ def _build_execution_contract_materialization_evidence(
         for name, definition in execution_contract["feature_definitions"].items()
     }
 
+    # Project Spec S0102: reduced categorical-domain coverage. Independently
+    # re-derived from the final execution_contract + the modeling intent's own
+    # categorical_domain_intent, rather than trusted from hidden state set
+    # during _build_execution_contract -- mirrors the existing
+    # _unresolved_review_columns re-derivation convention used above.
+    categorical_feature_names = sorted(
+        name
+        for name, definition in execution_contract["feature_definitions"].items()
+        if definition.get("type") == "categorical"
+    )
+    approved_categorical_domains = sorted(
+        name
+        for name in categorical_feature_names
+        if execution_contract["feature_definitions"][name].get("domain_constraints", {}).get("values")
+    )
+    unresolved_categorical_features = sorted(
+        set(categorical_feature_names) - set(approved_categorical_domains)
+    )
+    rejected_categorical_domain_declarations = []
+    for entry in modeling_intent.get("categorical_domain_intent") or []:
+        entry_name = entry.get("name")
+        if entry_name in approved_categorical_domains:
+            continue
+        _values, rejection_reason = _validate_categorical_domain_declaration(
+            entry,
+            execution_contract["feature_columns"],
+            execution_contract["feature_definitions"],
+        )
+        if rejection_reason is not None:
+            rejected_categorical_domain_declarations.append(
+                {"name": entry_name, "reason": rejection_reason}
+            )
+
     return {
         "artifact_type": "execution_contract_materialization_evidence",
         "contract_version": EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_CONTRACT_VERSION,
@@ -670,6 +768,12 @@ def _build_execution_contract_materialization_evidence(
         "identifier_exclusion_policy": identifier_exclusion_policy,
         "unresolved_feature_exclusions": unresolved_feature_exclusions,
         "feature_type_grounding": feature_type_grounding,
+        "categorical_domain_materialization": {
+            "approved_categorical_domains": approved_categorical_domains,
+            "unresolved_categorical_features": unresolved_categorical_features,
+            "rejected_categorical_domain_declarations": rejected_categorical_domain_declarations,
+            "values_inferred_during_materialization": False,
+        },
         "policy_defaults_requiring_future_review": list(_POLICY_DEFAULT_FIELDS),
         "execution_contract_boundary_confirmations": dict(EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS),
         "generated_at": generated_at or _utc_now_iso(),

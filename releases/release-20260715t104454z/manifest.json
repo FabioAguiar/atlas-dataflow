@@ -6,34 +6,40 @@
     "dataset_title": "Telco Customer Churn"
   },
   "release_identity": {
-    "release_id": "release-20260714t123223z",
+    "release_id": "release-20260715t104454z",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-07-14T12:32:23Z"
+    "created_at": "2026-07-15T10:44:54Z"
   },
   "artifacts": [
     {
       "role": "contracts",
       "reference": "contracts/runtime-contract.json",
       "hash_algorithm": "sha256",
-      "hash_value": "e3284130d71d823e7c16ab7e86b00a9f0ddc0221ed778974971b4a797943a2d4"
+      "hash_value": "90731caba3076080f8a75ec469f68dbeb636bea8b0b6f178dee71f7854a31ff8"
+    },
+    {
+      "role": "public_contract",
+      "reference": "contracts/public-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "90c1854c872f4dfe072db945493157e0d8cba33df2aab146bb2ff4fe34aca513"
     },
     {
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "669c6e90f288845799981fde2225bb6fa215c62cc6e93347854b1e158db9d9f5"
+      "hash_value": "e9886c48c356c148a273a3ed06fde0098b2378e182d9d86e7e941361ae13f824"
     },
     {
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "3ffcba143ca370f52b9e66d5a01f496256e2cc4344684ae05c332a9f55806a21"
+      "hash_value": "fb10b51c49e4b55ede5d4371a89201164001e3b6431b70d2364c6f2e4d6d9a78"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "806322b23728d23eb363f5152f807fb79e5c2875d7136c277aef8c444a673883"
+      "hash_value": "b351891f3aeb9a1c7d4982b4022f342bf0857f2bea5ddc1a5d227d2ad7e7c8ff"
     },
     {
       "role": "public_context",
@@ -45,19 +51,20 @@
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "25058068dae3491fdc05e8b236253676c450369113431108e82215b97a56c22d"
+      "hash_value": "cef2390c60473c0b24acd82ba377acb90f368883ba0a24c020bc7fe68011a938"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "5b3856a8117cc8a07f772d6d9c78b032d04f421a30b6e495c696437c05bfa7f3"
+      "hash_value": "94fad3af8c7933b251efa4263b4a71f091bced4abdd6304b52065b276e869950"
     }
   ],
   "required_hash_coverage": {
     "hash_algorithm": "sha256",
     "required_artifact_roles": [
       "contracts",
+      "public_contract",
       "predictive_bundle",
       "metrics",
       "model_card",

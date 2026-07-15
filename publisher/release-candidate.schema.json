@@ -98,6 +98,7 @@
       "additionalProperties": false,
       "required": [
         "contracts",
+        "public_contract",
         "predictive_bundle",
         "metrics",
         "model_card",
@@ -108,7 +109,11 @@
       "properties": {
         "contracts": {
           "$ref": "#/$defs/artifact_role",
-          "description": "Runtime and public contract artifacts required by the publisher and public runtime."
+          "description": "Runtime contract artifact required by the publisher and internal validation. Distinct from the public_contract role below."
+        },
+        "public_contract": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Public-facing contract projection artifact, candidate-relative and distinct from the runtime 'contracts' role. Consumed by the public API's contract endpoint after promotion."
         },
         "predictive_bundle": {
           "$ref": "#/$defs/artifact_role",
@@ -169,12 +174,13 @@
           "properties": {
             "required_artifact_roles": {
               "type": "array",
-              "minItems": 7,
+              "minItems": 8,
               "uniqueItems": true,
               "items": {
                 "type": "string",
                 "enum": [
                   "contracts",
+                  "public_contract",
                   "predictive_bundle",
                   "metrics",
                   "model_card",

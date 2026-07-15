@@ -74,7 +74,7 @@
     },
     "artifacts": {
       "type": "array",
-      "minItems": 7,
+      "minItems": 8,
       "items": {
         "$ref": "#/$defs/artifact_entry"
       },
@@ -84,6 +84,18 @@
             "properties": {
               "role": {
                 "const": "contracts"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "role": {
+                "const": "public_contract"
               }
             },
             "required": [
@@ -309,6 +321,7 @@
       "type": "string",
       "enum": [
         "contracts",
+        "public_contract",
         "predictive_bundle",
         "metrics",
         "model_card",
@@ -323,6 +336,7 @@
       "type": "string",
       "enum": [
         "contracts",
+        "public_contract",
         "predictive_bundle",
         "metrics",
         "model_card",
@@ -333,8 +347,8 @@
     },
     "required_artifact_role_list": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 8,
+      "maxItems": 8,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/required_artifact_role"
@@ -343,6 +357,11 @@
         {
           "contains": {
             "const": "contracts"
+          }
+        },
+        {
+          "contains": {
+            "const": "public_contract"
           }
         },
         {

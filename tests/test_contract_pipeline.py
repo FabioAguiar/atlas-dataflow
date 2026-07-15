@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.promote_contract import PromotionRejected, promote
 from pipeline.validate_contract_consistency import check
-from pipeline.derive_projections import derive
+from pipeline.derive_projections import DerivationFailed, derive
 from pipeline.training import (
     CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION,
     TrainingInputError,
@@ -165,6 +165,28 @@ def test_promote_then_check_and_derive_with_realistic_fixture(tmp_path: Path) ->
     assert (out_dir / "public-contract.json").exists()
     assert execution_contract["missing_value_policy"]["age"] == "mean"
     assert "has_loan" in execution_contract["optional_columns"]
+
+
+def test_promoted_categorical_field_without_known_values_blocks_derive(tmp_path: Path) -> None:
+    """Project Spec S0102: a human-facing contract field approved as
+    categorical but with no reviewed known_values promotes fine (promote()
+    has no readiness opinion), but the resulting execution contract's
+    categorical feature never gets domain_constraints -- so the full
+    promote()->derive() pipeline must raise DerivationFailed at the
+    projection stage, end to end, not just at the unit level."""
+    data = _valid_human_contract()
+    for field in data["candidate_fields"]:
+        if field["name"] == "job":
+            field.pop("known_values", None)
+    human_path = _write_json(tmp_path, "human.json", data)
+    execution_contract = promote(human_path, repo_root=REPO_ROOT)
+    assert "domain_constraints" not in execution_contract["feature_definitions"]["job"]
+    contract_path = _write_json(tmp_path, "contract.json", execution_contract)
+    out_dir = tmp_path / "out"
+    with pytest.raises(DerivationFailed) as exc_info:
+        derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    assert any("job" in e for e in exc_info.value.errors)
+    assert not out_dir.exists()
 
 
 def test_rejected_promotion_does_not_reach_derive(tmp_path: Path) -> None:

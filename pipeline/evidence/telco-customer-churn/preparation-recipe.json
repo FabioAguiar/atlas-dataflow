@@ -39,7 +39,7 @@
     "generator_version": "prepare-candidate.v1",
     "preparation_rules_source": "pipeline.prepare_candidate:verified_conditional_fill_policy(TotalCharges)"
   },
-  "generated_at": "2026-07-14T12:32:19+00:00",
+  "generated_at": "2026-07-15T10:44:50+00:00",
   "preparation_boundary_confirmations": {
     "complex_feature_engineering_performed": false,
     "model_training_performed": false,

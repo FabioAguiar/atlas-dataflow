@@ -111,6 +111,24 @@
       "grounded_from": "discovery_evidence.field_observations[].inferred_type"
     }
   },
+  "categorical_domain_materialization": {
+    "approved_categorical_domains": [
+      "Contract",
+      "DeviceProtection",
+      "InternetService",
+      "MultipleLines",
+      "OnlineBackup",
+      "OnlineSecurity",
+      "PaymentMethod",
+      "StreamingMovies",
+      "StreamingTV",
+      "TechSupport",
+      "gender"
+    ],
+    "unresolved_categorical_features": [],
+    "rejected_categorical_domain_declarations": [],
+    "values_inferred_during_materialization": false
+  },
   "policy_defaults_requiring_future_review": [
     "categorical_encoding_policy",
     "numeric_handling",
@@ -131,5 +149,5 @@
     "model_training_performed": false,
     "model_family_selected": false
   },
-  "generated_at": "2026-07-14T12:32:19+00:00"
+  "generated_at": "2026-07-15T10:44:50+00:00"
 }

@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.discovery_evidence import (
     authoring_helper_evidence_policy,
+    build_categorical_domain_declaration,
     build_dataset_modeling_intent,
     derive_feature_candidates,
     generate_discovery_evidence,
@@ -533,3 +534,95 @@ def test_modeling_intent_builds_from_synthetic_non_telco_shape():
     assert intent["initial_feature_candidates"] == ["color", "weight"]
     assert intent["feature_review_notes"] == {}
     assert intent["open_questions"] == []
+
+
+# --- reviewed categorical-domain intent (Project Spec S0102) ---
+
+
+def test_build_categorical_domain_declaration_approved():
+    declaration = build_categorical_domain_declaration(
+        name="gender",
+        accepted_values=["Female", "Male"],
+        review_status="approved",
+        source_basis="Reviewed against reduced_sample_values; cardinality 2.",
+    )
+    assert declaration["name"] == "gender"
+    assert declaration["accepted_values"] == ["Female", "Male"]
+    assert declaration["review_status"] == "approved"
+    assert declaration["closed_for_inference"] is True
+
+
+def test_build_categorical_domain_declaration_pending_review():
+    declaration = build_categorical_domain_declaration(
+        name="InternetService",
+        accepted_values=["DSL", "Fiber optic", "No"],
+        review_status="pending_review",
+        source_basis="Observed, not yet reviewed and approved.",
+    )
+    assert declaration["review_status"] == "pending_review"
+
+
+def test_build_categorical_domain_declaration_rejects_empty_values():
+    with pytest.raises(ValueError):
+        build_categorical_domain_declaration(
+            name="gender",
+            accepted_values=[],
+            review_status="approved",
+            source_basis="none",
+        )
+
+
+def test_build_categorical_domain_declaration_rejects_blank_value():
+    with pytest.raises(ValueError):
+        build_categorical_domain_declaration(
+            name="gender",
+            accepted_values=["Female", "  "],
+            review_status="approved",
+            source_basis="none",
+        )
+
+
+def test_build_categorical_domain_declaration_rejects_duplicate_values():
+    with pytest.raises(ValueError):
+        build_categorical_domain_declaration(
+            name="gender",
+            accepted_values=["Female", "Female"],
+            review_status="approved",
+            source_basis="none",
+        )
+
+
+def test_build_categorical_domain_declaration_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        build_categorical_domain_declaration(
+            name="gender",
+            accepted_values=["Female", "Male"],
+            review_status="candidate_only",
+            source_basis="none",
+        )
+
+
+def test_build_categorical_domain_declaration_rejects_blank_name():
+    with pytest.raises(ValueError):
+        build_categorical_domain_declaration(
+            name="",
+            accepted_values=["Female", "Male"],
+            review_status="approved",
+            source_basis="none",
+        )
+
+
+def test_modeling_intent_categorical_domain_intent_defaults_to_empty_list():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["categorical_domain_intent"] == []
+
+
+def test_modeling_intent_carries_categorical_domain_intent_verbatim():
+    declaration = build_categorical_domain_declaration(
+        name="SeniorCitizen",
+        accepted_values=["0", "1"],
+        review_status="approved",
+        source_basis="Reviewed authoring basis.",
+    )
+    intent = _build_telco_shaped_modeling_intent(categorical_domain_intent=[declaration])
+    assert intent["categorical_domain_intent"] == [declaration]

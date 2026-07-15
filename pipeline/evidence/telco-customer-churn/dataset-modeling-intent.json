@@ -144,6 +144,129 @@
     "Final 'SeniorCitizen' semantic type/encoding treatment is not yet decided.",
     "Final positive-label decision for 'Churn' requires explicit confirmation despite the observed candidate recorded here."
   ],
+  "categorical_domain_intent": [
+    {
+      "name": "gender",
+      "accepted_values": [
+        "Female",
+        "Male"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'gender' (cardinality=2, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "MultipleLines",
+      "accepted_values": [
+        "No",
+        "No phone service",
+        "Yes"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'MultipleLines' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "InternetService",
+      "accepted_values": [
+        "DSL",
+        "Fiber optic",
+        "No"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'InternetService' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "OnlineSecurity",
+      "accepted_values": [
+        "No",
+        "No internet service",
+        "Yes"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'OnlineSecurity' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "OnlineBackup",
+      "accepted_values": [
+        "No",
+        "No internet service",
+        "Yes"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'OnlineBackup' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "DeviceProtection",
+      "accepted_values": [
+        "No",
+        "No internet service",
+        "Yes"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'DeviceProtection' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "TechSupport",
+      "accepted_values": [
+        "No",
+        "No internet service",
+        "Yes"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'TechSupport' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "StreamingTV",
+      "accepted_values": [
+        "No",
+        "No internet service",
+        "Yes"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'StreamingTV' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "StreamingMovies",
+      "accepted_values": [
+        "No",
+        "No internet service",
+        "Yes"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'StreamingMovies' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "Contract",
+      "accepted_values": [
+        "Month-to-month",
+        "One year",
+        "Two year"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'Contract' (cardinality=3, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    },
+    {
+      "name": "PaymentMethod",
+      "accepted_values": [
+        "Bank transfer (automatic)",
+        "Credit card (automatic)",
+        "Electronic check",
+        "Mailed check"
+      ],
+      "review_status": "approved",
+      "source_basis": "Reviewed against this notebook's own authoring field observation for 'PaymentMethod' (cardinality=4, within the reduced-sample bound, so the reduced_sample_values set is provably complete for this field) -- not an unreviewed automatic promotion of observed values.",
+      "closed_for_inference": true
+    }
+  ],
   "modeling_intent_boundary_confirmations": {
     "is_execution_contract": false,
     "is_runtime_contract": false,
@@ -155,7 +278,7 @@
     "is_ui_fixture": false,
     "model_training_performed": false
   },
-  "generated_at": "2026-07-14T12:32:17+00:00",
+  "generated_at": "2026-07-15T10:44:48+00:00",
   "unresolved_review_items": [],
   "evidence_policy": {
     "raw_logs_prohibited": true,

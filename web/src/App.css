@@ -1968,12 +1968,18 @@ h1 {
   border-radius: var(--atlas-radius-pill);
   padding: 0.3rem var(--atlas-space-2);
   background: var(--atlas-color-surface-muted);
+  cursor: grab;
   touch-action: none;
 }
 
 .dataset-admin-field-chip.is-required-attention {
   border-color: color-mix(in srgb, var(--atlas-color-danger) 45%, var(--atlas-color-border));
   background: color-mix(in srgb, var(--atlas-color-danger) 8%, var(--atlas-color-surface));
+}
+
+.dataset-admin-field-chip.is-dragging,
+.dataset-admin-field-chip.is-dragging .dataset-admin-field-chip__drag {
+  cursor: grabbing;
 }
 
 .dataset-admin-field-chip__name {

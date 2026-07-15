@@ -2513,7 +2513,11 @@ function CustomizationEditor({
             const attentionActive = zone === FIELD_BANK_ZONE && field.required;
             return (
               <div
-                className={["dataset-admin-field-chip", attentionActive ? "is-required-attention" : ""]
+                className={[
+                  "dataset-admin-field-chip",
+                  attentionActive ? "is-required-attention" : "",
+                  isSource ? "is-dragging" : "",
+                ]
                   .filter(Boolean)
                   .join(" ")}
                 data-customization-field-index={index}
@@ -2526,6 +2530,7 @@ function CustomizationEditor({
                   }
                   openFieldModal(field.field_name);
                 }}
+                onLostPointerCapture={cancelFieldDrag}
                 onPointerCancel={cancelFieldDrag}
                 onPointerDown={(event) =>
                   startFieldDrag(event, field.field_name, zone, index, field.display_label || field.field_name)
@@ -2725,9 +2730,6 @@ function CustomizationEditor({
           <div className="dataset-admin-builder__heading">
             <div className="dataset-admin-builder__heading-text">
               <strong>No subgroup</strong>
-              <span className="dataset-admin-builder__subtitle">
-                Visible fields with no subgroup render here, below every subgroup card.
-              </span>
             </div>
             <Badge>{noSubgroupCount} fields</Badge>
           </div>

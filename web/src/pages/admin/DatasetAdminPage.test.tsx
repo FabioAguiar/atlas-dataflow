@@ -2360,6 +2360,99 @@ describe("DatasetAdminPage", () => {
     expect(await screen.findByRole("dialog", { name: "Edit field" })).toBeInTheDocument();
   });
 
+  // -------------------------------------------------------------------------
+  // Project Spec S0105: No subgroup redundant copy removal and full-chip
+  // grab/grabbing cursor contract
+  // -------------------------------------------------------------------------
+
+  it("removes the redundant No subgroup description sentence while keeping the title, counter, drop zone, and empty-state copy", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const noSubgroupZone = screen.getByLabelText("No subgroup");
+    expect(
+      within(noSubgroupZone).queryByText("Visible fields with no subgroup render here, below every subgroup card."),
+    ).not.toBeInTheDocument();
+
+    const heading = within(noSubgroupZone)
+      .getByText("No subgroup")
+      .closest(".dataset-admin-builder__heading") as HTMLElement;
+    expect(within(heading).getByText(/fields$/)).toBeInTheDocument();
+
+    const dropZone = screen.getByLabelText("No subgroup fields");
+    expect(within(dropZone).getByText("Drag fields here to show them without a subgroup.")).toBeInTheDocument();
+    expect(dropZone).toHaveAttribute("data-customization-drop-zone", "no-subgroup");
+  });
+
+  it("applies the is-dragging class to the source chip while dragging and clears it after a completed drop", async () => {
+    document.elementFromPoint = vi.fn(() =>
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="no-subgroup"]'),
+    );
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    expect(tenureChip).not.toHaveClass("is-dragging");
+
+    fireEvent.pointerDown(tenureChip, { pointerId: 30, clientX: 0, clientY: 0 });
+    expect(tenureChip).toHaveClass("is-dragging");
+
+    fireEvent.pointerUp(tenureChip, { pointerId: 30, clientX: 0, clientY: 50 });
+
+    const movedChip = within(screen.getByLabelText("No subgroup fields"))
+      .getByText("tenure")
+      .closest(".dataset-admin-field-chip") as HTMLElement;
+    expect(movedChip).not.toHaveClass("is-dragging");
+  });
+
+  it("clears the is-dragging state after pointer cancellation without moving the field", async () => {
+    document.elementFromPoint = vi.fn(() => null);
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    fireEvent.pointerDown(tenureChip, { pointerId: 31, clientX: 0, clientY: 0 });
+    expect(tenureChip).toHaveClass("is-dragging");
+
+    fireEvent.pointerCancel(tenureChip, { pointerId: 31, clientX: 0, clientY: 40 });
+    expect(tenureChip).not.toHaveClass("is-dragging");
+    expect(within(screen.getByLabelText("Account profile")).getByText("tenure")).toBeInTheDocument();
+  });
+
+  it("clears the is-dragging state after lost pointer capture without moving the field", async () => {
+    document.elementFromPoint = vi.fn(() => null);
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    fireEvent.pointerDown(tenureChip, { pointerId: 32, clientX: 0, clientY: 0 });
+    expect(tenureChip).toHaveClass("is-dragging");
+
+    fireEvent.lostPointerCapture(tenureChip, { pointerId: 32 });
+    expect(tenureChip).not.toHaveClass("is-dragging");
+    expect(within(screen.getByLabelText("Account profile")).getByText("tenure")).toBeInTheDocument();
+  });
+
+  it("does not apply the is-dragging class to a chip that is not the active drag source", async () => {
+    document.elementFromPoint = vi.fn(() => null);
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    const chargesChip = screen.getByText("MonthlyCharges").closest(".dataset-admin-field-chip") as HTMLElement;
+
+    fireEvent.pointerDown(tenureChip, { pointerId: 33, clientX: 0, clientY: 0 });
+    expect(tenureChip).toHaveClass("is-dragging");
+    expect(chargesChip).not.toHaveClass("is-dragging");
+
+    fireEvent.pointerUp(tenureChip, { pointerId: 33, clientX: 0, clientY: 0 });
+  });
+
   it("shows a disabled selector, no selected dataset, and a disabled public-open action when no datasets are registered", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

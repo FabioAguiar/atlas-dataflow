@@ -1042,6 +1042,24 @@ from pipeline import assemble_candidate  # noqa: E402
 S0099_DATASET_SLUG = "s0099-style-dataset"
 S0099_TRAINING_RUN_ID = "train-20260714T000000Z"
 
+# A minimal public_contract fixture that conforms to
+# contracts/public-contract.schema.json (Project Spec S0106) -- the generic
+# {"role": ..., "contract_version": ..., "schema_version": ...} placeholder
+# used for other roles is not schema-valid for public_contract and fails
+# real publisher validation.
+_S0099_VALID_PUBLIC_CONTRACT = {
+    "schema_version": "1.0.0",
+    "features": [
+        {
+            "name": "example_feature",
+            "label": "Example Feature",
+            "input_type": "number",
+            "optional": False,
+            "display_order": 1,
+        }
+    ],
+}
+
 
 def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
     dataset_slug = S0099_DATASET_SLUG
@@ -1067,6 +1085,8 @@ def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
         path.parent.mkdir(parents=True, exist_ok=True)
         if role == "model_artifact":
             path.write_bytes(b"not-a-real-model-but-real-bytes")
+        elif role == "public_contract":
+            path.write_text(json.dumps(_S0099_VALID_PUBLIC_CONTRACT), encoding="utf-8")
         else:
             path.write_text(
                 json.dumps({"role": role, "contract_version": f"{role}.v1", "schema_version": f"{role}.v1"}),

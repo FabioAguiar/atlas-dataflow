@@ -29,6 +29,24 @@ PUBLIC_CANDIDATE_ARTIFACTS = (
 )
 
 
+# A minimal public_contract fixture that conforms to
+# contracts/public-contract.schema.json (Project Spec S0106) -- the generic
+# {"role": ..., "governed": True} placeholder used for other roles is not
+# schema-valid for public_contract and fails real publisher validation.
+_VALID_PUBLIC_CONTRACT = {
+    "schema_version": "1.0.0",
+    "features": [
+        {
+            "name": "example_feature",
+            "label": "Example Feature",
+            "input_type": "number",
+            "optional": False,
+            "display_order": 1,
+        }
+    ],
+}
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -73,7 +91,8 @@ def _write_governed_artifacts(repo_root: Path, *, missing_role: str | None = Non
     for role, path in paths.items():
         if role == missing_role:
             continue
-        _write_json(repo_root / path, {"role": role, "governed": True})
+        payload = _VALID_PUBLIC_CONTRACT if role == "public_contract" else {"role": role, "governed": True}
+        _write_json(repo_root / path, payload)
     return paths
 
 
@@ -187,6 +206,10 @@ def _assemble_candidate(
     schema_dst = tmp_repo / "pipeline" / "build-evidence.schema.json"
     schema_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO_ROOT / "pipeline" / "build-evidence.schema.json", schema_dst)
+
+    public_contract_schema_dst = tmp_repo / "contracts" / "public-contract.schema.json"
+    public_contract_schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "contracts" / "public-contract.schema.json", public_contract_schema_dst)
 
     monkeypatch.setattr(assemble_candidate, "_REPO_ROOT", tmp_repo)
     monkeypatch.setattr(assemble_candidate, "_CANDIDATE_STAGING_PREFIX", output_dir)

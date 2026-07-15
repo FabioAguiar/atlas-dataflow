@@ -264,9 +264,13 @@ def test_loader_raises_view_not_found_returns_registry_unavailable():
 # Loader unit tests: direct calls against registry/predict-views.json
 # ---------------------------------------------------------------------------
 
-def test_production_loader_returns_no_views_when_registry_is_empty():
+def test_production_loader_returns_no_views_when_registry_is_empty(tmp_path):
     from public_predict_view_loader import load_public_predict_view_list
-    registry_path = REPO_ROOT / "registry" / "predict-views.json"
+    registry_path = tmp_path / "predict-views.json"
+    registry_path.write_text(
+        json.dumps({"schema_version": "atlas.dataflow.predict-views.v1", "predict_views": []}),
+        encoding="utf-8",
+    )
     results = load_public_predict_view_list("telco-customer-churn", predict_views_path=registry_path)
     assert results == []
 

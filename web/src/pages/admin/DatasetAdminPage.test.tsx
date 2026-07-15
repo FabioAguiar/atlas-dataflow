@@ -120,6 +120,10 @@ function installFetchMock(
     rejectProfileSave?: boolean;
     rejectPublish?: boolean;
     rejectVisibility?: boolean;
+    // Project Spec S0103: forces the predict-view customization PUT to fail
+    // backend validation, for exercising the shared Publish changes
+    // orchestrator's "customization request fails" path.
+    rejectCustomizationSave?: boolean;
     // Both overrides below exist only to make Live Preview reactivity
     // genuinely observable for fields whose shared-fixture defaults would
     // otherwise round-trip to an identical rendered value after an edit --
@@ -188,6 +192,19 @@ function installFetchMock(
     // property to let it settle. Exercises stale-request protection when
     // the request identity changes while a request is still in flight.
     customizationLoadDeferredOnce?: boolean;
+    // Project Spec S0104: replaces the shared compatible `customization`
+    // fixture's groups/field_hints entirely for the customization GET
+    // response, for tests that need a specific historical shape (a blank
+    // group label, a "group-1"/"group-3" collision gap, etc.) without
+    // affecting every other test's default fixture.
+    customizationOverride?: typeof customization;
+    // Project Spec S0104: appended to the /contract response's features
+    // array, deliberately never referenced by the shared `customization`
+    // fixture's field_hints -- simulates a contract field added after a
+    // compatible customization was last saved, to exercise the
+    // required/optional default rule applied only to a field the loaded
+    // overlay never covered.
+    extraContractFields?: Array<{ name: string; label: string; optional: boolean }>;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -272,6 +289,13 @@ function installFetchMock(
               optional: options.requiredFieldOverride === "MonthlyCharges" ? false : true,
               display_order: 2,
             },
+            ...(options.extraContractFields ?? []).map((field, index) => ({
+              name: field.name,
+              label: field.label,
+              input_type: "number" as const,
+              optional: field.optional,
+              display_order: 3 + index,
+            })),
           ],
         },
       });
@@ -410,6 +434,15 @@ function installFetchMock(
       });
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) && init?.method === "PUT") {
+      if (options.rejectCustomizationSave) {
+        return jsonResponse(
+          {
+            saved: false,
+            errors: [{ field: "field_hints", code: "CUSTOMIZATION_REJECTED", message: "Customization failed validation." }],
+          },
+          422,
+        );
+      }
       if (options.trackCustomizationSaves) {
         const body = typeof init.body === "string" ? (JSON.parse(init.body) as typeof customization) : customization;
         savedCustomization = body;
@@ -445,6 +478,14 @@ function installFetchMock(
           customization_exists: true,
           compatibility_status: "compatible",
           customization: savedCustomization,
+          errors: [],
+        });
+      }
+      if (options.customizationOverride) {
+        return jsonResponse({
+          customization_exists: true,
+          compatibility_status: "compatible",
+          customization: options.customizationOverride,
           errors: [],
         });
       }
@@ -492,10 +533,13 @@ async function loadDraftAndCustomization() {
   // Project Spec S0099: the Inference Form builder now bootstraps
   // automatically once a dataset, bound predict view, and public contract
   // are all ready -- no "Load customization" click is required or exists
-  // in the normal path.
+  // in the normal path. Project Spec S0103 removes the normal
+  // "Customization loaded"/"No customization yet" lifecycle panels, so this
+  // waits on the builder's own Field bank region (present for every
+  // draft-bearing customization state) instead of that removed copy.
   await loadDraftOnly();
   fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-  expect(await screen.findByText("Customization loaded")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Field bank")).toBeInTheDocument();
 }
 
 describe("DatasetAdminPage", () => {
@@ -1673,10 +1717,14 @@ describe("DatasetAdminPage", () => {
   });
 
   it("persists group create/edit/remove/reorder through customization save and reload", async () => {
-    // Route every drop onto the newly created "group-3" zone -- this test
-    // only ever drags one field (tenure), into that one destination.
+    // Route every drop onto the newly created "group-1" zone -- this test
+    // only ever drags one field (tenure), into that one destination. Project
+    // Spec S0104: the collision-safe generator looks at the highest existing
+    // "group-N" numeric suffix, and the two pre-existing groups here
+    // ("account", "charges") don't match that pattern, so the first
+    // generated id is "group-1", not the old array-length-based "group-3".
     document.elementFromPoint = vi.fn(() =>
-      document.querySelector<HTMLElement>('[data-customization-drop-zone="group-3"]'),
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="group-1"]'),
     );
 
     // A second eligible view keeps the S0100 governed multi-view select
@@ -1711,9 +1759,9 @@ describe("DatasetAdminPage", () => {
     });
     fireEvent.click(within(newGroupCard).getByRole("button", { name: "Save subgroup" }));
 
-    // The new group's group_id is deterministically "group-3"
-    // (`group-${current.groups.length + 1}` with 2 pre-existing groups).
-    // Drag "tenure" out of Account profile into the newly created group.
+    // The new group's group_id is deterministically "group-1" (see the
+    // collision-safe generator note above). Drag "tenure" out of Account
+    // profile into the newly created group.
     const tenureDragHandle = screen.getByRole("button", { name: "Drag field Tenure" });
     fireEvent.pointerDown(tenureDragHandle, { pointerId: 5, clientX: 0, clientY: 0 });
     fireEvent.pointerUp(tenureDragHandle, { pointerId: 5, clientX: 0, clientY: 0 });
@@ -1738,8 +1786,13 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(within(accountCard).getByRole("button", { name: "Edit" }));
     fireEvent.click(within(accountCard).getByRole("button", { name: "Remove subgroup" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
-    await screen.findByText("Customization saved.");
+    // Project Spec S0103: "Save customization" no longer exists -- editing
+    // the Inference Form customization enables the shared workspace toolbar
+    // Publish changes button, which persists it through the same
+    // customization endpoint.
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
 
     // A real reload, not just a payload assertion: unbind and rebind the
     // predict view via the (still-available, multi-view) select, which
@@ -1748,14 +1801,17 @@ describe("DatasetAdminPage", () => {
     // all five edits.
     fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: viewId } });
-    await screen.findByText("Customization loaded");
 
+    await waitFor(() => {
+      const reloadedLayoutPanel = screen.getByLabelText("Public form layout");
+      const reloadedCards = Array.from(reloadedLayoutPanel.querySelectorAll(".dataset-admin-builder-card"));
+      expect(reloadedCards.map((card) => card.querySelector("strong")?.textContent)).toEqual([
+        "Charges",
+        "Support tier",
+      ]);
+    });
     const reloadedLayoutPanel = screen.getByLabelText("Public form layout");
     const reloadedCards = Array.from(reloadedLayoutPanel.querySelectorAll(".dataset-admin-builder-card"));
-    expect(reloadedCards.map((card) => card.querySelector("strong")?.textContent)).toEqual([
-      "Charges",
-      "Support tier",
-    ]);
     expect(
       reloadedCards.map((card) => card.querySelector(".dataset-admin-subgroup-header__helper")?.textContent),
     ).toEqual(["Billing attributes", "Support-related attributes"]);
@@ -1765,7 +1821,7 @@ describe("DatasetAdminPage", () => {
   });
 
   it("isolates the group collapse affordance from the saved customization", async () => {
-    const fetchMock = installFetchMock();
+    installFetchMock();
     renderAdminPage();
 
     await loadDraftAndCustomization();
@@ -1773,8 +1829,9 @@ describe("DatasetAdminPage", () => {
     const accountCard = screen.getByText("Account profile").closest(".dataset-admin-builder-card") as HTMLElement;
 
     // Project Spec S0100: the subgroup metadata edit panel is closed by
-    // default and independent of collapse/expand -- Group ID/Label/
-    // Description are never shown until "Edit" is activated.
+    // default and independent of collapse/expand -- Label/Description are
+    // never shown until "Edit" is activated. Project Spec S0104: there is no
+    // Group ID input at all -- group_id is internal and never editable.
     const collapseButton = within(accountCard).getByRole("button", { name: "Collapse" });
     expect(collapseButton).toHaveAttribute("aria-expanded", "true");
     expect(within(accountCard).queryByLabelText("Group ID")).not.toBeInTheDocument();
@@ -1785,7 +1842,7 @@ describe("DatasetAdminPage", () => {
     // Activating Edit reveals the metadata fields seeded from the current
     // group; Cancel discards any local change without mutating the draft.
     fireEvent.click(within(accountCard).getByRole("button", { name: "Edit" }));
-    expect(within(accountCard).getByLabelText("Group ID")).toHaveValue("account");
+    expect(within(accountCard).queryByLabelText("Group ID")).not.toBeInTheDocument();
     expect(within(accountCard).getByLabelText("Label")).toHaveValue("Account profile");
     expect(within(accountCard).getByLabelText("Description")).toHaveValue("Account attributes");
     fireEvent.change(within(accountCard).getByLabelText("Label"), { target: { value: "Should not persist" } });
@@ -1814,28 +1871,112 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(expandButton);
 
-    const callsBeforeSave = fetchMock.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
-    await screen.findByText("Customization saved.");
+    // Project Spec S0103: collapse/expand and a cancelled Edit panel change
+    // are transient editor state, never persisted customization data, so
+    // neither dirties the shared workspace toolbar Publish changes button --
+    // the direct proof that the underlying draft was never mutated by them.
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
+  });
 
-    const saveCall = fetchMock.mock.calls
-      .slice(callsBeforeSave)
-      .find(
-        (call: unknown[]) =>
-          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
-          (call[1] as RequestInit | undefined)?.method === "PUT",
-      );
-    expect(saveCall).toBeDefined();
-    expect(saveCall?.[1]).toMatchObject({
-      headers: { "Content-Type": "application/json" },
+  // -------------------------------------------------------------------------
+  // Project Spec S0104: group identity is internal/stable, historical blank
+  // labels get a deterministic fallback, and new group identity generation
+  // is collision-safe
+  // -------------------------------------------------------------------------
+
+  it("gives a historical group with a blank label a deterministic generic display label, never the raw group_id, and seeds it into the active draft", async () => {
+    installFetchMock({
+      customizationOverride: {
+        ...customization,
+        groups: [
+          { group_id: "account", label: "", description: "Account attributes" },
+          { group_id: "charges", label: "Charges", description: "Billing attributes" },
+        ],
+      },
     });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    // The raw group_id ("account") is never rendered as the visible title.
+    expect(screen.queryByText("account")).not.toBeInTheDocument();
+    expect(screen.getByText("Group 1")).toBeInTheDocument();
+    expect(screen.getByText("Charges")).toBeInTheDocument();
+
+    const blankLabelCard = screen.getByText("Group 1").closest(".dataset-admin-builder-card") as HTMLElement;
+    fireEvent.click(within(blankLabelCard).getByRole("button", { name: "Edit" }));
+    expect(within(blankLabelCard).queryByLabelText("Group ID")).not.toBeInTheDocument();
+    // The generated fallback is seeded directly into the editable Label
+    // field, not left blank, so the operator can edit and persist it
+    // intentionally the next time they publish.
+    expect(within(blankLabelCard).getByLabelText("Label")).toHaveValue("Group 1");
+  });
+
+  it("generates a collision-safe new group identity after a deletion gap, and repeated activations produce distinct ids/labels", async () => {
+    const fetchMock = installFetchMock({
+      trackCustomizationSaves: true,
+      customizationOverride: {
+        ...customization,
+        groups: [
+          { group_id: "group-1", label: "Group 1", description: "" },
+          { group_id: "group-3", label: "Group 3", description: "" },
+        ],
+      },
+    });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    // [group-1, group-3] must produce group-4, never a reused "group-3"
+    // merely because the array length is two.
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    expect(screen.getByText("Group 4")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    expect(screen.getByText("Group 5")).toBeInTheDocument();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+
+    const saveCall = fetchMock.mock.calls.find(
+      (call: unknown[]) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+        (call[1] as RequestInit | undefined)?.method === "PUT",
+    );
     const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
       groups: Array<{ group_id: string; label: string }>;
     };
-    expect(body.groups.map((group) => ({ group_id: group.group_id, label: group.label }))).toEqual([
-      { group_id: "account", label: "Account profile" },
-      { group_id: "charges", label: "Charges" },
-    ]);
+    expect(body.groups.map((group) => group.group_id)).toEqual(["group-1", "group-3", "group-4", "group-5"]);
+    expect(body.groups.map((group) => group.label)).toEqual(["Group 1", "Group 3", "Group 4", "Group 5"]);
+  });
+
+  it("editing a group's label does not change its internal group_id or the field group references assigned to it", async () => {
+    const fetchMock = installFetchMock({ trackCustomizationSaves: true });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const accountCard = screen.getByText("Account profile").closest(".dataset-admin-builder-card") as HTMLElement;
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Edit" }));
+    fireEvent.change(within(accountCard).getByLabelText("Label"), { target: { value: "Account profile renamed" } });
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Save subgroup" }));
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+
+    const saveCall = fetchMock.mock.calls.find(
+      (call: unknown[]) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+        (call[1] as RequestInit | undefined)?.method === "PUT",
+    );
+    const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+      groups: Array<{ group_id: string; label: string }>;
+      field_hints: Array<{ field_name: string; group?: string }>;
+    };
+    const renamedGroup = body.groups.find((group) => group.label === "Account profile renamed");
+    expect(renamedGroup?.group_id).toBe("account");
+    const tenureHint = body.field_hints.find((hint) => hint.field_name === "tenure");
+    expect(tenureHint?.group).toBe("account");
   });
 
   it("shows a visible attention state for a required field left in the bank, blocks saving, and never persists it as hidden", async () => {
@@ -1858,8 +1999,38 @@ describe("DatasetAdminPage", () => {
     expect(within(tenureChip).getByText("Required")).toBeInTheDocument();
     expect(screen.getByText(/1 required field still in the bank/i)).toBeInTheDocument();
 
-    const saveButton = screen.getByRole("button", { name: "Save customization" });
-    expect(saveButton).toBeDisabled();
+    // Project Spec S0103: "Save customization" no longer exists. Moving a
+    // required field into the bank dirties the shared workspace toolbar
+    // Publish changes button (like any other persisted customization edit),
+    // but clicking it while a required field is hidden is blocked entirely
+    // by the same local guard, with an actionable message beside the
+    // toolbar action -- the button itself stays enabled rather than
+    // pre-emptively disabling like the removed dedicated save button did.
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeEnabled();
+
+    const callsBeforeBlockedAttempt = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+    expect(
+      await screen.findByText("Move every required field out of the field bank before saving."),
+    ).toBeInTheDocument();
+    expect(publishButton).toBeEnabled();
+    expect(
+      fetchMock.mock.calls
+        .slice(callsBeforeBlockedAttempt)
+        .some(
+          (call: unknown[]) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        ),
+    ).toBe(false);
+    // Local validation blocks both requests, not just the customization one.
+    expect(
+      fetchMock.mock.calls
+        .slice(callsBeforeBlockedAttempt)
+        .some((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+    ).toBe(false);
 
     // Drag tenure back out into the public form layout's No subgroup zone --
     // required fields return to the standard chip treatment and the block
@@ -1871,11 +2042,11 @@ describe("DatasetAdminPage", () => {
     fireEvent.pointerUp(tenureDragHandleAgain, { pointerId: 8, clientX: 0, clientY: 0 });
 
     expect(screen.queryByText(/required field.*still in the bank/i)).not.toBeInTheDocument();
-    expect(saveButton).not.toBeDisabled();
+    expect(publishButton).toBeEnabled();
 
     const callsBeforeSave = fetchMock.mock.calls.length;
-    fireEvent.click(saveButton);
-    await screen.findByText("Customization saved.");
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
 
     const saveCall = fetchMock.mock.calls
       .slice(callsBeforeSave)
@@ -1916,8 +2087,9 @@ describe("DatasetAdminPage", () => {
 
     const callsBeforeButtonSave = buttonFetchMock.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Move subgroup Account profile down" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
-    await screen.findByText("Customization saved.");
+    const buttonToolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(buttonToolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(buttonToolbar).getByText("Changes saved.")).toBeInTheDocument());
     const buttonOrder = extractSavedGroupOrder(buttonFetchMock, callsBeforeButtonSave);
 
     unmount();
@@ -1938,8 +2110,9 @@ describe("DatasetAdminPage", () => {
     const callsBeforeDragSave = dragFetchMock.mock.calls.length;
     fireEvent.pointerDown(accountDragHandle, { pointerId: 3, clientX: 0, clientY: 0 });
     fireEvent.pointerUp(accountDragHandle, { pointerId: 3, clientX: 0, clientY: 1 });
-    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
-    await screen.findByText("Customization saved.");
+    const dragToolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(dragToolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(dragToolbar).getByText("Changes saved.")).toBeInTheDocument());
     const dragOrder = extractSavedGroupOrder(dragFetchMock, callsBeforeDragSave);
 
     expect(dragOrder).toEqual(buttonOrder);
@@ -1983,8 +2156,9 @@ describe("DatasetAdminPage", () => {
 
     expect(within(screen.getByLabelText("Account profile")).getByText("tenure")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
-    await screen.findByText("Customization saved.");
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
 
     const saveCall = fetchMock.mock.calls.find(
       (call: unknown[]) =>
@@ -2032,17 +2206,20 @@ describe("DatasetAdminPage", () => {
       ),
     ).not.toBeInTheDocument();
 
-    // The compact action row contains exactly the two normal-path actions.
-    const actionRow = screen.getByRole("button", { name: "Add subgroup" }).closest(".dataset-admin-builder-actions") as HTMLElement;
-    expect(within(actionRow).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Add subgroup",
-      "Save customization",
-    ]);
+    // Project Spec S0104: there is no separate top action row anymore --
+    // "Add subgroup" lives inside the Public form layout header, aligned
+    // right beside the visible-field counter, and the old bound-view badge
+    // is gone without any replacement tag/pill/card/status label.
+    expect(document.querySelector(".dataset-admin-builder-actions")).toBeNull();
+    const layoutSectionForHeading = screen.getByLabelText("Public form layout");
+    const layoutHeading = layoutSectionForHeading.querySelector(".dataset-admin-builder__heading") as HTMLElement;
+    expect(within(layoutHeading).getByRole("button", { name: "Add subgroup" })).toBeInTheDocument();
+    expect(within(layoutHeading).getByText(/visible$/)).toBeInTheDocument();
 
     // The builder is not wrapped in an additional full card around the two
-    // columns (no atlas-card ancestor between the action row and the tab
-    // panel root).
-    expect(actionRow.closest(".atlas-card")).toBeNull();
+    // columns (no atlas-card ancestor between the Public form layout section
+    // and the tab panel root).
+    expect(layoutSectionForHeading.closest(".atlas-card")).toBeNull();
 
     // No visible text node "Drag" anywhere in a subgroup header -- only the
     // accessible name carries that word; the visible glyph is an icon.
@@ -2088,6 +2265,99 @@ describe("DatasetAdminPage", () => {
 
     expect(screen.queryByRole("dialog", { name: "Edit field" })).not.toBeInTheDocument();
     expect(document.activeElement).toBe(tenureChip);
+  });
+
+  // -------------------------------------------------------------------------
+  // Project Spec S0104: the whole field chip is the drag hitbox, not just
+  // the six-dot handle, and a completed drag never opens the edit modal
+  // -------------------------------------------------------------------------
+
+  it("starts a field drag from the field name, not just the six-dot handle", async () => {
+    document.elementFromPoint = vi.fn(() =>
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="bank"]'),
+    );
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureName = within(screen.getByLabelText("Account profile")).getByText("tenure");
+    fireEvent.pointerDown(tenureName, { pointerId: 20, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(tenureName, { pointerId: 20, clientX: 0, clientY: 50 });
+
+    expect(within(screen.getByLabelText("Field bank")).getByText("tenure")).toBeInTheDocument();
+  });
+
+  it("starts a field drag from empty chip space", async () => {
+    document.elementFromPoint = vi.fn(() =>
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="no-subgroup"]'),
+    );
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    fireEvent.pointerDown(tenureChip, { pointerId: 21, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(tenureChip, { pointerId: 21, clientX: 0, clientY: 50 });
+
+    expect(within(screen.getByLabelText("No subgroup fields")).getByText("tenure")).toBeInTheDocument();
+  });
+
+  it("starts a field drag from the Required tag", async () => {
+    document.elementFromPoint = vi.fn(() =>
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="no-subgroup"]'),
+    );
+    installFetchMock({ requiredFieldOverride: "tenure" });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    const requiredTag = within(tenureChip).getByText("Required");
+    fireEvent.pointerDown(requiredTag, { pointerId: 22, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(requiredTag, { pointerId: 22, clientX: 0, clientY: 50 });
+
+    expect(within(screen.getByLabelText("No subgroup fields")).getByText("tenure")).toBeInTheDocument();
+  });
+
+  it("suppresses the double-click-to-edit modal immediately after a completed drag with real pointer movement, but not the next genuine double click", async () => {
+    document.elementFromPoint = vi.fn(() =>
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="bank"]'),
+    );
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    fireEvent.pointerDown(tenureChip, { pointerId: 23, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(tenureChip, { pointerId: 23, clientX: 0, clientY: 40 });
+    fireEvent.pointerUp(tenureChip, { pointerId: 23, clientX: 0, clientY: 40 });
+
+    // The field actually moved -- proof a real drag happened, not a click.
+    expect(within(screen.getByLabelText("Field bank")).getByText("tenure")).toBeInTheDocument();
+
+    const movedChip = within(screen.getByLabelText("Field bank"))
+      .getByText("tenure")
+      .closest(".dataset-admin-field-chip") as HTMLElement;
+    fireEvent.doubleClick(movedChip);
+    expect(screen.queryByRole("dialog", { name: "Edit field" })).not.toBeInTheDocument();
+
+    // The suppression is consumed by that one double click -- a later,
+    // genuine double click (with no drag before it) still opens the modal.
+    fireEvent.doubleClick(movedChip);
+    expect(await screen.findByRole("dialog", { name: "Edit field" })).toBeInTheDocument();
+  });
+
+  it("does not suppress the double-click modal after a pointer down/up with no real movement", async () => {
+    document.elementFromPoint = vi.fn(() => null);
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const tenureChip = screen.getByText("tenure").closest(".dataset-admin-field-chip") as HTMLElement;
+    fireEvent.pointerDown(tenureChip, { pointerId: 24, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(tenureChip, { pointerId: 24, clientX: 0, clientY: 0 });
+
+    fireEvent.doubleClick(tenureChip);
+    expect(await screen.findByRole("dialog", { name: "Edit field" })).toBeInTheDocument();
   });
 
   it("shows a disabled selector, no selected dataset, and a disabled public-open action when no datasets are registered", async () => {
@@ -2509,28 +2779,42 @@ describe("DatasetAdminPage", () => {
 
   it("preserves a currently valid bound_predict_view_id instead of overriding it", async () => {
     // Project Spec S0100: the normal (single-eligible-view) path never shows
-    // the manual "Bound predict view" select -- the resolved view renders as
-    // compact read-only context instead, so this now asserts that badge
-    // rather than a select value.
-    installFetchMock();
+    // the manual "Bound predict view" select. Project Spec S0104 also
+    // removes the read-only badge that used to confirm the resolved view --
+    // proving the correct view was silently bound now requires observing
+    // that the customization bootstrap actually succeeds, since the fetch
+    // mock only serves that endpoint for the exact real viewId.
+    const fetchMock = installFetchMock();
     renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
     expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
-    expect(await screen.findByText("Churn risk overview")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Field bank")).toBeInTheDocument();
+    expect(screen.queryByText("Churn risk overview")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`),
+      ),
+    ).toBe(true);
   });
 
   it("deterministically selects the sole eligible predict view when no binding exists yet", async () => {
-    installFetchMock({ noExistingDraft: true });
+    const fetchMock = installFetchMock({ noExistingDraft: true });
     renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
-    await waitFor(() => expect(screen.getByText("Churn risk overview")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Field bank")).toBeInTheDocument());
     expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(screen.queryByText("Churn risk overview")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`),
+      ),
+    ).toBe(true);
   });
 
   it("repairs a stale bound_predict_view_id by selecting the sole eligible view", async () => {
@@ -2540,17 +2824,23 @@ describe("DatasetAdminPage", () => {
     // from the eligible list either way, and the rebind default must repair
     // it the same as any other stale reference (never select it, never
     // leave it bound). The now-hidden normal-path select can no longer be
-    // inspected for the stale option directly, but the badge showing the
-    // correctly-resolved sole eligible view proves the stale id was never
-    // selected.
-    installFetchMock({ boundPredictViewIdOverride: "some-other-datasets-view" });
+    // inspected for the stale option directly, and Project Spec S0104 also
+    // removed the badge that used to show the resolved view -- the
+    // customization bootstrap succeeding (it can only succeed for the real
+    // sole eligible viewId) proves the stale id was never selected.
+    const fetchMock = installFetchMock({ boundPredictViewIdOverride: "some-other-datasets-view" });
     renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
-    await waitFor(() => expect(screen.getByText("Churn risk overview")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Field bank")).toBeInTheDocument());
     expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`),
+      ),
+    ).toBe(true);
   });
 
   it("keeps the predict view unbound when zero eligible views exist", async () => {
@@ -2565,7 +2855,11 @@ describe("DatasetAdminPage", () => {
     // of a visible-but-empty selector.
     expect(await screen.findByText("No predict view bound")).toBeInTheDocument();
     expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save customization" })).toBeDisabled();
+    // Project Spec S0103: with no bound view there is no customization draft
+    // to persist at all, so the shared workspace toolbar Publish changes
+    // button has nothing customization-related to enable it either.
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
   });
 
   it("requires an explicit user choice when multiple eligible views exist and no valid binding exists", async () => {
@@ -2595,7 +2889,7 @@ describe("DatasetAdminPage", () => {
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-    await waitFor(() => expect(screen.getByText("Churn risk overview")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Field bank")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
     const publishButton = within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" });
@@ -2631,15 +2925,54 @@ describe("DatasetAdminPage", () => {
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
 
-    expect(await screen.findByText("No customization yet")).toBeInTheDocument();
-    const layoutPanel = screen.getByLabelText("Public form layout");
-    // Every canonical contract field renders visible and ungrouped, with no
-    // customization-supplied label/copy -- the "no-subgroup" zone is where
-    // an unhidden, ungrouped field renders.
-    const noSubgroupZone = document.querySelector('[data-customization-drop-zone="no-subgroup"]') as HTMLElement;
-    expect(within(noSubgroupZone).getByText("tenure")).toBeInTheDocument();
-    expect(within(noSubgroupZone).getByText("MonthlyCharges")).toBeInTheDocument();
+    const layoutPanel = await screen.findByLabelText("Public form layout");
+    // Project Spec S0104: every canonical contract field with no compatible
+    // persisted field-hint decision defaults per required/optional -- the
+    // shared contract fixture's fields are both optional (unless overridden
+    // by requiredFieldOverride), so a clean base draft places them in the
+    // Field bank, not visible in the Public form layout's No subgroup zone.
+    const bankZone = document.querySelector('[data-customization-drop-zone="bank"]') as HTMLElement;
+    expect(within(bankZone).getByText("tenure")).toBeInTheDocument();
+    expect(within(bankZone).getByText("MonthlyCharges")).toBeInTheDocument();
     expect(within(layoutPanel).queryByText("Tenure")).not.toBeInTheDocument();
+  });
+
+  it("places a required field in No subgroup and an optional field in the Field bank for a base draft with no compatible customization", async () => {
+    installFetchMock({ customizationAbsent: true, requiredFieldOverride: "tenure" });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    await screen.findByLabelText("Public form layout");
+    const noSubgroupZone = document.querySelector('[data-customization-drop-zone="no-subgroup"]') as HTMLElement;
+    const bankZone = document.querySelector('[data-customization-drop-zone="bank"]') as HTMLElement;
+    expect(within(noSubgroupZone).getByText("tenure")).toBeInTheDocument();
+    expect(within(bankZone).getByText("MonthlyCharges")).toBeInTheDocument();
+    expect(screen.queryByText(/required field.*still in the bank/i)).not.toBeInTheDocument();
+  });
+
+  it("applies the required/optional default rule only to contract fields absent from a compatible overlay, preserving the overlay's own placements", async () => {
+    installFetchMock({
+      extraContractFields: [
+        { name: "PaperlessBilling", label: "Paperless billing", optional: false },
+        { name: "Contract", label: "Contract type", optional: true },
+      ],
+    });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    // The shared compatible customization's own placements (tenure/
+    // MonthlyCharges grouped) are untouched by the new fields' defaults.
+    expect(within(screen.getByLabelText("Account profile")).getByText("tenure")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Charges")).getByText("MonthlyCharges")).toBeInTheDocument();
+
+    // The overlay never covered either new field, so each follows the
+    // required/optional default rule independently of the other fields.
+    const noSubgroupZone = document.querySelector('[data-customization-drop-zone="no-subgroup"]') as HTMLElement;
+    const bankZone = document.querySelector('[data-customization-drop-zone="bank"]') as HTMLElement;
+    expect(within(noSubgroupZone).getByText("PaperlessBilling")).toBeInTheDocument();
+    expect(within(bankZone).getByText("Contract")).toBeInTheDocument();
   });
 
   it("does not persist a customization merely by opening the tab", async () => {
@@ -2648,7 +2981,7 @@ describe("DatasetAdminPage", () => {
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-    await screen.findByText("No customization yet");
+    await screen.findByLabelText("Public form layout");
 
     expect(
       fetchMock.mock.calls.some(
@@ -2672,12 +3005,22 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByText(/UNKNOWN_FIELD_REFERENCE/)).not.toBeInTheDocument();
 
     const layoutPanel = screen.getByLabelText("Public form layout");
-    const noSubgroupZone = document.querySelector('[data-customization-drop-zone="no-subgroup"]') as HTMLElement;
-    expect(within(noSubgroupZone).getByText("tenure")).toBeInTheDocument();
+    // Project Spec S0104: the ignored-overlay base draft follows the same
+    // required/optional default rule as the absence-bootstrap draft -- both
+    // shared contract fields are optional, so they land in the Field bank.
+    const bankZone = document.querySelector('[data-customization-drop-zone="bank"]') as HTMLElement;
+    expect(within(bankZone).getByText("tenure")).toBeInTheDocument();
     expect(within(layoutPanel).queryByText("Tenure")).not.toBeInTheDocument();
 
-    // The builder is not blocked -- a new customization can still be saved.
-    expect(screen.getByRole("button", { name: "Save customization" })).not.toBeDisabled();
+    // Project Spec S0103: the builder is not blocked -- a new customization
+    // can still be persisted through the shared workspace toolbar Publish
+    // changes action once an actual edit dirties it (nothing is dirty yet
+    // immediately after this clean bootstrap).
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    expect(publishButton).toBeEnabled();
   });
 
   it("shows a Retry control only after an actual load failure, and Retry recovers the builder", async () => {
@@ -2692,7 +3035,7 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(retryButton);
 
-    expect(await screen.findByText("Customization loaded")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Field bank")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 
@@ -2744,17 +3087,24 @@ describe("DatasetAdminPage", () => {
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
-    await screen.findByText("No customization yet");
+    await screen.findByLabelText("Public form layout");
 
-    fireEvent.click(screen.getByRole("button", { name: "Save customization" }));
-    await screen.findByText("Customization saved.");
+    // Project Spec S0103: persistence now happens only through the shared
+    // workspace toolbar Publish changes action -- add a subgroup so the
+    // customization is actually dirty before publishing it.
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
 
     // Force a genuine reload via identity change (no manual reload control
     // exists) and confirm the automatically reloaded state matches what the
     // save already produced -- a compatible overlay, not an absence.
     fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: viewId } });
-    expect(await screen.findByText("Customization loaded")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Public form layout").querySelectorAll(".dataset-admin-builder-card")).toHaveLength(1),
+    );
 
     const putCalls = fetchMock.mock.calls.filter(
       (call) =>
@@ -2762,5 +3112,215 @@ describe("DatasetAdminPage", () => {
         (call[1] as RequestInit | undefined)?.method === "PUT",
     );
     expect(putCalls).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Project Spec S0103: Inference Form customization integrated into the
+  // workspace Publish changes dirty-state and orchestration
+  // -------------------------------------------------------------------------
+
+  it("enables the workspace toolbar Publish changes button when Inference Form customization is edited, and disables it again when reverted to the loaded baseline", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
+
+    const accountCard = screen.getByText("Account profile").closest(".dataset-admin-builder-card") as HTMLElement;
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Edit" }));
+    fireEvent.change(within(accountCard).getByLabelText("Label"), { target: { value: "Account profile edited" } });
+    fireEvent.click(within(accountCard).getByRole("button", { name: "Save subgroup" }));
+
+    expect(publishButton).toBeEnabled();
+
+    const editedCard = screen.getByText("Account profile edited").closest(".dataset-admin-builder-card") as HTMLElement;
+    fireEvent.click(within(editedCard).getByRole("button", { name: "Edit" }));
+    fireEvent.change(within(editedCard).getByLabelText("Label"), { target: { value: "Account profile" } });
+    fireEvent.click(within(editedCard).getByRole("button", { name: "Save subgroup" }));
+
+    expect(publishButton).toBeDisabled();
+  });
+
+  it("sends only the dirty resource's request when only Inference Form customization, then only Public Content, is dirty", async () => {
+    const fetchMock = installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    expect(publishButton).toBeEnabled();
+
+    const callsBeforeCustomizationOnly = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+    const customizationOnlyCalls = fetchMock.mock.calls.slice(callsBeforeCustomizationOnly);
+    expect(
+      customizationOnlyCalls.some(
+        (call) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toBe(true);
+    expect(
+      customizationOnlyCalls.some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+    ).toBe(false);
+    await waitFor(() => expect(publishButton).toBeDisabled());
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Profile-only edit" } });
+    expect(publishButton).toBeEnabled();
+
+    const callsBeforeProfileOnly = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+    const profileOnlyCalls = fetchMock.mock.calls.slice(callsBeforeProfileOnly);
+    expect(profileOnlyCalls.some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toBe(
+      true,
+    );
+    expect(
+      profileOnlyCalls.some(
+        (call) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toBe(false);
+  });
+
+  it("persists customization before publishing the profile when both are dirty, and reports a single combined success", async () => {
+    const fetchMock = installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Combined edit" } });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeEnabled();
+
+    const callsBefore = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+
+    const relevantCalls = fetchMock.mock.calls
+      .slice(callsBefore)
+      .filter(
+        (call) =>
+          (String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT") ||
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`),
+      );
+    expect(relevantCalls).toHaveLength(2);
+    expect(String(relevantCalls[0][0])).toContain("/customization");
+    expect(String(relevantCalls[1][0])).toContain("/publish");
+
+    await waitFor(() => expect(publishButton).toBeDisabled());
+  });
+
+  it("prevents profile publication when the customization request itself fails, leaving Publish changes enabled", async () => {
+    const fetchMock = installFetchMock({ rejectCustomizationSave: true });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Should not publish" } });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+
+    const callsBefore = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+
+    expect(await screen.findByText("Inference Form could not be saved.")).toBeInTheDocument();
+    expect(publishButton).toBeEnabled();
+    expect(
+      fetchMock.mock.calls
+        .slice(callsBefore)
+        .some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+    ).toBe(false);
+  });
+
+  it("updates only the customization baseline when customization succeeds but profile publication fails, and a retry sends only the remaining profile request", async () => {
+    const fetchMock = installFetchMock({ rejectPublish: true });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Partial success edit" } });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+
+    const callsBeforeFirst = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+
+    expect(await screen.findByText("Inference Form saved; Dataset Detail publication failed.")).toBeInTheDocument();
+    expect(publishButton).toBeEnabled();
+
+    const firstAttemptCalls = fetchMock.mock.calls.slice(callsBeforeFirst);
+    expect(
+      firstAttemptCalls.some(
+        (call) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toBe(true);
+    expect(
+      firstAttemptCalls.some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+    ).toBe(true);
+
+    // Retry: the customization is no longer dirty (its baseline updated on
+    // the earlier success), so only the still-dirty profile request is sent.
+    const callsBeforeRetry = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls
+          .slice(callsBeforeRetry)
+          .some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+      ).toBe(true),
+    );
+    expect(
+      fetchMock.mock.calls
+        .slice(callsBeforeRetry)
+        .some(
+          (call) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        ),
+    ).toBe(false);
+  });
+
+  it("resets the customization baseline on a stale-request-safe reload so a discarded edit does not leave the reloaded view appearing dirty", async () => {
+    installFetchMock({
+      viewsOverride: [
+        { view_id: viewId, display: { title: "Churn risk overview" } },
+        { view_id: "retention-outlook", display: { title: "Retention Outlook" } },
+      ],
+    });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add subgroup" }));
+    expect(publishButton).toBeEnabled();
+
+    // Reload the same view without publishing -- the fresh fetch
+    // re-establishes the baseline from the real backend record, discarding
+    // the local, unpublished subgroup addition and its dirty flag with it.
+    fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: viewId } });
+
+    await waitFor(() => expect(publishButton).toBeDisabled());
   });
 });

@@ -1128,6 +1128,24 @@ h1 {
   white-space: nowrap;
 }
 
+/* Project Spec S0103: progress feedback for the shared workspace toolbar
+   Publish changes action while either the Inference Form customization or
+   the Dataset Detail profile (or both, in sequence) is being persisted. */
+.dataset-admin-toolbar-progress {
+  display: inline-flex;
+  min-height: 2.5rem;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-pill);
+  padding: 0 var(--atlas-space-3);
+  color: var(--atlas-color-text-muted);
+  background: var(--atlas-color-surface-muted);
+  font-size: var(--atlas-text-xs);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1697,28 +1715,6 @@ h1 {
   gap: var(--atlas-space-4);
 }
 
-.dataset-admin-builder-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--atlas-space-3);
-  border-bottom: 1px solid var(--atlas-color-border);
-  padding-bottom: var(--atlas-space-4);
-}
-
-.dataset-admin-builder-actions__group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--atlas-space-2);
-}
-
-.dataset-admin-bound-view-badge {
-  color: var(--atlas-color-accent-strong);
-  background: var(--atlas-color-accent-muted);
-}
-
 .dataset-admin-inline-status {
   margin: 0;
   color: var(--atlas-color-text-muted);
@@ -1796,6 +1792,13 @@ h1 {
   display: grid;
   gap: 0.15rem;
   min-width: 0;
+}
+
+.dataset-admin-builder__heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--atlas-space-2);
 }
 
 .dataset-admin-builder__title {
@@ -1965,6 +1968,7 @@ h1 {
   border-radius: var(--atlas-radius-pill);
   padding: 0.3rem var(--atlas-space-2);
   background: var(--atlas-color-surface-muted);
+  touch-action: none;
 }
 
 .dataset-admin-field-chip.is-required-attention {

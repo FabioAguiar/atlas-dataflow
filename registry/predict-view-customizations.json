@@ -7,32 +7,35 @@
       "dataset_slug": "telco-customer-churn",
       "field_hints": [
         {
-          "field_name": "Partner",
+          "field_name": "TotalCharges",
           "display_order_hint": 1,
-          "group": "group-1"
-        },
-        {
-          "field_name": "SeniorCitizen",
-          "display_order_hint": 2,
-          "group": "group-1"
+          "group": "group-3"
         },
         {
           "field_name": "gender",
-          "display_order_hint": 3,
-          "group": "group-1"
+          "display_order_hint": 2,
+          "group": "group-2"
         },
         {
-          "field_name": "OnlineSecurity",
+          "field_name": "tenure",
+          "display_order_hint": 3,
+          "display_label": "Tenure",
+          "group": "group-2"
+        },
+        {
+          "field_name": "Partner",
           "display_order_hint": 4,
           "group": "group-1"
         },
         {
-          "field_name": "Dependents",
-          "display_order_hint": 5
+          "field_name": "SeniorCitizen",
+          "display_order_hint": 5,
+          "group": "group-1"
         },
         {
-          "field_name": "tenure",
-          "display_order_hint": 6
+          "field_name": "OnlineSecurity",
+          "display_order_hint": 6,
+          "group": "group-1"
         },
         {
           "field_name": "PhoneService",
@@ -67,27 +70,35 @@
           "display_order_hint": 14
         },
         {
-          "field_name": "Contract",
+          "field_name": "Dependents",
           "display_order_hint": 15
         },
         {
-          "field_name": "PaperlessBilling",
+          "field_name": "Contract",
           "display_order_hint": 16
         },
         {
-          "field_name": "PaymentMethod",
+          "field_name": "PaperlessBilling",
           "display_order_hint": 17
         },
         {
-          "field_name": "MonthlyCharges",
+          "field_name": "PaymentMethod",
           "display_order_hint": 18
         },
         {
-          "field_name": "TotalCharges",
+          "field_name": "MonthlyCharges",
           "display_order_hint": 19
         }
       ],
       "groups": [
+        {
+          "group_id": "group-3",
+          "label": "Group 3"
+        },
+        {
+          "group_id": "group-2",
+          "label": "Group 2"
+        },
         {
           "group_id": "group-1",
           "label": ""

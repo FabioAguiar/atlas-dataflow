@@ -459,22 +459,77 @@ type CustomizationFieldDragState = {
   pointerX: number;
   pointerY: number;
   label: string;
+  // Project Spec S0104: origin point and real-movement flag for the
+  // full-chip drag threshold -- a pointer down/up with no movement beyond
+  // FIELD_DRAG_THRESHOLD_PX is a click, not a drag, and must not suppress
+  // the chip's normal double-click-to-edit behavior.
+  startX: number;
+  startY: number;
+  didMove: boolean;
 };
+
+const FIELD_DRAG_THRESHOLD_PX = 4;
+
+// Project Spec S0104: opt-out marker for a future interactive chip
+// descendant (e.g. a button) that must not start a drag on pointer down.
+// No current chip descendant carries this marker -- the six-dot handle,
+// field name, and Required tag are all valid drag-start targets.
+function isChipDragExcluded(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.closest("[data-chip-drag-exclude]") !== null;
+}
 
 const emptyCustomizationEditorState: CustomizationEditorState = { status: "no_view_bound" };
 
+// Project Spec S0104: a field with no compatible persisted field-hint
+// decision defaults to hidden = !required (optional fields start in the
+// Field bank, required fields start visible in No subgroup) rather than
+// always visible -- see customizationDraftFromRecord below for the same
+// rule applied only to a contract field the loaded record never covered.
 function emptyCustomizationDraft(fields: ContractField[]): CustomizationEditorDraft {
   return {
-    fieldHints: fields.map((field) => ({
-      field_name: field.name,
-      display_label: "",
-      explanatory_copy: "",
-      group: "",
-      hidden: false,
-      required: !field.optional,
-    })),
+    fieldHints: fields.map((field) => {
+      const required = !field.optional;
+      return {
+        field_name: field.name,
+        display_label: "",
+        explanatory_copy: "",
+        group: "",
+        hidden: !required,
+        required,
+      };
+    }),
     groups: [],
   };
+}
+
+// Project Spec S0104: deterministic, position-stable fallback for a
+// historical group whose label is blank -- never the raw group_id (see
+// customizationDraftFromRecord below, which also writes this fallback into
+// the active draft so the operator can edit/persist it intentionally).
+function deterministicGroupLabel(index: number): string {
+  return `Group ${index + 1}`;
+}
+
+// Project Spec S0104: the next collision-safe internal group identity.
+// Based on the highest existing "group-N" numeric suffix (not array
+// length), so a deletion gap (e.g. [group-1, group-3]) never reproduces an
+// already-used id (-> group-4, not group-3). Non-standard historical ids
+// (e.g. "account") are ignored for the max computation but still checked
+// for exact-collision safety.
+function nextGroupIdentity(groups: GroupDraft[]): { group_id: string; label: string } {
+  const existingIds = new Set(groups.map((group) => group.group_id));
+  let highestSuffix = 0;
+  for (const group of groups) {
+    const match = /^group-(\d+)$/.exec(group.group_id);
+    if (match) {
+      highestSuffix = Math.max(highestSuffix, Number(match[1]));
+    }
+  }
+  let candidateSuffix = highestSuffix + 1;
+  while (existingIds.has(`group-${candidateSuffix}`)) {
+    candidateSuffix += 1;
+  }
+  return { group_id: `group-${candidateSuffix}`, label: `Group ${candidateSuffix}` };
 }
 
 function customizationDraftFromRecord(
@@ -492,21 +547,31 @@ function customizationDraftFromRecord(
     return keyA - keyB;
   });
 
-  const groups = record.groups.map((group) => ({
+  // Project Spec S0104: a historical group with an empty/blank label gets a
+  // deterministic generic label written directly into the active draft
+  // (never the raw group_id) so it renders as a real, editable title and
+  // can be persisted intentionally the next time the operator publishes.
+  const groups = record.groups.map((group, index) => ({
     group_id: group.group_id,
-    label: group.label,
+    label: group.label && group.label.trim() ? group.label : deterministicGroupLabel(index),
     description: group.description ?? "",
   }));
 
   const fieldHints = sortedFields.map((field) => {
     const hint = hintMap.get(field.name);
+    const required = requiredMap.get(field.name) ?? false;
     return {
       field_name: field.name,
       display_label: hint?.display_label ?? "",
       explanatory_copy: hint?.explanatory_copy ?? "",
       group: hint?.group ?? "",
-      hidden: hint?.hidden ?? false,
-      required: requiredMap.get(field.name) ?? false,
+      // A field the loaded record never covered (a contract field added
+      // since the customization was last saved) follows the same
+      // required/optional default as a base draft; a field the record does
+      // cover keeps its exact persisted hidden decision, even if that
+      // decision predates this default rule.
+      hidden: hint ? hint.hidden ?? false : !required,
+      required,
     };
   });
 
@@ -535,6 +600,29 @@ function customizationDraftToRecord(draft: CustomizationEditorDraft): {
       return def;
     }),
   };
+}
+
+// Project Spec S0103: the workspace dirty-state baseline for the Inference
+// Form customization is a deterministic string derived from exactly the
+// same persistence projection customizationDraftToRecord already builds for
+// the PUT request body -- so a freshly loaded/saved draft and an in-progress
+// edited draft are always compared through one shared normalizer, never two
+// divergent ones.
+function normalizedCustomizationDraft(draft: CustomizationEditorDraft): string {
+  return stableJson(customizationDraftToRecord(draft));
+}
+
+// A null baseline means no customization draft has been established yet for
+// the current dataset/view/contract identity (still loading, no view bound,
+// contract unavailable, or load failed) -- in every one of those states
+// customizationDraftOf also returns null, so there is nothing to compare and
+// this correctly reports "not dirty" rather than inventing a false positive.
+function isCustomizationRecordDirty(state: CustomizationEditorState, baseline: string | null): boolean {
+  const draft = customizationDraftOf(state);
+  if (!draft || baseline === null) {
+    return false;
+  }
+  return normalizedCustomizationDraft(draft) !== baseline;
 }
 
 function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
@@ -1416,6 +1504,13 @@ function sameProfile(left: ProfileDraft | null, right: ProfileDraft | null): boo
 
 // Publishable fields observed by the workspace Publish changes action across
 // Dataset Detail tabs. This deliberately excludes transient editor state.
+// Project Spec S0103: bound_predict_view_id is included here even though it
+// reads from the Inference Form tab's selector, because it is itself a
+// persisted ProfileDraft.inference_presentation field carried through
+// profileFromForm/formFromProfile and published by the same profile publish
+// boundary as every other field below -- it was simply missing from this
+// projection before, which is why changing it previously left the workspace
+// toolbar's Publish changes button unaffected.
 type WorkspacePublishFields = Pick<
   DraftForm,
   | "display_title"
@@ -1433,6 +1528,7 @@ type WorkspacePublishFields = Pick<
   | "performance_focus"
   | "background_image_ref"
   | "theme_preset"
+  | "bound_predict_view_id"
 >;
 
 function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
@@ -1454,6 +1550,7 @@ function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
     theme_preset: isDatasetThemePresetId(form.theme_preset)
       ? form.theme_preset
       : DEFAULT_DATASET_THEME_PRESET,
+    bound_predict_view_id: form.bound_predict_view_id,
   };
 }
 
@@ -2019,26 +2116,15 @@ function CustomizationStatusPanel({
       </article>
     );
   }
-  if (state.status === "ready_base") {
-    return (
-      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--info">
-        <strong>No customization yet</strong>
-        <p className="dataset-admin-exceptional-notice__text">
-          Showing the default form built from the current public contract. Saving will create a customization
-          record for this predict view.
-        </p>
-      </article>
-    );
-  }
-  if (state.status === "ready_overlaid") {
-    return (
-      <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--info">
-        <strong>Customization loaded</strong>
-        <p className="dataset-admin-exceptional-notice__text">
-          Editable fields were populated from the existing customization record.
-        </p>
-      </article>
-    );
+  // Project Spec S0103: "ready_base"/"ready_overlaid" (no customization yet /
+  // a compatible overlay loaded) and "saving"/"saved" are normal lifecycle
+  // states now that persistence goes through the shared workspace toolbar
+  // Publish changes action -- their progress/success feedback renders there
+  // instead, so this panel intentionally renders nothing for them, and no
+  // fixed-height wrapper is left behind since InferenceFormTab calls this
+  // component directly with no reserved-space container around it.
+  if (state.status === "ready_base" || state.status === "ready_overlaid") {
+    return null;
   }
   if (state.status === "incompatible_overlay_ignored") {
     return (
@@ -2052,15 +2138,8 @@ function CustomizationStatusPanel({
       </article>
     );
   }
-  if (state.status === "saving") {
-    return <p className="dataset-admin-inline-status">Saving customization...</p>;
-  }
-  if (state.status === "saved") {
-    return (
-      <article className="atlas-status-pill atlas-status-pill--success" role="status">
-        Customization saved.
-      </article>
-    );
+  if (state.status === "saving" || state.status === "saved") {
+    return null;
   }
   if (state.status === "invalid") {
     return (
@@ -2173,6 +2252,12 @@ function CustomizationEditor({
     { status: "closed" },
   );
   const chipRefs = useRef(new Map<string, HTMLDivElement>());
+  // Project Spec S0104: pointerdown now starts a field drag from anywhere
+  // on the chip (not just the six-dot handle), so a completed drag (real
+  // pointer movement) must suppress the double-click that would otherwise
+  // follow it and reopen the field-edit modal. Consumed (and reset) by the
+  // very next chip double-click, so it never suppresses an unrelated one.
+  const suppressChipInteractionRef = useRef(false);
   // Local-only, non-schema-persisted expand/collapse affordance for group
   // cards (mirrors the executable prototype's collapse-button pattern).
   // Never read by customizationDraftToRecord and never added to
@@ -2221,6 +2306,16 @@ function CustomizationEditor({
       ...current,
       groups: current.groups.map((group, i) => (i === index ? { ...group, ...patch } : group)),
     }));
+  }
+
+  // Computed inside the updater (against the true latest current.groups)
+  // rather than the draft prop, so two rapid Add subgroup activations
+  // before a re-render still each get a distinct collision-safe identity.
+  function handleAddSubgroup() {
+    onUpdateDraft((current) => {
+      const { group_id, label } = nextGroupIdentity(current.groups);
+      return { ...current, groups: [...current.groups, { group_id, label, description: "" }] };
+    });
   }
 
   function removeGroup(groupId: string) {
@@ -2313,12 +2408,13 @@ function CustomizationEditor({
   }
 
   function startFieldDrag(
-    event: ReactPointerEvent<HTMLButtonElement>,
+    event: ReactPointerEvent<HTMLDivElement>,
     fieldName: string,
     sourceZone: FieldZoneKey,
     sourceIndex: number,
     label: string,
   ) {
+    if (isChipDragExcluded(event.target)) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setFieldDragState({
@@ -2329,10 +2425,13 @@ function CustomizationEditor({
       pointerX: event.clientX,
       pointerY: event.clientY,
       label,
+      startX: event.clientX,
+      startY: event.clientY,
+      didMove: false,
     });
   }
 
-  function updateFieldDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+  function updateFieldDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (!fieldDragState) return;
     event.preventDefault();
     const { zone, index } = resolveFieldDropTarget(
@@ -2341,10 +2440,18 @@ function CustomizationEditor({
       fieldDragState.targetZone,
       fieldDragState.targetIndex,
     );
-    setFieldDragState({ ...fieldDragState, targetZone: zone, targetIndex: index, pointerX: event.clientX, pointerY: event.clientY });
+    const movedDistance = Math.hypot(event.clientX - fieldDragState.startX, event.clientY - fieldDragState.startY);
+    setFieldDragState({
+      ...fieldDragState,
+      targetZone: zone,
+      targetIndex: index,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      didMove: fieldDragState.didMove || movedDistance > FIELD_DRAG_THRESHOLD_PX,
+    });
   }
 
-  function finishFieldDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+  function finishFieldDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (!fieldDragState) return;
     event.preventDefault();
     const { zone, index } = resolveFieldDropTarget(
@@ -2353,12 +2460,15 @@ function CustomizationEditor({
       fieldDragState.targetZone,
       fieldDragState.targetIndex,
     );
-    const { fieldName } = fieldDragState;
+    const { fieldName, didMove } = fieldDragState;
     setFieldDragState(null);
+    if (didMove) {
+      suppressChipInteractionRef.current = true;
+    }
     onUpdateDraft((current) => moveFieldToZone(current, fieldName, zone, index));
   }
 
-  function cancelFieldDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+  function cancelFieldDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (!fieldDragState) return;
     event.preventDefault();
     setFieldDragState(null);
@@ -2409,7 +2519,19 @@ function CustomizationEditor({
                 data-customization-field-index={index}
                 data-customization-field-zone={zone}
                 key={field.field_name}
-                onDoubleClick={() => openFieldModal(field.field_name)}
+                onDoubleClick={() => {
+                  if (suppressChipInteractionRef.current) {
+                    suppressChipInteractionRef.current = false;
+                    return;
+                  }
+                  openFieldModal(field.field_name);
+                }}
+                onPointerCancel={cancelFieldDrag}
+                onPointerDown={(event) =>
+                  startFieldDrag(event, field.field_name, zone, index, field.display_label || field.field_name)
+                }
+                onPointerMove={updateFieldDrag}
+                onPointerUp={finishFieldDrag}
                 ref={(element) => {
                   if (element) {
                     chipRefs.current.set(field.field_name, element);
@@ -2426,12 +2548,6 @@ function CustomizationEditor({
                 <button
                   aria-label={`Drag field ${field.display_label || field.field_name}`}
                   className="dataset-admin-field-chip__drag"
-                  onPointerCancel={cancelFieldDrag}
-                  onPointerDown={(event) =>
-                    startFieldDrag(event, field.field_name, zone, index, field.display_label || field.field_name)
-                  }
-                  onPointerMove={updateFieldDrag}
-                  onPointerUp={finishFieldDrag}
                   type="button"
                 >
                   ⋮⋮
@@ -2461,10 +2577,6 @@ function CustomizationEditor({
         <div className="dataset-admin-builder__heading">
           <div className="dataset-admin-builder__heading-text">
             <span className="dataset-admin-builder__title">Field bank</span>
-            <p className="dataset-admin-builder__subtitle">
-              Fields outside the public form. Drag a chip into the public form layout to make it visible, or
-              double-click a chip to edit its presentation.
-            </p>
           </div>
           <Badge>
             {bankCount} available
@@ -2488,13 +2600,15 @@ function CustomizationEditor({
         <div className="dataset-admin-builder__heading">
           <div className="dataset-admin-builder__heading-text">
             <span className="dataset-admin-builder__title">Public form layout</span>
-            <p className="dataset-admin-builder__subtitle">
-              Subgroup cards and the explicit No subgroup area define presentation order.
-            </p>
           </div>
-          <Badge>
-            {visibleCount} visible
-          </Badge>
+          <div className="dataset-admin-builder__heading-actions">
+            <Badge>
+              {visibleCount} visible
+            </Badge>
+            <button className="atlas-button atlas-button--secondary" onClick={handleAddSubgroup} type="button">
+              Add subgroup
+            </button>
+          </div>
         </div>
         {draft.groups.length === 0 ? (
           <p className="dataset-admin-builder__subtitle">
@@ -2503,7 +2617,7 @@ function CustomizationEditor({
         ) : (
           <div className="dataset-admin-builder__stack">
             {draft.groups.map((group, index) => {
-              const groupLabel = group.label || group.group_id || `Group ${index + 1}`;
+              const groupLabel = group.label.trim() ? group.label : deterministicGroupLabel(index);
               const isEditing = editingGroupId === group.group_id;
               return (
                 <div
@@ -2569,18 +2683,11 @@ function CustomizationEditor({
                   </div>
                   {isEditing && groupEditDraft && (
                     <div className="dataset-admin-subgroup-edit-panel">
-                      <div style={twoColumnGridStyle}>
-                        <TextField
-                          label="Group ID"
-                          onChange={(value) => setGroupEditDraft((current) => (current ? { ...current, group_id: value } : current))}
-                          value={groupEditDraft.group_id}
-                        />
-                        <TextField
-                          label="Label"
-                          onChange={(value) => setGroupEditDraft((current) => (current ? { ...current, label: value } : current))}
-                          value={groupEditDraft.label}
-                        />
-                      </div>
+                      <TextField
+                        label="Label"
+                        onChange={(value) => setGroupEditDraft((current) => (current ? { ...current, label: value } : current))}
+                        value={groupEditDraft.label}
+                      />
                       <TextField
                         label="Description"
                         onChange={(value) => setGroupEditDraft((current) => (current ? { ...current, description: value } : current))}
@@ -2663,7 +2770,6 @@ function InferenceFormTab({
   readOnlyData,
   customizationEditorState,
   onRetryCustomization,
-  onSaveCustomization,
   onUpdateDraft,
 }: {
   form: DraftForm;
@@ -2671,7 +2777,6 @@ function InferenceFormTab({
   readOnlyData: ReadOnlyData;
   customizationEditorState: CustomizationEditorState;
   onRetryCustomization: () => void;
-  onSaveCustomization: () => void;
   onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
 }) {
   const views = stateValue(readOnlyData.views) ?? [];
@@ -2680,47 +2785,19 @@ function InferenceFormTab({
     () => new Map(contractFields(stateValue(readOnlyData.contract)).map((field) => [field.name, field])),
     [readOnlyData.contract],
   );
-  const requiredInBank = draft ? draft.fieldHints.some((field) => field.required && field.hidden) : false;
-  const saveDisabled = !draft || requiredInBank || customizationEditorState.status === "saving";
 
   // Project Spec S0100: the normal path (the common, single-eligible-view
   // dataset shape every current fixture and real dataset uses) never shows a
-  // manual predict-view selector -- the resolved view renders as compact
-  // read-only context instead. The select only reappears for the genuine
-  // governed multi-view choice S0099 already defines; S0100 does not invent
-  // a second selection flow or a normal-path rebind control.
-  const boundViewId = form.bound_predict_view_id;
-  const boundView = views.find((view) => view.view_id === boundViewId);
+  // manual predict-view selector -- the resolved view is bound silently
+  // instead. The select only reappears for the genuine governed multi-view
+  // choice S0099 already defines; S0100 does not invent a second selection
+  // flow or a normal-path rebind control. Project Spec S0104 removes the
+  // single-view read-only badge that used to render here for the normal
+  // path, without any replacement tag/pill/card/status label.
   const showBoundViewSelect = views.length > 1;
-
-  function handleAddSubgroup() {
-    onUpdateDraft((current) => ({
-      ...current,
-      groups: [...current.groups, { group_id: `group-${current.groups.length + 1}`, label: "", description: "" }],
-    }));
-  }
 
   return (
     <div className="dataset-admin-tab-workspace dataset-admin-inference-workspace">
-      <div className="dataset-admin-builder-actions">
-        <div className="dataset-admin-builder-actions__group">
-          <button className="atlas-button atlas-button--secondary" onClick={handleAddSubgroup} type="button">
-            Add subgroup
-          </button>
-          <button
-            className="atlas-button"
-            disabled={saveDisabled}
-            onClick={onSaveCustomization}
-            title={requiredInBank ? "Move every required field out of the field bank before saving." : undefined}
-            type="button"
-          >
-            Save customization
-          </button>
-        </div>
-        {boundViewId && !showBoundViewSelect && (
-          <Badge className="dataset-admin-bound-view-badge">{boundView?.display?.title || boundViewId}</Badge>
-        )}
-      </div>
       {showBoundViewSelect && (
         <FormRow
           helpText="Multiple predict views are eligible for this dataset. Choose one to build its Inference Form."
@@ -3308,7 +3385,6 @@ function renderSelectedTab(
   onPublish: () => void,
   onSaveDraft: () => void,
   onSetVisibility: (visible: boolean) => void,
-  onSaveCustomization: () => void,
   onUpdateCustomizationDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void,
   publicationState: PublicationState,
   lastPublishedAt: string | undefined,
@@ -3344,7 +3420,6 @@ function renderSelectedTab(
           customizationEditorState={customizationEditorState}
           form={form}
           onRetryCustomization={onRetryCustomization}
-          onSaveCustomization={onSaveCustomization}
           onUpdateDraft={onUpdateCustomizationDraft}
           readOnlyData={readOnlyData}
           setField={setField}
@@ -3412,7 +3487,20 @@ export default function DatasetAdminPage() {
   const [customizationEditorState, setCustomizationEditorState] = useState<CustomizationEditorState>(
     emptyCustomizationEditorState,
   );
+  // Project Spec S0103: the normalized customization baseline the workspace
+  // dirty-state compares the current builder draft against. null means no
+  // baseline has been established yet for the current dataset/view/contract
+  // identity (see isCustomizationRecordDirty).
+  const [customizationBaseline, setCustomizationBaseline] = useState<string | null>(null);
   const [publicationState, setPublicationState] = useState<PublicationState>(emptyPublicationState);
+  // Project Spec S0103: the shared toolbar message area's own feedback for
+  // the combined customization+profile Publish changes orchestration --
+  // distinct from PublicationState, which only ever describes the profile
+  // publish/visibility boundary and is left otherwise untouched so the
+  // Publishing tab's existing status text keeps working unchanged.
+  const [workspacePublishFeedback, setWorkspacePublishFeedback] = useState<
+    { tone: "success" | "error"; text: string } | null
+  >(null);
   const [lastPublishedAt, setLastPublishedAt] = useState<string | undefined>(undefined);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const loadedDatasetSlugRef = useRef("");
@@ -3511,7 +3599,9 @@ export default function DatasetAdminPage() {
       setReadOnlyData(emptyReadOnlyData);
       setDraftForm(emptyDraftForm());
       setCustomizationEditorState(emptyCustomizationEditorState);
+      setCustomizationBaseline(null);
       setPublicationState(emptyPublicationState);
+      setWorkspacePublishFeedback(null);
       setLastPublishedAt(undefined);
       return;
     }
@@ -3521,7 +3611,9 @@ export default function DatasetAdminPage() {
       setDraftForm((current) => ({ ...emptyDraftForm(selectedSlug), schema_version: current.schema_version || "1.0.0" }));
       setDraftState({ status: "loading" });
       setCustomizationEditorState(emptyCustomizationEditorState);
+      setCustomizationBaseline(null);
       setPublicationState(emptyPublicationState);
+      setWorkspacePublishFeedback(null);
       setLastPublishedAt(undefined);
       // Project Spec S0098: the deterministic predict-view rebind default
       // below applies at most once per dataset selection; switching to a
@@ -3739,6 +3831,21 @@ export default function DatasetAdminPage() {
       return { ...current, release_date_label: lastUpdatedDate };
     });
   }, [selectedSlug, lastUpdatedDate, draftState.status]);
+  // Project Spec S0103: bound_predict_view_id now participates in
+  // workspacePublishFields (see the type above), so this baseline must also
+  // reflect the same deterministic single-eligible-view default the S0098
+  // rebind effect below applies to draftForm -- otherwise that automatic
+  // default (not a real operator edit) would immediately, falsely enable
+  // Publish changes the instant the eligible views list resolves.
+  const eligibleBoundPredictViewIds = (stateValue(readOnlyData.views) ?? [])
+    .map((view) => view.view_id)
+    .filter((viewId): viewId is string => Boolean(viewId));
+  function resolvedBoundPredictViewIdDefault(rawBoundPredictViewId: string): string {
+    if (rawBoundPredictViewId && eligibleBoundPredictViewIds.includes(rawBoundPredictViewId)) {
+      return rawBoundPredictViewId;
+    }
+    return eligibleBoundPredictViewIds.length === 1 ? eligibleBoundPredictViewIds[0] : "";
+  }
   // The workspace toolbar's Publish changes snapshot (Project Spec S0058):
   // the normalized current saved/published form state for the selected
   // Dataset Detail's workspace-publishable fields, or -- when no backend draft/
@@ -3747,28 +3854,55 @@ export default function DatasetAdminPage() {
   // using the whole-profile comparison above for its own lifecycle.
   const workspacePublishSnapshotForm: DraftForm =
     hasBackendDraftProfile && lastBackendDraft
-      ? { ...formFromProfile(lastBackendDraft, selectedSlug), release_date_label: lastUpdatedDate }
+      ? {
+          ...formFromProfile(lastBackendDraft, selectedSlug),
+          release_date_label: lastUpdatedDate,
+          bound_predict_view_id: resolvedBoundPredictViewIdDefault(
+            formFromProfile(lastBackendDraft, selectedSlug).bound_predict_view_id,
+          ),
+        }
       : {
           ...emptyDraftForm(selectedSlug),
           display_title: canonicalDisplayTitle,
           release_date_label: lastUpdatedDate,
+          bound_predict_view_id: resolvedBoundPredictViewIdDefault(""),
         };
   const hasUnpublishedWorkspaceChanges =
     Boolean(selectedSlug) && !sameWorkspacePublishFields(draftForm, workspacePublishSnapshotForm);
+  // Project Spec S0103: the Inference Form customization now participates in
+  // the same shared workspace dirty-state as every other Dataset Detail tab.
+  const hasUnpublishedCustomizationChanges = isCustomizationRecordDirty(customizationEditorState, customizationBaseline);
   const toolbarPublishBusy =
     draftState.status === "loading" ||
     publicationState.status === "publishing" ||
-    publicationState.status === "saving_visibility";
-  const toolbarPublishDisabled = !selectedSlug || !hasUnpublishedWorkspaceChanges || toolbarPublishBusy;
-  const toolbarPublishError =
-    draftState.status === "invalid"
-      ? "Public Content changes could not be saved. Open the Publishing tab for details."
-      : publicationState.status === "invalid"
-      ? "Public Content changes could not be published. Open the Publishing tab for details."
-      : publicationState.status === "unavailable"
-      ? publicationState.message
-      : null;
-  const toolbarPublishFeedback = toolbarPublicationFeedback(publicationState);
+    publicationState.status === "saving_visibility" ||
+    customizationEditorState.status === "saving";
+  const toolbarPublishDisabled =
+    !selectedSlug || (!hasUnpublishedWorkspaceChanges && !hasUnpublishedCustomizationChanges) || toolbarPublishBusy;
+  // Progress/result feedback beside the shared Publish changes button:
+  // "Saving changes..." always wins while busy; otherwise the S0103
+  // orchestrator's own workspacePublishFeedback (covering customization-only
+  // and combined customization+profile outcomes) takes precedence over the
+  // pre-existing profile-only publish/visibility feedback derived from
+  // publicationState, which is left completely unchanged for the
+  // profile-only path.
+  const toolbarPublishProgress = toolbarPublishBusy ? "Saving changes..." : null;
+  const toolbarPublishError = toolbarPublishProgress
+    ? null
+    : workspacePublishFeedback?.tone === "error"
+    ? workspacePublishFeedback.text
+    : draftState.status === "invalid"
+    ? "Public Content changes could not be saved. Open the Publishing tab for details."
+    : publicationState.status === "invalid"
+    ? "Public Content changes could not be published. Open the Publishing tab for details."
+    : publicationState.status === "unavailable"
+    ? publicationState.message
+    : null;
+  const toolbarPublishFeedback = toolbarPublishProgress
+    ? null
+    : workspacePublishFeedback?.tone === "success"
+    ? workspacePublishFeedback.text
+    : toolbarPublicationFeedback(publicationState);
 
   function selectDatasetFromQuery(value: string) {
     setDatasetQuery(value);
@@ -3843,8 +3977,11 @@ export default function DatasetAdminPage() {
   // read or required by the backend along this path. Shared by publishChanges
   // (Publishing tab) and the workspace toolbar's own Publish changes button,
   // both of which call this with profileFromForm(draftForm, selectedSlug)
-  // and nothing else.
-  function performPublish(profileToPublish: ProfileDraft) {
+  // and nothing else. Project Spec S0103: an optional callbacks argument lets
+  // the shared orchestrator below layer its own combined-outcome toolbar
+  // feedback on top, without changing any existing publicationState
+  // transition this function already performs for the profile-only path.
+  function performPublish(profileToPublish: ProfileDraft, callbacks?: { onSuccess?: () => void; onFailure?: () => void }) {
     setPublicationState((current) => ({
       status: "publishing",
       visible: current.visible,
@@ -3868,6 +4005,7 @@ export default function DatasetAdminPage() {
             publishedProfile: current.publishedProfile,
             message: "Publish endpoint unavailable for this private admin session. Confirm API configuration.",
           }));
+          callbacks?.onFailure?.();
           return null;
         }
         return response.json().then((body: { published?: boolean; display_title?: string | null; snapshot?: PublishSnapshot | null; errors?: DraftError[] }) => ({
@@ -3886,6 +4024,7 @@ export default function DatasetAdminPage() {
             publishedProfile: current.publishedProfile,
             errors: result.body.errors ?? [{ message: "Profile publish failed validation." }],
           }));
+          callbacks?.onFailure?.();
           return;
         }
         const publishedProfile = profileFromSnapshot(result.body.snapshot, selectedSlug) ?? profileToPublish;
@@ -3920,6 +4059,7 @@ export default function DatasetAdminPage() {
         }
         setLastPublishedAt(result.body.snapshot?.published_at);
         setRefreshRevision((current) => current + 1);
+        callbacks?.onSuccess?.();
       })
       .catch(() => {
         setPublicationState((current) => ({
@@ -3928,19 +4068,82 @@ export default function DatasetAdminPage() {
           publishedProfile: current.publishedProfile,
           message: "Profile could not be published. Check private admin API reachability.",
         }));
+        callbacks?.onFailure?.();
       });
   }
 
   // Shared by the Publishing tab's own Publish changes button and the
-  // workspace toolbar's Publish changes button (Project Spec S0061): both
-  // publish the current form payload directly, with no save-profile-draft
-  // precondition.
-  function publishChanges() {
+  // workspace toolbar's Publish changes button (Project Spec S0061/S0103):
+  // determines which of the two resources (Inference Form customization,
+  // Dataset Detail profile) are actually dirty and orchestrates them --
+  // customization always precedes profile publication so a known-invalid
+  // form layout can never be accompanied by a newly published profile in the
+  // same action, only dirty resources are mutated, and a resource's baseline
+  // only updates once its own operation actually succeeds.
+  //
+  // profileDirty is supplied by the caller rather than computed once here,
+  // because the two buttons have always had intentionally different
+  // enablement semantics that predate S0103: the workspace toolbar gates on
+  // hasUnpublishedWorkspaceChanges (differs from the last loaded draft),
+  // while the Publishing tab's own button gates on hasPublishableChanges
+  // (differs from the last published snapshot, so it stays true the first
+  // time anything is published at all) and has always published
+  // unconditionally whenever clicked. Recomputing one universal definition
+  // here would either silently no-op a legitimate Publishing-tab publish or
+  // send a redundant profile publish alongside a customization-only toolbar
+  // edit -- passing each caller's own notion of profileDirty preserves both.
+  function publishChanges(profileDirty: boolean) {
     if (!selectedSlug) {
       return;
     }
 
-    performPublish(profileFromForm(draftForm, selectedSlug));
+    const customizationDraft = customizationDraftOf(customizationEditorState);
+    const customizationDirty = isCustomizationRecordDirty(customizationEditorState, customizationBaseline);
+    const currentProfileForPublish = profileFromForm(draftForm, selectedSlug);
+
+    if (!customizationDirty && !profileDirty) {
+      return;
+    }
+
+    if (customizationDirty && customizationDraft) {
+      const validationErrors = requiredFieldHiddenErrors(customizationDraft);
+      if (validationErrors.length > 0) {
+        // Local validation failure: neither request is sent, the resource
+        // stays dirty, and Publish changes remains enabled.
+        setCustomizationEditorState({ status: "invalid", draft: customizationDraft, errors: validationErrors });
+        setWorkspacePublishFeedback({ tone: "error", text: validationErrors[0].message ?? "Inference Form could not be saved." });
+        return;
+      }
+
+      setWorkspacePublishFeedback(null);
+      persistCustomizationDraft(customizationDraft).then((customizationSaved) => {
+        if (!customizationSaved) {
+          // Customization request failed: profile publication is not
+          // attempted, the customization baseline is left unchanged, and
+          // Publish changes remains enabled.
+          setWorkspacePublishFeedback({ tone: "error", text: "Inference Form could not be saved." });
+          return;
+        }
+        if (!profileDirty) {
+          setWorkspacePublishFeedback({ tone: "success", text: "Changes saved." });
+          return;
+        }
+        performPublish(currentProfileForPublish, {
+          onSuccess: () => setWorkspacePublishFeedback({ tone: "success", text: "Changes saved." }),
+          onFailure: () =>
+            setWorkspacePublishFeedback({
+              tone: "error",
+              text: "Inference Form saved; Dataset Detail publication failed.",
+            }),
+        });
+      });
+      return;
+    }
+
+    // Only the Dataset Detail profile is dirty: existing profile publication
+    // flow, unchanged from Project Spec S0061.
+    setWorkspacePublishFeedback(null);
+    performPublish(currentProfileForPublish);
   }
 
   function setPublicVisibility(visible: boolean) {
@@ -4030,16 +4233,19 @@ export default function DatasetAdminPage() {
 
     if (!selectedSlug || !boundPredictViewId) {
       setCustomizationEditorState({ status: "no_view_bound" });
+      setCustomizationBaseline(null);
       return;
     }
 
     const contractState = readOnlyData.contract;
     if (contractState.status === "unavailable") {
       setCustomizationEditorState({ status: "contract_unavailable" });
+      setCustomizationBaseline(null);
       return;
     }
     if (contractState.status !== "ready") {
       setCustomizationEditorState({ status: "loading" });
+      setCustomizationBaseline(null);
       return;
     }
 
@@ -4047,6 +4253,7 @@ export default function DatasetAdminPage() {
     const controller = new AbortController();
 
     setCustomizationEditorState({ status: "loading" });
+    setCustomizationBaseline(null);
 
     type CustomizationReadResponse = {
       customization_exists: boolean;
@@ -4082,27 +4289,37 @@ export default function DatasetAdminPage() {
         }
         const { data } = result;
         if (data.compatibility_status === "compatible" && data.customization) {
+          const overlaidDraft = customizationDraftFromRecord(data.customization, fields);
           setCustomizationEditorState({
             status: "ready_overlaid",
-            draft: customizationDraftFromRecord(data.customization, fields),
+            draft: overlaidDraft,
             recordExists: true,
           });
+          setCustomizationBaseline(normalizedCustomizationDraft(overlaidDraft));
           return;
         }
+        // Project Spec S0103: an ignored incompatible historical
+        // customization must never become the active baseline -- the
+        // baseline below is always the clean contract-derived draft, the
+        // same one this state renders from.
         if (data.compatibility_status === "incompatible") {
+          const ignoredBaseDraft = emptyCustomizationDraft(fields);
           setCustomizationEditorState({
             status: "incompatible_overlay_ignored",
-            draft: emptyCustomizationDraft(fields),
+            draft: ignoredBaseDraft,
             recordExists: data.customization_exists,
             errors: data.errors ?? [],
           });
+          setCustomizationBaseline(normalizedCustomizationDraft(ignoredBaseDraft));
           return;
         }
+        const baseDraft = emptyCustomizationDraft(fields);
         setCustomizationEditorState({
           status: "ready_base",
-          draft: emptyCustomizationDraft(fields),
+          draft: baseDraft,
           recordExists: false,
         });
+        setCustomizationBaseline(normalizedCustomizationDraft(baseDraft));
       })
       .catch((err: Error) => {
         if (err.name === "AbortError" || customizationRequestRef.current !== requestId) {
@@ -4123,36 +4340,30 @@ export default function DatasetAdminPage() {
     setCustomizationRetryNonce((current) => current + 1);
   }
 
-  function saveCustomization() {
-    if (!selectedSlug || !boundPredictViewId) {
-      return;
-    }
-    if (customizationEditorState.status === "saving") {
-      return;
-    }
-    const draft = customizationDraftOf(customizationEditorState);
-    if (!draft) {
-      return;
-    }
-    // Client-side mirror of the backend's REQUIRED_FIELD_HIDDEN rejection
-    // (registry/predict_view_customization_validate.py): block the request
-    // entirely rather than round-tripping a save the backend is guaranteed
-    // to reject. This does not weaken or replace that backend validation --
-    // it only avoids relying on it as the sole enforcement point.
-    if (draft.fieldHints.some((field) => field.required && field.hidden)) {
-      setCustomizationEditorState({
-        status: "invalid",
-        draft,
-        errors: [
+  // Client-side mirror of the backend's REQUIRED_FIELD_HIDDEN rejection
+  // (registry/predict_view_customization_validate.py): lets the shared
+  // Publish changes orchestrator below block the request entirely rather
+  // than round-tripping a save the backend is guaranteed to reject. This
+  // does not weaken or replace that backend validation -- it only avoids
+  // relying on it as the sole enforcement point.
+  function requiredFieldHiddenErrors(draft: CustomizationEditorDraft): CustomizationError[] {
+    return draft.fieldHints.some((field) => field.required && field.hidden)
+      ? [
           {
             code: "REQUIRED_FIELD_HIDDEN",
             field: null,
             message: "Move every required field out of the field bank before saving.",
           },
-        ],
-      });
-      return;
-    }
+        ]
+      : [];
+  }
+
+  // Project Spec S0103: persists the Inference Form customization through
+  // the existing customization endpoint, now called only from the shared
+  // Publish changes orchestrator below (the dedicated "Save customization"
+  // action no longer exists). Resolves to whether the persist succeeded so
+  // the orchestrator can decide whether to proceed to profile publication.
+  function persistCustomizationDraft(draft: CustomizationEditorDraft): Promise<boolean> {
     const { field_hints, groups } = customizationDraftToRecord(draft);
     const payload = {
       schema_version: "1.0.0",
@@ -4169,7 +4380,7 @@ export default function DatasetAdminPage() {
 
     setCustomizationEditorState({ status: "saving", draft });
 
-    fetch(
+    return fetch(
       `${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
       {
         method: "PUT",
@@ -4183,34 +4394,32 @@ export default function DatasetAdminPage() {
             status: "unavailable",
             message: "Customization endpoint unavailable for this private admin session. Confirm API configuration.",
           });
-          return null;
+          return false;
         }
-        return response.json().then((body: { saved?: boolean; customization?: PredictViewCustomization; errors?: CustomizationError[] }) => ({
-          ok: response.ok,
-          body,
-        }));
-      })
-      .then((result) => {
-        if (!result) {
-          return;
-        }
-        if (!result.ok || !result.body.saved) {
-          setCustomizationEditorState({
-            status: "invalid",
-            draft,
-            errors: result.body.errors ?? [{ message: "Customization failed validation." }],
-          });
-          return;
-        }
-        const contractState = stateValue(readOnlyData.contract);
-        const fields = contractFields(contractState);
-        const savedDraft = result.body.customization
-          ? customizationDraftFromRecord(result.body.customization, fields)
-          : draft;
-        setCustomizationEditorState({ status: "saved", draft: savedDraft });
+        return response.json().then((body: { saved?: boolean; customization?: PredictViewCustomization; errors?: CustomizationError[] }) => {
+          if (!response.ok || !body.saved) {
+            setCustomizationEditorState({
+              status: "invalid",
+              draft,
+              errors: body.errors ?? [{ message: "Customization failed validation." }],
+            });
+            return false;
+          }
+          const contractState = stateValue(readOnlyData.contract);
+          const fields = contractFields(contractState);
+          const savedDraft = body.customization ? customizationDraftFromRecord(body.customization, fields) : draft;
+          setCustomizationEditorState({ status: "saved", draft: savedDraft });
+          // The new baseline is the exact persisted normalized payload
+          // (Project Spec S0103), derived from whatever the backend actually
+          // stored (falling back to the sent draft when it echoes nothing
+          // back), never the pre-save draft alone.
+          setCustomizationBaseline(normalizedCustomizationDraft(savedDraft));
+          return true;
+        });
       })
       .catch(() => {
         setCustomizationEditorState({ status: "unavailable", message: "Customization could not be saved. Check private admin API reachability." });
+        return false;
       });
   }
 
@@ -4292,13 +4501,17 @@ export default function DatasetAdminPage() {
           />
           <button
             disabled={toolbarPublishDisabled}
-            onClick={publishChanges}
+            onClick={() => publishChanges(hasUnpublishedWorkspaceChanges)}
             style={toolbarPublishDisabled ? disabledButtonStyle : actionButtonStyle}
             type="button"
           >
             Publish changes
           </button>
-          {toolbarPublishFeedback ? (
+          {toolbarPublishProgress ? (
+            <span className="dataset-admin-toolbar-progress" role="status">
+              {toolbarPublishProgress}
+            </span>
+          ) : toolbarPublishFeedback ? (
             <span className="dataset-admin-toolbar-success" role="status">
               {toolbarPublishFeedback}
             </span>
@@ -4327,13 +4540,17 @@ export default function DatasetAdminPage() {
             customizationEditorState,
             retryCustomization,
             () => setSelectedTab("live-preview"),
-            publishChanges,
+            // The Publishing tab's own Publish changes button has always
+            // published unconditionally whenever clicked (Project Spec
+            // S0061), gated only by its own disabled attribute
+            // (publishDisabledReason) -- pass profileDirty: true so S0103's
+            // resource-aware orchestration never second-guesses that.
+            () => publishChanges(true),
             // Publishing tab's own Save draft button passes its onClick
             // SyntheticEvent straight through as this callback's first
             // argument -- wrap so it never reaches saveDraft.
             () => saveDraft(),
             setPublicVisibility,
-            saveCustomization,
             updateCustomizationDraft,
             publicationState,
             lastPublishedAt,

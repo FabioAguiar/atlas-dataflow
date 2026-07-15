@@ -1,0 +1,53 @@
+{
+  "artifact_kind": "training_metrics",
+  "created_at": "2026-07-15T15:28:04.015476Z",
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "9ba2a78014fa4bcb9cf3f764fe483204f2184a6f78ca5c84c3b1cca8ac5e4766"
+  },
+  "metric_source": {
+    "computed_from_mixed_split": false,
+    "computed_from_training_split": false,
+    "random_seed": 0,
+    "split_name": "evaluation",
+    "split_size": 2114
+  },
+  "metrics": {
+    "primary_metric": {
+      "name": "roc_auc",
+      "value": 0.8435590708800057
+    },
+    "secondary_metrics": [
+      {
+        "name": "f1",
+        "value": 0.7939456048600292
+      },
+      {
+        "name": "pr_auc",
+        "value": 0.6656143652383235
+      }
+    ]
+  },
+  "path_references": {
+    "dataset_path": "pipeline/prepared/telco-customer-churn/prepared-data.csv",
+    "execution_contract_path": "contracts/telco-customer-churn/execution-contract.json",
+    "metrics_path": "pipeline/training-runs/telco-customer-churn/train-20260715T152804Z/metrics.json",
+    "training_parameter_record_path": "pipeline/training-runs/telco-customer-churn/train-20260715T152804Z/training-parameter-record.json"
+  },
+  "schema_version": "training-metrics.v1",
+  "training_run_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260715T152804Z/",
+    "run_id": "train-20260715T152804Z"
+  }
+}

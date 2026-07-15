@@ -1,18 +1,16 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-15T15:21:14Z",
-  "active_release_at_publish_time": "release-20260715t104454z",
+  "published_at": "2026-07-15T15:49:01Z",
+  "active_release_at_publish_time": "release-20260715t154638z",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
-      "problem_summary_title": "teste",
-      "problem_summary_body": "teste",
       "release_date_label": "2026-07-14",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": "/media/home-cards/1cf2cbffa65f42b08d6dcb6a3a45047c.jpg",
+      "background_image_ref": "/media/home-cards/cdd39634ef95476aac377deab2e97693.jpg",
       "primary_metric_key": null
     },
     "performance_focus": {

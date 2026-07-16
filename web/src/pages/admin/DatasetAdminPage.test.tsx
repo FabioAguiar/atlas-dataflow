@@ -72,14 +72,20 @@ const publicProfile = {
     bound_predict_view_id: viewId,
   },
   result_card: {
-    probability_label: "Churn probability",
+    schema_version: "binary-result-presentation.v1",
+    positive_class_probability_label: "Churn probability",
+    predicted_outcome_label: "Predicted retention status",
+    positive_outcome_copy: "Likely to churn",
+    negative_outcome_copy: "Likely to stay",
     submit_button_label: "Run prediction",
-    model_label: "Retention model",
-    badge_preset: "risk",
-    badge_labels: {
-      high: "High risk",
-      medium: "Medium risk",
-      low: "Low risk",
+    model_section_label: "Scoring model",
+    interpretation: {
+      preset: "risk",
+      labels: {
+        high: "High risk",
+        medium: "Medium risk",
+        low: "Low risk",
+      },
     },
   },
 };
@@ -304,6 +310,27 @@ function installFetchMock(
               display_order: 3 + index,
             })),
           ],
+        },
+        result_contract: {
+          status: "available",
+          semantics: {
+            schema_version: "binary-result-semantics.v1",
+            problem_type: "binary_classification",
+            result_schema_version: "binary-classification-result.v1",
+            primary_output: "positive_class_probability",
+            positive_class: { class_id: "churn", event_label: "Customer churn" },
+            negative_class: { class_id: "retained" },
+            decision: { threshold: 0.6 },
+            interpretation: {
+              preset: "risk",
+              bands: [
+                { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+                { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+                { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+              ],
+            },
+            model_descriptor: { model_family: "linear", display_name: "Retention model" },
+          },
         },
       });
     }
@@ -1181,7 +1208,7 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
     fireEvent.change(screen.getByLabelText("Badge preset"), { target: { value: "risk" } });
-    fireEvent.change(screen.getByLabelText("High badge label"), { target: { value: "Severe risk" } });
+    fireEvent.change(screen.getByLabelText("High label"), { target: { value: "Severe risk" } });
 
     // Save draft only exists inside the Publishing tab's own panel now that
     // the top-level workspace-shell button has been removed (S0055).
@@ -1206,7 +1233,7 @@ describe("DatasetAdminPage", () => {
       home_card?: { icon?: string; primary_metric_key?: string | null };
       performance_focus?: { focus_id?: string; highlighted_score_id?: string; visible_scores?: Array<{ score_id: string; value: string }> };
       theme?: { preset?: string };
-      result_card?: { badge_preset?: string; badge_labels?: { high?: string } };
+      result_card?: { schema_version?: string; interpretation?: { preset?: string; labels?: { high?: string } } };
     };
 
     expect(body.home_card?.icon).toBe("chart-line");
@@ -1218,9 +1245,9 @@ describe("DatasetAdminPage", () => {
     expect(body.performance_focus?.visible_scores?.[0]).toMatchObject({ score_id: "balanced_accuracy", value: "0.81" });
     expect(body.theme?.preset).toBe("cyber-neon");
     expect(SCHEMA_SUPPORTED_THEME_PRESETS).toContain(body.theme?.preset);
-    expect(body.result_card?.badge_preset).toBe("risk");
-    expect(SCHEMA_SUPPORTED_BADGE_PRESETS).toContain(body.result_card?.badge_preset);
-    expect(body.result_card?.badge_labels?.high).toBe("Severe risk");
+    expect(body.result_card?.schema_version).toBe("binary-result-presentation.v1");
+    expect(SCHEMA_SUPPORTED_BADGE_PRESETS).toContain(body.result_card?.interpretation?.preset);
+    expect(body.result_card?.interpretation?.labels?.high).toBe("Severe risk");
   });
 
   it("renders the exact enabled card-only theme catalog while preserving Result Card locks", async () => {
@@ -1578,7 +1605,7 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Curated churn profile" })).toBeInTheDocument();
 
     expect(screen.getByRole("tab", { name: "Dataset Detail", selected: true })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Result" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Prediction result" })).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
@@ -1587,8 +1614,8 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByText("Curated home card copy")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
-    expect(screen.getByText(/Placeholder preview only, not a real prediction./)).toBeInTheDocument();
-    const resultRegion = screen.getByRole("region", { name: "Result" });
+    expect(screen.getByText(/Preview only — no inference request is executed./)).toBeInTheDocument();
+    const resultRegion = screen.getByRole("region", { name: "Prediction result" });
     expect(within(resultRegion).getByText("Churn probability")).toBeInTheDocument();
     expect(screen.getByText("Account profile")).toBeInTheDocument();
   });
@@ -1628,7 +1655,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Atlas Green" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
-    fireEvent.change(screen.getByLabelText("Medium badge label"), { target: { value: "Elevated risk (edited)" } });
+    fireEvent.change(screen.getByLabelText("High label"), { target: { value: "Elevated risk (edited)" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
     fireEvent.doubleClick(screen.getByText("tenure"));
@@ -1673,8 +1700,8 @@ describe("DatasetAdminPage", () => {
     // currently and always renders (decision-02).
     expect(screen.getByText("Format: dd/mm/yyyy")).toBeInTheDocument();
 
-    // 0.72 fixed placeholder confidence resolves to the "warning" tone,
-    // which maps to the medium badge label.
+    // The contract-derived positive scenario is 0.8 for a 0.6 threshold,
+    // which selects the governed high band and its edited presentation copy.
     expect(screen.getByText("Elevated risk (edited)")).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure (edited)")).toBeInTheDocument();
 
@@ -3430,7 +3457,7 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
     expect(screen.queryByLabelText("Submit button label")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Probability label")).toBeInTheDocument();
+    expect(screen.getByLabelText("Positive-class probability label")).toBeInTheDocument();
   });
 
   it("disables Submit button label when no predict view is bound (Project Spec S0110)", async () => {

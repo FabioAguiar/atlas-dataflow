@@ -1375,7 +1375,11 @@ def test_result_contract_available_when_binary_result_semantics_present():
         release_dir = releases_root / "release-s0109-available"
         _s0109_write_release_with_bundle(
             release_dir,
-            {"feature_order": ["age"], "result_semantics": _S0109_RESULT_SEMANTICS},
+            {
+                "feature_order": ["age"],
+                "output_schema": {"class_labels": ["No", "Yes"]},
+                "result_semantics": _S0109_RESULT_SEMANTICS,
+            },
         )
 
         original_resolve_dataset = api_main.resolve_dataset
@@ -1391,7 +1395,10 @@ def test_result_contract_available_when_binary_result_semantics_present():
             response = api_main.get_public_contract("example-dataset")
 
             assert response["result_contract"]["status"] == "available"
-            assert response["result_contract"]["semantics"] == _S0109_RESULT_SEMANTICS
+            assert response["result_contract"]["semantics"] == {
+                **_S0109_RESULT_SEMANTICS,
+                "negative_class": {"class_id": "No"},
+            }
             _assert_no_internal_public_exposure(response)
         finally:
             api_main.resolve_dataset = original_resolve_dataset
@@ -1430,6 +1437,43 @@ def test_result_contract_unavailable_for_historical_bundle_without_result_semant
             api_main._inference_releases_root = original_releases_root
 
 
+def test_result_contract_unavailable_when_binary_class_identity_is_not_resolvable():
+    invalid_class_sets = [None, [], ["Yes"], ["No", "Yes", "Maybe"], ["Yes", " yes "], ["No", "Maybe"]]
+    for class_labels in invalid_class_sets:
+        bundle = {
+            "feature_order": ["age"],
+            "result_semantics": _S0109_RESULT_SEMANTICS,
+            "output_schema": {},
+        }
+        if class_labels is not None:
+            bundle["output_schema"]["class_labels"] = class_labels
+
+        from runtime.inference import project_result_contract
+
+        assert project_result_contract(bundle) == {
+            "status": "unavailable",
+            "reason": "binary_result_semantics_unavailable",
+        }
+
+
+def test_result_contract_projects_order_independent_numeric_and_boolean_negative_identities():
+    from runtime.inference import project_result_contract
+
+    numeric_semantics = {**_S0109_RESULT_SEMANTICS, "positive_class": {"class_id": "1", "event_label": "Event"}}
+    numeric = project_result_contract({
+        "output_schema": {"class_labels": [1, 0]},
+        "result_semantics": numeric_semantics,
+    })
+    assert numeric["semantics"]["negative_class"] == {"class_id": "0"}
+
+    boolean_semantics = {**_S0109_RESULT_SEMANTICS, "positive_class": {"class_id": "True", "event_label": "Event"}}
+    boolean = project_result_contract({
+        "output_schema": {"class_labels": [False, True]},
+        "result_semantics": boolean_semantics,
+    })
+    assert boolean["semantics"]["negative_class"] == {"class_id": "False"}
+
+
 def test_result_contract_projection_never_invokes_model_loader():
     """GET /contract must never deserialize the model, even when a real
     loader-strategy allowlist entry exists -- it only reads bundle JSON."""
@@ -1443,6 +1487,7 @@ def test_result_contract_projection_never_invokes_model_loader():
                 "feature_order": ["age"],
                 "runtime_execution": {"loader_strategy": "joblib_sklearn_predict", "serialization_format": "joblib"},
                 "model_artifact": {"path": "models/model.pkl", "sha256": "0" * 64},
+                "output_schema": {"class_labels": ["No", "Yes"]},
                 "result_semantics": _S0109_RESULT_SEMANTICS,
             },
         )

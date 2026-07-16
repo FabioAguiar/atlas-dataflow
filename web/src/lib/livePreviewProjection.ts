@@ -1,6 +1,11 @@
 import type { DatasetDetailMetadataItem } from "../components/DatasetDetail/DatasetDetailHeader";
 import type { VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
-import type { ResultPreviewLabels, PredictionResult } from "../components/InferenceResult/InferenceResult";
+import type {
+  BinaryClassificationResult,
+  BinaryResultPresentation,
+  BinaryResultSemantics,
+  BinaryRiskBand,
+} from "../components/ResultCard/types";
 import type { DatasetIconName } from "./datasetPresentation";
 import type { PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 
@@ -61,15 +66,6 @@ type PreviewDraftForm = {
   short_description: string;
 };
 
-type PreviewResultCardForm = {
-  probability_label: string;
-  model_label: string;
-  badge_preset: "" | "risk";
-  badge_high: string;
-  badge_medium: string;
-  badge_low: string;
-};
-
 type PreviewPerformanceFocusDraft = {
   focus_id: PerformanceFocus["focus_id"];
   highlighted_score_id: string;
@@ -84,11 +80,6 @@ export type HomeCardPreviewProps = {
   tags?: string[];
   iconOverride?: DatasetIconName;
   problemType?: string;
-};
-
-export type ResultCardPreview = {
-  result: PredictionResult;
-  previewLabels: ResultPreviewLabels;
 };
 
 export type DatasetDetailPreview = {
@@ -202,39 +193,59 @@ export function projectModelCardPreview(modelCard: PreviewModelCard | null): Mod
   return null;
 }
 
-/**
- * Fixed, explicitly-labeled placeholder outcome -- never a real /inference
- * response -- so result_card settings can be previewed without implying a
- * genuine prediction was made.
- */
-const RESULT_CARD_PLACEHOLDER_RESULT: PredictionResult = {
-  label: "sample_outcome",
-  confidence: 0.72,
-};
+function selectedBand(bands: BinaryRiskBand[], probability: number): BinaryRiskBand | null {
+  const matches = bands.filter((band, index) =>
+    probability >= band.lower_bound &&
+    (probability < band.upper_bound || (index === bands.length - 1 && probability === 1 && band.upper_bound === 1)),
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
 
 /**
- * Projects result-card draft labels onto InferenceResult's preview override
- * contract. The result is always a fixed placeholder, probability/model labels
- * fall back to InferenceResult defaults when blank, and the risk preset maps
- * high/medium/low draft labels onto the component's danger/warning/success
- * tone labels.
+ * Creates an Admin-only synthetic result from governed release semantics.
+ * This helper is deliberately separate from real inference consumption: it
+ * accepts no API result and performs no I/O.
  */
-export function projectResultCardPreview(form: PreviewResultCardForm): ResultCardPreview {
-  const toneLabels: ResultPreviewLabels["toneLabels"] = {};
-  if (form.badge_preset === "risk") {
-    if (form.badge_high.trim()) toneLabels.danger = form.badge_high.trim();
-    if (form.badge_medium.trim()) toneLabels.warning = form.badge_medium.trim();
-    if (form.badge_low.trim()) toneLabels.success = form.badge_low.trim();
-  }
+export function projectBinaryResultPreview(
+  semantics: BinaryResultSemantics,
+  presentation: BinaryResultPresentation,
+  probability: number,
+): BinaryClassificationResult | null {
+  if (!Number.isFinite(probability) || probability < 0 || probability > 1) return null;
+  if (semantics.interpretation.preset !== "risk" || presentation.interpretation.preset !== "risk") return null;
+  if (semantics.interpretation.bands.length !== 3) return null;
+  if (semantics.positive_class.class_id === semantics.negative_class.class_id) return null;
+
+  const band = selectedBand(semantics.interpretation.bands, probability);
+  if (!band) return null;
+  const predictedPositive = probability >= semantics.decision.threshold;
 
   return {
-    result: RESULT_CARD_PLACEHOLDER_RESULT,
-    previewLabels: {
-      confidenceLabel: form.probability_label.trim() || undefined,
-      modelLabel: form.model_label.trim() || undefined,
-      toneLabels: Object.keys(toneLabels).length ? toneLabels : undefined,
+    schema_version: "binary-classification-result.v1",
+    problem_type: "binary_classification",
+    predicted_class: predictedPositive ? { class_id: semantics.positive_class.class_id } : semantics.negative_class,
+    positive_class: semantics.positive_class,
+    positive_class_probability: probability,
+    class_probabilities: [
+      { class_id: semantics.negative_class.class_id, probability: 1 - probability },
+      { class_id: semantics.positive_class.class_id, probability },
+    ],
+    decision: { threshold: semantics.decision.threshold, predicted_positive: predictedPositive },
+    interpretation: {
+      preset: semantics.interpretation.preset,
+      band_id: band.band_id,
+      bands: semantics.interpretation.bands,
     },
+    model_descriptor: semantics.model_descriptor,
   };
+}
+
+export function positiveScenarioProbability(threshold: number): number {
+  return threshold + (1 - threshold) / 2;
+}
+
+export function negativeScenarioProbability(threshold: number): number | null {
+  return threshold > 0 ? threshold / 2 : null;
 }
 
 /** Projects only checked presentation scores into the public S0069 shape. */

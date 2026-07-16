@@ -141,8 +141,7 @@
   "metric_candidates": [],
   "split_policy_candidate": null,
   "open_questions": [
-    "Final 'SeniorCitizen' semantic type/encoding treatment is not yet decided.",
-    "Final positive-label decision for 'Churn' requires explicit confirmation despite the observed candidate recorded here."
+    "Final 'SeniorCitizen' semantic type/encoding treatment is not yet decided."
   ],
   "categorical_domain_intent": [
     {
@@ -267,6 +266,39 @@
       "closed_for_inference": true
     }
   ],
+  "binary_result_semantics_intent": {
+    "schema_version": "binary_result_semantics_intent.v1",
+    "review_status": "approved",
+    "problem_type": "binary_classification",
+    "positive_class": {
+      "class_id": "Yes",
+      "event_label": "Churn"
+    },
+    "primary_output": "positive_class_probability",
+    "decision": {
+      "threshold": 0.5
+    },
+    "interpretation": {
+      "preset": "risk",
+      "bands": [
+        {
+          "band_id": "low",
+          "lower_bound": 0.0,
+          "upper_bound": 0.35
+        },
+        {
+          "band_id": "medium",
+          "lower_bound": 0.35,
+          "upper_bound": 0.65
+        },
+        {
+          "band_id": "high",
+          "lower_bound": 0.65,
+          "upper_bound": 1.0
+        }
+      ]
+    }
+  },
   "modeling_intent_boundary_confirmations": {
     "is_execution_contract": false,
     "is_runtime_contract": false,
@@ -278,7 +310,7 @@
     "is_ui_fixture": false,
     "model_training_performed": false
   },
-  "generated_at": "2026-07-15T15:46:35+00:00",
+  "generated_at": "2026-07-16T21:00:16+00:00",
   "unresolved_review_items": [],
   "evidence_policy": {
     "raw_logs_prohibited": true,

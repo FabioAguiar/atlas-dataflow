@@ -430,6 +430,7 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
             "result_schema_version": semantics["result_schema_version"],
             "primary_output": semantics["primary_output"],
             "positive_class": dict(semantics["positive_class"]),
+            "negative_class": dict(semantics["negative_class"]),
             "decision": dict(semantics["decision"]),
             "interpretation": {
                 "preset": semantics["interpretation"]["preset"],
@@ -445,7 +446,6 @@ def _execute_binary_prediction(
     validated_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     semantics = _validate_result_semantics(adapter.declaration)
-    _validate_bundle_class_labels(adapter.metadata)
 
     row = _build_ordered_row(adapter.metadata.feature_order, validated_payload)
 
@@ -500,15 +500,14 @@ def _execute_binary_prediction(
         )
 
     positive_index = [_normalize_class_id(c) for c in model_classes].index(positive_normalized)
-    other_index = 1 - positive_index
-    other_class_id = model_classes[other_index]
-
     class_probabilities = _validate_probabilities(proba_row)
     positive_class_probability = class_probabilities[positive_index]
 
     threshold = semantics["decision"]["threshold"]
     predicted_positive = positive_class_probability >= threshold
-    predicted_class_id = positive_class_id if predicted_positive else str(other_class_id)
+    predicted_class_id = (
+        positive_class_id if predicted_positive else semantics["negative_class"]["class_id"]
+    )
 
     band_id = _resolve_band(positive_class_probability, semantics["interpretation"]["bands"])
 
@@ -970,6 +969,8 @@ def _validate_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]
             field="result_semantics.positive_class.event_label",
         )
 
+    class_identities = _resolve_binary_class_identities(declaration, positive_class)
+
     decision = semantics.get("decision")
     threshold = decision.get("threshold") if isinstance(decision, Mapping) else None
     if (
@@ -1020,7 +1021,11 @@ def _validate_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]
         "problem_type": semantics["problem_type"],
         "result_schema_version": semantics["result_schema_version"],
         "primary_output": semantics["primary_output"],
-        "positive_class": {"class_id": class_id, "event_label": event_label},
+        "positive_class": {
+            "class_id": class_identities["positive_class"]["class_id"],
+            "event_label": event_label,
+        },
+        "negative_class": class_identities["negative_class"],
         "decision": {"threshold": float(threshold)},
         "interpretation": {"preset": "risk", "bands": bands},
         "model_descriptor": {"model_family": model_family, "display_name": display_name},
@@ -1098,18 +1103,50 @@ def _validate_bands(bands: Any) -> list[dict[str, Any]]:
     return parsed
 
 
-def _validate_bundle_class_labels(metadata: RuntimeBundleMetadata) -> None:
-    class_labels = metadata.output_schema.get("class_labels")
-    if (
-        not isinstance(class_labels, Sequence)
-        or isinstance(class_labels, (str, bytes))
-        or len(set(_normalize_class_id(c) for c in class_labels)) != 2
-    ):
+def _resolve_binary_class_identities(
+    declaration: Mapping[str, Any], positive_class: Mapping[str, Any]
+) -> dict[str, dict[str, str]]:
+    """Resolve the governed binary identities without loading a model."""
+
+    output_schema = declaration.get("output_schema")
+    class_labels = output_schema.get("class_labels") if isinstance(output_schema, Mapping) else None
+    if not isinstance(class_labels, Sequence) or isinstance(class_labels, (str, bytes)) or len(class_labels) != 2:
         raise BundleValidationError(
             "invalid_output_schema_class_labels",
-            "Inference bundle output schema class labels are invalid.",
+            "Inference bundle output schema must define exactly two class labels.",
             field="output_schema.class_labels",
         )
+
+    projected_labels = [str(label).strip() for label in class_labels]
+    normalized_labels = [_normalize_class_id(label) for label in class_labels]
+    if any(not label for label in normalized_labels):
+        raise BundleValidationError(
+            "invalid_output_schema_class_labels",
+            "Inference bundle output schema class labels must be non-empty.",
+            field="output_schema.class_labels",
+        )
+    if len(set(normalized_labels)) != 2:
+        raise BundleValidationError(
+            "binary_class_labels_not_unique",
+            "Inference bundle output schema class labels are not unique after normalization.",
+            field="output_schema.class_labels",
+        )
+
+    positive_id = str(positive_class.get("class_id", "")).strip()
+    positive_normalized = _normalize_class_id(positive_id)
+    matches = [index for index, label in enumerate(normalized_labels) if label == positive_normalized]
+    if len(matches) != 1:
+        raise BundleValidationError(
+            "positive_class_not_in_bundle_class_labels",
+            "Inference bundle positive class does not match exactly one output schema class label.",
+            field="result_semantics.positive_class.class_id",
+        )
+
+    negative_index = 1 - matches[0]
+    return {
+        "positive_class": {"class_id": positive_id},
+        "negative_class": {"class_id": projected_labels[negative_index]},
+    }
 
 
 def _build_ordered_row(feature_order: Sequence[str], validated_payload: Mapping[str, Any]) -> Any:

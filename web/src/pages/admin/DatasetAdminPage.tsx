@@ -16,7 +16,15 @@ import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummar
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import ModelCard from "../../components/ModelCard/ModelCard";
-import InferenceResult from "../../components/InferenceResult/InferenceResult";
+import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
+import ResultCardShell from "../../components/ResultCard/ResultCardShell";
+import {
+  GENERIC_RESULT_PRESENTATION,
+  isAvailableBinaryResultContract,
+  type BinaryResultContract,
+  type BinaryResultPresentation,
+  type BinaryResultSemantics,
+} from "../../components/ResultCard/types";
 import InferenceForm, {
   type FieldHint,
   type GroupDef,
@@ -27,7 +35,9 @@ import {
   projectHomeCardPreview,
   projectPerformanceFocusPreview,
   projectModelCardPreview,
-  projectResultCardPreview,
+  negativeScenarioProbability,
+  positiveScenarioProbability,
+  projectBinaryResultPreview,
   toVisualizationsPayload,
 } from "../../lib/livePreviewProjection";
 import {
@@ -83,11 +93,11 @@ const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> =
 ];
 
 const RESULT_PRESET_CARDS = [
-  { label: "Risk", value: "risk", samples: ["High risk", "Medium risk", "Low risk"], available: true },
-  { label: "Value band", value: "value-band", samples: ["High value", "Medium value", "Low value"], available: false },
-  { label: "Target status", value: "target-status", samples: ["Above target", "On target", "Below target"], available: false },
-  { label: "Severity", value: "severity", samples: ["Critical", "Moderate", "Low"], available: false },
-  { label: "Custom", value: "custom", samples: ["Dataset high", "Dataset medium", "Dataset low"], available: false },
+  { label: "Risk", value: "risk", requirement: "Requires a compatible binary risk result contract" },
+  { label: "Value band", value: "value-band", requirement: "Requires regression result contract" },
+  { label: "Target status", value: "target-status", requirement: "Requires target-status semantics" },
+  { label: "Severity", value: "severity", requirement: "Requires severity semantics" },
+  { label: "Custom", value: "custom", requirement: "Requires custom renderer contract" },
 ] as const;
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -171,15 +181,18 @@ type ProfileDraft = {
     bound_predict_view_id?: string | null;
   };
   result_card?: {
-    probability_label?: string;
-    submit_button_label?: string;
-    model_label?: string;
-    badge_preset?: "risk";
-    badge_labels?: {
-      high?: string;
-      medium?: string;
-      low?: string;
+    schema_version?: "binary-result-presentation.v1";
+    positive_class_probability_label?: string;
+    predicted_outcome_label?: string;
+    positive_outcome_copy?: string;
+    negative_outcome_copy?: string;
+    model_section_label?: string;
+    interpretation?: {
+      preset?: "risk";
+      labels?: { high?: string; medium?: string; low?: string };
     };
+    // Bounded read-only migration input. Never serialized by profileFromForm.
+    submit_button_label?: string;
   };
 };
 
@@ -246,18 +259,21 @@ type DraftForm = {
   performance_focus: PerformanceFocusDraft;
   theme_preset: DatasetThemePresetId;
   bound_predict_view_id: string;
-  probability_label: string;
+  positive_class_probability_label: string;
+  predicted_outcome_label: string;
+  positive_outcome_copy: string;
+  negative_outcome_copy: string;
   // Project Spec S0110: read-only migration context only -- the Result Card
   // tab no longer renders or edits this field, and profileFromForm never
   // writes it back. Populated by formFromProfile purely so the Inference
   // Form tab's customization-loading effect can seed a migration candidate
   // from the currently loaded profile's legacy value.
   legacy_submit_button_label: string;
-  model_label: string;
-  badge_preset: "" | "risk";
-  badge_high: string;
-  badge_medium: string;
-  badge_low: string;
+  model_section_label: string;
+  interpretation_preset: "risk";
+  interpretation_high: string;
+  interpretation_medium: string;
+  interpretation_low: string;
 };
 
 type DraftError = {
@@ -321,6 +337,18 @@ type ContractPayload = {
   features: ContractField[];
 };
 
+type ContractEnvelope = {
+  contract: ContractPayload;
+  result_contract?: BinaryResultContract | unknown;
+};
+
+type ResultContractState =
+  | { status: "idle" | "loading" }
+  | { status: "available"; semantics: BinaryResultSemantics }
+  | { status: "unavailable"; message: string }
+  | { status: "transport_failure"; message: string }
+  | { status: "incompatible"; message: string };
+
 type ContextPayload = {
   title?: string;
   summary?: string;
@@ -351,6 +379,7 @@ type ReadOnlyData = {
   dataset: SectionState<DatasetListing>;
   context: SectionState<ContextPayload>;
   contract: SectionState<ContractPayload>;
+  resultContract: ResultContractState;
   metrics: SectionState<MetricsPayload>;
   modelCard: SectionState<ModelCardPayload>;
   visualizations: SectionState<unknown>;
@@ -804,6 +833,7 @@ const emptyReadOnlyData: ReadOnlyData = {
   dataset: { status: "idle" },
   context: { status: "idle" },
   contract: { status: "idle" },
+  resultContract: { status: "idle" },
   metrics: { status: "idle" },
   modelCard: { status: "idle" },
   visualizations: { status: "idle" },
@@ -1396,13 +1426,16 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     performance_focus: defaultPerformanceFocus(),
     theme_preset: DEFAULT_DATASET_THEME_PRESET,
     bound_predict_view_id: "",
-    probability_label: "",
+    positive_class_probability_label: GENERIC_RESULT_PRESENTATION.positive_class_probability_label,
+    predicted_outcome_label: GENERIC_RESULT_PRESENTATION.predicted_outcome_label,
+    positive_outcome_copy: GENERIC_RESULT_PRESENTATION.positive_outcome_copy,
+    negative_outcome_copy: GENERIC_RESULT_PRESENTATION.negative_outcome_copy,
     legacy_submit_button_label: "",
-    model_label: "",
-    badge_preset: "risk",
-    badge_high: "",
-    badge_medium: "",
-    badge_low: "",
+    model_section_label: GENERIC_RESULT_PRESENTATION.model_section_label,
+    interpretation_preset: "risk",
+    interpretation_high: GENERIC_RESULT_PRESENTATION.interpretation.labels.high,
+    interpretation_medium: GENERIC_RESULT_PRESENTATION.interpretation.labels.medium,
+    interpretation_low: GENERIC_RESULT_PRESENTATION.interpretation.labels.low,
   };
 }
 
@@ -1443,13 +1476,16 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
       ? profile.theme.preset
       : DEFAULT_DATASET_THEME_PRESET,
     bound_predict_view_id: profile.inference_presentation?.bound_predict_view_id ?? "",
-    probability_label: profile.result_card?.probability_label ?? "",
+    positive_class_probability_label: profile.result_card?.positive_class_probability_label ?? form.positive_class_probability_label,
+    predicted_outcome_label: profile.result_card?.predicted_outcome_label ?? form.predicted_outcome_label,
+    positive_outcome_copy: profile.result_card?.positive_outcome_copy ?? form.positive_outcome_copy,
+    negative_outcome_copy: profile.result_card?.negative_outcome_copy ?? form.negative_outcome_copy,
     legacy_submit_button_label: profile.result_card?.submit_button_label ?? "",
-    model_label: profile.result_card?.model_label ?? "",
-    badge_preset: profile.result_card?.badge_preset ?? "risk",
-    badge_high: profile.result_card?.badge_labels?.high ?? "",
-    badge_medium: profile.result_card?.badge_labels?.medium ?? "",
-    badge_low: profile.result_card?.badge_labels?.low ?? "",
+    model_section_label: profile.result_card?.model_section_label ?? form.model_section_label,
+    interpretation_preset: "risk",
+    interpretation_high: profile.result_card?.interpretation?.labels?.high ?? form.interpretation_high,
+    interpretation_medium: profile.result_card?.interpretation?.labels?.medium ?? form.interpretation_medium,
+    interpretation_low: profile.result_card?.interpretation?.labels?.low ?? form.interpretation_low,
   };
 }
 
@@ -1524,22 +1560,22 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   // (see contracts/dataset-public-profile.schema.json's deprecated,
   // read-only compatibility description for that field). The Inference Form
   // tab's predict-view customization is the only writer of submit copy now.
-  const resultCard: NonNullable<ProfileDraft["result_card"]> = {};
-  resultCard.probability_label = textValue(form.probability_label);
-  resultCard.model_label = textValue(form.model_label);
-  if (form.badge_preset) {
-    resultCard.badge_preset = form.badge_preset;
-  }
-  const badgeLabels: NonNullable<NonNullable<ProfileDraft["result_card"]>["badge_labels"]> = {};
-  badgeLabels.high = textValue(form.badge_high);
-  badgeLabels.medium = textValue(form.badge_medium);
-  badgeLabels.low = textValue(form.badge_low);
-  if (Object.keys(badgeLabels).length > 0) {
-    resultCard.badge_labels = badgeLabels;
-  }
-  if (Object.keys(resultCard).length > 0) {
-    profile.result_card = resultCard;
-  }
+  profile.result_card = {
+    schema_version: "binary-result-presentation.v1",
+    positive_class_probability_label: textValue(form.positive_class_probability_label),
+    predicted_outcome_label: textValue(form.predicted_outcome_label),
+    positive_outcome_copy: textValue(form.positive_outcome_copy),
+    negative_outcome_copy: textValue(form.negative_outcome_copy),
+    model_section_label: textValue(form.model_section_label),
+    interpretation: {
+      preset: "risk",
+      labels: {
+        high: textValue(form.interpretation_high),
+        medium: textValue(form.interpretation_medium),
+        low: textValue(form.interpretation_low),
+      },
+    },
+  };
 
   return profile;
 }
@@ -1594,6 +1630,15 @@ type WorkspacePublishFields = Pick<
   | "background_image_ref"
   | "theme_preset"
   | "bound_predict_view_id"
+  | "positive_class_probability_label"
+  | "predicted_outcome_label"
+  | "positive_outcome_copy"
+  | "negative_outcome_copy"
+  | "model_section_label"
+  | "interpretation_preset"
+  | "interpretation_high"
+  | "interpretation_medium"
+  | "interpretation_low"
 >;
 
 function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
@@ -1616,6 +1661,15 @@ function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
       ? form.theme_preset
       : DEFAULT_DATASET_THEME_PRESET,
     bound_predict_view_id: form.bound_predict_view_id,
+    positive_class_probability_label: form.positive_class_probability_label,
+    predicted_outcome_label: form.predicted_outcome_label,
+    positive_outcome_copy: form.positive_outcome_copy,
+    negative_outcome_copy: form.negative_outcome_copy,
+    model_section_label: form.model_section_label,
+    interpretation_preset: form.interpretation_preset,
+    interpretation_high: form.interpretation_high,
+    interpretation_medium: form.interpretation_medium,
+    interpretation_low: form.interpretation_low,
   };
 }
 
@@ -1734,6 +1788,40 @@ function metricKeys(metrics: MetricsPayload | null): string[] {
 
 function contractFields(contract: ContractPayload | null): ContractField[] {
   return contract?.features ?? [];
+}
+
+function classifyResultContract(envelope: ContractEnvelope): ResultContractState {
+  const value = envelope.result_contract;
+  if (value && typeof value === "object" && "status" in value && value.status === "unavailable") {
+    const reason = "reason" in value && typeof value.reason === "string" ? value.reason : "No result semantics are available for this release.";
+    return { status: "unavailable", message: reason };
+  }
+  if (!isAvailableBinaryResultContract(value)) {
+    return { status: "incompatible", message: "The active release result contract is missing or incompatible." };
+  }
+  if (value.semantics.interpretation.bands.length !== 3) {
+    return { status: "incompatible", message: "The active release must expose exactly three governed risk bands." };
+  }
+  return { status: "available", semantics: value.semantics };
+}
+
+function presentationFromForm(form: DraftForm): BinaryResultPresentation {
+  return {
+    schema_version: "binary-result-presentation.v1",
+    positive_class_probability_label: form.positive_class_probability_label.trim() || GENERIC_RESULT_PRESENTATION.positive_class_probability_label,
+    predicted_outcome_label: form.predicted_outcome_label.trim() || GENERIC_RESULT_PRESENTATION.predicted_outcome_label,
+    positive_outcome_copy: form.positive_outcome_copy.trim() || GENERIC_RESULT_PRESENTATION.positive_outcome_copy,
+    negative_outcome_copy: form.negative_outcome_copy.trim() || GENERIC_RESULT_PRESENTATION.negative_outcome_copy,
+    model_section_label: form.model_section_label.trim() || GENERIC_RESULT_PRESENTATION.model_section_label,
+    interpretation: {
+      preset: "risk",
+      labels: {
+        high: form.interpretation_high.trim() || GENERIC_RESULT_PRESENTATION.interpretation.labels.high,
+        medium: form.interpretation_medium.trim() || GENERIC_RESULT_PRESENTATION.interpretation.labels.medium,
+        low: form.interpretation_low.trim() || GENERIC_RESULT_PRESENTATION.interpretation.labels.low,
+      },
+    },
+  };
 }
 
 async function fetchJson<T>(path: string, signal: AbortSignal): Promise<SectionState<T>> {
@@ -2920,68 +3008,102 @@ function InferenceFormTab({
 
 function ResultCardTab({
   form,
+  readOnlyData,
+  selectedSlug,
   setField,
 }: {
   form: DraftForm;
+  readOnlyData: ReadOnlyData;
+  selectedSlug: string;
   setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
 }) {
+  const resultContract = readOnlyData.resultContract;
+  const semantics = resultContract.status === "available" ? resultContract.semantics : null;
   return (
     <TabWorkspace eyebrow="Result Card" helper="Edit public presentation labels only; model behavior remains read-only Atlas state.">
+      <Card className="dataset-admin-technical-summary">
+        <div className="dataset-admin-card-heading">
+          <h2>Technical result contract</h2>
+          <p>Release-governed values are read-only. Performance focus is presentation/evaluation context only.</p>
+        </div>
+        {resultContract.status === "loading" || resultContract.status === "idle" ? <p role="status">Loading result contract…</p> : null}
+        {resultContract.status === "unavailable" || resultContract.status === "incompatible" || resultContract.status === "transport_failure" ? (
+          <p className="dataset-admin-contract-warning" role="alert">{resultContract.message}</p>
+        ) : null}
+        <div className="dataset-admin-technical-grid">
+          <ReadOnlyField label="Problem type" value={semantics?.problem_type ?? "Unavailable"} />
+          <ReadOnlyField label="Performance focus (context only)" value={form.performance_focus.focus_id || "Unavailable"} />
+          <ReadOnlyField label="Positive class" value={semantics ? `${semantics.positive_class.class_id} — ${semantics.positive_class.event_label}` : "Unavailable"} />
+          <ReadOnlyField label="Primary output" value={semantics?.primary_output ?? "Unavailable"} />
+          <ReadOnlyField label="Decision threshold" value={semantics ? `${Math.round(semantics.decision.threshold * 1000) / 10}%` : "Unavailable"} />
+          <ReadOnlyField label="Model descriptor" value={semantics ? `${semantics.model_descriptor.display_name} (${semantics.model_descriptor.model_family})` : "Unavailable"} />
+        </div>
+        {semantics ? (
+          <div className="dataset-admin-boundaries" aria-label="Governed risk band boundaries">
+            {semantics.interpretation.bands.map((band) => <span key={band.band_id}><strong>{band.band_id}</strong> {Math.round(band.lower_bound * 1000) / 10}%–{Math.round(band.upper_bound * 1000) / 10}%</span>)}
+          </div>
+        ) : null}
+      </Card>
       <div className="dataset-admin-card-grid dataset-admin-card-grid--split">
         <Card className="dataset-admin-config-card">
           <div className="dataset-admin-card-heading">
             <h2>Configuration</h2>
-            <p>Risk is the only schema-supported badge preset; the other documented interpretations remain locked.</p>
+            <p>Risk is enabled only by a compatible technical contract; other interpretations show their requirements.</p>
           </div>
           <div className="dataset-admin-form-grid">
-            <TextField label="Probability label" onChange={(value) => setField("probability_label", value)} value={form.probability_label} />
-            <TextField label="Model label" onChange={(value) => setField("model_label", value)} value={form.model_label} />
+            <TextField label="Positive-class probability label" onChange={(value) => setField("positive_class_probability_label", value)} value={form.positive_class_probability_label} />
+            <TextField label="Predicted outcome label" onChange={(value) => setField("predicted_outcome_label", value)} value={form.predicted_outcome_label} />
+            <TextField label="Positive outcome copy" onChange={(value) => setField("positive_outcome_copy", value)} value={form.positive_outcome_copy} />
+            <TextField label="Negative outcome copy" onChange={(value) => setField("negative_outcome_copy", value)} value={form.negative_outcome_copy} />
+            <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
           </div>
           <label className="dataset-admin-native-select">
             <span style={labelStyle}>Badge preset</span>
             <select
-              onChange={(event) => setField("badge_preset", event.target.value as DraftForm["badge_preset"])}
+              disabled={!semantics}
+              onChange={() => setField("interpretation_preset", "risk")}
               style={inputStyle}
-              value={form.badge_preset}
+              value={semantics ? "risk" : ""}
             >
-              <option value="">No badge preset</option>
+              <option value="">Risk unavailable</option>
               <option value="risk">Risk</option>
             </select>
           </label>
           <div className="dataset-admin-result-preset-grid">
             {RESULT_PRESET_CARDS.map((preset) => {
-              const selected = String(form.badge_preset) === preset.value;
+              const available = preset.value === "risk" && Boolean(semantics);
+              const selected = available && form.interpretation_preset === "risk";
               return (
                 <button
-                  aria-disabled={!preset.available}
-                  aria-pressed={preset.available ? selected : undefined}
+                  aria-disabled={!available}
+                  aria-pressed={available ? selected : undefined}
                   className={[
                     "dataset-admin-result-preset-card",
                     selected ? "is-selected" : "",
-                    !preset.available ? "is-locked" : "",
+                    !available ? "is-locked" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
-                  disabled={!preset.available}
+                  disabled={!available}
                   key={preset.value}
                   onClick={() => {
-                    if (preset.available) {
-                      setField("badge_preset", preset.value as DraftForm["badge_preset"]);
+                    if (available) {
+                      setField("interpretation_preset", "risk");
                     }
                   }}
                   type="button"
                 >
                   <strong>{preset.label}</strong>
-                  <span>{preset.samples.join(" / ")}</span>
-                  {!preset.available ? <Badge>Locked</Badge> : null}
+                  <span>{preset.requirement}</span>
+                  {!available ? <Badge>Locked</Badge> : null}
                 </button>
               );
             })}
           </div>
           <div className="dataset-admin-form-grid">
-            <TextField label="High badge label" onChange={(value) => setField("badge_high", value)} value={form.badge_high} />
-            <TextField label="Medium badge label" onChange={(value) => setField("badge_medium", value)} value={form.badge_medium} />
-            <TextField label="Low badge label" onChange={(value) => setField("badge_low", value)} value={form.badge_low} />
+            <TextField label="High label" onChange={(value) => setField("interpretation_high", value)} value={form.interpretation_high} />
+            <TextField label="Medium label" onChange={(value) => setField("interpretation_medium", value)} value={form.interpretation_medium} />
+            <TextField label="Low label" onChange={(value) => setField("interpretation_low", value)} value={form.interpretation_low} />
           </div>
         </Card>
 
@@ -2990,7 +3112,7 @@ function ResultCardTab({
             <h2>Example result</h2>
             <p>Compact preview fed by the current label fields.</p>
           </div>
-          <ResultCardLivePreview form={form} />
+          <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />
         </Card>
       </div>
     </TabWorkspace>
@@ -3302,13 +3424,40 @@ function DatasetDetailLivePreview({
   );
 }
 
-function ResultCardLivePreview({ form }: { form: DraftForm }) {
-  const { result, previewLabels } = projectResultCardPreview(form);
+function ResultCardLivePreview({ form, resetKey, resultContract }: { form: DraftForm; resetKey: string; resultContract: ResultContractState }) {
+  const semantics = resultContract.status === "available" ? resultContract.semantics : null;
+  const threshold = semantics?.decision.threshold ?? 0;
+  const [probability, setProbability] = useState(() => semantics ? positiveScenarioProbability(threshold) : 0);
+
+  useEffect(() => {
+    setProbability(semantics ? positiveScenarioProbability(semantics.decision.threshold) : 0);
+  }, [resetKey, semantics]);
+
+  const presentation = presentationFromForm(form);
+  const result = semantics ? projectBinaryResultPreview(semantics, presentation, probability) : null;
+  const negativeProbability = semantics ? negativeScenarioProbability(threshold) : null;
 
   return (
-    <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
-      <p style={mutedTextStyle}>Placeholder preview only, not a real prediction.</p>
-      <InferenceResult result={result} previewLabels={previewLabels} />
+    <div className="dataset-admin-result-preview">
+      <p style={mutedTextStyle}>Preview only — no inference request is executed.</p>
+      {semantics ? (
+        <div className="dataset-admin-preview-controls">
+          <div className="dataset-admin-scenario-controls" role="group" aria-label="Preview scenario">
+            <button aria-pressed={probability >= threshold} onClick={() => setProbability(positiveScenarioProbability(threshold))} type="button">Positive scenario</button>
+            <button aria-pressed={probability < threshold} disabled={negativeProbability === null} onClick={() => negativeProbability !== null && setProbability(negativeProbability)} title={negativeProbability === null ? "Unavailable when the decision threshold is zero" : undefined} type="button">Negative scenario</button>
+          </div>
+          <label className="dataset-admin-probability-control">
+            <span>Preview positive-class probability: {Math.round(probability * 1000) / 10}%</span>
+            <input aria-valuetext={`${Math.round(probability * 1000) / 10}%; decision threshold ${Math.round(threshold * 1000) / 10}%`} max="1" min="0" onChange={(event) => setProbability(Number(event.target.value))} step="0.001" type="range" value={probability} />
+            <small>Governed threshold: {Math.round(threshold * 1000) / 10}%</small>
+          </label>
+        </div>
+      ) : null}
+      {result ? (
+        <ResultCardShell state="success">
+          <BinaryClassificationResult presentation={presentation} result={result} />
+        </ResultCardShell>
+      ) : <ResultCardShell state="unavailable" />}
     </div>
   );
 }
@@ -3450,7 +3599,7 @@ function LivePreviewTab({
           <article className="dataset-admin-preview-panel dataset-admin-preview-panel--detail" aria-label="Dataset Detail preview">
             <DatasetDetailLivePreview dataset={dataset} form={form} readOnlyData={readOnlyData} />
             <div className="dataset-admin-detail-preview-grid">
-              <ResultCardLivePreview form={form} />
+              <ResultCardLivePreview form={form} resultContract={readOnlyData.resultContract} resetKey={selectedSlug} />
               <FormLayoutLivePreview
                 customizationEditorState={customizationEditorState}
                 readOnlyData={readOnlyData}
@@ -3519,7 +3668,7 @@ function renderSelectedTab(
         />
       );
     case "result-card":
-      return <ResultCardTab form={form} setField={setField} />;
+      return <ResultCardTab form={form} readOnlyData={readOnlyData} selectedSlug={selectedSlug} setField={setField} />;
     case "documentation":
       return <div aria-label="Documentation placeholder" />;
     case "publishing":
@@ -3733,6 +3882,7 @@ export default function DatasetAdminPage() {
         dataset: { status: "loading" },
         context: { status: "loading" },
         contract: { status: "loading" },
+        resultContract: { status: "loading" },
         metrics: { status: "loading" },
         modelCard: { status: "loading" },
         visualizations: { status: "loading" },
@@ -3745,17 +3895,22 @@ export default function DatasetAdminPage() {
       const [dataset, context, contract, metrics, modelCard, visualizations, viewsResponse] = await Promise.all([
         fetchJson<DatasetListing>(`/datasets/${encoded}`, controller.signal),
         fetchJson<{ context: ContextPayload }>(`/datasets/${encoded}/context`, controller.signal),
-        fetchJson<{ contract: ContractPayload }>(`/datasets/${encoded}/contract`, controller.signal),
+        fetchJson<ContractEnvelope>(`/datasets/${encoded}/contract`, controller.signal),
         fetchJson<{ metrics: MetricsPayload }>(`/datasets/${encoded}/metrics`, controller.signal),
         fetchJson<{ model_card: ModelCardPayload }>(`/datasets/${encoded}/model-card`, controller.signal),
         fetchJson<{ visualizations: unknown }>(`/datasets/${encoded}/visualizations`, controller.signal),
         fetchJson<{ views: PredictView[] }>(`/datasets/${encoded}/views`, controller.signal),
       ]);
 
+      const resultContract: ResultContractState = contract.status === "ready"
+        ? classifyResultContract(contract.data)
+        : { status: "transport_failure", message: "message" in contract ? contract.message : "Result contract request did not complete." };
+
       setReadOnlyData({
         dataset,
         context: mapSection(context, (data) => data.context),
         contract: mapSection(contract, (data) => data.contract),
+        resultContract,
         metrics: mapSection(metrics, (data) => data.metrics),
         modelCard: mapSection(modelCard, (data) => data.model_card),
         visualizations: mapSection(visualizations, (data) => data.visualizations),

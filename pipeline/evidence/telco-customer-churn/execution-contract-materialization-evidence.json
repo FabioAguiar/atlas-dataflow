@@ -138,6 +138,34 @@
     "secondary_metrics",
     "modeling_constraints"
   ],
+  "result_semantics_materialization": {
+    "reviewed_source_intent_present": true,
+    "positive_class": {
+      "class_id": "Yes",
+      "event_label": "Churn"
+    },
+    "threshold": 0.5,
+    "bands": [
+      {
+        "band_id": "low",
+        "lower_bound": 0.0,
+        "upper_bound": 0.35
+      },
+      {
+        "band_id": "medium",
+        "lower_bound": 0.35,
+        "upper_bound": 0.65
+      },
+      {
+        "band_id": "high",
+        "lower_bound": 0.65,
+        "upper_bound": 1.0
+      }
+    ],
+    "no_defaults_inferred": true,
+    "readiness": "materialized",
+    "blocking_reasons": []
+  },
   "execution_contract_boundary_confirmations": {
     "is_runtime_contract": false,
     "is_public_contract": false,
@@ -149,5 +177,5 @@
     "model_training_performed": false,
     "model_family_selected": false
   },
-  "generated_at": "2026-07-15T15:46:35+00:00"
+  "generated_at": "2026-07-16T21:00:18+00:00"
 }

@@ -22,6 +22,7 @@ from runtime.inference import (
     BundleValidationError,
     load_joblib_sklearn_model,
     load_runtime_bundle_adapter,
+    project_result_contract,
     validate_binary_classification_result,
 )
 
@@ -990,6 +991,10 @@ def test_s0109_real_joblib_loader_end_to_end_binary_prediction(tmp_path: Path) -
     )
 
     manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+    declaration = json.loads((release_root / "predictions" / "bundle.json").read_text(encoding="utf-8"))
+    projected_contract = project_result_contract(declaration)
+    assert projected_contract["semantics"]["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
+    assert projected_contract["semantics"]["negative_class"] == {"class_id": "No"}
 
     # High-tenure, low-charges row: trained pattern predicts "No" (not churned).
     negative_result = execute_prediction(
@@ -1002,6 +1007,7 @@ def test_s0109_real_joblib_loader_end_to_end_binary_prediction(tmp_path: Path) -
     )["result"]
     assert negative_result["schema_version"] == "binary-classification-result.v1"
     assert negative_result["predicted_class"]["class_id"] == "No"
+    assert negative_result["predicted_class"] == projected_contract["semantics"]["negative_class"]
     assert negative_result["decision"]["predicted_positive"] is False
     assert negative_result["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
     assert 0.0 <= negative_result["positive_class_probability"] <= 1.0

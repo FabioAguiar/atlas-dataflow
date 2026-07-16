@@ -27,13 +27,14 @@
           "group": "group-2"
         },
         {
-          "field_name": "tenure",
+          "field_name": "SeniorCitizen",
           "display_order_hint": 5,
-          "display_label": "Tenure"
+          "group": "group-2"
         },
         {
-          "field_name": "SeniorCitizen",
-          "display_order_hint": 6
+          "field_name": "tenure",
+          "display_order_hint": 6,
+          "display_label": "Tenure"
         },
         {
           "field_name": "PhoneService",

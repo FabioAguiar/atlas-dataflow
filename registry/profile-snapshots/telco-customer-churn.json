@@ -1,16 +1,17 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-15T15:49:01Z",
-  "active_release_at_publish_time": "release-20260715t154638z",
+  "published_at": "2026-07-16T21:01:00Z",
+  "active_release_at_publish_time": "release-20260716t210022z",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
-      "release_date_label": "2026-07-14",
+      "problem_summary_title": "teste",
+      "release_date_label": "2026-07-15",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": "/media/home-cards/cdd39634ef95476aac377deab2e97693.jpg",
+      "background_image_ref": "/media/home-cards/2e1c05d6069140fea2a1821429b43511.jpg",
       "primary_metric_key": null
     },
     "performance_focus": {
@@ -47,8 +48,20 @@
       "bound_predict_view_id": "churn-risk-overview"
     },
     "result_card": {
-      "badge_preset": "risk",
-      "badge_labels": {}
+      "schema_version": "binary-result-presentation.v1",
+      "positive_class_probability_label": "Positive class probability",
+      "predicted_outcome_label": "Predicted outcome",
+      "positive_outcome_copy": "Positive outcome",
+      "negative_outcome_copy": "Negative outcome",
+      "model_section_label": "Model",
+      "interpretation": {
+        "preset": "risk",
+        "labels": {
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low"
+        }
+      }
     }
   },
   "source_draft_schema_version": "1.0.0"

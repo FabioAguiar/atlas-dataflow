@@ -3,7 +3,7 @@
   "validation_kind": "release_candidate_cross_artifact_consistency",
   "candidate_identity": {
     "dataset_slug": "telco-customer-churn",
-    "release_id": "release-20260715t154638z",
+    "release_id": "release-20260716t210022z",
     "release_version": "1.0.0-rc.1"
   },
   "source_candidate": {
@@ -13,13 +13,14 @@
       "contracts",
       "public_contract",
       "predictive_bundle",
+      "model_artifact",
       "metrics",
       "model_card",
       "public_context",
       "manifest_input",
       "candidate_metadata"
     ],
-    "candidate_reference": "release-candidate-v1:telco-customer-churn/release-20260715t154638z"
+    "candidate_reference": "release-candidate-v1:telco-customer-churn/release-20260716t210022z"
   },
   "validation_outcome": "accepted",
   "required_artifact_role_results": {
@@ -42,6 +43,13 @@
       "status": "present",
       "required": true,
       "artifact_reference": "predictions/bundle.json",
+      "declared_sha256_present": false
+    },
+    "model_artifact": {
+      "role": "model_artifact",
+      "status": "present",
+      "required": true,
+      "artifact_reference": "models/model.pkl",
       "declared_sha256_present": false
     },
     "metrics": {
@@ -156,6 +164,11 @@
       },
       {
         "artifact_role": "predictive_bundle",
+        "declared_sha256_present": false,
+        "status": "present"
+      },
+      {
+        "artifact_role": "model_artifact",
         "declared_sha256_present": false,
         "status": "present"
       },

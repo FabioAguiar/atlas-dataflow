@@ -6,9 +6,9 @@
     "dataset_title": "Telco Customer Churn"
   },
   "release_identity": {
-    "release_id": "release-20260715t154638z",
+    "release_id": "release-20260716t210022z",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-07-15T15:46:38Z"
+    "created_at": "2026-07-16T21:00:22Z"
   },
   "artifacts": [
     {
@@ -27,19 +27,25 @@
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "ece5b058ae6f23ed67e538b3bfdb6f2304587a9ee67cfd272d3116ec29b50520"
+      "hash_value": "20780cb9626ee9d8fea052181a47b5b78b83d80338d5b7a975ad01a149ee0182"
+    },
+    {
+      "role": "model_artifact",
+      "reference": "models/model.pkl",
+      "hash_algorithm": "sha256",
+      "hash_value": "ec2eb1127b5489449195629f8cbb5500291002fae0f633f99324a77e29bf8282"
     },
     {
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "c32752f374ecd23c8119521d35246c5a06198b52f2581cf0001a663dcdc9c222"
+      "hash_value": "9362ff17774d7b94bb1406d1893ca06341ab4d4c94aec29c428299c840251644"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "0e959ea1ec103c6bbf49fa2e8f1a015f04bc24ca08cc5075d44b81bba7119d65"
+      "hash_value": "a66c9330a53e206da3f2508a89f7647f82d75054c48a8fb68ccee0d52a2441f8"
     },
     {
       "role": "public_context",
@@ -51,13 +57,13 @@
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "3b8915d0fc1e7a8e90d4a22f4962c2e88f015ed06cffd0ce5cfefc67c8cbbeb6"
+      "hash_value": "598f73ea9bda14ccd1d745264f88389504044ac5470a4f6177574884d2c15579"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "8d6bec7ae81484a79e1c41e0ac29ce5379453b8fff9ba76e21e470b5ef5d7c15"
+      "hash_value": "1cdfb7cfcc0355946da586644401fa5fd71256033d3f9bb9f671d2464c734d2a"
     }
   ],
   "required_hash_coverage": {
@@ -66,6 +72,7 @@
       "contracts",
       "public_contract",
       "predictive_bundle",
+      "model_artifact",
       "metrics",
       "model_card",
       "public_context",

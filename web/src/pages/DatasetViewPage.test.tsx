@@ -54,6 +54,7 @@ const resultContractAvailable = {
     result_schema_version: "binary-classification-result.v1" as const,
     primary_output: "positive_class_probability" as const,
     positive_class: { class_id: "Yes", event_label: "Churn" },
+    negative_class: { class_id: "No" },
     decision: { threshold: 0.5 },
     interpretation: {
       preset: "risk",

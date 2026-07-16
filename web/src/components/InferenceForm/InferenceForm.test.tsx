@@ -42,6 +42,7 @@ const availableContract: BinaryResultContract = {
     result_schema_version: "binary-classification-result.v1",
     primary_output: "positive_class_probability",
     positive_class: { class_id: "Yes", event_label: "Churn" },
+    negative_class: { class_id: "No" },
     decision: { threshold: 0.5 },
     interpretation: {
       preset: "risk",
@@ -135,6 +136,22 @@ describe("InferenceForm public execution (Project Spec S0112)", () => {
 
     fireEvent.submit(container.querySelector("form")!);
 
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing negative class", { ...availableContract, semantics: { ...availableContract.semantics, negative_class: undefined } }],
+    ["blank negative class", { ...availableContract, semantics: { ...availableContract.semantics, negative_class: { class_id: " " } } }],
+    ["equal class identities", { ...availableContract, semantics: { ...availableContract.semantics, negative_class: { class_id: "Yes" } } }],
+  ])("disables submission and never POSTs for a malformed available contract: %s", (_case, malformedContract) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <InferenceForm contract={contract} slug={slug} resultContract={malformedContract as BinaryResultContract} />,
+    );
+
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+    fireEvent.submit(container.querySelector("form")!);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

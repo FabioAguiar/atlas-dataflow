@@ -3,6 +3,7 @@ import ResultCardShell from "../ResultCard/ResultCardShell";
 import BinaryClassificationResult from "../ResultCard/BinaryClassificationResult";
 import {
   GENERIC_RESULT_PRESENTATION,
+  isAvailableBinaryResultContract,
   isBinaryClassificationResult,
   type BinaryClassificationResult as BinaryClassificationResultData,
   type BinaryResultContract,
@@ -191,7 +192,7 @@ export default function InferenceForm({
   const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
 
   const hintMap = buildHintMap(customization);
-  const contractAvailable = !previewMode && resultContract?.status === "available";
+  const contractAvailable = !previewMode && isAvailableBinaryResultContract(resultContract);
   const effectivePresentation = resultPresentation ?? GENERIC_RESULT_PRESENTATION;
 
   const sortedForPresentation = [...contract.features].sort((a, b) => {

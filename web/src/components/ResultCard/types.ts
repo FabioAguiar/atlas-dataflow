@@ -63,6 +63,7 @@ export type BinaryResultSemantics = {
   result_schema_version: "binary-classification-result.v1";
   primary_output: "positive_class_probability";
   positive_class: BinaryPositiveClass;
+  negative_class: BinaryClassIdentity;
   decision: {
     threshold: number;
   };
@@ -84,6 +85,26 @@ export type UnavailableBinaryResultContract = {
 };
 
 export type BinaryResultContract = AvailableBinaryResultContract | UnavailableBinaryResultContract;
+
+/** Bounded guard for the executable public binary result-contract capability. */
+export function isAvailableBinaryResultContract(value: unknown): value is AvailableBinaryResultContract {
+  if (!isRecord(value) || value.status !== "available" || !isRecord(value.semantics)) return false;
+
+  const semantics = value.semantics;
+  if (semantics.schema_version !== "binary-result-semantics.v1") return false;
+  if (semantics.problem_type !== "binary_classification") return false;
+  if (semantics.result_schema_version !== "binary-classification-result.v1") return false;
+  if (semantics.primary_output !== "positive_class_probability") return false;
+  if (!isPositiveClass(semantics.positive_class) || !isClassIdentity(semantics.negative_class)) return false;
+  if (semantics.positive_class.class_id.trim() === semantics.negative_class.class_id.trim()) return false;
+
+  const decision = semantics.decision;
+  if (!isRecord(decision) || !isUnitInterval(decision.threshold)) return false;
+  const interpretation = semantics.interpretation;
+  if (!isRecord(interpretation) || interpretation.preset !== SUPPORTED_INTERPRETATION_PRESET) return false;
+  if (!Array.isArray(interpretation.bands) || !interpretation.bands.every(isRiskBand)) return false;
+  return isModelDescriptor(semantics.model_descriptor);
+}
 
 /** Matches GET /datasets/{slug}/context's result_card (binary-result-presentation.v1). */
 export type BinaryResultPresentation = {

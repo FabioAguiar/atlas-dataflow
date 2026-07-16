@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pipeline.discovery_evidence import (
+    build_binary_result_semantics_intent,
     build_categorical_domain_declaration,
     build_dataset_modeling_intent,
     materialize_dataset_modeling_intent,
@@ -700,3 +701,52 @@ def test_materialize_dataset_modeling_intent_preserves_categorical_domain_intent
     )
 
     assert materialized["categorical_domain_intent"] == [declaration]
+
+
+def test_materialize_dataset_modeling_intent_preserves_binary_result_semantics_intent_traceability(
+    tmp_path,
+):
+    """Project Spec S0108: a reviewed binary_result_semantics_intent declaration
+    built into the modeling intent survives materialization/persistence
+    verbatim, exactly like categorical_domain_intent above."""
+    tmp_repo = tmp_path / "repo"
+    tmp_repo.mkdir()
+
+    binary_intent = build_binary_result_semantics_intent(
+        review_status="approved",
+        problem_type="binary_classification",
+        positive_class_id="Yes",
+        event_label="Churn",
+        primary_output="positive_class_probability",
+        threshold=0.5,
+        preset="risk",
+        bands=[
+            {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+            {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+            {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+        ],
+    )
+    modeling_intent = _telco_shaped_modeling_intent(binary_result_semantics_intent=binary_intent)
+
+    materialized = materialize_dataset_modeling_intent(
+        modeling_intent,
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+    )
+
+    assert materialized["binary_result_semantics_intent"] == binary_intent
+
+
+def test_materialize_dataset_modeling_intent_binary_result_semantics_intent_absent_by_default(
+    tmp_path,
+):
+    tmp_repo = tmp_path / "repo"
+    tmp_repo.mkdir()
+
+    materialized = materialize_dataset_modeling_intent(
+        _telco_shaped_modeling_intent(),
+        output_relative_path="pipeline/evidence/telco-customer-churn/dataset-modeling-intent.json",
+        repo_root=tmp_repo,
+    )
+
+    assert materialized["binary_result_semantics_intent"] is None

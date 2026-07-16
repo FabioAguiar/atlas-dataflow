@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.discovery_evidence import (
     authoring_helper_evidence_policy,
+    build_binary_result_semantics_intent,
     build_categorical_domain_declaration,
     build_dataset_modeling_intent,
     derive_feature_candidates,
@@ -626,3 +627,188 @@ def test_modeling_intent_carries_categorical_domain_intent_verbatim():
     )
     intent = _build_telco_shaped_modeling_intent(categorical_domain_intent=[declaration])
     assert intent["categorical_domain_intent"] == [declaration]
+
+
+# --- reviewed binary-result semantics intent (Project Spec S0108) ---
+
+VALID_BANDS = [
+    {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+    {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+    {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+]
+
+
+def _build_binary_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="binary_classification",
+        positive_class_id="Yes",
+        event_label="Churn",
+        primary_output="positive_class_probability",
+        threshold=0.5,
+        preset="risk",
+        bands=VALID_BANDS,
+    )
+    kwargs.update(overrides)
+    return build_binary_result_semantics_intent(**kwargs)
+
+
+def test_binary_result_semantics_intent_approved_shape():
+    intent = _build_binary_result_semantics_intent()
+    assert intent["schema_version"] == "binary_result_semantics_intent.v1"
+    assert intent["review_status"] == "approved"
+    assert intent["problem_type"] == "binary_classification"
+    assert intent["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
+    assert intent["primary_output"] == "positive_class_probability"
+    assert intent["decision"] == {"threshold": 0.5}
+    assert intent["interpretation"]["preset"] == "risk"
+    assert intent["interpretation"]["bands"] == VALID_BANDS
+
+
+def test_binary_result_semantics_intent_pending_review_does_not_raise():
+    intent = _build_binary_result_semantics_intent(review_status="pending_review")
+    assert intent["review_status"] == "pending_review"
+
+
+def test_binary_result_semantics_intent_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(review_status="candidate_only")
+
+
+def test_binary_result_semantics_intent_rejects_wrong_problem_type():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(problem_type="multiclass_classification")
+
+
+def test_binary_result_semantics_intent_rejects_blank_positive_class_id():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(positive_class_id="  ")
+
+
+def test_binary_result_semantics_intent_rejects_blank_event_label():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(event_label="")
+
+
+def test_binary_result_semantics_intent_rejects_wrong_primary_output():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(primary_output="confidence")
+
+
+def test_binary_result_semantics_intent_rejects_out_of_range_threshold():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(threshold=1.5)
+
+
+def test_binary_result_semantics_intent_rejects_non_finite_threshold():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(threshold=float("nan"))
+
+
+def test_binary_result_semantics_intent_rejects_wrong_preset():
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(preset="percentile")
+
+
+def test_binary_result_semantics_intent_rejects_missing_band():
+    bands = [VALID_BANDS[0], VALID_BANDS[1]]
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(bands=bands)
+
+
+def test_binary_result_semantics_intent_rejects_duplicate_band_id():
+    bands = [VALID_BANDS[0], VALID_BANDS[0], VALID_BANDS[2]]
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(bands=bands)
+
+
+def test_binary_result_semantics_intent_rejects_gap_between_bands():
+    bands = [
+        {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.30},
+        {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+        {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+    ]
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(bands=bands)
+
+
+def test_binary_result_semantics_intent_rejects_overlap_between_bands():
+    bands = [
+        {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.40},
+        {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+        {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+    ]
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(bands=bands)
+
+
+def test_binary_result_semantics_intent_rejects_unordered_bands():
+    bands = [
+        {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+        {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+        {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+    ]
+    intent = _build_binary_result_semantics_intent(bands=bands)
+    # Bands must be normalized to canonical low/medium/high order regardless
+    # of input order, since ordering/contiguity is checked on the canonical
+    # sequence, not the caller's own order.
+    assert [b["band_id"] for b in intent["interpretation"]["bands"]] == ["low", "medium", "high"]
+
+
+def test_binary_result_semantics_intent_rejects_first_lower_bound_not_zero():
+    bands = [
+        {"band_id": "low", "lower_bound": 0.05, "upper_bound": 0.35},
+        {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+        {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+    ]
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(bands=bands)
+
+
+def test_binary_result_semantics_intent_rejects_final_upper_bound_not_one():
+    bands = [
+        {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+        {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+        {"band_id": "high", "lower_bound": 0.65, "upper_bound": 0.95},
+    ]
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(bands=bands)
+
+
+def test_binary_result_semantics_intent_rejects_out_of_range_band_bound():
+    bands = [
+        {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+        {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+        {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.5},
+    ]
+    with pytest.raises(ValueError):
+        _build_binary_result_semantics_intent(bands=bands)
+
+
+def test_binary_result_semantics_intent_boundary_semantics_at_exact_edges():
+    # Exercises the documented interval semantics
+    # (lower_bound <= probability < upper_bound, except the final band's
+    # upper bound 1.0 is inclusive) at the exact boundary values.
+    intent = _build_binary_result_semantics_intent()
+    bands = {b["band_id"]: b for b in intent["interpretation"]["bands"]}
+    assert bands["low"]["lower_bound"] == 0.0
+    assert bands["low"]["upper_bound"] == bands["medium"]["lower_bound"]
+    assert bands["medium"]["upper_bound"] == bands["high"]["lower_bound"]
+    assert bands["high"]["upper_bound"] == 1.0
+
+
+def test_modeling_intent_binary_result_semantics_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["binary_result_semantics_intent"] is None
+
+
+def test_modeling_intent_carries_binary_result_semantics_intent_verbatim():
+    binary_intent = _build_binary_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(binary_result_semantics_intent=binary_intent)
+    assert intent["binary_result_semantics_intent"] == binary_intent
+
+
+def test_modeling_intent_carries_pending_binary_result_semantics_intent_unresolved():
+    binary_intent = _build_binary_result_semantics_intent(review_status="pending_review")
+    intent = _build_telco_shaped_modeling_intent(binary_result_semantics_intent=binary_intent)
+    assert intent["binary_result_semantics_intent"]["review_status"] == "pending_review"

@@ -124,6 +124,10 @@
     "modeling_constraints": {
       "$ref": "#/definitions/modeling_constraints",
       "description": "Constraints bounding the model family selection space and training strategy. Does not select a specific model — constrains what is permissible for this dataset. Execution-only."
+    },
+    "result_semantics": {
+      "$ref": "#/definitions/result_semantics",
+      "description": "Project Spec S0108: optional, backward-compatible normalized binary-result semantics. Present only on new binary execution contracts with a reviewed, approved binary_result_semantics_intent; strictly validated when present. Excludes authoring-only fields such as review status/notes — those remain in the dataset modeling intent, not here."
     }
   },
   "definitions": {
@@ -278,6 +282,94 @@
           "type": ["integer", "null"],
           "minimum": 1,
           "description": "Optional upper bound on training wall-clock time in seconds. Null means no time constraint is imposed."
+        }
+      }
+    },
+    "result_semantics": {
+      "type": "object",
+      "required": ["schema_version", "problem_type", "positive_class", "primary_output", "decision", "interpretation"],
+      "additionalProperties": false,
+      "description": "Project Spec S0108: normalized machine-readable binary-result semantics materialized from a reviewed, approved binary_result_semantics_intent. Excludes authoring-only fields such as review_status/review notes.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "binary-result-semantics.v1"
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "binary_classification"
+        },
+        "positive_class": {
+          "type": "object",
+          "required": ["class_id", "event_label"],
+          "additionalProperties": false,
+          "properties": {
+            "class_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The reviewed final positive technical class ID. Distinct from the public event meaning."
+            },
+            "event_label": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The reviewed public meaning of the positive event. Distinct from the technical class ID."
+            }
+          }
+        },
+        "primary_output": {
+          "type": "string",
+          "const": "positive_class_probability"
+        },
+        "decision": {
+          "type": "object",
+          "required": ["threshold"],
+          "additionalProperties": false,
+          "properties": {
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Reviewed decision threshold, distinct from the interpretation bands below."
+            }
+          }
+        },
+        "interpretation": {
+          "type": "object",
+          "required": ["preset", "bands"],
+          "additionalProperties": false,
+          "properties": {
+            "preset": {
+              "type": "string",
+              "const": "risk"
+            },
+            "bands": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "required": ["band_id", "lower_bound", "upper_bound"],
+                "additionalProperties": false,
+                "properties": {
+                  "band_id": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"]
+                  },
+                  "lower_bound": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "upper_bound": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "description": "Ordered, contiguous, non-overlapping risk bands covering [0, 1] exactly: low, medium, high, each once. Interval semantics are lower_bound <= probability < upper_bound, except the final band's upper bound 1.0 is inclusive. Full ordering/contiguity is enforced by the materialization pipeline, not by this schema alone."
+            }
+          }
         }
       }
     }

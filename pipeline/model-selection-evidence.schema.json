@@ -86,6 +86,9 @@
             "items": {
               "$ref": "#/$defs/metric_value"
             }
+          },
+          "classification_evidence": {
+            "$ref": "#/$defs/classification_evidence"
           }
         }
       }
@@ -218,6 +221,43 @@
         "logistic_regression",
         "gradient_boosting",
         "random_forest"
+      ]
+    },
+    "classification_evidence": {
+      "description": "Project Spec S0108: governed binary-classification evidence for this candidate's fitted model, or null when not binary.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "problem_type",
+            "ordered_class_labels",
+            "positive_class_id",
+            "positive_class_probability_index"
+          ],
+          "properties": {
+            "problem_type": {
+              "type": "string",
+              "const": "binary_classification"
+            },
+            "ordered_class_labels": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "string" }
+            },
+            "positive_class_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "positive_class_probability_index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
       ]
     },
     "training_parameter_record_path": {

@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pipeline.training as training_module
 from pipeline.generate_inference_bundle import (
+    BundleGenerationError,
     _build_bundle,
     _build_parser,
     materialize_governed_inference_bundle,
@@ -456,6 +458,242 @@ def test_generate_inference_bundle_produces_schema_valid_telco_descriptor(
         "runtime_payload_validation_duplicated": False,
         "training_internals_required_at_runtime": False,
     }
+
+
+def test_generate_inference_bundle_omits_result_semantics_when_execution_contract_lacks_it(
+    tmp_path: Path,
+) -> None:
+    # Historical-compatibility path: no result_semantics on the execution
+    # contract means the bundle is generated exactly as before, with no
+    # result_semantics key at all (never null, never invented defaults).
+    argv, _ = _write_governed_fixtures(tmp_path)
+    args = _build_parser().parse_args(argv)
+    bundle = _build_bundle(args)
+    assert "result_semantics" not in bundle
+
+
+# --- binary result-semantics release metadata projection (Project Spec S0108) ---
+
+def _binary_result_semantics_contract_block(positive_class_id: str = "Yes") -> dict[str, Any]:
+    return {
+        "schema_version": "binary-result-semantics.v1",
+        "problem_type": "binary_classification",
+        "positive_class": {"class_id": positive_class_id, "event_label": "Churn"},
+        "primary_output": "positive_class_probability",
+        "decision": {"threshold": 0.5},
+        "interpretation": {
+            "preset": "risk",
+            "bands": [
+                {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+            ],
+        },
+    }
+
+
+def _write_governed_fixtures_with_result_semantics(
+    tmp_path: Path,
+    *,
+    result_semantics: dict[str, Any] | None,
+    binary_classification_evidence: dict[str, Any] | None,
+    class_labels: list[str] = ("No", "Yes"),
+    probability_output: bool = True,
+    model_family: str = "gradient_boosting",
+) -> tuple[list[str], dict[str, Path]]:
+    execution_contract = _synthetic_execution_contract()
+    if result_semantics is not None:
+        execution_contract["result_semantics"] = result_semantics
+    execution_contract_path = _write_json(tmp_path / "execution-contract.json", execution_contract)
+
+    runtime_contract_path = _write_json(
+        tmp_path / "runtime-contract.json", _synthetic_runtime_contract()
+    )
+    public_contract_path = _write_json(
+        tmp_path / "public-contract.json", _synthetic_public_contract()
+    )
+    prepared_dataset_path = _write_json(
+        tmp_path / "prepared-data-metadata.json", _synthetic_prepared_dataset_metadata()
+    )
+    model_artifact_path = _write_bytes(tmp_path / "model.pkl", b"synthetic-joblib-model-bytes")
+    metrics_path = _write_json(tmp_path / "metrics.json", _synthetic_metrics())
+
+    training_record = _synthetic_training_record(
+        execution_contract_sha256=_sha256_bytes(execution_contract_path.read_bytes()),
+        prepared_dataset_sha256=_sha256_bytes(prepared_dataset_path.read_bytes()),
+        model_artifact_sha256=_sha256_bytes(model_artifact_path.read_bytes()),
+        metrics_sha256=_sha256_bytes(metrics_path.read_bytes()),
+        model_family=model_family,
+    )
+    if binary_classification_evidence is not None:
+        training_record["binary_classification_evidence"] = binary_classification_evidence
+    training_record_path = _write_json(
+        tmp_path / "training-parameter-record.json", training_record
+    )
+
+    output_path = tmp_path / "inference-bundle.json"
+    argv = [
+        "--execution-contract", str(execution_contract_path),
+        "--runtime-contract", str(runtime_contract_path),
+        "--public-contract", str(public_contract_path),
+        "--prepared-dataset", str(prepared_dataset_path),
+        "--training-parameter-record", str(training_record_path),
+        "--training-metrics", str(metrics_path),
+        "--model-artifact", str(model_artifact_path),
+        "--output", str(output_path),
+        "--release-package-reference", "predictions/bundle.json",
+        "--prediction-type", "string",
+        "--release-id", "release-20260709-001",
+        "--dataset-slug", "telco-customer-churn",
+        "--execution-contract-ref", "contracts/telco-customer-churn/execution-contract.json",
+        "--runtime-contract-ref", "contracts/telco-customer-churn/runtime-contract.json",
+        "--public-contract-ref", "contracts/telco-customer-churn/public-contract.json",
+        "--prepared-dataset-ref",
+        "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        "--dataset-context-ref",
+        "pipeline/prepared/telco-customer-churn/prepared-data-metadata.json",
+        "--training-parameter-record-ref", "training/training-parameter-record.json",
+        "--training-metrics-ref", "training/metrics.json",
+        "--model-artifact-ref", "models/model.pkl",
+        "--probability-output", "true" if probability_output else "false",
+    ]
+    for label in class_labels:
+        argv.extend(["--class-label", label])
+    paths = {
+        "execution_contract": execution_contract_path,
+        "training_record": training_record_path,
+        "output": output_path,
+    }
+    return argv, paths
+
+
+def test_generate_inference_bundle_projects_result_semantics_when_present(tmp_path: Path) -> None:
+    result_semantics = _binary_result_semantics_contract_block(positive_class_id="Yes")
+    argv, _ = _write_governed_fixtures_with_result_semantics(
+        tmp_path,
+        result_semantics=result_semantics,
+        binary_classification_evidence={
+            "problem_type": "binary_classification",
+            "ordered_class_labels": ["No", "Yes"],
+            "positive_class_id": "Yes",
+            "positive_class_probability_index": 1,
+        },
+        model_family="gradient_boosting",
+    )
+    args = _build_parser().parse_args(argv)
+    bundle = _build_bundle(args)
+
+    out = bundle["result_semantics"]
+    assert out["schema_version"] == "binary-result-semantics.v1"
+    assert out["problem_type"] == "binary_classification"
+    assert out["result_schema_version"] == "binary-classification-result.v1"
+    assert out["primary_output"] == "positive_class_probability"
+    assert out["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
+    assert out["decision"] == {"threshold": 0.5}
+    assert out["interpretation"]["preset"] == "risk"
+    assert len(out["interpretation"]["bands"]) == 3
+    assert out["model_descriptor"] == {
+        "model_family": "gradient_boosting",
+        "display_name": "Gradient Boosting",
+    }
+
+
+def test_generate_inference_bundle_model_descriptor_follows_actual_selected_family(
+    tmp_path: Path,
+) -> None:
+    # The display name must be looked up from whatever model_family the
+    # training evidence actually selected -- never a hardcoded default.
+    result_semantics = _binary_result_semantics_contract_block(positive_class_id="Yes")
+    argv, _ = _write_governed_fixtures_with_result_semantics(
+        tmp_path,
+        result_semantics=result_semantics,
+        binary_classification_evidence={
+            "problem_type": "binary_classification",
+            "ordered_class_labels": ["No", "Yes"],
+            "positive_class_id": "Yes",
+            "positive_class_probability_index": 1,
+        },
+        model_family="random_forest",
+    )
+    args = _build_parser().parse_args(argv)
+    bundle = _build_bundle(args)
+    assert bundle["result_semantics"]["model_descriptor"] == {
+        "model_family": "random_forest",
+        "display_name": "Random Forest",
+    }
+
+
+def test_generate_inference_bundle_blocks_on_positive_class_mismatch_with_training_evidence(
+    tmp_path: Path,
+) -> None:
+    result_semantics = _binary_result_semantics_contract_block(positive_class_id="Yes")
+    argv, _ = _write_governed_fixtures_with_result_semantics(
+        tmp_path,
+        result_semantics=result_semantics,
+        binary_classification_evidence={
+            "problem_type": "binary_classification",
+            "ordered_class_labels": ["No", "Yes"],
+            "positive_class_id": "No",  # mismatched vs execution contract's "Yes"
+            "positive_class_probability_index": 0,
+        },
+    )
+    args = _build_parser().parse_args(argv)
+    with pytest.raises(BundleGenerationError):
+        _build_bundle(args)
+
+
+def test_generate_inference_bundle_blocks_when_class_labels_not_exactly_two(
+    tmp_path: Path,
+) -> None:
+    result_semantics = _binary_result_semantics_contract_block(positive_class_id="Yes")
+    argv, _ = _write_governed_fixtures_with_result_semantics(
+        tmp_path,
+        result_semantics=result_semantics,
+        binary_classification_evidence={
+            "problem_type": "binary_classification",
+            "ordered_class_labels": ["No", "Yes"],
+            "positive_class_id": "Yes",
+            "positive_class_probability_index": 1,
+        },
+        class_labels=["Yes"],
+    )
+    args = _build_parser().parse_args(argv)
+    with pytest.raises(BundleGenerationError):
+        _build_bundle(args)
+
+
+def test_generate_inference_bundle_blocks_when_probability_output_not_true(
+    tmp_path: Path,
+) -> None:
+    result_semantics = _binary_result_semantics_contract_block(positive_class_id="Yes")
+    argv, _ = _write_governed_fixtures_with_result_semantics(
+        tmp_path,
+        result_semantics=result_semantics,
+        binary_classification_evidence={
+            "problem_type": "binary_classification",
+            "ordered_class_labels": ["No", "Yes"],
+            "positive_class_id": "Yes",
+            "positive_class_probability_index": 1,
+        },
+        probability_output=False,
+    )
+    args = _build_parser().parse_args(argv)
+    with pytest.raises(BundleGenerationError):
+        _build_bundle(args)
+
+
+def test_generate_inference_bundle_blocks_when_binary_classification_evidence_missing(
+    tmp_path: Path,
+) -> None:
+    result_semantics = _binary_result_semantics_contract_block(positive_class_id="Yes")
+    argv, _ = _write_governed_fixtures_with_result_semantics(
+        tmp_path,
+        result_semantics=result_semantics,
+        binary_classification_evidence=None,
+    )
+    args = _build_parser().parse_args(argv)
+    with pytest.raises(BundleGenerationError):
+        _build_bundle(args)
 
 
 def test_generated_bundle_is_consumable_by_runtime_adapter(tmp_path: Path) -> None:

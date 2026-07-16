@@ -213,10 +213,10 @@
     },
     "permitted_execution_contract_fields": {
       "type": "array",
-      "minItems": 14,
-      "maxItems": 14,
+      "minItems": 15,
+      "maxItems": 15,
       "uniqueItems": true,
-      "description": "Closed list of execution contract fields actually consumed by the training run. Must match the M24 training interface subset and must not include ignored_columns, required_columns, or optional_columns.",
+      "description": "Closed list of execution contract fields actually consumed by the training run. Must match the M24 training interface subset and must not include ignored_columns, required_columns, or optional_columns. Project Spec S0108 added result_semantics as an authorized, optional consumed field used to resolve the governed positive class.",
       "items": {
         "type": "string",
         "enum": [
@@ -233,7 +233,8 @@
           "random_seed",
           "primary_metric",
           "secondary_metrics",
-          "modeling_constraints"
+          "modeling_constraints",
+          "result_semantics"
         ]
       }
     },
@@ -315,6 +316,44 @@
           "$ref": "#/$defs/modeling_constraints"
         }
       }
+    },
+    "binary_classification_evidence": {
+      "description": "Project Spec S0108: governed binary-classification evidence for the selected model, or null when the fitted model is not binary. Never embeds raw predictions or evaluation rows.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "problem_type",
+            "ordered_class_labels",
+            "positive_class_id",
+            "positive_class_probability_index"
+          ],
+          "properties": {
+            "problem_type": {
+              "type": "string",
+              "const": "binary_classification"
+            },
+            "ordered_class_labels": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "string" },
+              "description": "The fitted model's actual classes_ ordering, so a reversed class order is recorded as evidence rather than hidden."
+            },
+            "positive_class_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "positive_class_probability_index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      ]
     },
     "hashes": {
       "type": "object",

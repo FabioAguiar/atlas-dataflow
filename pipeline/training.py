@@ -49,6 +49,11 @@ PERMITTED_EXECUTION_CONTRACT_FIELDS = frozenset({
     "primary_metric",
     "secondary_metrics",
     "modeling_constraints",
+    # Project Spec S0108: optional, backward-compatible normalized binary
+    # result semantics. Authorizes training to resolve the governed positive
+    # class from result_semantics.positive_class.class_id when present,
+    # instead of an implicit model.classes_ ordering convention.
+    "result_semantics",
 })
 
 SUPPORTED_MODEL_FAMILIES = (
@@ -1077,7 +1082,18 @@ def _metric_names(contract: dict[str, Any]) -> list[str]:
     return names
 
 
-def _positive_class_label(model: Any) -> Any:
+def _positive_class_label(model: Any, contract: dict[str, Any] | None = None) -> Any:
+    """Resolve the positive class for binary probability metrics.
+
+    Project Spec S0108: when the execution contract carries a reviewed
+    `result_semantics.positive_class.class_id`, that governed class is
+    resolved from the fitted model's actual classes_ -- never assumed to be
+    `classes_[1]` -- and a mismatch or absence raises a deterministic error
+    rather than silently falling back. When no `result_semantics` is present
+    at all (historical/non-binary-reviewed contracts), the original
+    `classes_[1]` convention is preserved unchanged for backward
+    compatibility.
+    """
     classes = list(getattr(model, "classes_", []))
     if len(classes) != 2:
         raise TrainingInputError(
@@ -1085,7 +1101,55 @@ def _positive_class_label(model: Any) -> Any:
             "roc_auc and pr_auc require binary classification probabilities.",
             field="primary_metric",
         )
+
+    result_semantics = (contract or {}).get("result_semantics")
+    if isinstance(result_semantics, dict):
+        positive_class_id = (result_semantics.get("positive_class") or {}).get("class_id")
+        if not isinstance(positive_class_id, str) or not positive_class_id:
+            raise TrainingInputError(
+                "invalid_contract_field",
+                "execution contract result_semantics.positive_class.class_id must be a "
+                "non-empty string when result_semantics is present.",
+                field="result_semantics.positive_class.class_id",
+            )
+        for candidate in classes:
+            if candidate == positive_class_id or str(candidate) == positive_class_id:
+                return candidate
+        raise TrainingInputError(
+            "positive_class_not_in_model_classes",
+            (
+                "execution contract result_semantics.positive_class.class_id "
+                f"{positive_class_id!r} was not found among the fitted model classes: "
+                f"{[str(c) for c in classes]}."
+            ),
+            field="result_semantics.positive_class.class_id",
+        )
     return classes[1]
+
+
+def _classification_evidence_for_model(
+    model: Any, contract: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Return governed binary-classification evidence for a fitted model, or None.
+
+    Returns None when the fitted model is not binary (`classes_` length !=
+    2) -- multiclass/regression candidates carry no positive-class concept.
+    When binary, resolves the positive class via `_positive_class_label`
+    (governed from `result_semantics` when present, else the legacy
+    `classes_[1]` fallback), and records the model's actual fitted class
+    ordering as evidence -- this is what makes a reversed class order not
+    change the recorded positive-class meaning.
+    """
+    classes = list(getattr(model, "classes_", []))
+    if len(classes) != 2:
+        return None
+    positive_class = _positive_class_label(model, contract)
+    return {
+        "problem_type": "binary_classification",
+        "ordered_class_labels": [str(c) for c in classes],
+        "positive_class_id": str(positive_class),
+        "positive_class_probability_index": classes.index(positive_class),
+    }
 
 
 def _classification_probabilities(model: Any, evaluation_features: Any) -> Any:
@@ -1116,6 +1180,7 @@ def _compute_metrics(
     evaluation_features: Any,
     evaluation_target: Any,
     metric_names: list[str],
+    contract: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     if task_type != "classification":
         raise TrainingInputError(
@@ -1164,7 +1229,7 @@ def _compute_metrics(
             elif metric_name in {"roc_auc", "pr_auc"}:
                 if probabilities is None:
                     probabilities = _classification_probabilities(model, evaluation_features)
-                positive_label = _positive_class_label(model)
+                positive_label = _positive_class_label(model, contract)
                 positive_scores = probabilities[:, list(model.classes_).index(positive_label)]
                 binary_target = [value == positive_label for value in evaluation_target]
                 if metric_name == "roc_auc":
@@ -1213,18 +1278,26 @@ def _train_candidate_models(
         model = _build_estimator(model_family, task_type, contract.get("random_seed"))
         model.set_params(preprocess=_build_preprocessor(features))
         model.fit(features.iloc[train_indices], target.iloc[train_indices])
+        # Project Spec S0108: resolve governed binary-classification evidence
+        # immediately after fit, for every candidate, regardless of which
+        # metrics were requested -- this is what makes a missing/mismatched
+        # governed positive class raise deterministically rather than only
+        # when roc_auc/pr_auc happen to be configured.
+        classification_evidence = _classification_evidence_for_model(model, contract)
         metric_values = _compute_metrics(
             model=model,
             task_type=task_type,
             evaluation_features=features.iloc[evaluation_indices],
             evaluation_target=target.iloc[evaluation_indices],
             metric_names=metric_names,
+            contract=contract,
         )
         candidates.append({
             "candidate_id": model_family,
             "model_family": model_family,
             "model": model,
             "metrics": metric_values,
+            "classification_evidence": classification_evidence,
         })
 
     primary_metric = str(contract["primary_metric"])
@@ -1354,6 +1427,7 @@ def _build_model_selection_evidence(
                     for metric_name in _metric_names(contract)
                     if metric_name != primary_metric
                 ],
+                "classification_evidence": candidate.get("classification_evidence"),
             }
             for candidate in candidates
         ],
@@ -1458,6 +1532,12 @@ def _build_training_parameter_record(
             "secondary_metrics": list(contract.get("secondary_metrics") or []),
             "modeling_constraints": dict(contract["modeling_constraints"]),
         },
+        # Project Spec S0108: governed binary-classification evidence for the
+        # selected model, or None when the fitted model is not binary. Never
+        # embeds raw predictions or evaluation rows -- only the resolved
+        # positive class, its probability column index, and the model's
+        # actual fitted class ordering.
+        "binary_classification_evidence": result.get("classification_evidence"),
         "hashes": {
             "algorithm": "sha256",
             "execution_contract_sha256": _sha256_file(contract_path),
@@ -1830,6 +1910,7 @@ def train_from_paths(
         "model_family": model_family,
         "train_indices": train_indices,
         "evaluation_indices": evaluation_indices,
+        "classification_evidence": selected_candidate.get("classification_evidence"),
     }
     parameter_record = _build_training_parameter_record(
         contract=contract,

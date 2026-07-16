@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -559,6 +560,161 @@ def build_categorical_domain_declaration(
     }
 
 
+# Project Spec S0108: a single reviewed binary-result semantics declaration.
+# "approved" is the only status that may be promoted into execution policy by
+# contract_derivation._build_execution_contract; "pending_review" keeps a
+# declaration visible as an unresolved review item without ever silently
+# materializing into executable policy.
+BINARY_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION = "binary_result_semantics_intent.v1"
+BINARY_RESULT_SEMANTICS_REVIEW_STATUSES = frozenset({"approved", "pending_review"})
+_BINARY_RESULT_SEMANTICS_REQUIRED_BAND_IDS = ("low", "medium", "high")
+
+
+def _validate_binary_result_semantics_bands(bands: Any) -> list[dict[str, Any]]:
+    """Validate and normalize the three required interpretation bands.
+
+    Enforces the interval semantics required by Project Spec S0108: bands
+    are exactly {low, medium, high} once each, finite and within [0, 1], the
+    first lower_bound is 0, the final upper_bound is 1, and the bands are
+    ordered, contiguous, with no gap or overlap
+    (`lower_bound <= probability < upper_bound`, except the final band's
+    upper bound 1.0 is inclusive).
+    """
+    if not isinstance(bands, (list, tuple)):
+        raise ValueError(
+            "interpretation.bands must be a list of band objects"
+        )
+    bands = list(bands)
+    if len(bands) != 3:
+        raise ValueError("interpretation.bands must contain exactly 3 bands")
+
+    seen_ids: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for band in bands:
+        if not isinstance(band, dict):
+            raise ValueError("each band must be an object")
+        band_id = band.get("band_id")
+        if band_id not in _BINARY_RESULT_SEMANTICS_REQUIRED_BAND_IDS:
+            raise ValueError(
+                f"band_id must be one of {_BINARY_RESULT_SEMANTICS_REQUIRED_BAND_IDS}, "
+                f"got {band_id!r}"
+            )
+        if band_id in seen_ids:
+            raise ValueError(f"duplicate band_id: {band_id!r}")
+        seen_ids.add(band_id)
+
+        lower_bound = band.get("lower_bound")
+        upper_bound = band.get("upper_bound")
+        for field_name, value in (("lower_bound", lower_bound), ("upper_bound", upper_bound)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{band_id}.{field_name} must be a finite number")
+            if not math.isfinite(value):
+                raise ValueError(f"{band_id}.{field_name} must be finite")
+            if not (0.0 <= value <= 1.0):
+                raise ValueError(f"{band_id}.{field_name} must be within [0, 1]")
+        if not (lower_bound < upper_bound):
+            raise ValueError(f"{band_id}: lower_bound must be less than upper_bound")
+
+        normalized.append({
+            "band_id": band_id,
+            "lower_bound": float(lower_bound),
+            "upper_bound": float(upper_bound),
+        })
+
+    if seen_ids != set(_BINARY_RESULT_SEMANTICS_REQUIRED_BAND_IDS):
+        raise ValueError(
+            f"bands must include exactly {_BINARY_RESULT_SEMANTICS_REQUIRED_BAND_IDS} once each"
+        )
+
+    ordered = sorted(
+        normalized,
+        key=lambda entry: _BINARY_RESULT_SEMANTICS_REQUIRED_BAND_IDS.index(entry["band_id"]),
+    )
+    if ordered[0]["lower_bound"] != 0.0:
+        raise ValueError("the first band (low) lower_bound must be 0")
+    if ordered[-1]["upper_bound"] != 1.0:
+        raise ValueError("the final band (high) upper_bound must be 1")
+    for previous, current in zip(ordered, ordered[1:]):
+        if current["lower_bound"] != previous["upper_bound"]:
+            raise ValueError(
+                "bands must be ordered and contiguous with no gap or overlap: "
+                f"{previous['band_id']} upper_bound {previous['upper_bound']} must "
+                f"equal {current['band_id']} lower_bound {current['lower_bound']}"
+            )
+    return ordered
+
+
+def build_binary_result_semantics_intent(
+    review_status: str,
+    problem_type: str,
+    positive_class_id: str,
+    event_label: str,
+    primary_output: str,
+    threshold: float,
+    preset: str,
+    bands: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a `binary_result_semantics_intent.v1` reviewed declaration (Project Spec S0108).
+
+    Every value is an explicit caller-supplied parameter with no defaults --
+    this builder never inserts illustrative/prototype values (for example the
+    design prototype's Churn/0.5/0.35/0.65) automatically. Only
+    `review_status == "approved"` may later be promoted into executable
+    execution-contract policy by
+    `contract_derivation._build_execution_contract`; `"pending_review"` keeps
+    the declaration visible as an unresolved review item and this builder
+    still returns it rather than raising, since a pending declaration is a
+    normal, reportable state, not a malformed one. Raises ValueError on a
+    structurally malformed declaration (bad problem_type/primary_output/
+    preset, non-finite or out-of-range threshold, or bands that are missing,
+    duplicated, gapped, overlapping, unordered, or not covering [0, 1]).
+    """
+    if review_status not in BINARY_RESULT_SEMANTICS_REVIEW_STATUSES:
+        raise ValueError(
+            f"review_status must be one of {sorted(BINARY_RESULT_SEMANTICS_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    if problem_type != "binary_classification":
+        raise ValueError(
+            f"problem_type must be exactly 'binary_classification', got {problem_type!r}"
+        )
+    if not isinstance(positive_class_id, str) or not positive_class_id.strip():
+        raise ValueError("positive_class.class_id must be a non-empty string")
+    if not isinstance(event_label, str) or not event_label.strip():
+        raise ValueError(
+            "positive_class.event_label must be a non-empty, presentation-safe string"
+        )
+    if primary_output != "positive_class_probability":
+        raise ValueError(
+            f"primary_output must be exactly 'positive_class_probability', got {primary_output!r}"
+        )
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+        raise ValueError("decision.threshold must be a finite number")
+    if not math.isfinite(threshold):
+        raise ValueError("decision.threshold must be finite")
+    if not (0.0 <= threshold <= 1.0):
+        raise ValueError("decision.threshold must be within [0, 1]")
+    if preset != "risk":
+        raise ValueError(f"interpretation.preset must be exactly 'risk', got {preset!r}")
+    normalized_bands = _validate_binary_result_semantics_bands(bands)
+
+    return {
+        "schema_version": BINARY_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "problem_type": problem_type,
+        "positive_class": {
+            "class_id": positive_class_id,
+            "event_label": event_label,
+        },
+        "primary_output": primary_output,
+        "decision": {"threshold": float(threshold)},
+        "interpretation": {
+            "preset": preset,
+            "bands": normalized_bands,
+        },
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -591,6 +747,7 @@ def build_dataset_modeling_intent(
     open_questions: Sequence[str] | None = None,
     reduced_discovery_evidence_ref: str | None = None,
     categorical_domain_intent: Sequence[dict[str, Any]] | None = None,
+    binary_result_semantics_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build a `dataset_modeling_intent.v1` authoring-intent object.
@@ -658,6 +815,11 @@ def build_dataset_modeling_intent(
         "split_policy_candidate": split_policy_candidate,
         "open_questions": list(open_questions or []),
         "categorical_domain_intent": [dict(entry) for entry in (categorical_domain_intent or [])],
+        "binary_result_semantics_intent": (
+            dict(binary_result_semantics_intent)
+            if binary_result_semantics_intent is not None
+            else None
+        ),
         "modeling_intent_boundary_confirmations": dict(
             MODELING_INTENT_BOUNDARY_CONFIRMATIONS
         ),

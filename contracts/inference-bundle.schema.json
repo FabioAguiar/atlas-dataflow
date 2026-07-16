@@ -420,6 +420,10 @@
         }
       }
     },
+    "result_semantics": {
+      "$ref": "#/$defs/binary_result_semantics",
+      "description": "Project Spec S0108: optional, backward-compatible normalized binary-result release metadata. Present only on newly generated binary bundles whose execution contract carries a reviewed, materialized result_semantics; absent (never null) for historical bundles. Strictly validated when present."
+    },
     "boundary_confirmations": {
       "type": "object",
       "additionalProperties": false,
@@ -552,6 +556,119 @@
         "run_id": {
           "type": "string",
           "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
+        }
+      }
+    },
+    "binary_result_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "problem_type",
+        "result_schema_version",
+        "primary_output",
+        "positive_class",
+        "decision",
+        "interpretation",
+        "model_descriptor"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "binary-result-semantics.v1"
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "binary_classification"
+        },
+        "result_schema_version": {
+          "type": "string",
+          "const": "binary-classification-result.v1",
+          "description": "Identifies the future binary response family this release's metadata is compatible with; created by S0108, produced by S0109."
+        },
+        "primary_output": {
+          "type": "string",
+          "const": "positive_class_probability"
+        },
+        "positive_class": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class_id", "event_label"],
+          "properties": {
+            "class_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "event_label": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threshold"],
+          "properties": {
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "interpretation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["preset", "bands"],
+          "properties": {
+            "preset": {
+              "type": "string",
+              "const": "risk"
+            },
+            "bands": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["band_id", "lower_bound", "upper_bound"],
+                "properties": {
+                  "band_id": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"]
+                  },
+                  "lower_bound": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "upper_bound": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "model_descriptor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "display_name"],
+          "properties": {
+            "model_family": {
+              "type": "string",
+              "enum": ["logistic_regression", "gradient_boosting", "random_forest"]
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Deterministic projection of model_family via a fixed code mapping. Never editable profile copy."
+            }
+          }
         }
       }
     }

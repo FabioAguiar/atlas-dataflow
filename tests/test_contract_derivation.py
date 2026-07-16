@@ -1,9 +1,14 @@
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.contract_derivation import (
     EXECUTION_CONTRACT_DRAFT_CONTRACT_VERSION,
+    _build_execution_contract,
+    _build_execution_contract_materialization_evidence,
     _check_safety,
     _derive_public_contract,
     _derive_public_feature,
@@ -11,6 +16,7 @@ from pipeline.contract_derivation import (
     _fresh_label,
     project_execution_contract_draft,
 )
+from pipeline.discovery_evidence import build_binary_result_semantics_intent
 
 
 def _categorical_feature(values=("admin", "blue-collar", "technician"), **overrides):
@@ -333,3 +339,201 @@ def test_draft_projection_is_deterministic_for_same_input() -> None:
     first = project_execution_contract_draft(intent, generated_at="2026-07-09T00:00:00+00:00")
     second = project_execution_contract_draft(intent, generated_at="2026-07-09T00:00:00+00:00")
     assert first == second
+
+
+# --- binary result semantics materialization (Project Spec S0108) ---
+# A small, dataset-agnostic "campaign-response" fixture, matching the
+# established S0014 dataset-agnosticism precedent (mirrors
+# tests/test_execution_contract_schema.py's own local fixture shape, since
+# that file is not part of this Project Spec's allowed edit paths).
+
+VALID_RESULT_SEMANTICS_BANDS = [
+    {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+    {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+    {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+]
+
+
+def _approved_binary_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="binary_classification",
+        positive_class_id="Yes",
+        event_label="Responded",
+        primary_output="positive_class_probability",
+        threshold=0.5,
+        preset="risk",
+        bands=VALID_RESULT_SEMANTICS_BANDS,
+    )
+    kwargs.update(overrides)
+    return build_binary_result_semantics_intent(**kwargs)
+
+
+def _modeling_intent_for_result_semantics(binary_result_semantics_intent=None) -> dict:
+    return {
+        "artifact_type": "dataset_modeling_intent",
+        "contract_version": "dataset_modeling_intent.v1",
+        "dataset_identity": {
+            "dataset_slug": "campaign-response",
+            "dataset_source_ref": "data/raw/campaign-response.csv",
+        },
+        "target_intent": {
+            "target_column": "responded",
+            "task_type": "binary_classification",
+            "observed_labels": ["No", "Yes"],
+            "positive_label_candidate": "Yes",
+            "observed_target_distribution": {"No": 800, "Yes": 200},
+            "is_final_training_configuration": False,
+        },
+        "identifier_and_ignored_columns": [
+            {"name": "customer_ref", "reason": "identifier_candidate_excluded_from_features"}
+        ],
+        "initial_feature_candidates": ["age", "channel", "opted_in"],
+        "categorical_domain_intent": [],
+        "binary_result_semantics_intent": binary_result_semantics_intent,
+    }
+
+
+def _discovery_evidence_for_result_semantics() -> dict:
+    return {
+        "schema_version": "dataset-discovery-evidence.v1",
+        "field_observations": [
+            {
+                "name": "age", "inferred_type": "integer", "null_count": 0, "null_rate": 0.0,
+                "cardinality": 40, "sample_min": 18, "sample_max": 90,
+            },
+            {
+                "name": "channel", "inferred_type": "string", "null_count": 0, "null_rate": 0.0,
+                "cardinality": 3, "sample_min": "email", "sample_max": "sms",
+            },
+            {
+                "name": "opted_in", "inferred_type": "boolean", "null_count": 0, "null_rate": 0.0,
+                "cardinality": 2, "sample_min": "0", "sample_max": "1",
+            },
+        ],
+        "generation_settings": {"seed": 0, "generator_version": "discovery-evidence.v1"},
+    }
+
+
+def test_execution_contract_omits_result_semantics_when_intent_absent():
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_result_semantics_when_pending_review():
+    intent = _approved_binary_result_semantics_intent(review_status="pending_review")
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=intent)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert "result_semantics" not in contract, (
+        "a pending/unreviewed binary_result_semantics_intent must not materialize "
+        "into executable execution-contract policy"
+    )
+
+
+def test_execution_contract_materializes_result_semantics_when_approved():
+    intent = _approved_binary_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=intent)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+    result_semantics = contract["result_semantics"]
+    assert result_semantics["schema_version"] == "binary-result-semantics.v1"
+    assert result_semantics["problem_type"] == "binary_classification"
+    assert result_semantics["positive_class"] == {"class_id": "Yes", "event_label": "Responded"}
+    assert result_semantics["primary_output"] == "positive_class_probability"
+    assert result_semantics["decision"] == {"threshold": 0.5}
+    assert result_semantics["interpretation"]["preset"] == "risk"
+    assert result_semantics["interpretation"]["bands"] == VALID_RESULT_SEMANTICS_BANDS
+    # Authoring-only fields must never leak into the executable form.
+    assert "review_status" not in result_semantics
+    assert "schema_version" in result_semantics and result_semantics["schema_version"] != (
+        intent["schema_version"]
+    ), "the materialized schema_version must be the execution-form constant, not the authoring intent's own"
+
+
+def test_execution_contract_still_validates_against_schema_with_result_semantics():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    intent = _approved_binary_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=intent)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_rejects_structurally_invalid_intent_without_raising():
+    # A hand-crafted, malformed declaration (missing a required band) with a
+    # literal review_status of "approved" must still be independently
+    # re-validated and rejected -- not trusted just because it claims to be
+    # approved.
+    malformed_intent = {
+        "schema_version": "binary_result_semantics_intent.v1",
+        "review_status": "approved",
+        "problem_type": "binary_classification",
+        "positive_class": {"class_id": "Yes", "event_label": "Responded"},
+        "primary_output": "positive_class_probability",
+        "decision": {"threshold": 0.5},
+        "interpretation": {
+            "preset": "risk",
+            "bands": VALID_RESULT_SEMANTICS_BANDS[:2],  # missing the "high" band
+        },
+    }
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=malformed_intent)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_materialization_evidence_reports_absence():
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    discovery_evidence = _discovery_evidence_for_result_semantics()
+    contract = _build_execution_contract(modeling_intent, discovery_evidence, None)
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        None,
+        contract,
+        execution_contract_relative_path="contracts/campaign-response/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        generated_at="2026-07-16T00:00:00+00:00",
+    )
+    materialization = evidence["result_semantics_materialization"]
+    assert materialization["reviewed_source_intent_present"] is False
+    assert materialization["readiness"] == "not_materialized"
+    assert materialization["positive_class"] is None
+    assert len(materialization["blocking_reasons"]) == 1
+
+
+def test_execution_contract_materialization_evidence_reports_materialized():
+    intent = _approved_binary_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=intent)
+    discovery_evidence = _discovery_evidence_for_result_semantics()
+    contract = _build_execution_contract(modeling_intent, discovery_evidence, None)
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        None,
+        contract,
+        execution_contract_relative_path="contracts/campaign-response/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        generated_at="2026-07-16T00:00:00+00:00",
+    )
+    materialization = evidence["result_semantics_materialization"]
+    assert materialization["reviewed_source_intent_present"] is True
+    assert materialization["readiness"] == "materialized"
+    assert materialization["positive_class"] == {"class_id": "Yes", "event_label": "Responded"}
+    assert materialization["threshold"] == 0.5
+    assert materialization["bands"] == VALID_RESULT_SEMANTICS_BANDS
+    assert materialization["no_defaults_inferred"] is True
+    assert materialization["blocking_reasons"] == []

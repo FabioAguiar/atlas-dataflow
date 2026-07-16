@@ -59,6 +59,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline.discovery_evidence import build_binary_result_semantics_intent
+
 
 REPO_ROOT = Path(__file__).parent.parent
 RUNTIME_SCHEMA_PATH = REPO_ROOT / "contracts" / "runtime-contract.schema.json"
@@ -506,6 +508,106 @@ def _unresolved_review_columns(preparation_recipe: dict[str, Any] | None) -> dic
     return unresolved
 
 
+# Project Spec S0108: materialize a reviewed, approved binary_result_semantics_intent
+# from the modeling intent into a normalized result_semantics block on the
+# execution contract. Never trusts the modeling intent's own prior
+# validation -- re-validates independently via
+# discovery_evidence.build_binary_result_semantics_intent, mirroring the
+# _validate_categorical_domain_declaration re-validation convention above.
+_BINARY_RESULT_SEMANTICS_SCHEMA_VERSION = "binary-result-semantics.v1"
+
+
+def _materialize_binary_result_semantics(
+    modeling_intent: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Return (result_semantics_or_None, materialization_evidence).
+
+    `result_semantics` is None whenever the modeling intent's
+    `binary_result_semantics_intent` is absent, not approved, or fails
+    independent re-validation -- the execution contract as a whole is still
+    built successfully in every case; this only omits the optional
+    `result_semantics` block rather than blocking materialization of the
+    whole contract. Never infers or defaults any field.
+    """
+    intent = modeling_intent.get("binary_result_semantics_intent")
+    if not isinstance(intent, dict):
+        return None, {
+            "reviewed_source_intent_present": False,
+            "positive_class": None,
+            "threshold": None,
+            "bands": None,
+            "no_defaults_inferred": True,
+            "readiness": "not_materialized",
+            "blocking_reasons": [
+                "binary_result_semantics_intent is absent from the dataset modeling intent"
+            ],
+        }
+
+    review_status = intent.get("review_status")
+    if review_status != "approved":
+        return None, {
+            "reviewed_source_intent_present": True,
+            "positive_class": None,
+            "threshold": None,
+            "bands": None,
+            "no_defaults_inferred": True,
+            "readiness": "not_materialized",
+            "blocking_reasons": [
+                f"binary_result_semantics_intent.review_status is {review_status!r}, "
+                "not 'approved'"
+            ],
+        }
+
+    positive_class = intent.get("positive_class") or {}
+    interpretation = intent.get("interpretation") or {}
+    decision = intent.get("decision") or {}
+    try:
+        rebuilt = build_binary_result_semantics_intent(
+            review_status=review_status,
+            problem_type=intent.get("problem_type"),
+            positive_class_id=positive_class.get("class_id"),
+            event_label=positive_class.get("event_label"),
+            primary_output=intent.get("primary_output"),
+            threshold=decision.get("threshold"),
+            preset=interpretation.get("preset"),
+            bands=interpretation.get("bands") or [],
+        )
+    except ValueError as exc:
+        return None, {
+            "reviewed_source_intent_present": True,
+            "positive_class": None,
+            "threshold": None,
+            "bands": None,
+            "no_defaults_inferred": True,
+            "readiness": "not_materialized",
+            "blocking_reasons": [
+                f"binary_result_semantics_intent failed independent re-validation: {exc}"
+            ],
+        }
+
+    result_semantics = {
+        "schema_version": _BINARY_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": rebuilt["problem_type"],
+        "positive_class": dict(rebuilt["positive_class"]),
+        "primary_output": rebuilt["primary_output"],
+        "decision": dict(rebuilt["decision"]),
+        "interpretation": {
+            "preset": rebuilt["interpretation"]["preset"],
+            "bands": [dict(band) for band in rebuilt["interpretation"]["bands"]],
+        },
+    }
+    evidence = {
+        "reviewed_source_intent_present": True,
+        "positive_class": dict(result_semantics["positive_class"]),
+        "threshold": result_semantics["decision"]["threshold"],
+        "bands": [dict(band) for band in result_semantics["interpretation"]["bands"]],
+        "no_defaults_inferred": True,
+        "readiness": "materialized",
+        "blocking_reasons": [],
+    }
+    return result_semantics, evidence
+
+
 def _build_execution_contract(
     modeling_intent: dict[str, Any],
     discovery_evidence: dict[str, Any],
@@ -595,7 +697,16 @@ def _build_execution_contract(
 
     seed = (discovery_evidence.get("generation_settings") or {}).get("seed")
 
-    return {
+    # Project Spec S0108: materialize a reviewed, approved
+    # binary_result_semantics_intent into a normalized result_semantics
+    # block. Omitted entirely (never present-but-null) when absent, pending,
+    # or invalid -- this is what "blocks executable materialization" means
+    # for this optional, backward-compatible field.
+    result_semantics, _result_semantics_evidence = _materialize_binary_result_semantics(
+        modeling_intent
+    )
+
+    contract: dict[str, Any] = {
         "contract_version": EXECUTION_CONTRACT_CONTRACT_VERSION,
         "dataset_id": dataset_identity.get("dataset_slug"),
         "target_column": target_column,
@@ -638,6 +749,9 @@ def _build_execution_contract(
             "max_training_time_seconds": None,
         },
     }
+    if result_semantics is not None:
+        contract["result_semantics"] = result_semantics
+    return contract
 
 
 def _build_execution_contract_materialization_evidence(
@@ -725,6 +839,13 @@ def _build_execution_contract_materialization_evidence(
                 {"name": entry_name, "reason": rejection_reason}
             )
 
+    # Project Spec S0108: independently re-derived (never trusted from hidden
+    # state set during _build_execution_contract), mirroring the categorical
+    # domain re-derivation convention above.
+    _result_semantics, result_semantics_evidence = _materialize_binary_result_semantics(
+        modeling_intent
+    )
+
     return {
         "artifact_type": "execution_contract_materialization_evidence",
         "contract_version": EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_CONTRACT_VERSION,
@@ -775,6 +896,7 @@ def _build_execution_contract_materialization_evidence(
             "values_inferred_during_materialization": False,
         },
         "policy_defaults_requiring_future_review": list(_POLICY_DEFAULT_FIELDS),
+        "result_semantics_materialization": result_semantics_evidence,
         "execution_contract_boundary_confirmations": dict(EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS),
         "generated_at": generated_at or _utc_now_iso(),
     }

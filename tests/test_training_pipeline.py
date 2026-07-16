@@ -1084,3 +1084,150 @@ def test_normalize_training_handoff_references_rejects_unsafe_paths_in_training_
         "training_metrics": "fixture_only_path_rejected",
         "model_card": "missing_reference",
     }
+
+
+# --- governed positive class during training (Project Spec S0108) ---
+# Uses target labels ("active"/"churned") that sort so that the *wrong*
+# legacy classes_[1] convention ("churned") would silently diverge from the
+# reviewed positive class ("active", classes_[0]) if governance were not
+# actually wired in -- this is the "reversed class order" scenario the spec
+# requires to be handled correctly.
+
+def _binary_result_semantics_block(positive_class_id: str = "active", event_label: str = "Active") -> dict:
+    return {
+        "schema_version": "binary-result-semantics.v1",
+        "problem_type": "binary_classification",
+        "positive_class": {"class_id": positive_class_id, "event_label": event_label},
+        "primary_output": "positive_class_probability",
+        "decision": {"threshold": 0.5},
+        "interpretation": {
+            "preset": "risk",
+            "bands": [
+                {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+            ],
+        },
+    }
+
+
+def _reversed_label_execution_contract(result_semantics: dict | None = None) -> dict:
+    contract = _valid_execution_contract()
+    contract["target_column"] = "status"
+    contract["primary_metric"] = "roc_auc"
+    contract["secondary_metrics"] = []
+    if result_semantics is not None:
+        contract["result_semantics"] = result_semantics
+    return contract
+
+
+def _reversed_label_prepared_dataset() -> dict:
+    rows = [
+        {"dataset_id": "training-pipeline-test", "age": 24, "segment": "retail", "balance": 1000, "status": "churned"},
+        {"dataset_id": "training-pipeline-test", "age": 29, "segment": "smb", "balance": 2400, "status": "active"},
+        {"dataset_id": "training-pipeline-test", "age": 36, "segment": "enterprise", "balance": 3600, "status": "churned"},
+        {"dataset_id": "training-pipeline-test", "age": 41, "segment": "retail", "balance": 5200, "status": "active"},
+        {"dataset_id": "training-pipeline-test", "age": 48, "segment": "smb", "balance": 7600, "status": "churned"},
+        {"dataset_id": "training-pipeline-test", "age": 53, "segment": "enterprise", "balance": 9100, "status": "active"},
+        {"dataset_id": "training-pipeline-test", "age": 61, "segment": "retail", "balance": 12000, "status": "churned"},
+        {"dataset_id": "training-pipeline-test", "age": 68, "segment": "smb", "balance": 15000, "status": "active"},
+    ]
+    return {"dataset_id": "training-pipeline-test", "rows": rows}
+
+
+def _write_reversed_label_inputs(tmp_path: Path, result_semantics: dict | None = None) -> tuple[Path, Path]:
+    contract_path = _write_json(
+        tmp_path / "execution-contract.json", _reversed_label_execution_contract(result_semantics)
+    )
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _reversed_label_prepared_dataset())
+    return contract_path, dataset_path
+
+
+def test_binary_classification_evidence_absent_result_semantics_preserves_legacy_fallback(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    # No result_semantics at all (historical/non-binary-reviewed contract):
+    # the original classes_[1] convention must be preserved unchanged.
+    contract_path, dataset_path = _write_reversed_label_inputs(tmp_path, result_semantics=None)
+    result = train_from_paths(
+        contract_path, dataset_path,
+        dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+    )
+    output_directory = fixed_training_environment / result.output_directory
+    parameter_record = json.loads(
+        (output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text(encoding="utf-8")
+    )
+    evidence = parameter_record["binary_classification_evidence"]
+    assert evidence["problem_type"] == "binary_classification"
+    assert evidence["ordered_class_labels"] == ["active", "churned"]
+    assert evidence["positive_class_id"] == "churned"
+    assert evidence["positive_class_probability_index"] == 1
+
+
+def test_binary_classification_evidence_uses_governed_positive_class(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    # With a reviewed result_semantics present, the governed positive class
+    # ("active", classes_[0]) must be used -- not the legacy classes_[1]
+    # ("churned") convention -- even though "churned" is what the old
+    # ordering-based fallback would have silently picked.
+    contract_path, dataset_path = _write_reversed_label_inputs(
+        tmp_path, result_semantics=_binary_result_semantics_block(positive_class_id="active")
+    )
+    result = train_from_paths(
+        contract_path, dataset_path,
+        dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+    )
+    output_directory = fixed_training_environment / result.output_directory
+    parameter_record = json.loads(
+        (output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text(encoding="utf-8")
+    )
+    evidence = parameter_record["binary_classification_evidence"]
+    assert evidence["ordered_class_labels"] == ["active", "churned"]
+    assert evidence["positive_class_id"] == "active"
+    assert evidence["positive_class_probability_index"] == 0
+
+
+def test_governed_positive_class_absent_from_model_classes_raises_deterministic_error(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path, dataset_path = _write_reversed_label_inputs(
+        tmp_path, result_semantics=_binary_result_semantics_block(positive_class_id="left_the_company")
+    )
+    with pytest.raises(TrainingInputError) as exc_info:
+        train_from_paths(
+            contract_path, dataset_path,
+            dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+        )
+    assert exc_info.value.code == "positive_class_not_in_model_classes"
+
+
+def test_model_selection_evidence_records_classification_evidence_per_candidate(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _reversed_label_execution_contract(
+        result_semantics=_binary_result_semantics_block(positive_class_id="active")
+    )
+    contract["modeling_constraints"]["allowed_model_families"] = ["logistic_regression", "random_forest"]
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _reversed_label_prepared_dataset())
+
+    result = train_from_paths(
+        contract_path, dataset_path,
+        dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+    )
+    assert result.model_selection_evidence_produced is True
+    output_directory = fixed_training_environment / result.output_directory
+    from pipeline.training import MODEL_SELECTION_EVIDENCE_FILENAME
+    selection_evidence = json.loads(
+        (output_directory / MODEL_SELECTION_EVIDENCE_FILENAME).read_text(encoding="utf-8")
+    )
+    assert len(selection_evidence["candidates"]) == 2
+    for candidate in selection_evidence["candidates"]:
+        classification_evidence = candidate["classification_evidence"]
+        assert classification_evidence["positive_class_id"] == "active"
+        assert classification_evidence["ordered_class_labels"] == ["active", "churned"]

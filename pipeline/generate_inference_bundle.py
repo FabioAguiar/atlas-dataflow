@@ -32,6 +32,18 @@ SUPPORTED_MODEL_FAMILIES = frozenset({
     "gradient_boosting",
     "random_forest",
 })
+# Project Spec S0108: deterministic code mapping from model-family ID to a
+# safe display descriptor. Never looked up any other way (e.g. from editable
+# profile copy) -- the design prototype's "Logistic Regression" placeholder
+# must never be hardcoded as a default; this dict is keyed and looked up by
+# whatever model_family the actual training evidence recorded.
+MODEL_FAMILY_DISPLAY_NAMES: dict[str, str] = {
+    "logistic_regression": "Logistic Regression",
+    "gradient_boosting": "Gradient Boosting",
+    "random_forest": "Random Forest",
+}
+BINARY_RESULT_SEMANTICS_SCHEMA_VERSION = "binary-result-semantics.v1"
+BINARY_CLASSIFICATION_RESULT_SCHEMA_VERSION = "binary-classification-result.v1"
 SUPPORTED_PREDICTION_TYPES = frozenset({"number", "integer", "string", "boolean"})
 SUPPORTED_ENCODINGS = frozenset({"onehot", "ordinal", "target_encode", "binary"})
 SUPPORTED_NUMERIC_HANDLING = frozenset({"standardize", "normalize", "passthrough"})
@@ -414,6 +426,132 @@ def _resolve_runtime_execution(training_record: dict[str, Any], args: argparse.N
     return runtime
 
 
+def _resolve_result_semantics(
+    execution_contract: dict[str, Any],
+    training_record: dict[str, Any],
+    output_schema: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Project the execution contract's result_semantics into the bundle, or None.
+
+    Returns None (never null-but-present, never invented defaults) when the
+    execution contract carries no `result_semantics` at all -- this is the
+    historical-compatibility path: the bundle is generated exactly as
+    before. When `result_semantics` is present, validates cross-artifact
+    consistency against the bundle's own output_schema and the training
+    parameter record's governed `binary_classification_evidence`, blocking
+    (raising, never writing a partial bundle) on any mismatch.
+    """
+    result_semantics_source = execution_contract.get("result_semantics")
+    if result_semantics_source is None:
+        return None
+    if not isinstance(result_semantics_source, dict):
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "execution contract result_semantics must be an object when present.",
+            field="result_semantics",
+        )
+    if execution_contract.get("contract_version") != "execution_contract.v1":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics is only valid on an execution_contract.v1 contract.",
+            field="result_semantics",
+        )
+    if result_semantics_source.get("problem_type") != "binary_classification":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.problem_type must be exactly binary_classification.",
+            field="result_semantics.problem_type",
+        )
+
+    positive_class = _require_mapping(result_semantics_source, "positive_class")
+    positive_class_id = _require_string(positive_class, "class_id")
+    event_label = _require_string(positive_class, "event_label")
+
+    class_labels = output_schema.get("class_labels")
+    if not isinstance(class_labels, list) or len(set(class_labels)) != 2:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "output_schema.class_labels must declare exactly two unique values "
+            "when result_semantics is present.",
+            field="output_schema.class_labels",
+        )
+    if positive_class_id not in class_labels:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "result_semantics.positive_class.class_id is not one of output_schema.class_labels.",
+            field="result_semantics.positive_class.class_id",
+        )
+    if output_schema.get("probability_output") is not True:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "output_schema.probability_output must be true when result_semantics is present.",
+            field="output_schema.probability_output",
+        )
+
+    training_parameters = _require_mapping(training_record, "training_parameters")
+    model_family = _require_string(training_parameters, "model_family")
+    if model_family not in MODEL_FAMILY_DISPLAY_NAMES:
+        raise BundleGenerationError(
+            "unsupported_model_family",
+            "model_family is not supported by the result_semantics model_descriptor mapping.",
+            field="training_parameters.model_family",
+        )
+
+    binary_classification_evidence = training_record.get("binary_classification_evidence")
+    if not isinstance(binary_classification_evidence, dict):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training_parameter_record.binary_classification_evidence is required when "
+            "result_semantics is present.",
+            field="binary_classification_evidence",
+        )
+    if binary_classification_evidence.get("positive_class_id") != positive_class_id:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training evidence positive_class_id does not match "
+            "result_semantics.positive_class.class_id.",
+            field="binary_classification_evidence.positive_class_id",
+        )
+
+    decision = _require_mapping(result_semantics_source, "decision")
+    threshold = decision.get("threshold")
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not (0.0 <= threshold <= 1.0):
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.decision.threshold must be a number within [0, 1].",
+            field="result_semantics.decision.threshold",
+        )
+
+    interpretation = _require_mapping(result_semantics_source, "interpretation")
+    bands = interpretation.get("bands")
+    if not isinstance(bands, list) or len(bands) != 3:
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.interpretation.bands must contain exactly 3 bands.",
+            field="result_semantics.interpretation.bands",
+        )
+
+    return {
+        "schema_version": BINARY_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": "binary_classification",
+        "result_schema_version": BINARY_CLASSIFICATION_RESULT_SCHEMA_VERSION,
+        "primary_output": _require_string(result_semantics_source, "primary_output"),
+        "positive_class": {
+            "class_id": positive_class_id,
+            "event_label": event_label,
+        },
+        "decision": {"threshold": threshold},
+        "interpretation": {
+            "preset": _require_string(interpretation, "preset"),
+            "bands": [dict(band) for band in bands],
+        },
+        "model_descriptor": {
+            "model_family": model_family,
+            "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
+        },
+    }
+
+
 def _resolve_output_schema(args: argparse.Namespace) -> dict[str, Any]:
     if args.prediction_type not in SUPPORTED_PREDICTION_TYPES:
         raise BundleGenerationError(
@@ -689,6 +827,12 @@ def _build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         bundle["compatibility_constraints"]["minimum_runtime_adapter_version"] = (
             args.minimum_runtime_adapter_version
         )
+
+    result_semantics = _resolve_result_semantics(
+        execution_contract, training_record, bundle["output_schema"]
+    )
+    if result_semantics is not None:
+        bundle["result_semantics"] = result_semantics
 
     _validate_bundle_schema(bundle, schema_path)
     return bundle

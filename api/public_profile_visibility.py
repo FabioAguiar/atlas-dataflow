@@ -32,6 +32,7 @@ from registry.dataset_public_profile_snapshot_store import (
     SnapshotNotFoundError,
     get_snapshot,
 )
+from registry.dataset_public_profile_validate import normalize_binary_result_presentation
 
 
 def resolve_dataset_visibility(dataset_slug: str, repo_root: Path | None = None) -> bool:
@@ -60,12 +61,21 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
     Return the published snapshot's curated presentation fields for
     dataset_slug (display_title, display_subtitle, home_card_icon,
     short_description, theme_preset, source_name, source_url,
-    release_date_label, date_format, primary_metric_key), each None when no
-    snapshot has been published yet. Used to overlay curated fields on top
-    of a public route's existing default field source (e.g. the
-    release-context projection); never raises for a missing snapshot or
-    invalid slug, since both are normal "nothing curated yet" states for
-    this read-only overlay.
+    release_date_label, date_format, primary_metric_key, bound_predict_view_id,
+    legacy_submit_button_label), each None when no snapshot has been
+    published yet. Used to overlay curated fields on top of a public route's
+    existing default field source (e.g. the release-context projection);
+    never raises for a missing snapshot or invalid slug, since both are
+    normal "nothing curated yet" states for this read-only overlay.
+
+    Project Spec S0110: bound_predict_view_id and legacy_submit_button_label
+    are minimum transitional fields DatasetPage.tsx needs to resolve its
+    bound predict view's customization and fall back to the legacy,
+    deprecated result_card.submit_button_label when no customization value
+    exists yet. bound_predict_view_id comes only from the published
+    inference_presentation binding; legacy_submit_button_label comes only
+    from the published result_card -- neither is treated as new authority,
+    and no private draft is exposed by this read-only overlay.
     """
     defaults = {
         "display_title": None,
@@ -80,6 +90,9 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "date_format": None,
         "primary_metric_key": None,
         "performance_focus": None,
+        "bound_predict_view_id": None,
+        "legacy_submit_button_label": None,
+        "result_card": normalize_binary_result_presentation(None),
     }
 
     try:
@@ -95,6 +108,8 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
     home_card = profile.get("home_card")
     theme = profile.get("theme")
     performance_focus = profile.get("performance_focus")
+    inference_presentation = profile.get("inference_presentation")
+    result_card = profile.get("result_card")
 
     return {
         "display_title": display.get("title") if isinstance(display, dict) else None,
@@ -109,4 +124,13 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "date_format": display.get("date_format") if isinstance(display, dict) else None,
         "primary_metric_key": home_card.get("primary_metric_key") if isinstance(home_card, dict) else None,
         "performance_focus": performance_focus if isinstance(performance_focus, dict) else None,
+        "bound_predict_view_id": (
+            inference_presentation.get("bound_predict_view_id")
+            if isinstance(inference_presentation, dict)
+            else None
+        ),
+        "legacy_submit_button_label": (
+            result_card.get("submit_button_label") if isinstance(result_card, dict) else None
+        ),
+        "result_card": normalize_binary_result_presentation(result_card),
     }

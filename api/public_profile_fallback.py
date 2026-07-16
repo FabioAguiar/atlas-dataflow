@@ -195,7 +195,10 @@ def generate_fallback_profile(dataset_slug: str, repo_root: Path | None = None) 
         if primary_metric_key is not None:
             home_card["primary_metric_key"] = primary_metric_key
 
-    result_card = {}
+    # Result Card fallback copy is deliberately dataset-neutral. Model-card
+    # content is technical identity and must not become editable section copy.
+    from registry.dataset_public_profile_validate import normalize_binary_result_presentation
+    result_card = normalize_binary_result_presentation(None)
     try:
         model_card_payload = load_public_model_card(active_release, releases_root=releases_root)
     except PublicModelCardUnavailableError:
@@ -203,19 +206,13 @@ def generate_fallback_profile(dataset_slug: str, repo_root: Path | None = None) 
     else:
         sources_used["model_card"] = True
 
-    if model_card_payload is not None:
-        model_label = _model_label_from_model_card(model_card_payload)
-        if model_label is not None:
-            result_card["model_label"] = model_label
-
     profile: dict = {
         "schema_version": "1.0.0",
         "dataset_slug": dataset_slug,
     }
     if home_card:
         profile["home_card"] = home_card
-    if result_card:
-        profile["result_card"] = result_card
+    profile["result_card"] = result_card
 
     validation = validate_profile_draft(profile, repo_root=repo_root)
     if not validation["valid"]:

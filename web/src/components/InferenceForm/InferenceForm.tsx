@@ -44,6 +44,7 @@ export type PredictViewCustomization = {
     heading?: string;
     description?: string;
     usage_guidance?: string;
+    submit_button_label?: string;
   };
 };
 
@@ -85,6 +86,16 @@ type Props = {
    * callers (e.g. DatasetViewPage.tsx) are unaffected.
    */
   previewMode?: boolean;
+  /**
+   * Project Spec S0110: resolved idle submit-button copy, presentation only.
+   * The caller (DatasetPage/DatasetViewPage/Dataset Admin Live Preview) is
+   * responsible for resolving this via the
+   * customization -> legacy profile -> "Submit" precedence; this component
+   * never re-derives or infers a label itself, and this prop never changes
+   * endpoint selection, validation, payload, or submission behavior. Falls
+   * back to "Submit" when absent or blank.
+   */
+  submitButtonLabel?: string;
 };
 
 function buildHintMap(customization: PredictViewCustomization | undefined): Map<string, FieldHint> {
@@ -145,7 +156,13 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
   );
 }
 
-export default function InferenceForm({ contract, slug, customization, previewMode = false }: Props) {
+export default function InferenceForm({
+  contract,
+  slug,
+  customization,
+  previewMode = false,
+  submitButtonLabel,
+}: Props) {
   const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
 
   const hintMap = buildHintMap(customization);
@@ -258,6 +275,7 @@ export default function InferenceForm({ contract, slug, customization, previewMo
   }
 
   const hasGroups = customization && customization.groups.length > 0;
+  const idleLabel = submitButtonLabel?.trim() || "Submit";
 
   return (
     <section aria-label="Inference Form">
@@ -265,11 +283,7 @@ export default function InferenceForm({ contract, slug, customization, previewMo
       <form onSubmit={handleSubmit}>
         {hasGroups ? renderGrouped() : renderFields(sortedForPresentation)}
         <button type="submit" disabled={previewMode || submission.status === "submitting"}>
-          {previewMode
-            ? "Preview only"
-            : submission.status === "submitting"
-              ? "Submitting…"
-              : "Submit"}
+          {submission.status === "submitting" ? "Submitting…" : idleLabel}
         </button>
       </form>
 

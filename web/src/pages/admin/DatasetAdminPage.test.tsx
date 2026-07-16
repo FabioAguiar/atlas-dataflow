@@ -113,6 +113,13 @@ const customization = {
     customization_defines_runtime_validation: false,
     customization_duplicates_contract: false,
   },
+  // Project Spec S0110: absent by default (matching the shared fixture's
+  // customization record, which carries no view_copy of its own), typed
+  // here so per-test overrides (customizationOverride: { ...customization,
+  // view_copy: {...} }) type-check.
+  view_copy: undefined as
+    | { heading?: string; description?: string; usage_guidance?: string; submit_button_label?: string }
+    | undefined,
 };
 
 function installFetchMock(
@@ -1015,8 +1022,15 @@ describe("DatasetAdminPage", () => {
     const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
     fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
 
+    // Project Spec S0110: the shared fixture profile carries a legacy
+    // result_card.submit_button_label with no equivalent customization
+    // value yet, so this otherwise-unrelated Subtitle-only publish also
+    // carries a pending legacy migration -- the Inference Form
+    // customization persists successfully first, then the Public Content
+    // profile publish itself fails, producing the combined-outcome message
+    // rather than the profile-only failure text.
     expect(
-      await screen.findByText("Public Content changes could not be published. Open the Publishing tab for details."),
+      await screen.findByText("Inference Form saved; Dataset Detail publication failed."),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Subtitle")).toHaveValue("Toolbar-edited subtitle");
     expect(screen.queryByText(/PROFILE_PUBLISH_FAILED/)).not.toBeInTheDocument();
@@ -1318,7 +1332,9 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(oceanBlue);
     fireEvent.click(publishButton);
 
-    await screen.findByText("Public Content changes could not be published. Open the Publishing tab for details.");
+    // Project Spec S0110: same pending-legacy-migration combined outcome as
+    // the Subtitle-only publish-failure test above.
+    await screen.findByText("Inference Form saved; Dataset Detail publication failed.");
     expect(oceanBlue).toHaveAttribute("aria-pressed", "true");
     expect(publishButton).toBeEnabled();
   });
@@ -2860,8 +2876,11 @@ describe("DatasetAdminPage", () => {
     const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
     fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
 
+    // Project Spec S0110: same pending-legacy-migration combined outcome as
+    // the other Subtitle-only publish-failure tests above -- still safe,
+    // internal-terminology-free feedback.
     expect(
-      await screen.findByText("Public Content changes could not be published. Open the Publishing tab for details."),
+      await screen.findByText("Inference Form saved; Dataset Detail publication failed."),
     ).toBeInTheDocument();
     expect(forbiddenDraftTermsPresent()).toEqual([]);
   });
@@ -3389,6 +3408,177 @@ describe("DatasetAdminPage", () => {
             (call[1] as RequestInit | undefined)?.method === "PUT",
         ),
     ).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------
+  // Project Spec S0110: submit-action copy ownership moves from the Result
+  // Card tab to the Inference Form tab's predict-view customization.
+  // ---------------------------------------------------------------------
+
+  it("renders Submit button label on the Inference Form tab, seeded from the legacy profile value, and no longer on the Result Card tab (Project Spec S0110)", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const submitLabelField = screen.getByLabelText("Submit button label") as HTMLInputElement;
+    expect(submitLabelField).toBeEnabled();
+    // Seeded from the shared fixture's legacy result_card.submit_button_label
+    // ("Run prediction") since the shared customization fixture carries no
+    // view_copy.submit_button_label of its own yet -- a pending migration
+    // candidate, not a storage mutation.
+    expect(submitLabelField.value).toBe("Run prediction");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+    expect(screen.queryByLabelText("Submit button label")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Probability label")).toBeInTheDocument();
+  });
+
+  it("disables Submit button label when no predict view is bound (Project Spec S0110)", async () => {
+    // A single eligible view is silently auto-bound (Project Spec S0100), so
+    // proving genuinely no-view-bound requires zero eligible views.
+    installFetchMock({ viewsOverride: [], boundPredictViewIdOverride: "" });
+    renderAdminPage();
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    expect(await screen.findByLabelText("Submit button label")).toBeDisabled();
+  });
+
+  it("editing Submit button label enables Publish changes, and reverting it disables Publish changes when no other change exists (Project Spec S0110)", async () => {
+    // An already-persisted customization value means no migration seed
+    // applies, isolating this test to a plain field edit/revert.
+    installFetchMock({
+      customizationOverride: { ...customization, view_copy: { submit_button_label: "Existing label" } },
+    });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
+
+    const submitLabelField = screen.getByLabelText("Submit button label");
+    expect(submitLabelField).toHaveValue("Existing label");
+    fireEvent.change(submitLabelField, { target: { value: "New label" } });
+    expect(publishButton).toBeEnabled();
+
+    fireEvent.change(submitLabelField, { target: { value: "Existing label" } });
+    expect(publishButton).toBeDisabled();
+  });
+
+  it("publishing customization writes view_copy.submit_button_label while preserving other existing view_copy fields (Project Spec S0110)", async () => {
+    const fetchMock = installFetchMock({
+      trackCustomizationSaves: true,
+      customizationOverride: {
+        ...customization,
+        view_copy: { heading: "Existing heading", description: "Existing description" },
+      },
+    });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.change(screen.getByLabelText("Submit button label"), { target: { value: "Estimate churn risk" } });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+
+    const putCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+        (call[1] as RequestInit | undefined)?.method === "PUT",
+    );
+    const body = JSON.parse(String((putCall?.[1] as RequestInit).body)) as { view_copy?: Record<string, string> };
+    expect(body.view_copy).toEqual({
+      heading: "Existing heading",
+      description: "Existing description",
+      submit_button_label: "Estimate churn risk",
+    });
+  });
+
+  it("persists the migrated legacy submit label to customization before publishing an unrelated profile edit (Project Spec S0110)", async () => {
+    // Shared fixture: publicProfile.result_card.submit_button_label =
+    // "Run prediction" (legacy), and the shared customization fixture
+    // carries no view_copy.submit_button_label yet -- a pending migration
+    // even though only the unrelated Subtitle field is edited below.
+    const fetchMock = installFetchMock({ trackCustomizationSaves: true });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Unrelated edit" } });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    fireEvent.click(publishButton);
+
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+
+    const relevantCalls = fetchMock.mock.calls.filter(
+      (call) =>
+        (String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT") ||
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`),
+    );
+    expect(relevantCalls).toHaveLength(2);
+    expect(String(relevantCalls[0][0])).toContain("/customization");
+    expect(String(relevantCalls[1][0])).toContain("/publish");
+
+    const customizationBody = JSON.parse(String((relevantCalls[0][1] as RequestInit).body)) as {
+      view_copy?: Record<string, string>;
+    };
+    expect(customizationBody.view_copy?.submit_button_label).toBe("Run prediction");
+
+    const profileBody = JSON.parse(String((relevantCalls[1][1] as RequestInit).body)) as {
+      result_card?: Record<string, unknown>;
+    };
+    // New profile publications never emit the legacy field, even on the
+    // very publish that resolves the migration.
+    expect(profileBody.result_card?.submit_button_label).toBeUndefined();
+  });
+
+  it("blocks profile publication when the pending legacy migration's customization persist fails, leaving legacy copy intact and retry possible (Project Spec S0110)", async () => {
+    const fetchMock = installFetchMock({ rejectCustomizationSave: true });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Should not publish" } });
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    const callsBefore = fetchMock.mock.calls.length;
+    fireEvent.click(publishButton);
+
+    expect(await screen.findByText("Inference Form could not be saved.")).toBeInTheDocument();
+    expect(publishButton).toBeEnabled();
+    expect(
+      fetchMock.mock.calls
+        .slice(callsBefore)
+        .some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+    ).toBe(false);
+    // Retry remains possible: Publish changes is enabled again (asserted
+    // above) and clicking it re-attempts the same customization-first
+    // ordering rather than becoming permanently blocked.
+  });
+
+  it("Live Preview's Inference Form submit button reflects the customization draft's Submit button label immediately, and stays disabled (Project Spec S0110)", async () => {
+    installFetchMock({
+      customizationOverride: { ...customization, view_copy: { submit_button_label: "Estimate churn risk" } },
+    });
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    const initialPreviewButton = screen.getByRole("button", { name: "Estimate churn risk" });
+    expect(initialPreviewButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    fireEvent.change(screen.getByLabelText("Submit button label"), { target: { value: "Updated live label" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    expect(screen.getByRole("button", { name: "Updated live label" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Estimate churn risk" })).not.toBeInTheDocument();
   });
 
   it("resets the customization baseline on a stale-request-safe reload so a discarded edit does not leave the reloaded view appearing dirty", async () => {

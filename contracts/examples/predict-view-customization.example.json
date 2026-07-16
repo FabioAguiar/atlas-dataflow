@@ -6,7 +6,8 @@
   "view_copy": {
     "heading": "Churn Risk Assessment",
     "description": "Estimate the likelihood that a telecommunications customer will cancel their service.",
-    "usage_guidance": "Enter the customer profile below. Use the canonical dataset contracts for required fields, accepted values, and runtime validation."
+    "usage_guidance": "Enter the customer profile below. Use the canonical dataset contracts for required fields, accepted values, and runtime validation.",
+    "submit_button_label": "Estimate Churn Risk"
   },
   "field_hints": [
     {

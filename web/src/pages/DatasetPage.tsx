@@ -8,7 +8,7 @@ import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import ModelCard from "../components/ModelCard/ModelCard";
-import InferenceForm, { ContractPayload } from "../components/InferenceForm/InferenceForm";
+import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 import PredictViewList, { PredictViewItem } from "../components/PredictViewList/PredictViewList";
@@ -45,6 +45,8 @@ type PublicContextPayload = {
   primary_metric_key?: string | null;
   performance_focus?: PerformanceFocus | null;
   theme_preset?: string | null;
+  bound_predict_view_id?: string | null;
+  legacy_submit_button_label?: string | null;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -95,6 +97,9 @@ export default function DatasetPage() {
   const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
   const [contextState, setContextState] = useState<SectionState<PublicContextPayload>>({ status: "loading" });
   const [viewsState, setViewsState] = useState<SectionState<PredictViewListPayload>>({ status: "loading" });
+  const [boundViewCustomizationState, setBoundViewCustomizationState] = useState<
+    SectionState<PredictViewCustomization | null>
+  >({ status: "loading" });
 
   useEffect(() => {
     if (!slug) {
@@ -163,6 +168,51 @@ export default function DatasetPage() {
 
     return () => controller.abort();
   }, [slug]);
+
+  // Project Spec S0110: resolves the published bound predict view's
+  // customization for the default route's submit-button copy. Never
+  // auto-selects an arbitrary first view -- only fetches when the published
+  // context actually names a bound_predict_view_id. A transport failure or
+  // missing customization falls through to the legacy/"Submit" fallback
+  // instead of removing the form.
+  const boundPredictViewId = contextState.status === "ready" ? contextState.data.bound_predict_view_id : null;
+
+  useEffect(() => {
+    if (!slug || !boundPredictViewId) {
+      setBoundViewCustomizationState({ status: "ready", data: null });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(
+      `${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/views/${encodeURIComponent(boundPredictViewId)}/customization`,
+      { signal: controller.signal },
+    )
+      .then((res) => {
+        if (res.status === 404) {
+          setBoundViewCustomizationState({ status: "ready", data: null });
+          return null;
+        }
+        if (!res.ok) {
+          setBoundViewCustomizationState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<PredictViewCustomization>;
+      })
+      .then((data) => {
+        if (data) {
+          setBoundViewCustomizationState({ status: "ready", data });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setBoundViewCustomizationState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug, boundPredictViewId]);
 
   useEffect(() => {
     if (!slug) {
@@ -453,11 +503,22 @@ export default function DatasetPage() {
     { label: "Release", value: context?.release_date_label || null, hint: "Format: dd/mm/yyyy" },
   ];
 
+  // Project Spec S0110: same precedence rule DatasetViewPage.tsx applies --
+  // customization always wins, blank strings are treated as absent, legacy
+  // is a read-only fallback, and "Submit" is InferenceForm's own UI-only
+  // default (never persisted here).
+  const boundViewCustomization =
+    boundViewCustomizationState.status === "ready" ? boundViewCustomizationState.data : null;
+  const resolvedSubmitButtonLabel =
+    boundViewCustomization?.view_copy?.submit_button_label?.trim() ||
+    context?.legacy_submit_button_label?.trim() ||
+    undefined;
+
   const inferenceContent = (
     <div className="dataset-detail-inference__layout" ref={inferenceLayoutRef}>
       {contractState.status === "loading" && <LoadingState />}
       {contractState.status === "ready" && (
-        <InferenceForm contract={contractState.data} slug={slug!} />
+        <InferenceForm contract={contractState.data} slug={slug!} submitButtonLabel={resolvedSubmitButtonLabel} />
       )}
       {contractState.status === "unavailable" && (
         <ErrorState message="The prediction form is temporarily unavailable." />

@@ -63,7 +63,10 @@ from registry.dataset_public_profile_store import (
     get_draft,
     validate_profile_draft,
 )
-from registry.dataset_public_profile_validate import validate_profile_references
+from registry.dataset_public_profile_validate import (
+    normalize_binary_result_presentation,
+    validate_profile_references,
+)
 from registry.update import (
     derive_dataset_detail_timestamp_for_date,
     update_dataset_detail_timestamp,
@@ -134,6 +137,38 @@ def _load_predict_views_registry(repo_root: Path) -> dict:
     return data if isinstance(data, dict) else {"predict_views": []}
 
 
+def _legacy_submit_copy_is_migrated(profile: dict, repo_root: Path) -> bool:
+    result_card = profile.get("result_card")
+    legacy_label = result_card.get("submit_button_label") if isinstance(result_card, dict) else None
+    if not isinstance(legacy_label, str) or not legacy_label.strip():
+        return True
+    inference = profile.get("inference_presentation")
+    view_id = inference.get("bound_predict_view_id") if isinstance(inference, dict) else None
+    if not isinstance(view_id, str) or not view_id:
+        return False
+    try:
+        registry = json.loads(
+            (repo_root / "registry" / "predict-view-customizations.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+    entries = registry.get("predict_view_customizations") if isinstance(registry, dict) else None
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        view_copy = entry.get("view_copy")
+        if (
+            entry.get("dataset_slug") == profile.get("dataset_slug")
+            and entry.get("view_id") == view_id
+            and isinstance(view_copy, dict)
+            and view_copy.get("submit_button_label") == legacy_label.strip()
+        ):
+            return True
+    return False
+
+
 def _resolve_active_release(dataset_slug: str, repo_root: Path) -> str | None:
     datasets_path = repo_root / "registry" / "datasets.json"
     try:
@@ -190,6 +225,7 @@ def _build_snapshot_candidate(
     release_date_label: str,
 ) -> dict:
     profile = {field: draft[field] for field in _PROFILE_FIELDS if field in draft}
+    profile["result_card"] = normalize_binary_result_presentation(profile.get("result_card"))
     display = profile.get("display")
     if isinstance(display, dict):
         display = dict(display)
@@ -314,6 +350,18 @@ def _publish_profile(
     draft_validation = validate_profile_draft(sanitized_profile, repo_root)
     if not draft_validation["valid"]:
         return {"published": False, "path": None, "snapshot": None, "errors": draft_validation["errors"]}
+
+    if not _legacy_submit_copy_is_migrated(sanitized_profile, repo_root):
+        return {
+            "published": False,
+            "path": None,
+            "snapshot": None,
+            "errors": [_err(
+                "LEGACY_SUBMIT_COPY_MIGRATION_REQUIRED",
+                "result_card.submit_button_label",
+                "Persist the bound predict-view customization submit label before publishing this profile.",
+            )],
+        }
 
     active_release = _resolve_active_release(dataset_slug, repo_root)
     if active_release is None:

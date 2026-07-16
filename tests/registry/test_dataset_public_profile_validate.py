@@ -18,7 +18,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from registry.dataset_public_profile_validate import validate_profile_references  # noqa: E402
+from registry.dataset_public_profile_validate import (  # noqa: E402
+    normalize_binary_result_presentation,
+    validate_profile_references,
+)
 
 
 _MOCK_PREDICT_VIEWS_REGISTRY = {
@@ -260,6 +263,38 @@ def test_error_messages_contain_no_filesystem_paths():
 # ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
+
+def test_legacy_result_card_normalizes_to_canonical_without_submit_or_technical_fields():
+    legacy = {
+        "probability_label": "  Event probability  ",
+        "submit_button_label": "Run now",
+        "model_label": "Estimator",
+        "badge_preset": "risk",
+        "badge_labels": {"high": "Red", "medium": "Amber", "low": "Green"},
+    }
+    normalized = normalize_binary_result_presentation(legacy)
+    assert normalized["positive_class_probability_label"] == "Event probability"
+    assert normalized["model_section_label"] == "Estimator"
+    assert normalized["predicted_outcome_label"] == "Predicted outcome"
+    assert normalized["interpretation"]["labels"] == {
+        "high": "Red", "medium": "Amber", "low": "Green"
+    }
+    assert "submit_button_label" not in normalized
+    assert normalize_binary_result_presentation(normalized) == normalized
+
+
+def test_mixed_result_card_normalization_uses_canonical_precedence():
+    normalized = normalize_binary_result_presentation({
+        "positive_class_probability_label": "Canonical probability",
+        "probability_label": "Legacy probability",
+        "interpretation": {"labels": {"high": "Canonical high"}},
+        "badge_labels": {"high": "Legacy high", "medium": "Legacy medium"},
+    })
+    assert normalized["positive_class_probability_label"] == "Canonical probability"
+    assert normalized["interpretation"]["labels"] == {
+        "high": "Canonical high", "medium": "Legacy medium", "low": "Low"
+    }
+
 
 if __name__ == "__main__":
     tests = [

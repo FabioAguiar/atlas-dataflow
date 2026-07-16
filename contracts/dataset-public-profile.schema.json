@@ -248,24 +248,51 @@
       }
     },
     "result_card": {
+      "description": "Binary Result Card presentation only. Canonical authoring uses binary-result-presentation.v1; the legacy alternative is deprecated and remains readable only for migration.",
+      "oneOf": [
+        {"$ref": "#/definitions/canonical_result_card"},
+        {"$ref": "#/definitions/legacy_result_card"}
+      ]
+    },
+    "canonical_result_card": {
+      "type": "object",
+      "required": ["schema_version", "positive_class_probability_label", "predicted_outcome_label", "positive_outcome_copy", "negative_outcome_copy", "model_section_label", "interpretation"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "binary-result-presentation.v1"},
+        "positive_class_probability_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "predicted_outcome_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "positive_outcome_copy": {"$ref": "#/definitions/result_card_outcome_copy"},
+        "negative_outcome_copy": {"$ref": "#/definitions/result_card_outcome_copy"},
+        "model_section_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "interpretation": {"$ref": "#/definitions/result_card_interpretation"}
+      }
+    },
+    "legacy_result_card": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Optional curated presentation copy for the prediction result card. Fields are presentation text or a bounded preset/label selection only and must not carry inference logic, scoring rules, or model behavior.",
+      "description": "Deprecated read compatibility for historical drafts. New publications canonicalize this object and never persist these keys.",
       "properties": {
         "probability_label": {
           "type": "string",
           "minLength": 1,
-          "description": "Optional curated label for the displayed prediction probability."
+          "maxLength": 160,
+          "pattern": "\\S",
+          "description": "Deprecated label mapped only to positive_class_probability_label."
         },
         "submit_button_label": {
           "type": "string",
           "minLength": 1,
-          "description": "Optional curated label for the prediction submit action."
+          "maxLength": 80,
+          "pattern": "\\S",
+          "description": "Deprecated, read-only compatibility field for existing drafts. The submit action is now owned by contracts/predict-view-customization.schema.json's view_copy.submit_button_label; new writes must not set this field, and it is retained only as a temporary migration-era read fallback."
         },
         "model_label": {
           "type": "string",
           "minLength": 1,
-          "description": "Optional curated public-safe label identifying the model in the result presentation. Must not disclose internal model identifiers or technical model configuration."
+          "maxLength": 160,
+          "pattern": "\\S",
+          "description": "Deprecated section copy mapped only to model_section_label; never technical model identity."
         },
         "badge_preset": {
           "type": "string",
@@ -285,18 +312,47 @@
         "high": {
           "type": "string",
           "minLength": 1,
+          "maxLength": 80,
+          "pattern": "\\S",
           "description": "Optional curated label for the high badge level."
         },
         "medium": {
           "type": "string",
           "minLength": 1,
+          "maxLength": 80,
+          "pattern": "\\S",
           "description": "Optional curated label for the medium badge level."
         },
         "low": {
           "type": "string",
           "minLength": 1,
+          "maxLength": 80,
+          "pattern": "\\S",
           "description": "Optional curated label for the low badge level."
         }
+      }
+    },
+    "result_card_short_copy": {
+      "type": "string", "minLength": 1, "maxLength": 160, "pattern": "\\S",
+      "description": "Plain presentation copy. Consumers render this as text, never interpreted HTML."
+    },
+    "result_card_outcome_copy": {
+      "type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S",
+      "description": "Plain outcome presentation copy. Consumers render this as text, never interpreted HTML."
+    },
+    "result_card_interpretation": {
+      "type": "object", "required": ["preset", "labels"], "additionalProperties": false,
+      "properties": {
+        "preset": {"const": "risk"},
+        "labels": {"$ref": "#/definitions/canonical_badge_labels"}
+      }
+    },
+    "canonical_badge_labels": {
+      "type": "object", "required": ["high", "medium", "low"], "additionalProperties": false,
+      "properties": {
+        "high": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "\\S"},
+        "medium": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "\\S"},
+        "low": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "\\S"}
       }
     }
   }

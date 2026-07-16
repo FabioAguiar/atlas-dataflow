@@ -25,14 +25,19 @@
     "bound_predict_view_id": null
   },
   "result_card": {
-    "probability_label": "Churn probability",
-    "submit_button_label": "Run Prediction",
-    "model_label": "Model",
-    "badge_preset": "risk",
-    "badge_labels": {
-      "high": "High risk",
-      "medium": "Medium risk",
-      "low": "Low risk"
+    "schema_version": "binary-result-presentation.v1",
+    "positive_class_probability_label": "Churn probability",
+    "predicted_outcome_label": "Predicted outcome",
+    "positive_outcome_copy": "Churn is predicted",
+    "negative_outcome_copy": "Churn is not predicted",
+    "model_section_label": "Model",
+    "interpretation": {
+      "preset": "risk",
+      "labels": {
+        "high": "High risk",
+        "medium": "Medium risk",
+        "low": "Low risk"
+      }
     }
   }
 }

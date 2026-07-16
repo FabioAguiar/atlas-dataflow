@@ -70,6 +70,67 @@ PERFORMANCE_SCORE_CATALOG = {
     },
 }
 
+BINARY_RESULT_PRESENTATION_SCHEMA_VERSION = "binary-result-presentation.v1"
+_RESULT_CARD_FALLBACKS = {
+    "positive_class_probability_label": "Positive class probability",
+    "predicted_outcome_label": "Predicted outcome",
+    "positive_outcome_copy": "Positive outcome",
+    "negative_outcome_copy": "Negative outcome",
+    "model_section_label": "Model",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+}
+
+
+def normalize_binary_result_presentation(result_card: object) -> dict:
+    """Return the one canonical, dataset-neutral Result Card presentation.
+
+    Historical legacy keys are read only as presentation copy. Technical
+    result semantics and the legacy submit action are intentionally ignored.
+    Schema validation remains responsible for rejecting unknown/unsafe input;
+    this pure projection is deterministic and idempotent.
+    """
+    source = result_card if isinstance(result_card, dict) else {}
+    legacy_labels = source.get("badge_labels")
+    if not isinstance(legacy_labels, dict):
+        legacy_labels = {}
+    interpretation = source.get("interpretation")
+    if not isinstance(interpretation, dict):
+        interpretation = {}
+    canonical_labels = interpretation.get("labels")
+    if not isinstance(canonical_labels, dict):
+        canonical_labels = {}
+
+    def copy(canonical_key: str, legacy_key: str | None = None) -> str:
+        value = source.get(canonical_key)
+        if not isinstance(value, str) or not value.strip():
+            value = source.get(legacy_key) if legacy_key else None
+        return value.strip() if isinstance(value, str) and value.strip() else _RESULT_CARD_FALLBACKS[canonical_key]
+
+    def label(key: str) -> str:
+        value = canonical_labels.get(key)
+        if not isinstance(value, str) or not value.strip():
+            value = legacy_labels.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else _RESULT_CARD_FALLBACKS[key]
+
+    # risk is the only supported renderer preset. Invalid values cannot pass
+    # schema validation and must never be projected as a new authority.
+    return {
+        "schema_version": BINARY_RESULT_PRESENTATION_SCHEMA_VERSION,
+        "positive_class_probability_label": copy(
+            "positive_class_probability_label", "probability_label"
+        ),
+        "predicted_outcome_label": copy("predicted_outcome_label"),
+        "positive_outcome_copy": copy("positive_outcome_copy"),
+        "negative_outcome_copy": copy("negative_outcome_copy"),
+        "model_section_label": copy("model_section_label", "model_label"),
+        "interpretation": {
+            "preset": "risk",
+            "labels": {key: label(key) for key in ("high", "medium", "low")},
+        },
+    }
+
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}

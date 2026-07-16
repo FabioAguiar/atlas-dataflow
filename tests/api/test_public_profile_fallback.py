@@ -176,9 +176,8 @@ def test_fixture_fallback_is_schema_valid_deterministic_and_uses_safe_derivation
         "icon": "telecom",
         "primary_metric_key": "f1_score",
     }
-    assert first["profile"]["result_card"]["model_label"] == (
-        "Binary Classification: fixture_target"
-    )
+    assert first["profile"]["result_card"]["model_section_label"] == "Model"
+    assert first["profile"]["result_card"]["schema_version"] == "binary-result-presentation.v1"
     assert first["sources_used"] == {"metrics": True, "model_card": True}
 
 
@@ -192,9 +191,7 @@ def test_missing_metrics_artifact_omits_primary_metric_key_deterministically():
 
     assert result["sources_used"]["metrics"] is False
     assert "primary_metric_key" not in result["profile"]["home_card"]
-    assert result["profile"]["result_card"]["model_label"] == (
-        "Binary Classification: fixture_target"
-    )
+    assert result["profile"]["result_card"]["model_section_label"] == "Model"
 
 
 def test_missing_model_card_artifact_omits_model_label_deterministically():
@@ -206,7 +203,7 @@ def test_missing_model_card_artifact_omits_model_label_deterministically():
         result = generate_fallback_profile("fixture-dataset", repo_root=fake_repo)
 
     assert result["sources_used"]["model_card"] is False
-    assert "result_card" not in result["profile"]
+    assert result["profile"]["result_card"]["model_section_label"] == "Model"
     assert result["profile"]["home_card"]["primary_metric_key"] == "f1_score"
 
 
@@ -219,7 +216,7 @@ def test_invalid_json_model_card_omits_model_label_deterministically():
         result = generate_fallback_profile("fixture-dataset", repo_root=fake_repo)
 
     assert result["sources_used"]["model_card"] is True
-    assert "result_card" not in result["profile"]
+    assert result["profile"]["result_card"]["model_section_label"] == "Model"
 
 
 def test_fixture_healthcare_domain_resolves_to_a_curated_non_generic_icon():

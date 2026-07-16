@@ -247,7 +247,12 @@ type DraftForm = {
   theme_preset: DatasetThemePresetId;
   bound_predict_view_id: string;
   probability_label: string;
-  submit_button_label: string;
+  // Project Spec S0110: read-only migration context only -- the Result Card
+  // tab no longer renders or edits this field, and profileFromForm never
+  // writes it back. Populated by formFromProfile purely so the Inference
+  // Form tab's customization-loading effect can seed a migration candidate
+  // from the currently loaded profile's legacy value.
+  legacy_submit_button_label: string;
   model_label: string;
   badge_preset: "" | "risk";
   badge_high: string;
@@ -375,9 +380,31 @@ type GroupDraft = {
   description: string;
 };
 
+// Project Spec S0110: view-level presentation copy carried by the draft.
+// heading/description/usage_guidance are not yet exposed as editable Admin
+// UI fields, but must still be preserved byte-for-byte across an unrelated
+// field/group edit and round-tripped on save -- see
+// customizationDraftFromRecord/customizationDraftToRecord below.
+// submit_button_label is the only field this builder currently edits
+// (InferenceFormTab).
+type ViewCopyDraft = {
+  heading: string;
+  description: string;
+  usage_guidance: string;
+  submit_button_label: string;
+};
+
+const emptyViewCopyDraft: ViewCopyDraft = {
+  heading: "",
+  description: "",
+  usage_guidance: "",
+  submit_button_label: "",
+};
+
 type CustomizationEditorDraft = {
   fieldHints: FieldHintDraft[];
   groups: GroupDraft[];
+  viewCopy: ViewCopyDraft;
 };
 
 type CustomizationError = {
@@ -499,6 +526,7 @@ function emptyCustomizationDraft(fields: ContractField[]): CustomizationEditorDr
       };
     }),
     groups: [],
+    viewCopy: { ...emptyViewCopyDraft },
   };
 }
 
@@ -578,13 +606,27 @@ function customizationDraftFromRecord(
   // A previously saved record may not already satisfy the deterministic
   // flattening rule below (e.g. it predates this builder) -- reflow on load
   // so every loaded draft starts from the canonical macro order.
-  return { fieldHints: reflowFieldHints(fieldHints, groups), groups };
+  const viewCopy: ViewCopyDraft = {
+    heading: record.view_copy?.heading ?? "",
+    description: record.view_copy?.description ?? "",
+    usage_guidance: record.view_copy?.usage_guidance ?? "",
+    submit_button_label: record.view_copy?.submit_button_label ?? "",
+  };
+
+  return { fieldHints: reflowFieldHints(fieldHints, groups), groups, viewCopy };
 }
 
 function customizationDraftToRecord(draft: CustomizationEditorDraft): {
   field_hints: FieldHint[];
   groups: GroupDef[];
+  view_copy?: NonNullable<PredictViewCustomization["view_copy"]>;
 } {
+  const viewCopy: NonNullable<PredictViewCustomization["view_copy"]> = {};
+  if (draft.viewCopy.heading.trim()) viewCopy.heading = draft.viewCopy.heading.trim();
+  if (draft.viewCopy.description.trim()) viewCopy.description = draft.viewCopy.description.trim();
+  if (draft.viewCopy.usage_guidance.trim()) viewCopy.usage_guidance = draft.viewCopy.usage_guidance.trim();
+  if (draft.viewCopy.submit_button_label.trim()) viewCopy.submit_button_label = draft.viewCopy.submit_button_label.trim();
+
   return {
     field_hints: draft.fieldHints.map((field, index) => {
       const hint: FieldHint = { field_name: field.field_name, display_order_hint: index + 1 };
@@ -599,7 +641,26 @@ function customizationDraftToRecord(draft: CustomizationEditorDraft): {
       if (group.description.trim()) def.description = group.description.trim();
       return def;
     }),
+    ...(Object.keys(viewCopy).length > 0 ? { view_copy: viewCopy } : {}),
   };
+}
+
+// Project Spec S0110: seeds a customization draft's submit_button_label from
+// the legacy published profile value only when the draft does not already
+// carry one -- a pure local-state seed, never a storage write (see the
+// customization-loading effect below, which computes the dirty-state
+// baseline from the pre-seed draft so this migration candidate naturally
+// participates in the shared Publish changes dirty-state without inventing a
+// second dirty-tracking mechanism).
+function withMigratedSubmitLabel(draft: CustomizationEditorDraft, legacySubmitButtonLabel: string): CustomizationEditorDraft {
+  if (draft.viewCopy.submit_button_label.trim()) {
+    return draft;
+  }
+  const legacy = legacySubmitButtonLabel.trim();
+  if (!legacy) {
+    return draft;
+  }
+  return { ...draft, viewCopy: { ...draft.viewCopy, submit_button_label: legacy } };
 }
 
 // Project Spec S0103: the workspace dirty-state baseline for the Inference
@@ -1336,7 +1397,7 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     theme_preset: DEFAULT_DATASET_THEME_PRESET,
     bound_predict_view_id: "",
     probability_label: "",
-    submit_button_label: "",
+    legacy_submit_button_label: "",
     model_label: "",
     badge_preset: "risk",
     badge_high: "",
@@ -1383,7 +1444,7 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
       : DEFAULT_DATASET_THEME_PRESET,
     bound_predict_view_id: profile.inference_presentation?.bound_predict_view_id ?? "",
     probability_label: profile.result_card?.probability_label ?? "",
-    submit_button_label: profile.result_card?.submit_button_label ?? "",
+    legacy_submit_button_label: profile.result_card?.submit_button_label ?? "",
     model_label: profile.result_card?.model_label ?? "",
     badge_preset: profile.result_card?.badge_preset ?? "risk",
     badge_high: profile.result_card?.badge_labels?.high ?? "",
@@ -1458,9 +1519,13 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
     bound_predict_view_id: form.bound_predict_view_id.trim() || null,
   };
 
+  // Project Spec S0110: submit-button copy is no longer Result Card
+  // authority -- new profile publications never emit result_card.submit_button_label
+  // (see contracts/dataset-public-profile.schema.json's deprecated,
+  // read-only compatibility description for that field). The Inference Form
+  // tab's predict-view customization is the only writer of submit copy now.
   const resultCard: NonNullable<ProfileDraft["result_card"]> = {};
   resultCard.probability_label = textValue(form.probability_label);
-  resultCard.submit_button_label = textValue(form.submit_button_label);
   resultCard.model_label = textValue(form.model_label);
   if (form.badge_preset) {
     resultCard.badge_preset = form.badge_preset;
@@ -1598,6 +1663,7 @@ function TextField({
   maxLength,
   type = "text",
   rows,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -1607,6 +1673,7 @@ function TextField({
   maxLength?: number;
   type?: "text" | "url" | "date";
   rows?: number;
+  disabled?: boolean;
 }) {
   const hasCounter = typeof maxLength === "number";
   return (
@@ -1622,6 +1689,7 @@ function TextField({
       {multiline ? (
         <textarea
           aria-label={label}
+          disabled={disabled}
           maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           rows={rows}
@@ -1631,6 +1699,7 @@ function TextField({
       ) : (
         <input
           aria-label={label}
+          disabled={disabled}
           maxLength={maxLength}
           onChange={(event) => onChange(event.target.value)}
           style={hasCounter ? { ...inputStyle, ...counterPaddingStyle } : inputStyle}
@@ -2324,14 +2393,14 @@ function CustomizationEditor({
       const clearedFieldHints = current.fieldHints.map((field) =>
         field.group === groupId ? { ...field, group: "" } : field,
       );
-      return { groups: nextGroups, fieldHints: reflowFieldHints(clearedFieldHints, nextGroups) };
+      return { ...current, groups: nextGroups, fieldHints: reflowFieldHints(clearedFieldHints, nextGroups) };
     });
   }
 
   function moveSubgroup(index: number, direction: -1 | 1) {
     onUpdateDraft((current) => {
       const nextGroups = moveItem(current.groups, index, direction);
-      return { groups: nextGroups, fieldHints: reflowFieldHints(current.fieldHints, nextGroups) };
+      return { ...current, groups: nextGroups, fieldHints: reflowFieldHints(current.fieldHints, nextGroups) };
     });
   }
 
@@ -2363,7 +2432,7 @@ function CustomizationEditor({
     setGroupDragState(null);
     onUpdateDraft((current) => {
       const nextGroups = moveItemToIndex(current.groups, sourceIndex, finalTargetIndex);
-      return { groups: nextGroups, fieldHints: reflowFieldHints(current.fieldHints, nextGroups) };
+      return { ...current, groups: nextGroups, fieldHints: reflowFieldHints(current.fieldHints, nextGroups) };
     });
   }
 
@@ -2826,6 +2895,24 @@ function InferenceFormTab({
         onRetry={onRetryCustomization}
         state={customizationEditorState}
       />
+      {
+        // Project Spec S0110: submit-action copy now belongs to the
+        // Inference Form customization surface, view-scoped like every
+        // other field/group edit here -- disabled (rather than hidden) when
+        // no view is bound so the field's presence never implies an
+        // editable state that persistCustomizationDraft has nowhere to send.
+      }
+      <TextField
+        disabled={!draft}
+        label="Submit button label"
+        onChange={(value) =>
+          onUpdateDraft((current) => ({
+            ...current,
+            viewCopy: { ...current.viewCopy, submit_button_label: value },
+          }))
+        }
+        value={draft?.viewCopy.submit_button_label ?? ""}
+      />
       {draft && <CustomizationEditor contractFieldsByName={contractFieldsByName} draft={draft} onUpdateDraft={onUpdateDraft} />}
     </div>
   );
@@ -2848,7 +2935,6 @@ function ResultCardTab({
           </div>
           <div className="dataset-admin-form-grid">
             <TextField label="Probability label" onChange={(value) => setField("probability_label", value)} value={form.probability_label} />
-            <TextField label="Submit button label" onChange={(value) => setField("submit_button_label", value)} value={form.submit_button_label} />
             <TextField label="Model label" onChange={(value) => setField("model_label", value)} value={form.model_label} />
           </div>
           <label className="dataset-admin-native-select">
@@ -3221,10 +3307,7 @@ function ResultCardLivePreview({ form }: { form: DraftForm }) {
 
   return (
     <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
-      <p style={mutedTextStyle}>
-        Placeholder preview only, not a real prediction. Submit button will read:{" "}
-        <strong>{form.submit_button_label.trim() || "Submit"}</strong>
-      </p>
+      <p style={mutedTextStyle}>Placeholder preview only, not a real prediction.</p>
       <InferenceResult result={result} previewLabels={previewLabels} />
     </div>
   );
@@ -3253,10 +3336,18 @@ function FormLayoutLivePreview({
     );
   }
 
-  const { field_hints, groups } = customizationDraftToRecord(draft);
-  const customization: PredictViewCustomization = { field_hints, groups };
+  const { field_hints, groups, view_copy } = customizationDraftToRecord(draft);
+  const customization: PredictViewCustomization = { field_hints, groups, view_copy };
 
-  return <InferenceForm contract={contract} customization={customization} previewMode slug={selectedSlug} />;
+  return (
+    <InferenceForm
+      contract={contract}
+      customization={customization}
+      previewMode
+      slug={selectedSlug}
+      submitButtonLabel={draft.viewCopy.submit_button_label.trim() || undefined}
+    />
+  );
 }
 
 // Mirrors the comparison already used for Publishing's own status pill
@@ -3494,6 +3585,17 @@ export default function DatasetAdminPage() {
   // baseline has been established yet for the current dataset/view/contract
   // identity (see isCustomizationRecordDirty).
   const [customizationBaseline, setCustomizationBaseline] = useState<string | null>(null);
+  // Project Spec S0110: true when the currently loaded/rendered customization
+  // draft's submit_button_label was seeded from the legacy published profile
+  // value rather than an already-persisted customization value. This is
+  // deliberately tracked separately from the normal dirty-state baseline
+  // above (the baseline is computed from the migrated draft too, so loading
+  // a legacy-only dataset never spuriously enables Publish changes by
+  // itself) -- publishChanges below still forces a customization persist
+  // ahead of profile publication whenever this is true and a profile
+  // publish is about to happen, satisfying "persist customization first"
+  // even when the operator only changed an unrelated profile field.
+  const [submitLabelMigrationPending, setSubmitLabelMigrationPending] = useState(false);
   const [publicationState, setPublicationState] = useState<PublicationState>(emptyPublicationState);
   // Project Spec S0103: the shared toolbar message area's own feedback for
   // the combined customization+profile Publish changes orchestration --
@@ -4101,13 +4203,19 @@ export default function DatasetAdminPage() {
 
     const customizationDraft = customizationDraftOf(customizationEditorState);
     const customizationDirty = isCustomizationRecordDirty(customizationEditorState, customizationBaseline);
+    // Project Spec S0110: a pending legacy submit-label migration forces the
+    // same "customization persists before profile" ordering as an explicit
+    // customization edit whenever a profile publish is about to happen --
+    // otherwise the about-to-be-dropped legacy value would be lost with
+    // nowhere it was ever actually persisted to.
+    const migrationMustPersistFirst = submitLabelMigrationPending && profileDirty && !customizationDirty;
     const currentProfileForPublish = profileFromForm(draftForm, selectedSlug);
 
-    if (!customizationDirty && !profileDirty) {
+    if (!customizationDirty && !migrationMustPersistFirst && !profileDirty) {
       return;
     }
 
-    if (customizationDirty && customizationDraft) {
+    if ((customizationDirty || migrationMustPersistFirst) && customizationDraft) {
       const validationErrors = requiredFieldHiddenErrors(customizationDraft);
       if (validationErrors.length > 0) {
         // Local validation failure: neither request is sent, the resource
@@ -4236,6 +4344,7 @@ export default function DatasetAdminPage() {
     if (!selectedSlug || !boundPredictViewId) {
       setCustomizationEditorState({ status: "no_view_bound" });
       setCustomizationBaseline(null);
+      setSubmitLabelMigrationPending(false);
       return;
     }
 
@@ -4243,11 +4352,13 @@ export default function DatasetAdminPage() {
     if (contractState.status === "unavailable") {
       setCustomizationEditorState({ status: "contract_unavailable" });
       setCustomizationBaseline(null);
+      setSubmitLabelMigrationPending(false);
       return;
     }
     if (contractState.status !== "ready") {
       setCustomizationEditorState({ status: "loading" });
       setCustomizationBaseline(null);
+      setSubmitLabelMigrationPending(false);
       return;
     }
 
@@ -4290,14 +4401,27 @@ export default function DatasetAdminPage() {
           return;
         }
         const { data } = result;
+        // Project Spec S0110: legacy migration candidate. Read only from the
+        // currently loaded profile draft (never mutates storage) and applied
+        // to both the rendered draft and its dirty-state baseline, so
+        // loading a legacy-only dataset shows the pre-filled value without
+        // spuriously enabling Publish changes by itself.
+        // submitLabelMigrationPending tracks the pending migration
+        // separately -- publishChanges below still forces a customization
+        // persist ahead of profile publication whenever it is true and a
+        // profile publish is about to happen, even when only an unrelated
+        // profile field changed.
+        const legacySubmitButtonLabel = draftFormRef.current.legacy_submit_button_label;
         if (data.compatibility_status === "compatible" && data.customization) {
           const overlaidDraft = customizationDraftFromRecord(data.customization, fields);
+          const migratedDraft = withMigratedSubmitLabel(overlaidDraft, legacySubmitButtonLabel);
           setCustomizationEditorState({
             status: "ready_overlaid",
-            draft: overlaidDraft,
+            draft: migratedDraft,
             recordExists: true,
           });
-          setCustomizationBaseline(normalizedCustomizationDraft(overlaidDraft));
+          setCustomizationBaseline(normalizedCustomizationDraft(migratedDraft));
+          setSubmitLabelMigrationPending(migratedDraft !== overlaidDraft);
           return;
         }
         // Project Spec S0103: an ignored incompatible historical
@@ -4306,22 +4430,26 @@ export default function DatasetAdminPage() {
         // same one this state renders from.
         if (data.compatibility_status === "incompatible") {
           const ignoredBaseDraft = emptyCustomizationDraft(fields);
+          const migratedDraft = withMigratedSubmitLabel(ignoredBaseDraft, legacySubmitButtonLabel);
           setCustomizationEditorState({
             status: "incompatible_overlay_ignored",
-            draft: ignoredBaseDraft,
+            draft: migratedDraft,
             recordExists: data.customization_exists,
             errors: data.errors ?? [],
           });
-          setCustomizationBaseline(normalizedCustomizationDraft(ignoredBaseDraft));
+          setCustomizationBaseline(normalizedCustomizationDraft(migratedDraft));
+          setSubmitLabelMigrationPending(migratedDraft !== ignoredBaseDraft);
           return;
         }
         const baseDraft = emptyCustomizationDraft(fields);
+        const migratedDraft = withMigratedSubmitLabel(baseDraft, legacySubmitButtonLabel);
         setCustomizationEditorState({
           status: "ready_base",
-          draft: baseDraft,
+          draft: migratedDraft,
           recordExists: false,
         });
-        setCustomizationBaseline(normalizedCustomizationDraft(baseDraft));
+        setCustomizationBaseline(normalizedCustomizationDraft(migratedDraft));
+        setSubmitLabelMigrationPending(migratedDraft !== baseDraft);
       })
       .catch((err: Error) => {
         if (err.name === "AbortError" || customizationRequestRef.current !== requestId) {
@@ -4366,13 +4494,14 @@ export default function DatasetAdminPage() {
   // action no longer exists). Resolves to whether the persist succeeded so
   // the orchestrator can decide whether to proceed to profile publication.
   function persistCustomizationDraft(draft: CustomizationEditorDraft): Promise<boolean> {
-    const { field_hints, groups } = customizationDraftToRecord(draft);
+    const { field_hints, groups, view_copy } = customizationDraftToRecord(draft);
     const payload = {
       schema_version: "1.0.0",
       view_id: boundPredictViewId,
       dataset_slug: selectedSlug,
       field_hints,
       groups,
+      ...(view_copy ? { view_copy } : {}),
       contract_precedence: {
         canonical_contracts_are_source_of_truth: true,
         customization_defines_runtime_validation: false,
@@ -4416,6 +4545,10 @@ export default function DatasetAdminPage() {
           // stored (falling back to the sent draft when it echoes nothing
           // back), never the pre-save draft alone.
           setCustomizationBaseline(normalizedCustomizationDraft(savedDraft));
+          // Project Spec S0110: a successful persist always resolves any
+          // pending legacy migration -- the value (whatever it now is) is
+          // freshly confirmed as actually stored.
+          setSubmitLabelMigrationPending(false);
           return true;
         });
       })

@@ -85,6 +85,12 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional public-safe contextual guidance for users. Must not contain executable routing, validation rules, or business logic."
+        },
+        "submit_button_label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Optional curated label for this view's prediction submit action. Public-safe presentation copy only -- must not carry validation rules, routing, scripts, HTML, or model behavior. This is the canonical owner of submit-action copy; contracts/dataset-public-profile.schema.json's result_card.submit_button_label is a deprecated, read-only legacy fallback only."
         }
       }
     },

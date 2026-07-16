@@ -269,6 +269,34 @@ def test_save_updates_existing_customization_in_place():
         assert read_back["customization"]["groups"] == [{"group_id": "g1", "label": "Group 1"}]
 
 
+def test_save_round_trips_view_copy_submit_button_label():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            customization = dict(
+                _VALID_CUSTOMIZATION,
+                view_copy={
+                    "heading": "Churn Risk Assessment",
+                    "submit_button_label": "Estimate Churn Risk",
+                },
+            )
+            result = admin_predict_view_customizations.save_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview", customization
+            )
+            read_back = admin_predict_view_customizations.read_predict_view_customization(
+                "telco-customer-churn", "churn-risk-overview"
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["saved"] is True
+        assert result["customization"]["view_copy"]["submit_button_label"] == "Estimate Churn Risk"
+        assert read_back["customization"]["view_copy"]["heading"] == "Churn Risk Assessment"
+        assert read_back["customization"]["view_copy"]["submit_button_label"] == "Estimate Churn Risk"
+
+
 def test_save_rejects_unknown_field_reference_without_saving():
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = Path(tmp)

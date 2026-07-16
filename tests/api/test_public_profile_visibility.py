@@ -409,6 +409,20 @@ _EMPTY_PUBLIC_PROFILE_OVERLAY = {
     "date_format": None,
     "primary_metric_key": None,
     "performance_focus": None,
+    "bound_predict_view_id": None,
+    "legacy_submit_button_label": None,
+    "result_card": {
+        "schema_version": "binary-result-presentation.v1",
+        "positive_class_probability_label": "Positive class probability",
+        "predicted_outcome_label": "Predicted outcome",
+        "positive_outcome_copy": "Positive outcome",
+        "negative_outcome_copy": "Negative outcome",
+        "model_section_label": "Model",
+        "interpretation": {
+            "preset": "risk",
+            "labels": {"high": "High", "medium": "Medium", "low": "Low"},
+        },
+    },
 }
 _CURATED_PUBLIC_PROFILE_OVERLAY = {
     **_CURATED_OVERLAY,
@@ -425,6 +439,9 @@ _CURATED_PUBLIC_PROFILE_OVERLAY = {
             {"score_id": "recall", "display_label": "Recall", "value": "0.574", "value_source": "manual", "order": 0}
         ],
     },
+    "bound_predict_view_id": "churn-risk-overview",
+    "legacy_submit_button_label": "Run Prediction",
+    "result_card": _EMPTY_PUBLIC_PROFILE_OVERLAY["result_card"],
 }
 
 
@@ -601,6 +618,12 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
                         },
                         "theme": {"preset": "atlas-green"},
                         "performance_focus": _CURATED_PUBLIC_PROFILE_OVERLAY["performance_focus"],
+                        "inference_presentation": {
+                            "bound_predict_view_id": _CURATED_PUBLIC_PROFILE_OVERLAY["bound_predict_view_id"],
+                        },
+                        "result_card": {
+                            "submit_button_label": _CURATED_PUBLIC_PROFILE_OVERLAY["legacy_submit_button_label"],
+                        },
                     },
                 }
             ),

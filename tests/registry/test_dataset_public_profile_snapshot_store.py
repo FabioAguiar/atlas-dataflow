@@ -177,6 +177,52 @@ def test_publish_creates_deterministic_snapshot_file(fake_repo):
     assert "metrics" not in persisted
 
 
+def test_publish_canonicalizes_legacy_result_card_and_omits_legacy_keys(fake_repo):
+    legacy = _profile(result_card={
+        "probability_label": "Event probability",
+        "model_label": "Model details",
+        "badge_preset": "risk",
+        "badge_labels": {"high": "High risk", "medium": "Medium risk", "low": "Low risk"},
+    })
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", legacy, repo_root=fake_repo
+    )
+    assert result["published"] is True
+    card = result["snapshot"]["profile"]["result_card"]
+    assert card["schema_version"] == "binary-result-presentation.v1"
+    assert card["positive_class_probability_label"] == "Event probability"
+    assert card["model_section_label"] == "Model details"
+    assert not ({"probability_label", "model_label", "badge_preset", "badge_labels", "submit_button_label"} & card.keys())
+
+
+def test_publish_blocks_dropping_unmigrated_legacy_submit_copy(fake_repo):
+    profile = _profile(
+        inference_presentation={"bound_predict_view_id": "churn-risk-overview"},
+        result_card={"submit_button_label": "Run prediction"},
+    )
+    blocked = publish_snapshot_from_payload(
+        "telco-customer-churn", profile, repo_root=fake_repo
+    )
+    assert blocked["published"] is False
+    assert "LEGACY_SUBMIT_COPY_MIGRATION_REQUIRED" in _codes(blocked)
+
+    (fake_repo / "registry" / "predict-view-customizations.json").write_text(
+        json.dumps({
+            "predict_view_customizations": [{
+                "dataset_slug": "telco-customer-churn",
+                "view_id": "churn-risk-overview",
+                "view_copy": {"submit_button_label": "Run prediction"},
+            }]
+        }),
+        encoding="utf-8",
+    )
+    published = publish_snapshot_from_payload(
+        "telco-customer-churn", profile, repo_root=fake_repo
+    )
+    assert published["published"] is True
+    assert "submit_button_label" not in published["snapshot"]["profile"]["result_card"]
+
+
 @pytest.mark.parametrize(
     "release_id",
     ["release-20260101-001", "release-20260712t190939z"],

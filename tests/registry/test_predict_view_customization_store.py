@@ -158,6 +158,49 @@ def test_get_customization_missing_raises_not_found(fake_repo):
         get_customization("churn-risk-overview", "telco-customer-churn", repo_root=fake_repo)
 
 
+# Project Spec S0110: the store is a generic, field-name-agnostic round trip
+# -- it must persist and return view_copy.submit_button_label (and every
+# other view_copy field) exactly as given, with no hardcoded field
+# filtering.
+def test_create_and_get_customization_round_trips_view_copy_submit_button_label(fake_repo):
+    customization = _customization(
+        view_copy={
+            "heading": "Churn Risk Assessment",
+            "description": "Estimate churn likelihood.",
+            "usage_guidance": "Use canonical contracts.",
+            "submit_button_label": "Estimate Churn Risk",
+        }
+    )
+
+    result = create_customization(
+        "churn-risk-overview", "telco-customer-churn", customization, _PUBLIC_CONTRACT, repo_root=fake_repo
+    )
+    assert result["created"] is True
+
+    stored = get_customization("churn-risk-overview", "telco-customer-churn", repo_root=fake_repo)
+    assert stored["view_copy"]["submit_button_label"] == "Estimate Churn Risk"
+    # Other view_copy fields are preserved unchanged alongside the new field.
+    assert stored["view_copy"]["heading"] == "Churn Risk Assessment"
+    assert stored["view_copy"]["description"] == "Estimate churn likelihood."
+    assert stored["view_copy"]["usage_guidance"] == "Use canonical contracts."
+
+
+def test_update_customization_round_trips_view_copy_submit_button_label(fake_repo):
+    create_customization(
+        "churn-risk-overview", "telco-customer-churn", _customization(), _PUBLIC_CONTRACT, repo_root=fake_repo
+    )
+
+    updated = _customization(view_copy={"heading": "Kept heading", "submit_button_label": "Run prediction"})
+    result = update_customization(
+        "churn-risk-overview", "telco-customer-churn", updated, _PUBLIC_CONTRACT, repo_root=fake_repo
+    )
+    assert result["updated"] is True
+
+    stored = get_customization("churn-risk-overview", "telco-customer-churn", repo_root=fake_repo)
+    assert stored["view_copy"]["submit_button_label"] == "Run prediction"
+    assert stored["view_copy"]["heading"] == "Kept heading"
+
+
 def test_get_customization_returns_invalid_stored_record_without_validating(fake_repo):
     registry_path = fake_repo / "registry" / "predict-view-customizations.json"
     registry_path.write_text(

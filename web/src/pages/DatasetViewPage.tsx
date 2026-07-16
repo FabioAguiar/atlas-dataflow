@@ -25,11 +25,21 @@ type SectionState<T> =
   | { status: "ready"; data: T }
   | { status: "unavailable" };
 
+// Project Spec S0110: only the minimum transitional legacy fallback field is
+// read here -- api/public_profile_visibility.py's resolve_public_presentation_overlay
+// projects legacy_submit_button_label from the published, deprecated
+// result_card.submit_button_label only. No private draft is ever loaded by
+// this public route.
+type PublicContextOverlay = {
+  legacy_submit_button_label?: string | null;
+};
+
 export default function DatasetViewPage() {
   const { slug, viewId } = useParams<{ slug: string; viewId: string }>();
   const [viewState, setViewState] = useState<ViewState>({ status: "loading" });
   const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
   const [customizationState, setCustomizationState] = useState<SectionState<PredictViewCustomization | null>>({ status: "loading" });
+  const [contextState, setContextState] = useState<SectionState<PublicContextOverlay>>({ status: "loading" });
 
   useEffect(() => {
     if (!slug || !viewId) {
@@ -136,6 +146,42 @@ export default function DatasetViewPage() {
     return () => controller.abort();
   }, [slug, viewId]);
 
+  // Project Spec S0110: legacy fallback source for when this view's
+  // customization has no submit_button_label yet. Loads only the safe
+  // public context/presentation overlay -- never a private profile draft --
+  // and never blocks the form on failure (falls through to "Submit").
+  useEffect(() => {
+    if (!slug) {
+      setContextState({ status: "unavailable" });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/context`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setContextState({ status: "unavailable" });
+          return null;
+        }
+        return res.json() as Promise<{ dataset_slug: string; context: PublicContextOverlay }>;
+      })
+      .then((data) => {
+        if (data) {
+          setContextState({ status: "ready", data: data.context });
+        }
+      })
+      .catch((err: Error) => {
+        if (err.name !== "AbortError") {
+          setContextState({ status: "unavailable" });
+        }
+      });
+
+    return () => controller.abort();
+  }, [slug]);
+
   if (viewState.status === "loading") {
     return (
       <>
@@ -169,6 +215,15 @@ export default function DatasetViewPage() {
   const displayHeading =
     customization?.view_copy?.heading ?? view.display.title ?? view.view_id;
 
+  // Project Spec S0110: deterministic resolution precedence -- customization
+  // always wins, blank strings are treated as absent, legacy is a read-only
+  // fallback, and "Submit" is InferenceForm's own UI-only default (never
+  // persisted here).
+  const legacySubmitButtonLabel =
+    contextState.status === "ready" ? contextState.data.legacy_submit_button_label : null;
+  const resolvedSubmitButtonLabel =
+    customization?.view_copy?.submit_button_label?.trim() || legacySubmitButtonLabel?.trim() || undefined;
+
   return (
     <>
       <section aria-labelledby="view-title">
@@ -192,7 +247,12 @@ export default function DatasetViewPage() {
 
       {contractState.status === "loading" && <LoadingState />}
       {contractState.status === "ready" && (
-        <InferenceForm contract={contractState.data} slug={slug!} customization={customization} />
+        <InferenceForm
+          contract={contractState.data}
+          slug={slug!}
+          customization={customization}
+          submitButtonLabel={resolvedSubmitButtonLabel}
+        />
       )}
       {contractState.status === "unavailable" && (
         <ErrorState message="The prediction form is temporarily unavailable." />

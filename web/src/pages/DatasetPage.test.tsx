@@ -236,6 +236,139 @@ describe("DatasetPage synthetic-slug rendering", () => {
   });
 });
 
+// Project Spec S0110: DatasetPage resolves the published bound predict
+// view's customization submit label using
+// customization -> legacy published profile -> "Submit" precedence, and
+// never auto-selects an arbitrary view when no binding exists.
+describe("DatasetPage bound predict view submit-label resolution (Project Spec S0110)", () => {
+  const boundViewId = "churn-risk-overview";
+
+  function installBoundViewFetchMock(
+    options: {
+      boundPredictViewId?: string | null;
+      legacySubmitButtonLabel?: string | null;
+      customizationSubmitButtonLabel?: string;
+      customizationStatus?: number;
+    } = {},
+  ) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: {
+            ...contextPayload,
+            bound_predict_view_id: options.boundPredictViewId ?? null,
+            legacy_submit_button_label: options.legacySubmitButtonLabel ?? null,
+          },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/views/${boundViewId}/customization`)) {
+        if (options.customizationStatus) {
+          return jsonResponse({}, options.customizationStatus);
+        }
+        if (options.customizationSubmitButtonLabel === undefined) {
+          return jsonResponse({}, 404);
+        }
+        return jsonResponse({
+          schema_version: "1.0.0",
+          view_id: boundViewId,
+          dataset_slug: slug,
+          field_hints: [],
+          groups: [],
+          view_copy: { submit_button_label: options.customizationSubmitButtonLabel },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/model-card`)) {
+        return jsonResponse({ dataset_slug: slug, model_card: modelCardPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/views`)) {
+        return jsonResponse(viewsPayload);
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  async function openInferenceTab() {
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+  }
+
+  it("renders the bound view's customization submit label when both customization and legacy copy exist", async () => {
+    installBoundViewFetchMock({
+      boundPredictViewId: boundViewId,
+      legacySubmitButtonLabel: "Legacy Run",
+      customizationSubmitButtonLabel: "Estimate Churn Risk",
+    });
+    renderDatasetPage();
+    await openInferenceTab();
+
+    expect(screen.getByRole("button", { name: "Estimate Churn Risk" })).toBeInTheDocument();
+  });
+
+  it("falls back to the legacy published label when the bound view has no customization value yet", async () => {
+    installBoundViewFetchMock({
+      boundPredictViewId: boundViewId,
+      legacySubmitButtonLabel: "Legacy Run",
+      customizationSubmitButtonLabel: "",
+    });
+    renderDatasetPage();
+    await openInferenceTab();
+
+    expect(screen.getByRole("button", { name: "Legacy Run" })).toBeInTheDocument();
+  });
+
+  it('falls back to "Submit" when no bound view, customization, or legacy copy exists', async () => {
+    installBoundViewFetchMock();
+    renderDatasetPage();
+    await openInferenceTab();
+
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+  });
+
+  it("does not select an arbitrary view when no bound view is published, even though eligible views exist", async () => {
+    const fetchMock = installBoundViewFetchMock({ legacySubmitButtonLabel: "Legacy Run" });
+    renderDatasetPage();
+    await openInferenceTab();
+
+    // Falls back straight to the legacy label -- no
+    // /views/{id}/customization request is ever sent for an unbound
+    // dataset, proving no arbitrary first view was silently selected.
+    expect(screen.getByRole("button", { name: "Legacy Run" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/customization"))).toBe(false);
+  });
+
+  it("keeps the form usable and falls back to legacy copy when the bound view's customization transport fails", async () => {
+    installBoundViewFetchMock({
+      boundPredictViewId: boundViewId,
+      legacySubmitButtonLabel: "Legacy Run",
+      customizationStatus: 503,
+    });
+    renderDatasetPage();
+    await openInferenceTab();
+
+    expect(screen.getByRole("button", { name: "Legacy Run" })).toBeInTheDocument();
+  });
+});
+
 describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () => {
   it("renders real Source/Release metadata and the curated metric highlight when context provides them", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

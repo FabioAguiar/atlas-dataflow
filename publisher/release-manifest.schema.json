@@ -74,7 +74,7 @@
     },
     "artifacts": {
       "type": "array",
-      "minItems": 8,
+      "minItems": 9,
       "items": {
         "$ref": "#/$defs/artifact_entry"
       },
@@ -108,6 +108,18 @@
             "properties": {
               "role": {
                 "const": "predictive_bundle"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          }
+        },
+        {
+          "contains": {
+            "properties": {
+              "role": {
+                "const": "model_artifact"
               }
             },
             "required": [
@@ -323,6 +335,7 @@
         "contracts",
         "public_contract",
         "predictive_bundle",
+        "model_artifact",
         "metrics",
         "model_card",
         "public_context",
@@ -338,6 +351,7 @@
         "contracts",
         "public_contract",
         "predictive_bundle",
+        "model_artifact",
         "metrics",
         "model_card",
         "public_context",
@@ -347,8 +361,8 @@
     },
     "required_artifact_role_list": {
       "type": "array",
-      "minItems": 8,
-      "maxItems": 8,
+      "minItems": 9,
+      "maxItems": 9,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/required_artifact_role"
@@ -367,6 +381,11 @@
         {
           "contains": {
             "const": "predictive_bundle"
+          }
+        },
+        {
+          "contains": {
+            "const": "model_artifact"
           }
         },
         {

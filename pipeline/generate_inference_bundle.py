@@ -23,6 +23,7 @@ from pipeline.training import _prepared_dataset_metadata_blocking_reasons
 
 INFERENCE_BUNDLE_SCHEMA = "contracts/inference-bundle.schema.json"
 INFERENCE_BUNDLE_VERSION = "inference_bundle.v1"
+DEFAULT_MODEL_PACKAGE_REFERENCE = "models/model.pkl"
 SUPPORTED_SERIALIZATION_FORMAT = "joblib"
 SUPPORTED_LOADER_STRATEGY = "joblib_sklearn_predict"
 SUPPORTED_PREDICTION_INTERFACE = "predict"
@@ -549,6 +550,11 @@ def _build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         args.release_package_reference,
         "release_package_reference",
     )
+    model_package_reference = _validate_release_relative(
+        args.model_package_reference,
+        "model_package_reference",
+        file_path=True,
+    )
     generated_at = _utc_now_iso()
     bundle_id = f"{dataset_slug}-inference-bundle-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
 
@@ -636,7 +642,10 @@ def _build_bundle(args: argparse.Namespace) -> dict[str, Any]:
             "model_selection_evidence": model_selection_ref,
         },
         "model_artifact": {
-            "path": model_ref["path"],
+            # Release package reference (e.g. "models/model.pkl"), distinct
+            # from model_ref["path"] (the source training-run reference used
+            # only for build-time provenance verification below).
+            "path": model_package_reference,
             "sha256": model_ref["sha256"],
             "source_training_parameter_record_path": training_record_ref["path"],
         },
@@ -751,6 +760,7 @@ def materialize_governed_inference_bundle(
     public_contract_ref: str | None = None,
     dataset_context_ref: str | None = None,
     inference_bundle_schema_path: str | Path | None = None,
+    model_package_reference: str | None = None,
 ) -> dict[str, Any]:
     """Materialize ``inference_bundle.v1`` from a governed training run.
 
@@ -817,6 +827,7 @@ def materialize_governed_inference_bundle(
         model_artifact=str(resolved_repo_root / training_result["serialized_model_path"]),
         output=str(Path(output_path)),
         release_package_reference=GOVERNED_INFERENCE_BUNDLE_RELEASE_PACKAGE_REFERENCE,
+        model_package_reference=model_package_reference or DEFAULT_MODEL_PACKAGE_REFERENCE,
         prediction_type=prediction_type,
         release_id=provisional_release_id,
         dataset_slug=dataset_slug,
@@ -889,6 +900,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-artifact", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--release-package-reference", required=True)
+    parser.add_argument(
+        "--model-package-reference",
+        default=DEFAULT_MODEL_PACKAGE_REFERENCE,
+        help="Release-relative package reference for the model artifact (default: models/model.pkl).",
+    )
     parser.add_argument("--prediction-type", required=True)
 
     parser.add_argument("--release-id")

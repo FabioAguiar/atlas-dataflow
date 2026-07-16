@@ -22,13 +22,19 @@ from typing import Any
 
 _REPO_ROOT = Path(__file__).parent.parent
 
-_PUBLIC_ARTIFACT_MAPPINGS = [
+_CANDIDATE_ARTIFACT_MAPPINGS = [
     ("promoted_contracts.runtime_contract", "contracts/runtime-contract.json"),
     ("promoted_contracts.public_contract", "contracts/public-contract.json"),
     ("training_metrics", "metrics/metrics.json"),
     ("inference_bundle", "predictions/bundle.json"),
     ("model_card", "model-card.json"),
     ("public_context", "public-context.json"),
+    # Project Spec S0107: the release-bound governed model artifact. Unlike
+    # every other entry above, this is a private binary, not a public JSON
+    # artifact -- the mapping only decides where candidate assembly copies
+    # it, not its publisher visibility (declared separately in
+    # _build_release_candidate()'s artifact_roles.model_artifact below).
+    ("model_artifact", "models/model.pkl"),
 ]
 
 _REQUIRED_REAL_INPUTS = [
@@ -641,7 +647,7 @@ def _build_release_candidate(
             # Project Spec S0099: a distinct manifest-visible role for the
             # public contract, separate from the "contracts" (runtime) role
             # above -- previously the physical file was copied into the
-            # candidate directory (_PUBLIC_ARTIFACT_MAPPINGS) but never
+            # candidate directory (_CANDIDATE_ARTIFACT_MAPPINGS) but never
             # declared as its own artifact_roles entry, so
             # publisher/manifest.py had no role to read it from and the
             # active release manifest never carried a public_contract
@@ -688,6 +694,17 @@ def _build_release_candidate(
                 "required": True,
                 "media_type": "application/json",
             },
+            # Project Spec S0107: the release-bound governed model artifact,
+            # distinct from predictive_bundle (a JSON descriptor), model_card
+            # (public documentation), and training evidence (not a runtime
+            # model). Binary; excluded from publisher JSON-schema
+            # compatibility checks.
+            "model_artifact": {
+                "role": "model_artifact",
+                "path": "models/model.pkl",
+                "required": True,
+                "media_type": "application/octet-stream",
+            },
         },
         "candidate_metadata": {
             "assembled_by": "pipeline/assemble_candidate.py",
@@ -703,6 +720,7 @@ def _build_release_candidate(
                     "public_context",
                     "manifest_input",
                     "candidate_metadata",
+                    "model_artifact",
                 ],
                 "hash_policy": "publisher_calculates_hashes",
                 "manifest_policy": "publisher_generates_manifest",
@@ -797,7 +815,7 @@ def _resolve_repo_relative(path_value: str, repo_root: Path) -> Path:
 def _required_public_artifacts(candidate_input: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     artifact_inputs = candidate_input["artifact_inputs"]
     artifacts: list[tuple[dict[str, Any], str]] = []
-    for input_path, output_path in _PUBLIC_ARTIFACT_MAPPINGS:
+    for input_path, output_path in _CANDIDATE_ARTIFACT_MAPPINGS:
         artifacts.append((_get_nested(artifact_inputs, input_path), output_path))
     return artifacts
 

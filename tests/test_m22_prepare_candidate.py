@@ -8,6 +8,7 @@ data/ directory or a real dataset path.
 """
 
 import csv
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -1060,6 +1061,10 @@ _S0099_VALID_PUBLIC_CONTRACT = {
     ],
 }
 
+# Project Spec S0107: the model artifact is a private binary, never JSON.
+_S0099_MODEL_ARTIFACT_BYTES = b"not-a-real-model-but-real-bytes"
+_S0099_MODEL_ARTIFACT_SHA256 = hashlib.sha256(_S0099_MODEL_ARTIFACT_BYTES).hexdigest()
+
 
 def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
     dataset_slug = S0099_DATASET_SLUG
@@ -1084,9 +1089,22 @@ def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
         path = repo_root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         if role == "model_artifact":
-            path.write_bytes(b"not-a-real-model-but-real-bytes")
+            path.write_bytes(_S0099_MODEL_ARTIFACT_BYTES)
         elif role == "public_contract":
             path.write_text(json.dumps(_S0099_VALID_PUBLIC_CONTRACT), encoding="utf-8")
+        elif role == "inference_bundle":
+            path.write_text(
+                json.dumps({
+                    "role": role,
+                    "contract_version": f"{role}.v1",
+                    "schema_version": f"{role}.v1",
+                    "model_artifact": {
+                        "path": "models/model.pkl",
+                        "sha256": _S0099_MODEL_ARTIFACT_SHA256,
+                    },
+                }),
+                encoding="utf-8",
+            )
         else:
             path.write_text(
                 json.dumps({"role": role, "contract_version": f"{role}.v1", "schema_version": f"{role}.v1"}),
@@ -1130,3 +1148,90 @@ def test_assembled_release_candidate_declares_distinct_public_contract_role(tmp_
     # is additive to, not a replacement for, the existing artifact copy.
     assert (candidate_dir / "contracts" / "public-contract.json").is_file()
     assert (candidate_dir / "contracts" / "runtime-contract.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# S0107: release-bound model artifact packaging. The model was already
+# required as a real release-candidate-input.v1 artifact (source-provenance
+# side, tested above), but candidate assembly previously discarded it --
+# these tests prove it now normalizes into the candidate at models/model.pkl
+# and declares a distinct model_artifact role.
+# ---------------------------------------------------------------------------
+
+
+def test_assembled_release_candidate_copies_model_artifact_to_canonical_path(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    release_id = assemble_candidate.derive_deterministic_release_id(S0099_TRAINING_RUN_ID)
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0099_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0099_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0107-test-input",
+    )
+
+    assert result["status"] == "accepted", result
+    candidate_dir = Path(result["candidate_dir"])
+    release_candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    artifact_roles = release_candidate["artifact_roles"]
+
+    assert artifact_roles["model_artifact"] == {
+        "role": "model_artifact",
+        "path": "models/model.pkl",
+        "required": True,
+        "media_type": "application/octet-stream",
+    }
+    assert "model_artifact" in release_candidate["candidate_metadata"]["completeness_validation"][
+        "required_artifact_roles"
+    ]
+    assert len(
+        release_candidate["candidate_metadata"]["completeness_validation"]["required_artifact_roles"]
+    ) == 9
+
+    packaged_model = candidate_dir / "models" / "model.pkl"
+    assert packaged_model.is_file()
+    source_model = repo_root / artifact_references["model_artifact"]
+    assert packaged_model.read_bytes() == source_model.read_bytes()
+
+    # Assembly must not copy adjacent training-run files (e.g. the metrics
+    # or model card that happen to live in the same training-run directory
+    # as the model source) -- only the exact declared model artifact.
+    assert [p.name for p in (candidate_dir / "models").iterdir()] == ["model.pkl"]
+
+
+def test_missing_model_artifact_source_blocks_assembly(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    release_id = assemble_candidate.derive_deterministic_release_id(S0099_TRAINING_RUN_ID)
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0099_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0099_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+
+    # Simulate the source model disappearing between input construction and
+    # assembly (mirrors the existing S0032 missing-artifact precedent).
+    (repo_root / artifact_references["model_artifact"]).unlink()
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0107-test-input",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "candidate_artifact_missing"
+    assert artifact_references["model_artifact"] in result["missing_paths"]
+    assert not any((repo_root / "releases").rglob("release-candidate.json"))

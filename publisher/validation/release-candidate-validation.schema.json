@@ -100,6 +100,7 @@
         "contracts",
         "public_contract",
         "predictive_bundle",
+        "model_artifact",
         "metrics",
         "model_card",
         "public_context",
@@ -114,6 +115,9 @@
           "$ref": "#/$defs/artifact_role_result"
         },
         "predictive_bundle": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "model_artifact": {
           "$ref": "#/$defs/artifact_role_result"
         },
         "metrics": {
@@ -498,6 +502,7 @@
         "contracts",
         "public_contract",
         "predictive_bundle",
+        "model_artifact",
         "metrics",
         "model_card",
         "public_context",
@@ -507,8 +512,8 @@
     },
     "required_artifact_role_list": {
       "type": "array",
-      "minItems": 8,
-      "maxItems": 8,
+      "minItems": 9,
+      "maxItems": 9,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/required_artifact_role"
@@ -527,6 +532,11 @@
         {
           "contains": {
             "const": "predictive_bundle"
+          }
+        },
+        {
+          "contains": {
+            "const": "model_artifact"
           }
         },
         {
@@ -641,6 +651,7 @@
                       "missing_runtime_contract",
                       "missing_public_contract",
                       "missing_predictive_bundle",
+                      "missing_model_artifact",
                       "missing_metrics",
                       "missing_model_card",
                       "missing_public_context",
@@ -754,6 +765,7 @@
             "missing_runtime_contract",
             "missing_public_contract",
             "missing_predictive_bundle",
+            "missing_model_artifact",
             "missing_metrics",
             "missing_model_card",
             "missing_public_context",
@@ -763,6 +775,9 @@
             "incomplete_required_artifact",
             "contradictory_candidate_artifact",
             "unsafe_candidate_artifact",
+            "unsafe_model_reference",
+            "model_bundle_path_mismatch",
+            "model_bundle_hash_mismatch",
             "dataset_identifier_mismatch",
             "release_identifier_mismatch",
             "declared_hash_missing",

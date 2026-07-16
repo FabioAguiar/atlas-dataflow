@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -390,12 +391,18 @@ _S0101_REQUIRED_ROLES = (
     "contracts",
     "public_contract",
     "predictive_bundle",
+    "model_artifact",
     "metrics",
     "model_card",
     "public_context",
     "manifest_input",
     "candidate_metadata",
 )
+
+# Project Spec S0107: the model artifact is a private binary, never JSON.
+_S0101_MODEL_ARTIFACT_BYTES = b"pytest-fixture-model-bytes-not-a-real-model"
+_S0101_MODEL_ARTIFACT_SHA256 = hashlib.sha256(_S0101_MODEL_ARTIFACT_BYTES).hexdigest()
+_S0101_MODEL_ARTIFACT_PATH = "models/model.pkl"
 
 
 def _s0101_write_json(path: Path, data: dict) -> None:
@@ -432,9 +439,19 @@ def _s0101_artifact_payload(role: str) -> dict:
         payload["model_id"] = "contract-promotion-model-001"
     if role == "predictive_bundle":
         payload["runtime_contract_ref"] = "artifacts/contracts.json"
+        payload["model_artifact"] = {
+            "path": _S0101_MODEL_ARTIFACT_PATH,
+            "sha256": _S0101_MODEL_ARTIFACT_SHA256,
+        }
     if role == "public_context":
         payload["public_projection"] = {"safe_for_public": True}
     return payload
+
+
+def _s0101_role_path(role: str) -> str:
+    if role == "model_artifact":
+        return _S0101_MODEL_ARTIFACT_PATH
+    return f"artifacts/{role}.json"
 
 
 def _s0101_prepare_tmp_repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -453,8 +470,12 @@ def _s0101_prepare_tmp_repo(tmp_path: Path) -> tuple[Path, Path]:
     candidate_dir.mkdir(parents=True, exist_ok=True)
     artifact_roles = {}
     for role in _S0101_REQUIRED_ROLES:
-        role_path = f"artifacts/{role}.json"
+        role_path = _s0101_role_path(role)
         artifact_roles[role] = {"role": role, "path": role_path, "required": True}
+        if role == "model_artifact":
+            (candidate_dir / role_path).parent.mkdir(parents=True, exist_ok=True)
+            (candidate_dir / role_path).write_bytes(_S0101_MODEL_ARTIFACT_BYTES)
+            continue
         _s0101_write_json(candidate_dir / role_path, _s0101_artifact_payload(role))
 
     candidate = {
@@ -551,3 +572,54 @@ def test_manifest_generation_is_deterministic_for_public_contract(tmp_path: Path
     hashes_1 = {a["role"]: a["hash_value"] for a in manifest_1["artifacts"]}
     hashes_2 = {a["role"]: a["hash_value"] for a in manifest_2["artifacts"]}
     assert hashes_1["public_contract"] == hashes_2["public_contract"]
+
+
+# ---------------------------------------------------------------------------
+# S0107: release-bound model artifact packaging and manifest integrity --
+# generic promotion of the ninth required publisher artifact role, through
+# the same real validate -> manifest -> promote pipeline exercised above for
+# public_contract (S0101).
+# ---------------------------------------------------------------------------
+
+
+def test_model_artifact_promotion_copies_model_and_hashes_match_end_to_end(tmp_path: Path) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    validation_result = publisher_validate.run(str(candidate_dir), repo_root=tmp_repo)
+    assert validation_result["validation_outcome"] == "accepted"
+    assert validation_result["required_artifact_role_results"]["model_artifact"]["status"] == "present"
+
+    run_dirs = sorted((tmp_repo / "publisher" / "runs").iterdir())
+    run_dir = run_dirs[-1]
+    manifest_result = publisher_manifest.run(str(run_dir), repo_root=tmp_repo)
+    manifest_roles = {a["role"]: a for a in manifest_result["artifacts"]}
+    assert manifest_roles["model_artifact"]["reference"] == _S0101_MODEL_ARTIFACT_PATH
+    assert manifest_roles["model_artifact"]["hash_value"] == _S0101_MODEL_ARTIFACT_SHA256
+
+    promotion_result = publisher_promote.run(str(run_dir), repo_root=tmp_repo)
+    assert promotion_result["promotion_outcome"] == "promoted"
+
+    release_dir = tmp_repo / "releases" / _S0101_RELEASE_ID
+    promoted_model_path = release_dir / manifest_roles["model_artifact"]["reference"]
+    assert promoted_model_path.is_file()
+    promoted_bytes = promoted_model_path.read_bytes()
+    assert promoted_bytes == _S0101_MODEL_ARTIFACT_BYTES
+    assert hashlib.sha256(promoted_bytes).hexdigest() == manifest_roles["model_artifact"]["hash_value"]
+
+    bundle = json.loads(
+        (release_dir / manifest_roles["predictive_bundle"]["reference"]).read_text(encoding="utf-8")
+    )
+    assert bundle["model_artifact"]["sha256"] == manifest_roles["model_artifact"]["hash_value"]
+    assert bundle["model_artifact"]["path"] == manifest_roles["model_artifact"]["reference"]
+
+    # Promotion copies exactly the manifest-declared files -- no undeclared
+    # adjacent artifact (e.g. a stray copy under the candidate's own
+    # models/ directory naming) leaks into the promoted release.
+    declared_files = {release_dir / a["reference"] for a in manifest_result["artifacts"]}
+    declared_files.add(release_dir / "manifest.json")
+    actual_files = {p for p in release_dir.rglob("*") if p.is_file()}
+    assert actual_files == declared_files
+
+    valid, errors = publisher_manifest.verify(release_dir / "manifest.json", release_dir)
+    assert valid is True
+    assert errors == []

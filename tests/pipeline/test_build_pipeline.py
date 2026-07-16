@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 import sys
@@ -26,7 +27,12 @@ PUBLIC_CANDIDATE_ARTIFACTS = (
     "model-card.json",
     "public-context.json",
     "manifest-input.json",
+    "models/model.pkl",
 )
+
+# Project Spec S0107: the model artifact is a private binary, never JSON.
+MODEL_ARTIFACT_BYTES = b"pytest-fixture-model-bytes-for-build-pipeline"
+MODEL_ARTIFACT_SHA256 = hashlib.sha256(MODEL_ARTIFACT_BYTES).hexdigest()
 
 
 # A minimal public_contract fixture that conforms to
@@ -91,7 +97,16 @@ def _write_governed_artifacts(repo_root: Path, *, missing_role: str | None = Non
     for role, path in paths.items():
         if role == missing_role:
             continue
+        if role == "model_artifact":
+            (repo_root / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo_root / path).write_bytes(MODEL_ARTIFACT_BYTES)
+            continue
         payload = _VALID_PUBLIC_CONTRACT if role == "public_contract" else {"role": role, "governed": True}
+        if role == "inference_bundle":
+            payload["model_artifact"] = {
+                "path": "models/model.pkl",
+                "sha256": MODEL_ARTIFACT_SHA256,
+            }
         _write_json(repo_root / path, payload)
     return paths
 
@@ -246,6 +261,39 @@ def test_successful_build_creates_candidate_layout_and_required_artifacts(tmp_pa
     assert "build-evidence.json" not in {
         role["path"] for role in release_candidate["artifact_roles"].values()
     }
+
+
+# --- S0107: release-bound model artifact packaging ---
+
+
+def test_successful_build_copies_model_artifact_and_declares_role(tmp_path, monkeypatch):
+    tmp_repo = tmp_path / "repo"
+    artifact_paths = _write_governed_artifacts(tmp_repo)
+    exit_code, release_candidate, candidate_dir = _assemble_candidate(
+        tmp_path,
+        monkeypatch,
+        candidate_input=_write_candidate_input(tmp_path, artifact_paths=artifact_paths),
+    )
+
+    assert exit_code == 0
+    model_role = release_candidate["artifact_roles"]["model_artifact"]
+    assert model_role == {
+        "role": "model_artifact",
+        "path": "models/model.pkl",
+        "required": True,
+        "media_type": "application/octet-stream",
+    }
+    assert release_candidate["candidate_metadata"]["completeness_validation"][
+        "required_artifact_roles"
+    ].count("model_artifact") == 1
+    assert len(
+        release_candidate["candidate_metadata"]["completeness_validation"]["required_artifact_roles"]
+    ) == 9
+
+    packaged_model = candidate_dir / "models" / "model.pkl"
+    assert packaged_model.is_file()
+    source_model = tmp_repo / artifact_paths["model_artifact"]
+    assert packaged_model.read_bytes() == source_model.read_bytes()
 
 
 def test_successful_build_writes_reduced_evidence_and_boundary_confirmations(tmp_path, monkeypatch):

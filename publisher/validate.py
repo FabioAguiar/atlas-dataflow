@@ -21,11 +21,13 @@ from pathlib import Path
 _CANDIDATE_FILENAME = "release-candidate.json"
 _DEFAULT_REPO_ROOT = Path(__file__).parent.parent
 _PUBLIC_CONTRACT_ROLE = "public_contract"
+_MODEL_ARTIFACT_ROLE = "model_artifact"
 
 _REQUIRED_ROLES = (
     "contracts",
     "public_contract",
     "predictive_bundle",
+    "model_artifact",
     "metrics",
     "model_card",
     "public_context",
@@ -46,12 +48,23 @@ _MISSING_ROLE_CODE = {
     "contracts": "missing_runtime_contract",
     "public_contract": "missing_public_contract",
     "predictive_bundle": "missing_predictive_bundle",
+    "model_artifact": "missing_model_artifact",
     "metrics": "missing_metrics",
     "model_card": "missing_model_card",
     "public_context": "missing_public_context",
     "manifest_input": "missing_manifest_input",
     "candidate_metadata": "missing_candidate_metadata",
 }
+
+# Project Spec S0107: roles that need path-safety enforcement (absolute,
+# traversal, or candidate-root-escaping references rejected) before the file
+# is even looked up. public_contract already had this; model_artifact is a
+# private binary and gets its own distinct rejection code.
+_UNSAFE_REFERENCE_CODE = {
+    _PUBLIC_CONTRACT_ROLE: "unsafe_candidate_artifact",
+    _MODEL_ARTIFACT_ROLE: "unsafe_model_reference",
+}
+_PATH_SAFETY_CHECKED_ROLES = frozenset(_UNSAFE_REFERENCE_CODE)
 
 _SCHEMA_INCOMPAT_CODE = {
     "contracts": "contract_schema_incompatible",
@@ -343,6 +356,7 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
 
     # --- Artifact role presence ---
     role_results: dict[str, dict] = {}
+    model_role_actual_sha256: str | None = None
     for role in _REQUIRED_ROLES:
         role_def = (
             artifact_roles_decl.get(role)
@@ -367,9 +381,9 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
 
         role_path_str: str = role_def["path"]
 
-        if role == _PUBLIC_CONTRACT_ROLE and _unsafe_candidate_reference(role_path_str, candidate_dir):
+        if role in _PATH_SAFETY_CHECKED_ROLES and _unsafe_candidate_reference(role_path_str, candidate_dir):
             reason = _rejection_reason(
-                "unsafe_candidate_artifact",
+                _UNSAFE_REFERENCE_CODE[role],
                 f"Required artifact role '{role}' has an unsafe reference.",
                 role,
             )
@@ -401,6 +415,23 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
         else:
             declared_sha256 = role_def.get("sha256")
             actual_sha256 = _sha256_file(artifact_file)
+            if role == _MODEL_ARTIFACT_ROLE:
+                model_role_actual_sha256 = actual_sha256
+            if role == _MODEL_ARTIFACT_ROLE and actual_sha256 is None:
+                reason = _rejection_reason(
+                    _MISSING_ROLE_CODE[_MODEL_ARTIFACT_ROLE],
+                    f"Required artifact role '{role}' file could not be read.",
+                    role,
+                )
+                rejection_reasons.append(reason)
+                role_results[role] = {
+                    "role": role,
+                    "status": "missing",
+                    "required": True,
+                    "artifact_reference": None,
+                    "reason": reason,
+                }
+                continue
             role_results[role] = {
                 "role": role,
                 "status": "present",
@@ -529,6 +560,66 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
         data = _load_json_if_possible(candidate_dir / artifact_ref)
         if data is not None:
             json_artifacts[role] = data
+
+    # --- Model artifact / predictive bundle cross-consistency (Project Spec
+    # S0107). The model is binary and never JSON-parsed itself; only its
+    # already-computed bytes hash and declared candidate path are
+    # cross-checked against the JSON-parsed predictive_bundle's own
+    # model_artifact.path/.sha256 declarations. ---
+    model_role_result = role_results.get(_MODEL_ARTIFACT_ROLE)
+    if model_role_result is not None and model_role_result.get("status") == "present":
+        predictive_bundle_data = json_artifacts.get("predictive_bundle")
+        bundle_model_artifact = (
+            predictive_bundle_data.get("model_artifact")
+            if isinstance(predictive_bundle_data, dict)
+            else None
+        )
+
+        if not isinstance(bundle_model_artifact, dict) or not isinstance(
+            bundle_model_artifact.get("path"), str
+        ):
+            reason = _safe_rejection_reason(
+                "model_bundle_path_mismatch",
+                "Predictive bundle does not declare a model_artifact.path reference.",
+                _MODEL_ARTIFACT_ROLE,
+                "bundle_model_artifact_path_missing",
+            )
+            rejection_reasons.append(reason)
+            model_role_result["status"] = "contradictory"
+            model_role_result["reason"] = reason
+        elif bundle_model_artifact["path"] != model_role_result.get("artifact_reference"):
+            reason = _safe_rejection_reason(
+                "model_bundle_path_mismatch",
+                "Predictive bundle model_artifact.path does not match the candidate model role path.",
+                _MODEL_ARTIFACT_ROLE,
+                "model_path_mismatch",
+            )
+            rejection_reasons.append(reason)
+            model_role_result["status"] = "contradictory"
+            model_role_result["reason"] = reason
+
+        if not isinstance(bundle_model_artifact, dict) or not isinstance(
+            bundle_model_artifact.get("sha256"), str
+        ):
+            reason = _safe_rejection_reason(
+                "model_bundle_hash_mismatch",
+                "Predictive bundle does not declare a model_artifact.sha256 reference.",
+                _MODEL_ARTIFACT_ROLE,
+                "bundle_model_artifact_sha256_missing",
+            )
+            rejection_reasons.append(reason)
+            model_role_result["status"] = "contradictory"
+            model_role_result["reason"] = reason
+        elif bundle_model_artifact["sha256"] != model_role_actual_sha256:
+            reason = _safe_rejection_reason(
+                "model_bundle_hash_mismatch",
+                "Predictive bundle model_artifact.sha256 does not match the candidate model bytes.",
+                _MODEL_ARTIFACT_ROLE,
+                "model_hash_mismatch",
+            )
+            rejection_reasons.append(reason)
+            model_role_result["status"] = "contradictory"
+            model_role_result["reason"] = reason
 
     cross_artifact_consistency = _validate_cross_artifact_consistency(
         candidate,

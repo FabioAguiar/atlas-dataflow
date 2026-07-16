@@ -100,6 +100,7 @@
         "contracts",
         "public_contract",
         "predictive_bundle",
+        "model_artifact",
         "metrics",
         "model_card",
         "public_context",
@@ -118,6 +119,10 @@
         "predictive_bundle": {
           "$ref": "#/$defs/artifact_role",
           "description": "Inference bundle produced by the artifact pipeline and consumed only after publication."
+        },
+        "model_artifact": {
+          "$ref": "#/$defs/artifact_role",
+          "description": "Release-bound governed model artifact (binary), distinct from predictive_bundle (a JSON descriptor), model_card (public documentation), and training evidence."
         },
         "metrics": {
           "$ref": "#/$defs/artifact_role",
@@ -174,7 +179,8 @@
           "properties": {
             "required_artifact_roles": {
               "type": "array",
-              "minItems": 8,
+              "minItems": 9,
+              "maxItems": 9,
               "uniqueItems": true,
               "items": {
                 "type": "string",
@@ -182,6 +188,7 @@
                   "contracts",
                   "public_contract",
                   "predictive_bundle",
+                  "model_artifact",
                   "metrics",
                   "model_card",
                   "public_context",

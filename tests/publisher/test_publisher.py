@@ -24,12 +24,20 @@ REQUIRED_ROLES = (
     "contracts",
     "public_contract",
     "predictive_bundle",
+    "model_artifact",
     "metrics",
     "model_card",
     "public_context",
     "manifest_input",
     "candidate_metadata",
 )
+
+# Project Spec S0107: the model artifact is a private binary, never JSON --
+# a fixed fixture payload with its precomputed hash, reused everywhere a
+# release candidate needs a real, hashable model_artifact role file.
+MODEL_ARTIFACT_BYTES = b"pytest-fixture-model-bytes-not-a-real-model"
+MODEL_ARTIFACT_SHA256 = hashlib.sha256(MODEL_ARTIFACT_BYTES).hexdigest()
+MODEL_ARTIFACT_PATH = "models/model.pkl"
 
 
 def _copy_publisher_contracts(tmp_repo: Path) -> None:
@@ -86,6 +94,8 @@ def _candidate_dir(tmp_repo: Path, release_id: str = RELEASE_ID) -> Path:
 
 
 def _role_path(role: str) -> str:
+    if role == "model_artifact":
+        return MODEL_ARTIFACT_PATH
     return f"artifacts/{role}.json"
 
 
@@ -122,6 +132,7 @@ def _artifact_payload(role: str) -> dict:
         payload["model_id"] = "model-example-001"
     if role == "predictive_bundle":
         payload["runtime_contract_ref"] = "artifacts/contracts.json"
+        payload["model_artifact"] = {"path": MODEL_ARTIFACT_PATH, "sha256": MODEL_ARTIFACT_SHA256}
     if role == "public_context":
         payload["public_projection"] = {"safe_for_public": True}
     return payload
@@ -144,10 +155,13 @@ def _write_candidate(tmp_repo: Path, missing_role: str | None = None) -> Path:
 
         artifact_path = candidate_dir / role_path
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        artifact_path.write_text(
-            json.dumps(_artifact_payload(role), indent=2),
-            encoding="utf-8",
-        )
+        if role == "model_artifact":
+            artifact_path.write_bytes(MODEL_ARTIFACT_BYTES)
+        else:
+            artifact_path.write_text(
+                json.dumps(_artifact_payload(role), indent=2),
+                encoding="utf-8",
+            )
 
     candidate = {
         "schema_version": "release-candidate.v1",
@@ -574,6 +588,9 @@ def test_synchronized_promotion_result_validates_against_schema_for_both_release
         for role in REQUIRED_ROLES:
             artifact_path = candidate_dir / _role_path(role)
             artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            if role == "model_artifact":
+                artifact_path.write_bytes(MODEL_ARTIFACT_BYTES)
+                continue
             payload = _artifact_payload(role)
             if role != "public_contract":
                 # The real public-contract schema is additionalProperties:
@@ -818,6 +835,123 @@ def test_candidate_missing_public_contract_is_rejected(tmp_path):
     )
 
 
+# --- S0107: model_artifact as the ninth required publisher artifact role ---
+
+
+def test_model_artifact_is_manifest_hashed_and_promoted_generically(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    candidate_dir = _candidate_dir(tmp_repo)
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+    assert validation_result["validation_outcome"] == "accepted"
+    assert validation_result["required_artifact_role_results"]["model_artifact"]["status"] == "present"
+
+    run_dir = _latest_run_dir(tmp_repo)
+    manifest_result = manifest.run(str(run_dir), repo_root=tmp_repo)
+    manifest_roles = {a["role"]: a for a in manifest_result["artifacts"]}
+    assert manifest_roles["model_artifact"]["reference"] == MODEL_ARTIFACT_PATH
+    assert manifest_roles["model_artifact"]["hash_value"] == MODEL_ARTIFACT_SHA256
+    assert "model_artifact" in manifest_result["required_hash_coverage"]["required_artifact_roles"]
+
+    promotion_result = promote.run(str(run_dir), repo_root=tmp_repo)
+    assert promotion_result["promotion_outcome"] == "promoted"
+
+    release_dir = tmp_repo / "releases" / RELEASE_ID
+    promoted_model = release_dir / manifest_roles["model_artifact"]["reference"]
+    assert promoted_model.is_file()
+    assert promoted_model.read_bytes() == MODEL_ARTIFACT_BYTES
+    assert hashlib.sha256(promoted_model.read_bytes()).hexdigest() == MODEL_ARTIFACT_SHA256
+
+    valid, errors = manifest.verify(release_dir / "manifest.json", release_dir)
+    assert valid is True
+    assert errors == []
+
+
+def test_candidate_missing_model_artifact_is_rejected(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo, missing_role="model_artifact")
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert validation_result["promotion_gate"]["promotion_allowed"] is False
+    assert any(
+        r["code"] == "missing_model_artifact"
+        for r in validation_result["rejection"]["reasons"]
+    )
+
+
+def test_candidate_unsafe_model_artifact_path_is_rejected(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    candidate_json_path = _candidate_dir(tmp_repo) / "release-candidate.json"
+    candidate = json.loads(candidate_json_path.read_text())
+    candidate["artifact_roles"]["model_artifact"]["path"] = "../../../etc/passwd"
+    candidate_json_path.write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert any(
+        r["code"] == "unsafe_model_reference"
+        for r in validation_result["rejection"]["reasons"]
+    )
+    assert validation_result["required_artifact_role_results"]["model_artifact"]["status"] == "unsafe"
+
+
+def test_candidate_model_path_mismatch_with_bundle_declaration_is_rejected(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    bundle_path = _candidate_dir(tmp_repo) / _role_path("predictive_bundle")
+    bundle = json.loads(bundle_path.read_text())
+    bundle["model_artifact"]["path"] = "models/a-different-model.pkl"
+    bundle_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert any(
+        r["code"] == "model_bundle_path_mismatch"
+        for r in validation_result["rejection"]["reasons"]
+    )
+    assert (
+        validation_result["required_artifact_role_results"]["model_artifact"]["status"]
+        == "contradictory"
+    )
+
+
+def test_candidate_model_hash_mismatch_with_bundle_declaration_is_rejected(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    bundle_path = _candidate_dir(tmp_repo) / _role_path("predictive_bundle")
+    bundle = json.loads(bundle_path.read_text())
+    bundle["model_artifact"]["sha256"] = "f" * 64
+    bundle_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert any(
+        r["code"] == "model_bundle_hash_mismatch"
+        for r in validation_result["rejection"]["reasons"]
+    )
+    assert (
+        validation_result["required_artifact_role_results"]["model_artifact"]["status"]
+        == "contradictory"
+    )
+
+
+def test_model_artifact_bytes_are_never_parsed_as_json(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    # MODEL_ARTIFACT_BYTES is not valid JSON; a passing, accepted validation
+    # proves the model role is never JSON-parsed or schema-checked.
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(MODEL_ARTIFACT_BYTES)
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "accepted"
+    assert "model_artifact" not in validation_result["schema_compatibility"]
+
+
 # --- S0034: Telco publisher-validation run materialization ---
 
 TELCO_DATASET_SLUG = "telco-customer-churn"
@@ -850,6 +984,8 @@ def _write_telco_release_candidate(tmp_repo: Path, missing_role: str | None = No
                     }
                 ],
             }
+        elif role == "model_artifact":
+            payload = None
         else:
             payload = {
                 "role": role,
@@ -866,12 +1002,19 @@ def _write_telco_release_candidate(tmp_repo: Path, missing_role: str | None = No
                 payload["model_id"] = "telco-model-001"
             if role == "predictive_bundle":
                 payload["runtime_contract_ref"] = "artifacts/contracts.json"
+                payload["model_artifact"] = {
+                    "path": MODEL_ARTIFACT_PATH,
+                    "sha256": MODEL_ARTIFACT_SHA256,
+                }
             if role == "public_context":
                 payload["public_projection"] = {"safe_for_public": True}
 
         artifact_path = candidate_dir / role_path
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        if role == "model_artifact":
+            artifact_path.write_bytes(MODEL_ARTIFACT_BYTES)
+        else:
+            artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     candidate = {
         "schema_version": "release-candidate.v1",

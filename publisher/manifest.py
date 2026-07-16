@@ -3,7 +3,7 @@ Publisher release manifest generator.
 
 Reads a validation result from publisher/runs/{run_id}/validation-result.json,
 gates on promotion_gate.promotion_allowed: true, calculates SHA-256 hashes for
-all 8 required artifact role files in the validated release candidate, assembles
+all 9 required artifact role files in the validated release candidate, assembles
 a release manifest conforming to publisher/release-manifest.schema.json, and
 writes it to publisher/runs/{run_id}/manifest.json (same run directory).
 
@@ -24,6 +24,7 @@ _REQUIRED_ROLES = (
     "contracts",
     "public_contract",
     "predictive_bundle",
+    "model_artifact",
     "metrics",
     "model_card",
     "public_context",

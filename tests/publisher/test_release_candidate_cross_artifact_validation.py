@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -15,12 +16,18 @@ REQUIRED_ROLES = (
     "contracts",
     "public_contract",
     "predictive_bundle",
+    "model_artifact",
     "metrics",
     "model_card",
     "public_context",
     "manifest_input",
     "candidate_metadata",
 )
+
+# Project Spec S0107: the model artifact is a private binary, never JSON.
+MODEL_ARTIFACT_BYTES = b"pytest-fixture-model-bytes-not-a-real-model"
+MODEL_ARTIFACT_SHA256 = hashlib.sha256(MODEL_ARTIFACT_BYTES).hexdigest()
+MODEL_ARTIFACT_PATH = "models/model.pkl"
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -71,10 +78,17 @@ def _artifact_payload(role: str, **overrides) -> dict:
         payload["model_id"] = "model-example-001"
     if role == "predictive_bundle":
         payload["runtime_contract_ref"] = "artifacts/contracts.json"
+        payload["model_artifact"] = {"path": MODEL_ARTIFACT_PATH, "sha256": MODEL_ARTIFACT_SHA256}
     if role == "public_context":
         payload["public_projection"] = {"safe_for_public": True}
     payload.update(overrides)
     return payload
+
+
+def _role_path(role: str) -> str:
+    if role == "model_artifact":
+        return MODEL_ARTIFACT_PATH
+    return f"artifacts/{role}.json"
 
 
 def _write_candidate(tmp_path: Path, *, artifact_overrides: dict | None = None) -> Path:
@@ -84,12 +98,16 @@ def _write_candidate(tmp_path: Path, *, artifact_overrides: dict | None = None) 
 
     artifact_roles = {}
     for role in REQUIRED_ROLES:
-        role_path = f"artifacts/{role}.json"
+        role_path = _role_path(role)
         artifact_roles[role] = {
             "role": role,
             "path": role_path,
             "required": True,
         }
+        if role == "model_artifact":
+            (candidate_dir / role_path).parent.mkdir(parents=True, exist_ok=True)
+            (candidate_dir / role_path).write_bytes(MODEL_ARTIFACT_BYTES)
+            continue
         _write_json(
             candidate_dir / role_path,
             _artifact_payload(role, **artifact_overrides.get(role, {})),
@@ -256,8 +274,12 @@ def test_public_contract_missing_role_definition_is_rejected(tmp_path):
     for role in REQUIRED_ROLES:
         if role == "public_contract":
             continue
-        role_path = f"artifacts/{role}.json"
+        role_path = _role_path(role)
         artifact_roles[role] = {"role": role, "path": role_path, "required": True}
+        if role == "model_artifact":
+            (candidate_dir / role_path).parent.mkdir(parents=True, exist_ok=True)
+            (candidate_dir / role_path).write_bytes(MODEL_ARTIFACT_BYTES)
+            continue
         _write_json(candidate_dir / role_path, _artifact_payload(role))
 
     candidate = {
@@ -365,6 +387,90 @@ def test_public_contract_missing_file_is_rejected(tmp_path):
     assert result["role_results"]["public_contract"]["status"] == "missing"
 
 
+# --- S0107: model_artifact as the ninth required publisher artifact role ---
+
+
+def test_model_artifact_accepts_a_conformant_candidate(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert result["role_results"]["model_artifact"]["status"] == "present"
+    assert "model_artifact" not in result["schema_compatibility"]
+
+
+def test_model_artifact_missing_file_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    (candidate_dir / MODEL_ARTIFACT_PATH).unlink()
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "missing_model_artifact" in _rejection_codes(result)
+    assert result["role_results"]["model_artifact"]["status"] == "missing"
+
+
+def test_model_artifact_unsafe_reference_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    candidate["artifact_roles"]["model_artifact"]["path"] = "/etc/passwd"
+    _write_json(candidate_dir / "release-candidate.json", candidate)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "unsafe_model_reference" in _rejection_codes(result)
+    assert result["role_results"]["model_artifact"]["status"] == "unsafe"
+    assert result["role_results"]["model_artifact"]["artifact_reference"] is None
+
+
+def test_model_artifact_path_mismatch_with_bundle_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    bundle_path = candidate_dir / "artifacts" / "predictive_bundle.json"
+    bundle = json.loads(bundle_path.read_text())
+    bundle["model_artifact"]["path"] = "models/some-other-model.pkl"
+    _write_json(bundle_path, bundle)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "model_bundle_path_mismatch" in _rejection_codes(result)
+    assert result["role_results"]["model_artifact"]["status"] == "contradictory"
+
+
+def test_model_artifact_hash_mismatch_with_bundle_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    bundle_path = candidate_dir / "artifacts" / "predictive_bundle.json"
+    bundle = json.loads(bundle_path.read_text())
+    bundle["model_artifact"]["sha256"] = "0" * 64
+    _write_json(bundle_path, bundle)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "model_bundle_hash_mismatch" in _rejection_codes(result)
+    assert result["role_results"]["model_artifact"]["status"] == "contradictory"
+
+
+def test_model_artifact_bytes_never_parsed_as_json(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    non_json_bytes = b"\x80\x81not-json-binary\x00\xff"
+    (candidate_dir / MODEL_ARTIFACT_PATH).write_bytes(non_json_bytes)
+    bundle_path = candidate_dir / "artifacts" / "predictive_bundle.json"
+    bundle = json.loads(bundle_path.read_text())
+    bundle["model_artifact"]["sha256"] = hashlib.sha256(non_json_bytes).hexdigest()
+    _write_json(bundle_path, bundle)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    # Non-JSON, non-UTF8 model bytes must not raise or be schema-checked --
+    # the model role is never JSON-parsed, only hashed.
+    assert result["valid"] is True
+    assert result["role_results"]["model_artifact"]["status"] == "present"
+    assert "model_artifact" not in result["schema_compatibility"]
+
+
 # --- Release-candidate-input assembly from a governed training run (Project Spec S0032) ---
 #
 # These tests exercise pipeline/assemble_candidate.py's build_release_candidate_input,
@@ -376,6 +482,10 @@ def test_public_contract_missing_file_is_rejected(tmp_path):
 
 S0032_DATASET_SLUG = "telco-style-dataset"
 S0032_TRAINING_RUN_ID = "train-20260709T224340Z"
+
+# Project Spec S0107: the model artifact is a private binary, never JSON.
+_S0032_MODEL_ARTIFACT_BYTES = b"not-a-real-model-but-real-bytes"
+_S0032_MODEL_ARTIFACT_SHA256 = hashlib.sha256(_S0032_MODEL_ARTIFACT_BYTES).hexdigest()
 
 
 def _write_s0032_governed_artifacts(repo_root: Path, *, omit_role: str | None = None) -> dict:
@@ -403,7 +513,7 @@ def _write_s0032_governed_artifacts(repo_root: Path, *, omit_role: str | None = 
         if role == "model_artifact":
             path = repo_root / relative_path
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b"not-a-real-model-but-real-bytes")
+            path.write_bytes(_S0032_MODEL_ARTIFACT_BYTES)
         elif role == "public_contract":
             # Must be a real contracts/public-contract.schema.json instance
             # (additionalProperties: false), not the generic
@@ -411,6 +521,19 @@ def _write_s0032_governed_artifacts(repo_root: Path, *, omit_role: str | None = 
             # S0101 -- publisher/validate.py now validates this role for
             # real against that schema).
             _write_json(repo_root / relative_path, _valid_public_contract_payload())
+        elif role == "inference_bundle":
+            _write_json(
+                repo_root / relative_path,
+                {
+                    "role": role,
+                    "contract_version": f"{role}.v1",
+                    "schema_version": f"{role}.v1",
+                    "model_artifact": {
+                        "path": "models/model.pkl",
+                        "sha256": _S0032_MODEL_ARTIFACT_SHA256,
+                    },
+                },
+            )
         else:
             _write_json(
                 repo_root / relative_path,

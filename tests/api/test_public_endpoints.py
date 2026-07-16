@@ -837,7 +837,17 @@ def _valid_payload_from_contracts(public_contract, runtime_contract):
     return payload
 
 
-def test_real_release_valid_prediction_flow_uses_public_route_and_bundle():
+def test_real_release_historical_bundle_without_binary_semantics_fails_safely():
+    """
+    Project Spec S0109: the real bank-marketing release (release-20260620-002)
+    predates both S0107 (release-relative packaged model) and S0108
+    (result_semantics) -- its bundle has no runtime_execution.loader_strategy
+    and no result_semantics block at all. Hitting the real public inference
+    route for this historical release must now fail safely (no legacy
+    label/confidence fallback, no invented binary semantics), exercising the
+    "historical bundles lacking S0108 semantics fail safely without fallback"
+    acceptance criterion against a real, non-synthetic release.
+    """
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_releases_root = api_main._inference_releases_root
@@ -875,15 +885,10 @@ def test_real_release_valid_prediction_flow_uses_public_route_and_bundle():
             payload=payload,
         )
 
-        assert not hasattr(response, "status_code")
-        assert response["dataset_slug"] == resolved.dataset_slug
-        prediction = response["prediction"]
-        assert set(prediction.keys()) == {"label", "confidence"}
-        assert isinstance(prediction["label"], str)
-        assert prediction["label"]
-        assert isinstance(prediction["confidence"], float)
-        assert 0.0 <= prediction["confidence"] <= 1.0
-        _assert_no_internal_public_exposure(response)
+        assert response.status_code == 503
+        payload_body = _response_json(response)
+        assert payload_body["error_code"] == "INFERENCE_FAILURE"
+        _assert_no_internal_public_exposure(payload_body)
     finally:
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
@@ -1076,6 +1081,35 @@ def test_real_route_contract_invalid_prediction_payloads_fail_before_prediction_
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0109: a schema-valid binary-classification-result.v1 example,
+# reused wherever a test mocks api_main.execute_prediction's new return shape.
+# ---------------------------------------------------------------------------
+
+_S0109_VALID_BINARY_RESULT = {
+    "schema_version": "binary-classification-result.v1",
+    "problem_type": "binary_classification",
+    "predicted_class": {"class_id": "Yes"},
+    "positive_class": {"class_id": "Yes", "event_label": "Churn"},
+    "positive_class_probability": 0.68,
+    "class_probabilities": [
+        {"class_id": "No", "probability": 0.32},
+        {"class_id": "Yes", "probability": 0.68},
+    ],
+    "decision": {"threshold": 0.5, "predicted_positive": True},
+    "interpretation": {
+        "preset": "risk",
+        "band_id": "high",
+        "bands": [
+            {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+            {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+            {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+        ],
+    },
+    "model_descriptor": {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"},
+}
+
+
+# ---------------------------------------------------------------------------
 # Real-route select-path categorical domain validation: M32-03
 # ---------------------------------------------------------------------------
 
@@ -1121,7 +1155,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
             )
             api_main._inference_releases_root = lambda: Path(releases_root)
             api_main.execute_prediction = lambda *_args, **_kwargs: {
-                "prediction": {"label": "accepted", "confidence": 0.5}
+                "result": _S0109_VALID_BINARY_RESULT
             }
 
             accepted_response = api_main.validate_dataset_inference_payload(
@@ -1130,9 +1164,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
             )
 
             assert not hasattr(accepted_response, "status_code")
-            prediction = accepted_response["prediction"]
-            assert prediction["label"] == "accepted"
-            assert prediction["confidence"] == 0.5
+            assert accepted_response["result"] == _S0109_VALID_BINARY_RESULT
             _assert_no_internal_public_exposure(accepted_response)
 
         api_main.execute_prediction = (
@@ -1223,9 +1255,19 @@ def test_public_contract_endpoint_loads_promoted_contract_distinct_from_runtime_
 
             response = api_main.get_public_contract("example-dataset")
 
+            # Project Spec S0109: the release directory here lives under a
+            # temp releases_root distinct from api_main's default releases
+            # root (unmocked in this test), so the result-contract projection
+            # correctly cannot find a manifest and safely reports unavailable
+            # rather than inventing binary semantics -- the input contract
+            # stays available and independent regardless.
             assert response == {
                 "dataset_slug": "example-dataset",
                 "contract": _S0101_VALID_PUBLIC_CONTRACT,
+                "result_contract": {
+                    "status": "unavailable",
+                    "reason": "binary_result_semantics_unavailable",
+                },
             }
         finally:
             api_main.resolve_dataset = original_resolve_dataset
@@ -1293,6 +1335,145 @@ def test_public_contract_endpoint_rejects_reference_identical_to_runtime_contrac
         finally:
             api_main.resolve_dataset = original_resolve_dataset
             api_main.load_public_contract = original_load_public_contract
+
+
+def _s0109_write_release_with_bundle(release_dir: Path, bundle: dict) -> None:
+    release_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "release-manifest.v1",
+        "manifest_kind": "release_manifest",
+        "artifacts": [{"role": "predictive_bundle", "reference": "predictions/bundle.json"}],
+    }
+    (release_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    bundle_path = release_dir / "predictions" / "bundle.json"
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+
+_S0109_RESULT_SEMANTICS = {
+    "schema_version": "binary-result-semantics.v1",
+    "problem_type": "binary_classification",
+    "result_schema_version": "binary-classification-result.v1",
+    "primary_output": "positive_class_probability",
+    "positive_class": {"class_id": "Yes", "event_label": "Churn"},
+    "decision": {"threshold": 0.5},
+    "interpretation": {
+        "preset": "risk",
+        "bands": [
+            {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+            {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+            {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+        ],
+    },
+    "model_descriptor": {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"},
+}
+
+
+def test_result_contract_available_when_binary_result_semantics_present():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0109-available"
+        _s0109_write_release_with_bundle(
+            release_dir,
+            {"feature_order": ["age"], "result_semantics": _S0109_RESULT_SEMANTICS},
+        )
+
+        original_resolve_dataset = api_main.resolve_dataset
+        original_load_public_contract = api_main.load_public_contract
+        original_releases_root = api_main._inference_releases_root
+        try:
+            api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0109-available"
+            )
+            api_main.load_public_contract = lambda _active_release: {"features": []}
+            api_main._inference_releases_root = lambda: releases_root
+
+            response = api_main.get_public_contract("example-dataset")
+
+            assert response["result_contract"]["status"] == "available"
+            assert response["result_contract"]["semantics"] == _S0109_RESULT_SEMANTICS
+            _assert_no_internal_public_exposure(response)
+        finally:
+            api_main.resolve_dataset = original_resolve_dataset
+            api_main.load_public_contract = original_load_public_contract
+            api_main._inference_releases_root = original_releases_root
+
+
+def test_result_contract_unavailable_for_historical_bundle_without_result_semantics():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0109-historical"
+        _s0109_write_release_with_bundle(release_dir, {"feature_order": ["age"]})
+
+        original_resolve_dataset = api_main.resolve_dataset
+        original_load_public_contract = api_main.load_public_contract
+        original_releases_root = api_main._inference_releases_root
+        try:
+            api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0109-historical"
+            )
+            api_main.load_public_contract = lambda _active_release: {"features": []}
+            api_main._inference_releases_root = lambda: releases_root
+
+            response = api_main.get_public_contract("example-dataset")
+
+            assert response["result_contract"] == {
+                "status": "unavailable",
+                "reason": "binary_result_semantics_unavailable",
+            }
+            # Input contract remains available and independent.
+            assert response["contract"] == {"features": []}
+            _assert_no_internal_public_exposure(response)
+        finally:
+            api_main.resolve_dataset = original_resolve_dataset
+            api_main.load_public_contract = original_load_public_contract
+            api_main._inference_releases_root = original_releases_root
+
+
+def test_result_contract_projection_never_invokes_model_loader():
+    """GET /contract must never deserialize the model, even when a real
+    loader-strategy allowlist entry exists -- it only reads bundle JSON."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0109-no-model-load"
+        _s0109_write_release_with_bundle(
+            release_dir,
+            {
+                "feature_order": ["age"],
+                "runtime_execution": {"loader_strategy": "joblib_sklearn_predict", "serialization_format": "joblib"},
+                "model_artifact": {"path": "models/model.pkl", "sha256": "0" * 64},
+                "result_semantics": _S0109_RESULT_SEMANTICS,
+            },
+        )
+        # Deliberately no models/model.pkl file at all -- if the projection
+        # ever tried to load it, this would raise/fail rather than silently
+        # succeed, proving the model is never touched.
+
+        original_resolve_dataset = api_main.resolve_dataset
+        original_load_public_contract = api_main.load_public_contract
+        original_releases_root = api_main._inference_releases_root
+        original_loader = api_main._INFERENCE_LOADER_STRATEGIES["joblib_sklearn_predict"]
+        try:
+            api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0109-no-model-load"
+            )
+            api_main.load_public_contract = lambda _active_release: {"features": []}
+            api_main._inference_releases_root = lambda: releases_root
+
+            def _explode_if_invoked(*_args, **_kwargs):
+                raise AssertionError("result-contract projection must never invoke the model loader")
+
+            api_main._INFERENCE_LOADER_STRATEGIES["joblib_sklearn_predict"] = _explode_if_invoked
+
+            response = api_main.get_public_contract("example-dataset")
+
+            assert response["result_contract"]["status"] == "available"
+        finally:
+            api_main.resolve_dataset = original_resolve_dataset
+            api_main.load_public_contract = original_load_public_contract
+            api_main._inference_releases_root = original_releases_root
+            api_main._INFERENCE_LOADER_STRATEGIES["joblib_sklearn_predict"] = original_loader
 
 
 def test_public_contract_loader_rejects_reference_escaping_release_directory():

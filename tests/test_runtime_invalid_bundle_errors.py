@@ -290,6 +290,210 @@ def test_absolute_model_reference_rejected_without_internal_path_exposure(tmp_pa
         raise AssertionError("absolute model reference was accepted")
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0109: binary-classification execution edge cases. These use a
+# fake in-memory model double (not a real sklearn Pipeline -- that path is
+# already covered end-to-end in tests/test_local_inference_smoke.py) via
+# loader_strategies, to exercise malformed predict()/predict_proba() shapes,
+# class-identity mismatches, and probability validation deterministically.
+# ---------------------------------------------------------------------------
+
+import runtime.inference as _runtime_inference_module  # noqa: E402
+from runtime.inference import BundleExecutionError, execute_prediction  # noqa: E402
+
+
+class _FakeBinaryModel:
+    def __init__(self, classes, predict_return, predict_proba_return):
+        self.classes_ = classes
+        self._predict_return = predict_return
+        self._predict_proba_return = predict_proba_return
+
+    def predict(self, _row):
+        return self._predict_return
+
+    def predict_proba(self, _row):
+        return self._predict_proba_return
+
+
+def _s0109_binary_declaration(
+    *,
+    positive_class_id: str = "Yes",
+    class_labels: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "feature_order": ["age"],
+        "runtime_execution": {
+            "loader_strategy": "fake_binary_model",
+            "serialization_format": "fake",
+        },
+        "model_artifact": {"path": "models/model.json"},
+        "output_schema": {"class_labels": class_labels if class_labels is not None else ["No", "Yes"]},
+        "result_semantics": {
+            "schema_version": "binary-result-semantics.v1",
+            "problem_type": "binary_classification",
+            "result_schema_version": "binary-classification-result.v1",
+            "primary_output": "positive_class_probability",
+            "positive_class": {"class_id": positive_class_id, "event_label": "Churn"},
+            "decision": {"threshold": 0.5},
+            "interpretation": {
+                "preset": "risk",
+                "bands": [
+                    {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                    {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                    {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+                ],
+            },
+            "model_descriptor": {"model_family": "logistic_regression", "display_name": "Logistic Regression"},
+        },
+    }
+
+
+def _s0109_execute(tmp_path: Path, declaration: dict[str, Any], model: _FakeBinaryModel):
+    release_root = tmp_path / "release-s0109-edge"
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+    _write_json(release_root / "models" / "model.json", {"placeholder": True})
+
+    def _load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _load_fake_model(_path: Path, _declaration: Mapping[str, Any]):
+        return model
+
+    return execute_prediction(
+        {"path": str(release_root)},
+        {"age": 42},
+        manifest={"artifacts": [{"role": "predictive_bundle", "reference": "predictions/bundle.json"}]},
+        bundle_loader=_load_declaration,
+        loader_strategies={"fake_binary_model": _load_fake_model},
+        supported_serialization_formats=["fake"],
+    )
+
+
+def test_s0109_malformed_predict_output_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["Yes", "No"], predict_proba_return=[[0.4, 0.6]])
+    with pytest.raises(BundleExecutionError):
+        _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
+
+
+def test_s0109_malformed_predict_proba_output_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["Yes"], predict_proba_return=[[0.2, 0.3, 0.5]])
+    with pytest.raises(BundleExecutionError):
+        _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
+
+
+def test_s0109_positive_class_not_found_in_model_classes_rejected(tmp_path: Path) -> None:
+    # Model classes and bundle class_labels agree with each other as a set
+    # (["No", "Yes"]), but the approved positive_class.class_id names neither.
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[0.6, 0.4]])
+    with pytest.raises(BundleValidationError) as exc_info:
+        _s0109_execute(tmp_path, _s0109_binary_declaration(positive_class_id="Maybe"), model)
+    assert exc_info.value.code == "positive_class_not_found"
+
+
+def test_s0109_model_class_bundle_class_mismatch_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[0.6, 0.4]])
+    with pytest.raises(BundleValidationError) as exc_info:
+        _s0109_execute(tmp_path, _s0109_binary_declaration(class_labels=["Alpha", "Beta"]), model)
+    assert exc_info.value.code == "model_class_bundle_class_mismatch"
+
+
+def test_s0109_reversed_model_class_order_still_resolves_by_identity(tmp_path: Path) -> None:
+    """classes_ == ['Yes', 'No'] -- positive class 'Yes' is at index 0, not the
+    commonly-assumed index 1 -- must still resolve correctly by identity."""
+
+    model = _FakeBinaryModel(["Yes", "No"], predict_return=["Yes"], predict_proba_return=[[0.9, 0.1]])
+    result = _s0109_execute(tmp_path, _s0109_binary_declaration(positive_class_id="Yes"), model)["result"]
+    assert result["positive_class_probability"] == 0.9
+    assert result["predicted_class"]["class_id"] == "Yes"
+
+
+def test_s0109_nan_probability_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[float("nan"), 0.5]])
+    with pytest.raises(BundleExecutionError):
+        _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
+
+
+def test_s0109_infinite_probability_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[float("inf"), 0.5]])
+    with pytest.raises(BundleExecutionError):
+        _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
+
+
+def test_s0109_out_of_range_probability_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[1.5, -0.5]])
+    with pytest.raises(BundleExecutionError):
+        _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
+
+
+def test_s0109_probability_sum_mismatch_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[0.5, 0.6]])
+    with pytest.raises(BundleExecutionError):
+        _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
+
+
+def test_s0109_predicted_raw_class_outside_governed_set_rejected(tmp_path: Path) -> None:
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["Unknown"], predict_proba_return=[[0.4, 0.6]])
+    with pytest.raises(BundleExecutionError):
+        _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
+
+
+def test_s0109_band_boundaries_every_edge(tmp_path: Path) -> None:
+    bands = _runtime_inference_module._validate_bands(
+        [
+            {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+            {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+            {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+        ]
+    )
+    assert _runtime_inference_module._resolve_band(0.0, bands) == "low"
+    assert _runtime_inference_module._resolve_band(0.349999, bands) == "low"
+    assert _runtime_inference_module._resolve_band(0.35, bands) == "medium"
+    assert _runtime_inference_module._resolve_band(0.649999, bands) == "medium"
+    assert _runtime_inference_module._resolve_band(0.65, bands) == "high"
+    assert _runtime_inference_module._resolve_band(0.999999, bands) == "high"
+    assert _runtime_inference_module._resolve_band(1.0, bands) == "high"
+
+
+def test_s0109_band_resolution_zero_matches_fails_safely() -> None:
+    gapped_bands = [
+        {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.3},
+        {"band_id": "medium", "lower_bound": 0.4, "upper_bound": 0.6},
+        {"band_id": "high", "lower_bound": 0.6, "upper_bound": 1.0},
+    ]
+    with pytest.raises(BundleValidationError) as exc_info:
+        _runtime_inference_module._resolve_band(0.35, gapped_bands)
+    assert exc_info.value.code == "invalid_band_resolution"
+
+
+def test_s0109_band_resolution_multiple_matches_fails_safely() -> None:
+    overlapping_bands = [
+        {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.5},
+        {"band_id": "medium", "lower_bound": 0.3, "upper_bound": 0.7},
+        {"band_id": "high", "lower_bound": 0.7, "upper_bound": 1.0},
+    ]
+    with pytest.raises(BundleValidationError) as exc_info:
+        _runtime_inference_module._resolve_band(0.4, overlapping_bands)
+    assert exc_info.value.code == "invalid_band_resolution"
+
+
+def test_s0109_invalid_threshold_rejected(tmp_path: Path) -> None:
+    declaration = _s0109_binary_declaration()
+    declaration["result_semantics"]["decision"]["threshold"] = 1.5
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[0.6, 0.4]])
+    with pytest.raises(BundleValidationError) as exc_info:
+        _s0109_execute(tmp_path, declaration, model)
+    assert exc_info.value.code == "invalid_decision_threshold"
+
+
+def test_s0109_missing_positive_class_block_rejected(tmp_path: Path) -> None:
+    declaration = _s0109_binary_declaration()
+    del declaration["result_semantics"]["positive_class"]
+    model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[0.6, 0.4]])
+    with pytest.raises(BundleValidationError) as exc_info:
+        _s0109_execute(tmp_path, declaration, model)
+    assert exc_info.value.code == "missing_positive_class"
+
+
 # Generation-time invalid-input errors from pipeline.generate_inference_bundle,
 # distinct from the runtime load-time errors above. These synthetic Telco-shaped
 # governed fixtures cover the negative paths required before real Telco bundle

@@ -35,7 +35,12 @@ from public_errors import (  # noqa: E402
 from runtime.inference import (  # noqa: E402
     BundleUnavailableError,
     InferenceRuntimeError,
+    JOBLIB_SKLEARN_PREDICT_STRATEGY,
     execute_prediction,
+    load_inference_bundle,
+    load_joblib_sklearn_model,
+    project_result_contract,
+    validate_binary_classification_result,
 )
 from public_contract_loader import (  # noqa: E402
     PublicContractUnavailableError,
@@ -345,6 +350,24 @@ def _load_bundle(bundle_path: Path):
     raise BundleUnavailableError("Inference bundle could not be loaded.")
 
 
+# S0109: the only production loader strategy allowlist. Loader implementation
+# lives in runtime/inference.py; this is the single place the allowlist
+# selection is made, per the spec's "keep the public allowlist selection in
+# api/main.py, do not introduce a plugin registry" requirement.
+_INFERENCE_LOADER_STRATEGIES = {JOBLIB_SKLEARN_PREDICT_STRATEGY: load_joblib_sklearn_model}
+_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS = ("joblib",)
+
+
+def _read_active_release_manifest(active_release: str) -> tuple[Path, dict] | None:
+    release_dir = _inference_releases_root() / active_release
+    manifest_path = release_dir / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return release_dir, manifest
+
+
 _PAYLOAD_SIZE_LIMIT = 1_048_576  # 1 MB
 
 
@@ -469,7 +492,36 @@ def get_public_contract(dataset_slug: str):
     return {
         "dataset_slug": resolved.dataset_slug,
         "contract": public_contract,
+        "result_contract": _project_result_contract_safely(resolved.active_release),
     }
+
+
+def _project_result_contract_safely(active_release: str) -> dict:
+    """Read-only result-contract projection: never loads the model or executes inference."""
+
+    unavailable = {"status": "unavailable", "reason": "binary_result_semantics_unavailable"}
+
+    resolved_manifest = _read_active_release_manifest(active_release)
+    if resolved_manifest is None:
+        return unavailable
+    release_dir, manifest = resolved_manifest
+
+    try:
+        loaded = load_inference_bundle(
+            {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
+            manifest=manifest,
+            bundle_loader=_load_bundle,
+        )
+    except InferenceRuntimeError:
+        return unavailable
+    except Exception:
+        return unavailable
+
+    declaration = loaded.bundle if isinstance(loaded.bundle, dict) else manifest
+    try:
+        return project_result_contract(declaration)
+    except Exception:
+        return unavailable
 
 
 @app.post("/datasets/{dataset_slug}/inference")
@@ -507,41 +559,37 @@ def validate_dataset_inference_payload(
     if validation_failures:
         return validation_error_response(validation_failures)
 
-    release_dir = _inference_releases_root() / resolved.active_release
-    manifest_path = release_dir / "manifest.json"
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    resolved_manifest = _read_active_release_manifest(resolved.active_release)
+    if resolved_manifest is None:
         return public_error_response(INFERENCE_FAILURE)
+    release_dir, manifest = resolved_manifest
 
     try:
-        result = execute_prediction(
+        prediction_result = execute_prediction(
             {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
             dict(payload),
             manifest=manifest,
             bundle_loader=_load_bundle,
+            loader_strategies=_INFERENCE_LOADER_STRATEGIES,
+            supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
         )
     except InferenceRuntimeError:
         return public_error_response(INFERENCE_FAILURE)
     except Exception:
         return public_error_response(INFERENCE_FAILURE)
 
-    raw = result.get("prediction") if isinstance(result, dict) else None
-    if isinstance(raw, dict):
-        label = raw.get("label")
-        confidence = raw.get("confidence")
-    elif raw is not None:
-        label = getattr(raw, "label", None)
-        confidence = getattr(raw, "confidence", None)
-    else:
-        label = confidence = None
+    result = prediction_result.get("result") if isinstance(prediction_result, dict) else None
+    if not isinstance(result, dict):
+        return public_error_response(INFERENCE_FAILURE)
 
-    if not isinstance(label, str) or not isinstance(confidence, (int, float)):
+    try:
+        validate_binary_classification_result(result)
+    except InferenceRuntimeError:
         return public_error_response(INFERENCE_FAILURE)
 
     return {
         "dataset_slug": resolved.dataset_slug,
-        "prediction": {"label": label, "confidence": float(confidence)},
+        "result": result,
     }
 
 

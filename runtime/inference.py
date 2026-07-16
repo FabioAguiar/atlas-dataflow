@@ -9,9 +9,12 @@ this runtime boundary.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+
+import jsonschema
 
 
 BundleLoader = Callable[[Path], Any]
@@ -35,6 +38,121 @@ _RELEASE_ROOT_KEYS = (
     "path",
     "root",
 )
+
+# S0109: the single explicit, allowlisted production loader strategy name.
+# The allowlist itself (which strategy names are actually accepted) is
+# selected by the caller (api/main.py); this module only implements the
+# strategy's loading behavior.
+JOBLIB_SKLEARN_PREDICT_STRATEGY = "joblib_sklearn_predict"
+
+# Strict tolerance for "two probabilities sum to 1.0".
+_PROBABILITY_SUM_TOLERANCE = 1e-6
+
+_RISK_BAND_IDS = ("low", "medium", "high")
+
+# In-memory JSON Schema for binary-classification-result.v1. Deliberately not
+# persisted as contracts/binary-classification-result.schema.json: that path
+# is a candidate_edit_paths entry only, never promoted into this request's
+# repository_context.allowed_edit_paths, so creating it would exceed this
+# implementation's authorized edit scope. This inline schema still gives real,
+# strict, versioned validation via jsonschema.validate before any result is
+# serialized -- see implementation-evidence.json warnings for the same note.
+_BINARY_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
+    "$id": "urn:atlas-dataflow:binary-classification-result.v1",
+    "title": "binary-classification-result.v1",
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "schema_version",
+        "problem_type",
+        "predicted_class",
+        "positive_class",
+        "positive_class_probability",
+        "class_probabilities",
+        "decision",
+        "interpretation",
+        "model_descriptor",
+    ],
+    "properties": {
+        "schema_version": {"const": "binary-classification-result.v1"},
+        "problem_type": {"const": "binary_classification"},
+        "predicted_class": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["class_id"],
+            "properties": {"class_id": {"type": "string", "minLength": 1}},
+        },
+        "positive_class": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["class_id", "event_label"],
+            "properties": {
+                "class_id": {"type": "string", "minLength": 1},
+                "event_label": {"type": "string", "minLength": 1},
+            },
+        },
+        "positive_class_probability": {"type": "number", "minimum": 0, "maximum": 1},
+        "class_probabilities": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["class_id", "probability"],
+                "properties": {
+                    "class_id": {"type": "string", "minLength": 1},
+                    "probability": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+            },
+        },
+        "decision": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["threshold", "predicted_positive"],
+            "properties": {
+                "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+                "predicted_positive": {"type": "boolean"},
+            },
+        },
+        "interpretation": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["preset", "band_id", "bands"],
+            "properties": {
+                "preset": {"const": "risk"},
+                "band_id": {"type": "string", "enum": list(_RISK_BAND_IDS)},
+                "bands": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["band_id", "lower_bound", "upper_bound"],
+                        "properties": {
+                            "band_id": {"type": "string", "enum": list(_RISK_BAND_IDS)},
+                            "lower_bound": {"type": "number", "minimum": 0, "maximum": 1},
+                            "upper_bound": {"type": "number", "minimum": 0, "maximum": 1},
+                        },
+                    },
+                },
+            },
+        },
+        "model_descriptor": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["model_family", "display_name"],
+            "properties": {
+                "model_family": {
+                    "type": "string",
+                    "enum": ["logistic_regression", "gradient_boosting", "random_forest"],
+                },
+                "display_name": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
 
 
 class InferenceRuntimeError(Exception):
@@ -198,21 +316,42 @@ def execute_prediction(
     *,
     manifest: Mapping[str, Any] | None = None,
     bundle_loader: BundleLoader,
+    loader_strategies: Mapping[str, LoaderStrategy] | None = None,
+    supported_serialization_formats: Sequence[str] | None = None,
+    compatibility_status: Mapping[str, Any] | None = None,
     prediction_executor: PredictionExecutor | None = None,
 ) -> dict[str, Any]:
     """Load the active release bundle and execute prediction.
 
-    Returns the minimal structured prediction envelope currently confirmed for
-    the runtime boundary. Public API serialization can wrap or adapt this shape
-    when the API contract is finalized.
+    When ``loader_strategies`` is supplied and no test-only
+    ``prediction_executor`` override is given, this is the real production
+    path: the bundle-declared loader strategy is used to deserialize the
+    release-local model, and a full S0108/S0109 binary-classification result
+    is resolved and returned under ``{"result": ...}``.
+
+    A caller-supplied ``prediction_executor`` always takes precedence and
+    preserves the original generic/legacy envelope (``{"prediction": ...}``),
+    regardless of whether ``loader_strategies`` was also supplied -- this
+    keeps every existing test-only injected-executor call site working
+    unchanged.
+
+    With neither ``loader_strategies`` nor ``prediction_executor``, the
+    original generic bundle-execution behavior (including the historical
+    JSON-descriptor fallback) is unchanged.
     """
 
     adapter = load_runtime_bundle_adapter(
         active_release,
         manifest=manifest,
         bundle_loader=bundle_loader,
+        loader_strategies=loader_strategies,
+        supported_serialization_formats=supported_serialization_formats,
         prediction_executor=prediction_executor,
+        compatibility_status=compatibility_status,
     )
+
+    if loader_strategies is not None and prediction_executor is None:
+        return {"result": _execute_binary_prediction(adapter, validated_payload)}
 
     try:
         prediction = adapter.predict(validated_payload)
@@ -222,6 +361,184 @@ def execute_prediction(
         raise BundleExecutionError("Prediction execution failed.") from exc
 
     return {"prediction": prediction}
+
+
+def validate_binary_classification_result(result: Mapping[str, Any]) -> None:
+    """Strictly validate a serialized result against binary-classification-result.v1.
+
+    Exposed so API-layer callers can perform a defense-in-depth re-validation
+    pass on the exact same in-memory schema used internally, without
+    duplicating the schema definition.
+    """
+
+    try:
+        jsonschema.validate(result, _BINARY_CLASSIFICATION_RESULT_SCHEMA)
+    except jsonschema.ValidationError as exc:
+        raise BundleValidationError(
+            "invalid_binary_classification_result",
+            "Binary classification result failed schema validation.",
+            field="result",
+        ) from exc
+
+
+def load_joblib_sklearn_model(model_path: Path, declaration: Mapping[str, Any]) -> Any:
+    """The single explicit ``joblib_sklearn_predict`` production loader strategy.
+
+    Loads only the already-resolved, release-local, hash-verified model path
+    via the repository-supported joblib interface. Never resolves a path from
+    model content, never imports arbitrary modules declared by the bundle,
+    never calls ``pickle.loads()`` on network/request data.
+    """
+
+    runtime_execution = declaration.get("runtime_execution")
+    serialization_format = (
+        runtime_execution.get("serialization_format") if isinstance(runtime_execution, Mapping) else None
+    )
+    if serialization_format != "joblib":
+        raise BundleUnavailableError("Inference model serialization format is unsupported.")
+
+    import joblib  # local import: keep this dependency scoped to the loader strategy
+
+    try:
+        return joblib.load(model_path)
+    except InferenceRuntimeError:
+        raise
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise BundleUnavailableError("Inference model artifact could not be loaded.") from exc
+
+
+def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """Read-only result-contract projection for GET /datasets/{slug}/contract.
+
+    Never deserializes the model and never executes inference -- only
+    validates already-loaded bundle JSON metadata. Returns either
+    ``{"status": "available", "semantics": {...}}`` or
+    ``{"status": "unavailable", "reason": "binary_result_semantics_unavailable"}``.
+    Historical/incompatible bundles never receive invented defaults.
+    """
+
+    try:
+        semantics = _validate_result_semantics(declaration)
+    except BundleValidationError:
+        return {"status": "unavailable", "reason": "binary_result_semantics_unavailable"}
+
+    return {
+        "status": "available",
+        "semantics": {
+            "schema_version": semantics["schema_version"],
+            "problem_type": semantics["problem_type"],
+            "result_schema_version": semantics["result_schema_version"],
+            "primary_output": semantics["primary_output"],
+            "positive_class": dict(semantics["positive_class"]),
+            "decision": dict(semantics["decision"]),
+            "interpretation": {
+                "preset": semantics["interpretation"]["preset"],
+                "bands": [dict(band) for band in semantics["interpretation"]["bands"]],
+            },
+            "model_descriptor": dict(semantics["model_descriptor"]),
+        },
+    }
+
+
+def _execute_binary_prediction(
+    adapter: RuntimeBundleAdapter,
+    validated_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    semantics = _validate_result_semantics(adapter.declaration)
+    _validate_bundle_class_labels(adapter.metadata)
+
+    row = _build_ordered_row(adapter.metadata.feature_order, validated_payload)
+
+    model = adapter.bundle
+    predict = getattr(model, "predict", None)
+    predict_proba = getattr(model, "predict_proba", None)
+    if not callable(predict) or not callable(predict_proba):
+        raise BundleExecutionError("Inference model does not expose a binary prediction interface.")
+
+    try:
+        raw_prediction = predict(row)
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise BundleExecutionError("Prediction execution failed.") from exc
+    predicted_values = _as_flat_list(raw_prediction)
+    if len(predicted_values) != 1:
+        raise BundleExecutionError("Prediction execution failed.")
+
+    try:
+        raw_proba = predict_proba(row)
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise BundleExecutionError("Prediction execution failed.") from exc
+    proba_rows = _as_matrix(raw_proba)
+    if len(proba_rows) != 1 or len(proba_rows[0]) != 2:
+        raise BundleExecutionError("Prediction execution failed.")
+    proba_row = proba_rows[0]
+
+    model_classes = _resolve_model_classes(model)
+    unique_model_classes = list(dict.fromkeys(_normalize_class_id(c) for c in model_classes))
+    if len(unique_model_classes) != 2:
+        raise BundleExecutionError("Inference model does not expose exactly two classes.")
+
+    if _normalize_class_id(predicted_values[0]) not in unique_model_classes:
+        raise BundleExecutionError("Prediction execution failed.")
+
+    positive_class_id = semantics["positive_class"]["class_id"]
+    positive_normalized = _normalize_class_id(positive_class_id)
+
+    bundle_class_labels = list(adapter.metadata.output_schema.get("class_labels") or ())
+    bundle_normalized = list(dict.fromkeys(_normalize_class_id(c) for c in bundle_class_labels))
+    if set(bundle_normalized) != set(unique_model_classes):
+        raise BundleValidationError(
+            "model_class_bundle_class_mismatch",
+            "Inference model classes are inconsistent with bundle class labels.",
+            field="output_schema.class_labels",
+        )
+
+    if positive_normalized not in unique_model_classes:
+        raise BundleValidationError(
+            "positive_class_not_found",
+            "Approved positive class was not found in the model's actual classes.",
+            field="result_semantics.positive_class.class_id",
+        )
+
+    positive_index = [_normalize_class_id(c) for c in model_classes].index(positive_normalized)
+    other_index = 1 - positive_index
+    other_class_id = model_classes[other_index]
+
+    class_probabilities = _validate_probabilities(proba_row)
+    positive_class_probability = class_probabilities[positive_index]
+
+    threshold = semantics["decision"]["threshold"]
+    predicted_positive = positive_class_probability >= threshold
+    predicted_class_id = positive_class_id if predicted_positive else str(other_class_id)
+
+    band_id = _resolve_band(positive_class_probability, semantics["interpretation"]["bands"])
+
+    result: dict[str, Any] = {
+        "schema_version": "binary-classification-result.v1",
+        "problem_type": "binary_classification",
+        "predicted_class": {"class_id": predicted_class_id},
+        "positive_class": {
+            "class_id": positive_class_id,
+            "event_label": semantics["positive_class"]["event_label"],
+        },
+        "positive_class_probability": positive_class_probability,
+        "class_probabilities": [
+            {"class_id": str(model_classes[0]), "probability": class_probabilities[0]},
+            {"class_id": str(model_classes[1]), "probability": class_probabilities[1]},
+        ],
+        "decision": {
+            "threshold": threshold,
+            "predicted_positive": bool(predicted_positive),
+        },
+        "interpretation": {
+            "preset": semantics["interpretation"]["preset"],
+            "band_id": band_id,
+            "bands": [dict(band) for band in semantics["interpretation"]["bands"]],
+        },
+        "model_descriptor": dict(semantics["model_descriptor"]),
+    }
+
+    validate_binary_classification_result(result)
+    return result
 
 
 def _require_compatible_status(compatibility_status: Mapping[str, Any] | None) -> None:
@@ -593,3 +910,306 @@ def _is_string_sequence(value: Any) -> bool:
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and all(
         isinstance(item, str) for item in value
     )
+
+
+def _validate_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """Strictly validate the S0108 result_semantics block. Never invents defaults."""
+
+    semantics = declaration.get("result_semantics")
+    if not isinstance(semantics, Mapping):
+        raise BundleValidationError(
+            "missing_result_semantics",
+            "Inference bundle binary result semantics are not defined.",
+            field="result_semantics",
+        )
+
+    if semantics.get("schema_version") != "binary-result-semantics.v1":
+        raise BundleValidationError(
+            "invalid_result_semantics_schema_version",
+            "Inference bundle result semantics schema version is unsupported.",
+            field="result_semantics.schema_version",
+        )
+    if semantics.get("problem_type") != "binary_classification":
+        raise BundleValidationError(
+            "invalid_result_semantics_problem_type",
+            "Inference bundle problem type is not binary classification.",
+            field="result_semantics.problem_type",
+        )
+    if semantics.get("result_schema_version") != "binary-classification-result.v1":
+        raise BundleValidationError(
+            "invalid_result_semantics_result_schema_version",
+            "Inference bundle result schema version is unsupported.",
+            field="result_semantics.result_schema_version",
+        )
+    if semantics.get("primary_output") != "positive_class_probability":
+        raise BundleValidationError(
+            "invalid_result_semantics_primary_output",
+            "Inference bundle primary output is not positive_class_probability.",
+            field="result_semantics.primary_output",
+        )
+
+    positive_class = semantics.get("positive_class")
+    if not isinstance(positive_class, Mapping):
+        raise BundleValidationError(
+            "missing_positive_class",
+            "Inference bundle positive class is not defined.",
+            field="result_semantics.positive_class",
+        )
+    class_id = positive_class.get("class_id")
+    event_label = positive_class.get("event_label")
+    if not isinstance(class_id, str) or not class_id.strip():
+        raise BundleValidationError(
+            "invalid_positive_class_id",
+            "Inference bundle positive class id is not defined.",
+            field="result_semantics.positive_class.class_id",
+        )
+    if not isinstance(event_label, str) or not event_label.strip():
+        raise BundleValidationError(
+            "invalid_positive_class_event_label",
+            "Inference bundle positive class event label is not defined.",
+            field="result_semantics.positive_class.event_label",
+        )
+
+    decision = semantics.get("decision")
+    threshold = decision.get("threshold") if isinstance(decision, Mapping) else None
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or not math.isfinite(threshold)
+        or not 0.0 <= threshold <= 1.0
+    ):
+        raise BundleValidationError(
+            "invalid_decision_threshold",
+            "Inference bundle decision threshold is invalid.",
+            field="result_semantics.decision.threshold",
+        )
+
+    interpretation = semantics.get("interpretation")
+    if not isinstance(interpretation, Mapping) or interpretation.get("preset") != "risk":
+        raise BundleValidationError(
+            "invalid_interpretation_preset",
+            "Inference bundle interpretation preset is invalid.",
+            field="result_semantics.interpretation.preset",
+        )
+    bands = _validate_bands(interpretation.get("bands"))
+
+    model_descriptor = semantics.get("model_descriptor")
+    if not isinstance(model_descriptor, Mapping):
+        raise BundleValidationError(
+            "missing_model_descriptor",
+            "Inference bundle model descriptor is not defined.",
+            field="result_semantics.model_descriptor",
+        )
+    model_family = model_descriptor.get("model_family")
+    display_name = model_descriptor.get("display_name")
+    if model_family not in ("logistic_regression", "gradient_boosting", "random_forest"):
+        raise BundleValidationError(
+            "invalid_model_family",
+            "Inference bundle model family is invalid.",
+            field="result_semantics.model_descriptor.model_family",
+        )
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise BundleValidationError(
+            "invalid_model_display_name",
+            "Inference bundle model display name is not defined.",
+            field="result_semantics.model_descriptor.display_name",
+        )
+
+    return {
+        "schema_version": semantics["schema_version"],
+        "problem_type": semantics["problem_type"],
+        "result_schema_version": semantics["result_schema_version"],
+        "primary_output": semantics["primary_output"],
+        "positive_class": {"class_id": class_id, "event_label": event_label},
+        "decision": {"threshold": float(threshold)},
+        "interpretation": {"preset": "risk", "bands": bands},
+        "model_descriptor": {"model_family": model_family, "display_name": display_name},
+    }
+
+
+def _validate_bands(bands: Any) -> list[dict[str, Any]]:
+    if not isinstance(bands, Sequence) or isinstance(bands, (str, bytes)) or len(bands) != 3:
+        raise BundleValidationError(
+            "invalid_interpretation_bands",
+            "Inference bundle interpretation bands are invalid.",
+            field="result_semantics.interpretation.bands",
+        )
+
+    parsed: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for band in bands:
+        if not isinstance(band, Mapping):
+            raise BundleValidationError(
+                "invalid_interpretation_bands",
+                "Inference bundle interpretation bands are invalid.",
+                field="result_semantics.interpretation.bands",
+            )
+        band_id = band.get("band_id")
+        lower_bound = band.get("lower_bound")
+        upper_bound = band.get("upper_bound")
+        if band_id not in _RISK_BAND_IDS or band_id in seen_ids:
+            raise BundleValidationError(
+                "invalid_interpretation_bands",
+                "Inference bundle interpretation bands are invalid.",
+                field="result_semantics.interpretation.bands",
+            )
+        for bound in (lower_bound, upper_bound):
+            if (
+                not isinstance(bound, (int, float))
+                or isinstance(bound, bool)
+                or not math.isfinite(bound)
+                or not 0.0 <= bound <= 1.0
+            ):
+                raise BundleValidationError(
+                    "invalid_interpretation_bands",
+                    "Inference bundle interpretation bands are invalid.",
+                    field="result_semantics.interpretation.bands",
+                )
+        if lower_bound >= upper_bound:
+            raise BundleValidationError(
+                "invalid_interpretation_bands",
+                "Inference bundle interpretation bands are invalid.",
+                field="result_semantics.interpretation.bands",
+            )
+        seen_ids.add(band_id)
+        parsed.append({"band_id": band_id, "lower_bound": float(lower_bound), "upper_bound": float(upper_bound)})
+
+    parsed.sort(key=lambda b: b["lower_bound"])
+    if [b["band_id"] for b in parsed] != list(_RISK_BAND_IDS):
+        raise BundleValidationError(
+            "invalid_interpretation_bands",
+            "Inference bundle interpretation bands are invalid.",
+            field="result_semantics.interpretation.bands",
+        )
+    if parsed[0]["lower_bound"] != 0.0 or parsed[-1]["upper_bound"] != 1.0:
+        raise BundleValidationError(
+            "invalid_interpretation_bands",
+            "Inference bundle interpretation bands are invalid.",
+            field="result_semantics.interpretation.bands",
+        )
+    for previous, current in zip(parsed, parsed[1:]):
+        if previous["upper_bound"] != current["lower_bound"]:
+            raise BundleValidationError(
+                "invalid_interpretation_bands",
+                "Inference bundle interpretation bands are invalid.",
+                field="result_semantics.interpretation.bands",
+            )
+
+    return parsed
+
+
+def _validate_bundle_class_labels(metadata: RuntimeBundleMetadata) -> None:
+    class_labels = metadata.output_schema.get("class_labels")
+    if (
+        not isinstance(class_labels, Sequence)
+        or isinstance(class_labels, (str, bytes))
+        or len(set(_normalize_class_id(c) for c in class_labels)) != 2
+    ):
+        raise BundleValidationError(
+            "invalid_output_schema_class_labels",
+            "Inference bundle output schema class labels are invalid.",
+            field="output_schema.class_labels",
+        )
+
+
+def _build_ordered_row(feature_order: Sequence[str], validated_payload: Mapping[str, Any]) -> Any:
+    if not feature_order:
+        raise BundleValidationError(
+            "missing_feature_order",
+            "Inference bundle feature order is not defined.",
+            field="feature_order",
+        )
+    if len(set(feature_order)) != len(feature_order):
+        raise BundleValidationError(
+            "duplicate_feature_order_entry",
+            "Inference bundle feature order contains a duplicate entry.",
+            field="feature_order",
+        )
+
+    row: dict[str, Any] = {}
+    for feature_name in feature_order:
+        if feature_name not in validated_payload:
+            raise BundleValidationError(
+                "missing_feature_value",
+                "Validated payload is missing a required feature-order value.",
+                field=f"feature_order.{feature_name}",
+            )
+        row[feature_name] = validated_payload[feature_name]
+
+    import pandas as pd  # local import: keep this dependency scoped to the binary flow
+
+    return pd.DataFrame([row], columns=list(feature_order))
+
+
+def _resolve_model_classes(model: Any) -> list[Any]:
+    classes = getattr(model, "classes_", None)
+    if classes is None:
+        steps = getattr(model, "steps", None)
+        if isinstance(steps, Sequence) and steps:
+            final_estimator = steps[-1][1]
+            classes = getattr(final_estimator, "classes_", None)
+    if classes is None:
+        raise BundleExecutionError("Inference model does not expose class labels.")
+    return list(classes)
+
+
+def _normalize_class_id(value: Any) -> str:
+    return str(value).strip().lower()
+
+
+def _as_flat_list(value: Any) -> list[Any]:
+    try:
+        return list(value)
+    except TypeError:
+        return [value]
+
+
+def _as_matrix(value: Any) -> list[list[Any]]:
+    try:
+        rows = list(value)
+    except TypeError:
+        raise BundleExecutionError("Prediction execution failed.")
+    matrix: list[list[Any]] = []
+    for row in rows:
+        try:
+            matrix.append(list(row))
+        except TypeError:
+            raise BundleExecutionError("Prediction execution failed.")
+    return matrix
+
+
+def _validate_probabilities(proba_row: Sequence[Any]) -> list[float]:
+    if len(proba_row) != 2:
+        raise BundleExecutionError("Prediction execution failed.")
+
+    values: list[float] = []
+    for value in proba_row:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise BundleExecutionError("Prediction execution failed.")
+        numeric = float(value)
+        if not math.isfinite(numeric) or not 0.0 <= numeric <= 1.0:
+            raise BundleExecutionError("Prediction execution failed.")
+        values.append(numeric)
+
+    if abs(sum(values) - 1.0) > _PROBABILITY_SUM_TOLERANCE:
+        raise BundleExecutionError("Prediction execution failed.")
+
+    return values
+
+
+def _resolve_band(probability: float, bands: Sequence[Mapping[str, Any]]) -> str:
+    matches = [
+        band["band_id"]
+        for band in bands
+        if (
+            band["lower_bound"] <= probability < band["upper_bound"]
+            or (band["upper_bound"] == 1.0 and probability == 1.0)
+        )
+    ]
+    if len(matches) != 1:
+        raise BundleValidationError(
+            "invalid_band_resolution",
+            "Inference bundle interpretation bands did not resolve to exactly one band.",
+            field="result_semantics.interpretation.bands",
+        )
+    return matches[0]

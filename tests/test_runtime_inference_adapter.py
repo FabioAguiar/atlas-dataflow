@@ -11,6 +11,7 @@ from runtime import (  # noqa: E402
     BundleUnavailableError,
     load_runtime_bundle_adapter,
 )
+from runtime.inference import JOBLIB_SKLEARN_PREDICT_STRATEGY, load_joblib_sklearn_model  # noqa: E402
 
 
 def _write_json(path: Path, data: Mapping[str, Any]) -> None:
@@ -216,3 +217,120 @@ def test_runtime_bundle_adapter_executes_public_descriptor_bundle(
         "label": "client subscribes to a term deposit",
         "confidence": 0.5,
     }
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0109: joblib_sklearn_predict loader strategy allowlist.
+# ---------------------------------------------------------------------------
+
+
+def test_joblib_sklearn_predict_loader_accepts_joblib_serialization_format(tmp_path: Path) -> None:
+    import joblib
+
+    model_path = tmp_path / "model.pkl"
+    joblib.dump({"marker": "a-real-joblib-object"}, model_path)
+
+    loaded = load_joblib_sklearn_model(
+        model_path,
+        {"runtime_execution": {"serialization_format": "joblib"}},
+    )
+    assert loaded == {"marker": "a-real-joblib-object"}
+
+
+def test_joblib_sklearn_predict_loader_rejects_unsupported_serialization_format(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.pkl"
+    model_path.write_bytes(b"irrelevant")
+
+    try:
+        load_joblib_sklearn_model(
+            model_path,
+            {"runtime_execution": {"serialization_format": "pickle"}},
+        )
+    except BundleUnavailableError as exc:
+        assert str(exc) == "Inference model serialization format is unsupported."
+    else:
+        raise AssertionError("unsupported serialization format was accepted")
+
+
+def test_joblib_sklearn_predict_loader_maps_corrupt_file_to_sanitized_error(tmp_path: Path) -> None:
+    model_path = tmp_path / "model.pkl"
+    model_path.write_bytes(b"not-a-real-joblib-pickle-stream")
+
+    try:
+        load_joblib_sklearn_model(
+            model_path,
+            {"runtime_execution": {"serialization_format": "joblib"}},
+        )
+    except BundleUnavailableError as exc:
+        message = str(exc)
+        assert message == "Inference model artifact could not be loaded."
+        assert str(tmp_path) not in message
+        assert "Traceback" not in message
+    else:
+        raise AssertionError("corrupt joblib file was accepted")
+
+
+def test_runtime_bundle_adapter_loads_via_joblib_sklearn_predict_allowlist(tmp_path: Path) -> None:
+    import joblib
+
+    release_root = tmp_path / "release"
+    (release_root / "models").mkdir(parents=True)
+    joblib.dump({"marker": "real-model"}, release_root / "models" / "model.pkl")
+    declaration = {
+        "feature_order": ["age"],
+        "runtime_execution": {
+            "loader_strategy": JOBLIB_SKLEARN_PREDICT_STRATEGY,
+            "serialization_format": "joblib",
+        },
+        "model_artifact": {"path": "models/model.pkl"},
+        "output_schema": {"class_labels": ["No", "Yes"]},
+    }
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+
+    def load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    adapter = load_runtime_bundle_adapter(
+        {
+            "release_root": str(release_root),
+            "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+        },
+        bundle_loader=load_declaration,
+        loader_strategies={JOBLIB_SKLEARN_PREDICT_STRATEGY: load_joblib_sklearn_model},
+        supported_serialization_formats=["joblib"],
+    )
+
+    assert adapter.bundle == {"marker": "real-model"}
+    assert adapter.model_artifact_path == release_root / "models" / "model.pkl"
+
+
+def test_runtime_bundle_adapter_rejects_arbitrary_loader_strategy_name(tmp_path: Path) -> None:
+    release_root = tmp_path / "release"
+    declaration = {
+        "feature_order": ["age"],
+        "runtime_execution": {
+            "loader_strategy": "arbitrary_dynamic_import_strategy",
+            "serialization_format": "joblib",
+        },
+        "model_artifact": {"path": "models/model.pkl"},
+        "output_schema": {"class_labels": ["No", "Yes"]},
+    }
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+
+    def load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    try:
+        load_runtime_bundle_adapter(
+            {
+                "release_root": str(release_root),
+                "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+            },
+            bundle_loader=load_declaration,
+            loader_strategies={JOBLIB_SKLEARN_PREDICT_STRATEGY: load_joblib_sklearn_model},
+            supported_serialization_formats=["joblib"],
+        )
+    except BundleUnavailableError as exc:
+        assert str(exc) == "Inference bundle loader strategy is unsupported."
+    else:
+        raise AssertionError("arbitrary loader strategy name was accepted")

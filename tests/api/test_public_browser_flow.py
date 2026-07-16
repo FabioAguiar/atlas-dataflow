@@ -8,6 +8,7 @@ through M27-04 test files as edit targets.
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,29 @@ sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
 from registry.list import ListedDataset, list_datasets  # noqa: E402
+
+_S0109_VALID_BINARY_RESULT = {
+    "schema_version": "binary-classification-result.v1",
+    "problem_type": "binary_classification",
+    "predicted_class": {"class_id": "Yes"},
+    "positive_class": {"class_id": "Yes", "event_label": "Churn"},
+    "positive_class_probability": 0.68,
+    "class_probabilities": [
+        {"class_id": "No", "probability": 0.32},
+        {"class_id": "Yes", "probability": 0.68},
+    ],
+    "decision": {"threshold": 0.5, "predicted_positive": True},
+    "interpretation": {
+        "preset": "risk",
+        "band_id": "high",
+        "bands": [
+            {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+            {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+            {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+        ],
+    },
+    "model_descriptor": {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"},
+}
 
 _REAL_REGISTRY_PATH = REPO_ROOT / "registry" / "datasets.json"
 
@@ -284,3 +308,54 @@ def test_public_inference_errors_remain_safe_for_browser_consumers():
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+
+
+def test_public_inference_success_shape_matches_binary_result_contract_for_browser_consumers():
+    """Project Spec S0109: a valid inference response must expose exactly
+    dataset_slug + result (binary-classification-result.v1) -- never the
+    legacy prediction.label/confidence shape a pre-S0109 frontend consumer
+    would have expected."""
+
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_releases_root = api_main._inference_releases_root
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-m27-05-success-fixture",
+        )
+        api_main.load_contract = lambda _active_release: {
+            "schema_version": "atlas.dataflow.runtime_contract.v1",
+            "features": [
+                {
+                    "name": "age",
+                    "type": "numeric",
+                    "required": True,
+                    "domain_constraints": {"min": 0, "max": 120},
+                }
+            ],
+        }
+        api_main.execute_prediction = lambda *_args, **_kwargs: {"result": _S0109_VALID_BINARY_RESULT}
+
+        with tempfile.TemporaryDirectory() as releases_root:
+            release_dir = Path(releases_root) / "release-m27-05-success-fixture"
+            release_dir.mkdir(parents=True)
+            (release_dir / "manifest.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+            api_main._inference_releases_root = lambda: Path(releases_root)
+
+            response = api_main.validate_dataset_inference_payload(
+                "fixture-dataset",
+                payload={"age": 41},
+            )
+
+        assert not hasattr(response, "status_code")
+        assert set(response.keys()) == {"dataset_slug", "result"}
+        assert response["result"] == _S0109_VALID_BINARY_RESULT
+        assert "prediction" not in response
+        _assert_no_public_exposure(response)
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        api_main._inference_releases_root = original_releases_root

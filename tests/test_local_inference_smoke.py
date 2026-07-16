@@ -17,7 +17,18 @@ from pipeline.generate_inference_bundle import (
     materialize_governed_inference_bundle,
 )
 from runtime import execute_prediction
-from runtime.inference import load_runtime_bundle_adapter
+from runtime.inference import (
+    BundleUnavailableError,
+    BundleValidationError,
+    load_joblib_sklearn_model,
+    load_runtime_bundle_adapter,
+    validate_binary_classification_result,
+)
+
+import joblib
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
 
 
 @dataclass(frozen=True)
@@ -854,3 +865,328 @@ def test_materialize_governed_inference_bundle_from_trained_run(
     assert generated["prepared_dataset"]["prepared_dataset_reference"]["path"] == (
         prepared_dataset_relative
     )
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0109: release-bound binary prediction execution smoke test.
+#
+# Builds a fully isolated temporary release (manifest.json,
+# predictions/bundle.json, models/model.pkl, contracts/runtime-contract.json)
+# containing a small, deterministic, real scikit-learn Pipeline serialized via
+# joblib, and exercises it through the real joblib_sklearn_predict loader and
+# the real execute_prediction() binary-classification flow end-to-end. Does
+# not use the real active release, does not mutate registry state, does not
+# execute any notebook, and never reads from pipeline/training-runs/**.
+# ---------------------------------------------------------------------------
+
+_S0109_FEATURE_ORDER = ["tenure", "monthly_charges"]
+
+
+def _s0109_train_pipeline() -> Pipeline:
+    X = pd.DataFrame(
+        {
+            "tenure": [1, 2, 3, 4, 60, 61, 62, 63, 64, 65],
+            "monthly_charges": [95.0, 98.0, 90.0, 92.0, 20.0, 22.0, 18.0, 25.0, 19.0, 21.0],
+        }
+    )
+    y = ["Yes", "Yes", "Yes", "Yes", "No", "No", "No", "No", "No", "No"]
+    pipeline = Pipeline([("clf", LogisticRegression())])
+    pipeline.fit(X, y)
+    return pipeline
+
+
+def _s0109_result_semantics(*, threshold: float = 0.5) -> dict[str, Any]:
+    return {
+        "schema_version": "binary-result-semantics.v1",
+        "problem_type": "binary_classification",
+        "result_schema_version": "binary-classification-result.v1",
+        "primary_output": "positive_class_probability",
+        "positive_class": {"class_id": "Yes", "event_label": "Churn"},
+        "decision": {"threshold": threshold},
+        "interpretation": {
+            "preset": "risk",
+            "bands": [
+                {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+            ],
+        },
+        "model_descriptor": {"model_family": "logistic_regression", "display_name": "Logistic Regression"},
+    }
+
+
+def _s0109_write_isolated_release(
+    tmp_path: Path,
+    *,
+    pipeline: Pipeline,
+    result_semantics: dict[str, Any] | None,
+    class_labels: list[str] | None = None,
+    serialization_format: str = "joblib",
+    model_bytes_override: bytes | None = None,
+    model_sha256_override: str | None = None,
+) -> Path:
+    release_root = tmp_path / "release-s0109-smoke"
+    models_dir = release_root / "models"
+    predictions_dir = release_root / "predictions"
+    contracts_dir = release_root / "contracts"
+    models_dir.mkdir(parents=True)
+    predictions_dir.mkdir(parents=True)
+    contracts_dir.mkdir(parents=True)
+
+    model_path = models_dir / "model.pkl"
+    if model_bytes_override is not None:
+        model_path.write_bytes(model_bytes_override)
+    else:
+        joblib.dump(pipeline, model_path)
+    model_sha256 = model_sha256_override or _sha256_bytes(model_path.read_bytes())
+
+    _write_json(contracts_dir / "runtime-contract.json", {
+        "schema_version": "1.0.0",
+        "features": [{"name": name, "required": True} for name in _S0109_FEATURE_ORDER],
+    })
+
+    bundle: dict[str, Any] = {
+        "contract_version": "inference_bundle.v1",
+        "feature_order": list(_S0109_FEATURE_ORDER),
+        "runtime_execution": {
+            "loader_strategy": "joblib_sklearn_predict",
+            "serialization_format": serialization_format,
+            "prediction_interface": "predict",
+            "model_family": "logistic_regression",
+        },
+        "model_artifact": {"path": "models/model.pkl", "sha256": model_sha256},
+        "output_schema": {
+            "class_labels": class_labels if class_labels is not None else ["No", "Yes"],
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "probability_output": True,
+        },
+    }
+    if result_semantics is not None:
+        bundle["result_semantics"] = result_semantics
+    _write_json(predictions_dir / "bundle.json", bundle)
+
+    _write_json(release_root / "manifest.json", {
+        "schema_version": "release-manifest.v1",
+        "artifacts": [
+            {"role": "predictive_bundle", "reference": "predictions/bundle.json"},
+        ],
+    })
+
+    return release_root
+
+
+def _s0109_bundle_loader(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+_S0109_LOADER_STRATEGIES = {"joblib_sklearn_predict": load_joblib_sklearn_model}
+
+
+def test_s0109_real_joblib_loader_end_to_end_binary_prediction(tmp_path: Path) -> None:
+    pipeline = _s0109_train_pipeline()
+    release_root = _s0109_write_isolated_release(
+        tmp_path, pipeline=pipeline, result_semantics=_s0109_result_semantics()
+    )
+
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    # High-tenure, low-charges row: trained pattern predicts "No" (not churned).
+    negative_result = execute_prediction(
+        {"path": str(release_root), "artifacts": manifest["artifacts"]},
+        {"tenure": 63, "monthly_charges": 19.0},
+        manifest=manifest,
+        bundle_loader=_s0109_bundle_loader,
+        loader_strategies=_S0109_LOADER_STRATEGIES,
+        supported_serialization_formats=["joblib"],
+    )["result"]
+    assert negative_result["schema_version"] == "binary-classification-result.v1"
+    assert negative_result["predicted_class"]["class_id"] == "No"
+    assert negative_result["decision"]["predicted_positive"] is False
+    assert negative_result["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
+    assert 0.0 <= negative_result["positive_class_probability"] <= 1.0
+    assert {p["class_id"] for p in negative_result["class_probabilities"]} == {"No", "Yes"}
+    assert negative_result["interpretation"]["band_id"] in {"low", "medium", "high"}
+    assert negative_result["model_descriptor"] == {
+        "model_family": "logistic_regression",
+        "display_name": "Logistic Regression",
+    }
+
+    # Low-tenure, high-charges row: trained pattern predicts "Yes" (churned).
+    positive_result = execute_prediction(
+        {"path": str(release_root), "artifacts": manifest["artifacts"]},
+        {"tenure": 2, "monthly_charges": 96.0},
+        manifest=manifest,
+        bundle_loader=_s0109_bundle_loader,
+        loader_strategies=_S0109_LOADER_STRATEGIES,
+        supported_serialization_formats=["joblib"],
+    )["result"]
+    assert positive_result["predicted_class"]["class_id"] == "Yes"
+    assert positive_result["decision"]["predicted_positive"] is True
+    assert positive_result["interpretation"]["band_id"] == "high"
+
+    # No legacy label/confidence contract anywhere in either result.
+    for result in (negative_result, positive_result):
+        assert "label" not in result
+        assert "confidence" not in result
+
+
+def test_s0109_reversed_positive_class_resolved_by_identity_not_position(tmp_path: Path) -> None:
+    """positive_class.class_id == 'No', which is NOT at classes_ index 1 for
+    this model (LogisticRegression sorts classes_ alphabetically: ['No','Yes']),
+    proving positive-class lookup is identity-based, never index-based."""
+
+    pipeline = _s0109_train_pipeline()
+    assert list(pipeline.named_steps["clf"].classes_) == ["No", "Yes"]
+
+    release_root = _s0109_write_isolated_release(
+        tmp_path,
+        pipeline=pipeline,
+        result_semantics=_s0109_result_semantics(),
+    )
+    bundle_path = release_root / "predictions" / "bundle.json"
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle["result_semantics"]["positive_class"] = {"class_id": "No", "event_label": "Retained"}
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    result = execute_prediction(
+        {"path": str(release_root), "artifacts": manifest["artifacts"]},
+        {"tenure": 63, "monthly_charges": 19.0},
+        manifest=manifest,
+        bundle_loader=_s0109_bundle_loader,
+        loader_strategies=_S0109_LOADER_STRATEGIES,
+        supported_serialization_formats=["joblib"],
+    )["result"]
+
+    assert result["positive_class"]["class_id"] == "No"
+    # positive_class_probability must be the probability of "No", not classes_[1].
+    no_probability = next(p["probability"] for p in result["class_probabilities"] if p["class_id"] == "No")
+    assert result["positive_class_probability"] == no_probability
+
+
+def test_s0109_missing_model_artifact_fails_safely(tmp_path: Path) -> None:
+    pipeline = _s0109_train_pipeline()
+    release_root = _s0109_write_isolated_release(
+        tmp_path, pipeline=pipeline, result_semantics=_s0109_result_semantics()
+    )
+    (release_root / "models" / "model.pkl").unlink()
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(BundleUnavailableError):
+        execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )
+
+
+def test_s0109_model_hash_mismatch_fails_safely(tmp_path: Path) -> None:
+    pipeline = _s0109_train_pipeline()
+    release_root = _s0109_write_isolated_release(
+        tmp_path,
+        pipeline=pipeline,
+        result_semantics=_s0109_result_semantics(),
+        model_sha256_override="0" * 64,
+    )
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(BundleValidationError) as exc_info:
+        execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )
+    assert exc_info.value.code == "model_artifact_hash_mismatch"
+
+
+def test_s0109_unsupported_serialization_format_fails_safely(tmp_path: Path) -> None:
+    pipeline = _s0109_train_pipeline()
+    release_root = _s0109_write_isolated_release(
+        tmp_path,
+        pipeline=pipeline,
+        result_semantics=_s0109_result_semantics(),
+        serialization_format="pickle",
+    )
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(BundleValidationError) as exc_info:
+        execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )
+    assert exc_info.value.code == "unsupported_serialization_format"
+
+
+def test_s0109_historical_bundle_without_result_semantics_fails_safely_no_fallback(
+    tmp_path: Path,
+) -> None:
+    pipeline = _s0109_train_pipeline()
+    release_root = _s0109_write_isolated_release(tmp_path, pipeline=pipeline, result_semantics=None)
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(BundleValidationError) as exc_info:
+        execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )
+    assert exc_info.value.code == "missing_result_semantics"
+
+
+def test_s0109_threshold_equality_boundary_predicts_positive(tmp_path: Path) -> None:
+    """probability >= threshold (not strictly >) must predict positive."""
+
+    pipeline = _s0109_train_pipeline()
+    release_root = _s0109_write_isolated_release(
+        tmp_path,
+        pipeline=pipeline,
+        result_semantics=_s0109_result_semantics(threshold=0.0),
+    )
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    result = execute_prediction(
+        {"path": str(release_root), "artifacts": manifest["artifacts"]},
+        {"tenure": 63, "monthly_charges": 19.0},
+        manifest=manifest,
+        bundle_loader=_s0109_bundle_loader,
+        loader_strategies=_S0109_LOADER_STRATEGIES,
+        supported_serialization_formats=["joblib"],
+    )["result"]
+    # threshold 0.0: any probability >= 0.0 is positive.
+    assert result["decision"]["predicted_positive"] is True
+    assert result["predicted_class"]["class_id"] == "Yes"
+
+
+def test_s0109_result_matches_binary_classification_result_schema(tmp_path: Path) -> None:
+    pipeline = _s0109_train_pipeline()
+    release_root = _s0109_write_isolated_release(
+        tmp_path, pipeline=pipeline, result_semantics=_s0109_result_semantics()
+    )
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    result = execute_prediction(
+        {"path": str(release_root), "artifacts": manifest["artifacts"]},
+        {"tenure": 63, "monthly_charges": 19.0},
+        manifest=manifest,
+        bundle_loader=_s0109_bundle_loader,
+        loader_strategies=_S0109_LOADER_STRATEGIES,
+        supported_serialization_formats=["joblib"],
+    )["result"]
+
+    # Re-validating an already-returned result must succeed (defense-in-depth,
+    # matches the API layer's own second validation pass).
+    validate_binary_classification_result(result)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import DatasetDetailHeader, {
   type DatasetDetailMetadataItem,
@@ -9,6 +9,7 @@ import PerformanceSummary, { type PerformanceFocus } from "../components/Dataset
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import ModelCard from "../components/ModelCard/ModelCard";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
+import type { BinaryResultContract, BinaryResultPresentation } from "../components/ResultCard/types";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 import PredictViewList, { PredictViewItem } from "../components/PredictViewList/PredictViewList";
@@ -47,6 +48,12 @@ type PublicContextPayload = {
   theme_preset?: string | null;
   bound_predict_view_id?: string | null;
   legacy_submit_button_label?: string | null;
+  result_card?: BinaryResultPresentation | null;
+};
+
+type ContractEnvelope = {
+  contract: ContractPayload;
+  result_contract: BinaryResultContract;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -89,12 +96,11 @@ function extractInstanceCount(metrics: MetricsData): string | null {
 
 export default function DatasetPage() {
   const { slug } = useParams<{ slug: string }>();
-  const inferenceLayoutRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<PageState>({ status: "loading" });
   const [metricsState, setMetricsState] = useState<SectionState<MetricsData>>({ status: "loading" });
   const [modelCardState, setModelCardState] = useState<SectionState<ModelCardPayload>>({ status: "loading" });
   const [visualizationsState, setVisualizationsState] = useState<SectionState<VisualizationsPayload>>({ status: "loading" });
-  const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
+  const [contractState, setContractState] = useState<SectionState<ContractEnvelope>>({ status: "loading" });
   const [contextState, setContextState] = useState<SectionState<PublicContextPayload>>({ status: "loading" });
   const [viewsState, setViewsState] = useState<SectionState<PredictViewListPayload>>({ status: "loading" });
   const [boundViewCustomizationState, setBoundViewCustomizationState] = useState<
@@ -326,11 +332,18 @@ export default function DatasetPage() {
           setContractState({ status: "unavailable" });
           return null;
         }
-        return res.json() as Promise<{ dataset_slug: string; contract: ContractPayload }>;
+        return res.json() as Promise<{
+          dataset_slug: string;
+          contract: ContractPayload;
+          result_contract: BinaryResultContract;
+        }>;
       })
       .then((data) => {
         if (data) {
-          setContractState({ status: "ready", data: data.contract });
+          setContractState({
+            status: "ready",
+            data: { contract: data.contract, result_contract: data.result_contract },
+          });
         }
       })
       .catch((err: Error) => {
@@ -373,81 +386,6 @@ export default function DatasetPage() {
 
     return () => controller.abort();
   }, [slug]);
-
-  useEffect(() => {
-    const layout = inferenceLayoutRef.current;
-    if (!layout || contractState.status !== "ready") {
-      return;
-    }
-
-    const findResultElement = () =>
-      layout.querySelector<HTMLElement>(
-        ".inference-result, .result-panel, [class*='result' i], [data-testid*='result' i]",
-      );
-
-    const updateStickyState = () => {
-      const form = layout.querySelector<HTMLElement>("form");
-      const result = findResultElement();
-      const onlyChild = layout.children.length === 1 ? layout.firstElementChild : null;
-      const bridge =
-        onlyChild instanceof HTMLElement &&
-        form &&
-        result &&
-        onlyChild !== form &&
-        onlyChild !== result &&
-        onlyChild.contains(form) &&
-        onlyChild.contains(result)
-          ? onlyChild
-          : null;
-      const shouldStick = Boolean(form && result && form.offsetHeight > result.offsetHeight);
-
-      layout.querySelectorAll(".dataset-detail-inference__flow").forEach((element) => {
-        if (element !== bridge) {
-          element.classList.remove("dataset-detail-inference__flow");
-        }
-      });
-      bridge?.classList.add("dataset-detail-inference__flow");
-      layout.classList.toggle("dataset-detail-inference__layout--result-sticky", shouldStick);
-    };
-
-    updateStickyState();
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateStickyState);
-      return () => {
-        layout.classList.remove("dataset-detail-inference__layout--result-sticky");
-        layout.querySelectorAll(".dataset-detail-inference__flow").forEach((element) => {
-          element.classList.remove("dataset-detail-inference__flow");
-        });
-        window.removeEventListener("resize", updateStickyState);
-      };
-    }
-
-    const observer = new ResizeObserver(updateStickyState);
-    observer.observe(layout);
-
-    const form = layout.querySelector<HTMLElement>("form");
-    const result = findResultElement();
-
-    if (form) {
-      observer.observe(form);
-    }
-
-    if (result) {
-      observer.observe(result);
-    }
-
-    window.addEventListener("resize", updateStickyState);
-
-    return () => {
-      layout.classList.remove("dataset-detail-inference__layout--result-sticky");
-      layout.querySelectorAll(".dataset-detail-inference__flow").forEach((element) => {
-        element.classList.remove("dataset-detail-inference__flow");
-      });
-      observer.disconnect();
-      window.removeEventListener("resize", updateStickyState);
-    };
-  }, [contractState.status]);
 
   if (state.status === "loading") {
     return (
@@ -494,7 +432,7 @@ export default function DatasetPage() {
     },
     {
       label: "Features",
-      value: contractState.status === "ready" ? String(contractState.data.features.length) : null,
+      value: contractState.status === "ready" ? String(contractState.data.contract.features.length) : null,
     },
     {
       label: "Target",
@@ -515,15 +453,21 @@ export default function DatasetPage() {
     undefined;
 
   const inferenceContent = (
-    <div className="dataset-detail-inference__layout" ref={inferenceLayoutRef}>
+    <>
       {contractState.status === "loading" && <LoadingState />}
       {contractState.status === "ready" && (
-        <InferenceForm contract={contractState.data} slug={slug!} submitButtonLabel={resolvedSubmitButtonLabel} />
+        <InferenceForm
+          contract={contractState.data.contract}
+          slug={slug!}
+          submitButtonLabel={resolvedSubmitButtonLabel}
+          resultContract={contractState.data.result_contract}
+          resultPresentation={context?.result_card ?? undefined}
+        />
       )}
       {contractState.status === "unavailable" && (
         <ErrorState message="The prediction form is temporarily unavailable." />
       )}
-    </div>
+    </>
   );
 
   const problemSummaryText = getProblemSummaryText(context);

@@ -33,6 +33,43 @@ const datasetMetadata = {
   tags: ["synthetic"],
 };
 
+// Project Spec S0112: shared fixtures for the real /contract result_contract
+// and /context result_card projections, used across this file's mocks so
+// InferenceForm always receives a real (available) binary result contract.
+const resultContractAvailable = {
+  status: "available" as const,
+  semantics: {
+    schema_version: "binary-result-semantics.v1",
+    problem_type: "binary_classification" as const,
+    result_schema_version: "binary-classification-result.v1" as const,
+    primary_output: "positive_class_probability" as const,
+    positive_class: { class_id: "Yes", event_label: "Churn" },
+    decision: { threshold: 0.5 },
+    interpretation: {
+      preset: "risk",
+      bands: [
+        { band_id: "low", lower_bound: 0, upper_bound: 0.35 },
+        { band_id: "medium", lower_bound: 0.35, upper_bound: 0.65 },
+        { band_id: "high", lower_bound: 0.65, upper_bound: 1.0 },
+      ],
+    },
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+  },
+};
+
+const resultCardPresentation = {
+  schema_version: "binary-result-presentation.v1",
+  positive_class_probability_label: "Churn probability",
+  predicted_outcome_label: "Predicted outcome",
+  positive_outcome_copy: "Likely to churn",
+  negative_outcome_copy: "Unlikely to churn",
+  model_section_label: "Model",
+  interpretation: {
+    preset: "risk",
+    labels: { high: "High risk", medium: "Medium risk", low: "Low risk" },
+  },
+};
+
 const contextPayload = {
   title: "Synthetic Demo Dataset",
   summary: "Synthetic public-safe context summary.",
@@ -41,6 +78,7 @@ const contextPayload = {
   use_case: "Synthetic use case",
   problem_type: "binary_classification",
   prediction_target_description: "Whether the synthetic target event occurs.",
+  result_card: resultCardPresentation,
 };
 
 type ContextPayloadFixture = typeof contextPayload & {
@@ -114,7 +152,7 @@ function installDatasetPageFetchMock(context: ContextPayloadFixture = contextPay
       return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
     }
     if (url.endsWith(`/datasets/${slug}/contract`)) {
-      return jsonResponse({ dataset_slug: slug, contract: contractPayload });
+      return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
     }
     if (url.endsWith(`/datasets/${slug}/views`)) {
       return jsonResponse(viewsPayload);
@@ -230,9 +268,13 @@ describe("DatasetPage synthetic-slug rendering", () => {
     expect(overviewTab).toHaveAttribute("aria-selected", "false");
     expect(await screen.findByText("Synthetic Feature")).toBeInTheDocument();
 
-    const inferenceLayout = container.querySelector(".dataset-detail-inference__layout");
-    expect(inferenceLayout).toBeInTheDocument();
-    expect(inferenceLayout?.querySelector("form")).toBeInTheDocument();
+    // Project Spec S0112: the shared public inference surface (form panel +
+    // Result Card) is now owned by InferenceForm itself, not a page-specific
+    // sticky/resize DOM heuristic.
+    const inferenceSurface = container.querySelector(".public-inference-surface");
+    expect(inferenceSurface).toBeInTheDocument();
+    expect(inferenceSurface?.querySelector("form")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prediction result")).toBeInTheDocument();
   });
 });
 
@@ -290,7 +332,7 @@ describe("DatasetPage bound predict view submit-label resolution (Project Spec S
         return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
       }
       if (url.endsWith(`/datasets/${slug}/contract`)) {
-        return jsonResponse({ dataset_slug: slug, contract: contractPayload });
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
       }
       if (url.endsWith(`/datasets/${slug}/views`)) {
         return jsonResponse(viewsPayload);
@@ -395,7 +437,7 @@ describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () =
         return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
       }
       if (url.endsWith(`/datasets/${slug}/contract`)) {
-        return jsonResponse({ dataset_slug: slug, contract: contractPayload });
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
       }
       if (url.endsWith(`/datasets/${slug}/views`)) {
         return jsonResponse(viewsPayload);
@@ -453,6 +495,7 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     tags: ["churn", "binary-classification", "telecommunications", "customer-behavior"],
     problem_type: "binary_classification",
     prediction_target_description: "Whether a customer will cancel their service (churn).",
+    result_card: resultCardPresentation,
   };
 
   // Matches releases/release-20260619-001/metrics/metrics.json's real
@@ -558,7 +601,11 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
         return jsonResponse({ dataset_slug: telcoSlug, visualizations: telcoVisualizationsPayload });
       }
       if (url.endsWith(`/datasets/${telcoSlug}/contract`)) {
-        return jsonResponse({ dataset_slug: telcoSlug, contract: telcoContractPayload });
+        return jsonResponse({
+          dataset_slug: telcoSlug,
+          contract: telcoContractPayload,
+          result_contract: resultContractAvailable,
+        });
       }
       if (url.endsWith(`/datasets/${telcoSlug}/views`)) {
         return jsonResponse(telcoViewsPayload);

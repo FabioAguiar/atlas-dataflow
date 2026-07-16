@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
+import type { BinaryResultContract, BinaryResultPresentation } from "../components/ResultCard/types";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 
@@ -30,14 +31,23 @@ type SectionState<T> =
 // projects legacy_submit_button_label from the published, deprecated
 // result_card.submit_button_label only. No private draft is ever loaded by
 // this public route.
+// Project Spec S0112: also carries the canonical, published Result Card
+// presentation copy (result_card) so this route renders the same shared
+// surface as DatasetPage.
 type PublicContextOverlay = {
   legacy_submit_button_label?: string | null;
+  result_card?: BinaryResultPresentation | null;
+};
+
+type ContractEnvelope = {
+  contract: ContractPayload;
+  result_contract: BinaryResultContract;
 };
 
 export default function DatasetViewPage() {
   const { slug, viewId } = useParams<{ slug: string; viewId: string }>();
   const [viewState, setViewState] = useState<ViewState>({ status: "loading" });
-  const [contractState, setContractState] = useState<SectionState<ContractPayload>>({ status: "loading" });
+  const [contractState, setContractState] = useState<SectionState<ContractEnvelope>>({ status: "loading" });
   const [customizationState, setCustomizationState] = useState<SectionState<PredictViewCustomization | null>>({ status: "loading" });
   const [contextState, setContextState] = useState<SectionState<PublicContextOverlay>>({ status: "loading" });
 
@@ -93,11 +103,18 @@ export default function DatasetViewPage() {
           setContractState({ status: "unavailable" });
           return null;
         }
-        return res.json() as Promise<{ dataset_slug: string; contract: ContractPayload }>;
+        return res.json() as Promise<{
+          dataset_slug: string;
+          contract: ContractPayload;
+          result_contract: BinaryResultContract;
+        }>;
       })
       .then((data) => {
         if (data) {
-          setContractState({ status: "ready", data: data.contract });
+          setContractState({
+            status: "ready",
+            data: { contract: data.contract, result_contract: data.result_contract },
+          });
         }
       })
       .catch((err: Error) => {
@@ -248,10 +265,14 @@ export default function DatasetViewPage() {
       {contractState.status === "loading" && <LoadingState />}
       {contractState.status === "ready" && (
         <InferenceForm
-          contract={contractState.data}
+          contract={contractState.data.contract}
           slug={slug!}
           customization={customization}
           submitButtonLabel={resolvedSubmitButtonLabel}
+          resultContract={contractState.data.result_contract}
+          resultPresentation={
+            contextState.status === "ready" ? contextState.data.result_card ?? undefined : undefined
+          }
         />
       )}
       {contractState.status === "unavailable" && (

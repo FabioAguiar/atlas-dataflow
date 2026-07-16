@@ -1,6 +1,13 @@
 import { FormEvent, useState } from "react";
-import InferenceResult, { PredictionResult } from "../InferenceResult/InferenceResult";
-import ErrorState from "../ErrorState/ErrorState";
+import ResultCardShell from "../ResultCard/ResultCardShell";
+import BinaryClassificationResult from "../ResultCard/BinaryClassificationResult";
+import {
+  GENERIC_RESULT_PRESENTATION,
+  isBinaryClassificationResult,
+  type BinaryClassificationResult as BinaryClassificationResultData,
+  type BinaryResultContract,
+  type BinaryResultPresentation,
+} from "../ResultCard/types";
 
 export type FeatureOption = {
   value: string;
@@ -51,7 +58,7 @@ export type PredictViewCustomization = {
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
-  | { status: "result"; data: PredictionResult }
+  | { status: "success"; data: BinaryClassificationResultData }
   | { status: "error"; message: string };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -78,8 +85,8 @@ type Props = {
   customization?: PredictViewCustomization;
   /**
    * When true, disables the real POST /datasets/{slug}/inference submit
-   * path (and the InferenceResult/ErrorState outcome states) so this
-   * component can be reused as a non-executing Live Preview of the current
+   * path (and every public ResultCardShell state) so this component can be
+   * reused as a non-executing Live Preview of the current
    * grouping/ordering/visibility layout. All rendering logic (buildHintMap,
    * presentationSortKey, renderGrouped, renderFields, hidden-field
    * suppression) is reused unchanged. Defaults to false, so existing real
@@ -96,6 +103,22 @@ type Props = {
    * back to "Submit" when absent or blank.
    */
   submitButtonLabel?: string;
+  /**
+   * Project Spec S0112: the release-bound technical result capability from
+   * GET /datasets/{slug}/contract's result_contract. Required for real
+   * public execution (DatasetPage/DatasetViewPage always pass it); omitted
+   * for Dataset Admin Live Preview, which never performs public execution.
+   * An absent or "unavailable" contract disables submission -- this
+   * component never assumes availability by default.
+   */
+  resultContract?: BinaryResultContract;
+  /**
+   * Project Spec S0112: the published Result Card presentation copy from
+   * GET /datasets/{slug}/context's canonical result_card. A missing or
+   * malformed value safely falls back to GENERIC_RESULT_PRESENTATION rather
+   * than removing the form.
+   */
+  resultPresentation?: BinaryResultPresentation;
 };
 
 function buildHintMap(customization: PredictViewCustomization | undefined): Map<string, FieldHint> {
@@ -162,10 +185,14 @@ export default function InferenceForm({
   customization,
   previewMode = false,
   submitButtonLabel,
+  resultContract,
+  resultPresentation,
 }: Props) {
   const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
 
   const hintMap = buildHintMap(customization);
+  const contractAvailable = !previewMode && resultContract?.status === "available";
+  const effectivePresentation = resultPresentation ?? GENERIC_RESULT_PRESENTATION;
 
   const sortedForPresentation = [...contract.features].sort((a, b) => {
     const hintA = hintMap.get(a.name);
@@ -177,6 +204,14 @@ export default function InferenceForm({
     event.preventDefault();
 
     if (previewMode) {
+      return;
+    }
+
+    // Project Spec S0112: a result-contract-unavailable release must not
+    // issue the POST request at all (not just disable the button -- an
+    // Enter keypress in a text input can still submit the <form> even when
+    // the submit button itself is disabled).
+    if (!contractAvailable) {
       return;
     }
 
@@ -214,8 +249,14 @@ export default function InferenceForm({
       );
 
       if (res.ok) {
-        const body = await res.json() as { prediction: PredictionResult };
-        setSubmission({ status: "result", data: body.prediction });
+        const body = await res.json() as { result?: unknown };
+        if (isBinaryClassificationResult(body?.result)) {
+          setSubmission({ status: "success", data: body.result });
+        } else {
+          // Malformed success payload: never falls back to a legacy
+          // body.prediction field, always becomes the existing safe error state.
+          setSubmission({ status: "error", message: FALLBACK_ERROR });
+        }
       } else {
         const body = await res.json() as { error_code?: string };
         setSubmission({ status: "error", message: mapErrorCode(body.error_code) });
@@ -276,22 +317,35 @@ export default function InferenceForm({
 
   const hasGroups = customization && customization.groups.length > 0;
   const idleLabel = submitButtonLabel?.trim() || "Submit";
+  const submitDisabled = previewMode || submission.status === "submitting" || (!previewMode && !contractAvailable);
 
   return (
-    <section aria-label="Inference Form">
-      <h2>Make a Prediction</h2>
-      <form onSubmit={handleSubmit}>
-        {hasGroups ? renderGrouped() : renderFields(sortedForPresentation)}
-        <button type="submit" disabled={previewMode || submission.status === "submitting"}>
-          {submission.status === "submitting" ? "Submitting…" : idleLabel}
-        </button>
-      </form>
+    <section
+      aria-label="Inference Form"
+      className={previewMode ? undefined : "public-inference-surface"}
+    >
+      <div className="public-inference-surface__form-panel">
+        <h2>Make a Prediction</h2>
+        <form onSubmit={handleSubmit}>
+          {hasGroups ? renderGrouped() : renderFields(sortedForPresentation)}
+          <button type="submit" disabled={submitDisabled}>
+            {submission.status === "submitting" ? "Submitting…" : idleLabel}
+          </button>
+        </form>
+      </div>
 
-      {!previewMode && submission.status === "result" && (
-        <InferenceResult result={submission.data} />
+      {!previewMode && !contractAvailable && <ResultCardShell state="unavailable" />}
+      {!previewMode && contractAvailable && submission.status === "idle" && <ResultCardShell state="idle" />}
+      {!previewMode && contractAvailable && submission.status === "submitting" && (
+        <ResultCardShell state="submitting" />
       )}
-      {!previewMode && submission.status === "error" && (
-        <ErrorState message={submission.message} />
+      {!previewMode && contractAvailable && submission.status === "error" && (
+        <ResultCardShell state="error" message={submission.message} />
+      )}
+      {!previewMode && contractAvailable && submission.status === "success" && (
+        <ResultCardShell state="success">
+          <BinaryClassificationResult result={submission.data} presentation={effectivePresentation} />
+        </ResultCardShell>
       )}
     </section>
   );

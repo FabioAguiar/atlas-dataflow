@@ -43,6 +43,63 @@ const contractPayload = {
   ],
 };
 
+// Project Spec S0112: real result_contract/result_card/inference result
+// fixtures -- the legacy { prediction: { label, confidence } } shape is
+// never used in these public tests.
+const resultContractAvailable = {
+  status: "available" as const,
+  semantics: {
+    schema_version: "binary-result-semantics.v1",
+    problem_type: "binary_classification" as const,
+    result_schema_version: "binary-classification-result.v1" as const,
+    primary_output: "positive_class_probability" as const,
+    positive_class: { class_id: "Yes", event_label: "Churn" },
+    decision: { threshold: 0.5 },
+    interpretation: {
+      preset: "risk",
+      bands: [
+        { band_id: "low", lower_bound: 0, upper_bound: 0.35 },
+        { band_id: "medium", lower_bound: 0.35, upper_bound: 0.65 },
+        { band_id: "high", lower_bound: 0.65, upper_bound: 1.0 },
+      ],
+    },
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+  },
+};
+
+const resultContractUnavailable = {
+  status: "unavailable" as const,
+  reason: "binary_result_semantics_unavailable",
+};
+
+const resultCardPresentation = {
+  schema_version: "binary-result-presentation.v1",
+  positive_class_probability_label: "Churn probability",
+  predicted_outcome_label: "Predicted outcome",
+  positive_outcome_copy: "Likely to churn",
+  negative_outcome_copy: "Unlikely to churn",
+  model_section_label: "Model",
+  interpretation: {
+    preset: "risk",
+    labels: { high: "High risk", medium: "Medium risk", low: "Low risk" },
+  },
+};
+
+const binaryResult = {
+  schema_version: "binary-classification-result.v1",
+  problem_type: "binary_classification",
+  predicted_class: { class_id: "Yes" },
+  positive_class: { class_id: "Yes", event_label: "Churn" },
+  positive_class_probability: 0.68,
+  class_probabilities: [
+    { class_id: "No", probability: 0.32 },
+    { class_id: "Yes", probability: 0.68 },
+  ],
+  decision: { threshold: 0.5, predicted_positive: true },
+  interpretation: { preset: "risk", band_id: "high", bands: resultContractAvailable.semantics.interpretation.bands },
+  model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+};
+
 function installFetchMock(
   options: {
     customizationSubmitButtonLabel?: string;
@@ -50,6 +107,7 @@ function installFetchMock(
     legacySubmitButtonLabel?: string | null;
     contextStatus?: number;
     deferInference?: boolean;
+    resultContractStatus?: "available" | "unavailable";
   } = {},
 ) {
   let releaseInference: ((response: MockResponse) => void) | null = null;
@@ -77,7 +135,11 @@ function installFetchMock(
       return jsonResponse(viewPayload);
     }
     if (url.endsWith(`/datasets/${slug}/contract`)) {
-      return jsonResponse({ dataset_slug: slug, contract: contractPayload });
+      return jsonResponse({
+        dataset_slug: slug,
+        contract: contractPayload,
+        result_contract: options.resultContractStatus === "unavailable" ? resultContractUnavailable : resultContractAvailable,
+      });
     }
     if (url.endsWith(`/datasets/${slug}/context`)) {
       if (options.contextStatus) {
@@ -85,7 +147,10 @@ function installFetchMock(
       }
       return jsonResponse({
         dataset_slug: slug,
-        context: { legacy_submit_button_label: options.legacySubmitButtonLabel ?? null },
+        context: {
+          legacy_submit_button_label: options.legacySubmitButtonLabel ?? null,
+          result_card: resultCardPresentation,
+        },
       });
     }
     if (url.endsWith(`/datasets/${slug}/inference`) && init?.method === "POST") {
@@ -94,14 +159,17 @@ function installFetchMock(
           releaseInference = resolve;
         });
       }
-      return jsonResponse({ prediction: { label: "sample_outcome", confidence: 0.5 } });
+      return jsonResponse({ dataset_slug: slug, result: binaryResult });
     }
 
     return jsonResponse({}, 404);
   });
 
   vi.stubGlobal("fetch", fetchMock);
-  return { fetchMock, releaseInference: () => releaseInference?.(jsonResponse({ prediction: { label: "x", confidence: 0.5 } })) };
+  return {
+    fetchMock,
+    releaseInference: () => releaseInference?.(jsonResponse({ dataset_slug: slug, result: binaryResult })),
+  };
 }
 
 function renderDatasetViewPage() {
@@ -169,5 +237,38 @@ describe("DatasetViewPage submit-label resolution (Project Spec S0110)", () => {
 
     releaseInference();
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+});
+
+// Project Spec S0112: DatasetViewPage renders the same shared Result Card
+// surface as DatasetPage, parses body.result (never body.prediction), and
+// respects the result_contract availability gate.
+describe("DatasetViewPage shared Result Card surface (Project Spec S0112)", () => {
+  it("renders the idle Result Card shell before submission when the result contract is available", async () => {
+    installFetchMock();
+    renderDatasetViewPage();
+
+    expect(await screen.findByText("Submit the form to see the prediction.")).toBeInTheDocument();
+  });
+
+  it("disables submission and explains capability when the result contract is unavailable, without removing the form", async () => {
+    installFetchMock({ resultContractStatus: "unavailable" });
+    renderDatasetViewPage();
+
+    expect(
+      await screen.findByText("This active release does not currently expose a compatible result."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+  });
+
+  it("parses body.result on success and renders the shared BinaryClassificationResult", async () => {
+    installFetchMock();
+    renderDatasetViewPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
+    expect(screen.getByText("68%")).toBeInTheDocument();
+    expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument();
   });
 });

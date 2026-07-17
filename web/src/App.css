@@ -521,6 +521,72 @@ h1 {
   background: var(--atlas-color-accent-muted);
 }
 
+/* Project Spec S0117: shared public Dataset Detail access-state surface
+   (maintenance / not found / unavailable), rendered by
+   DatasetAccessState.tsx in place of the normal Dataset Detail content.
+   Meaning is carried by heading/copy text, not color, so it stays
+   understandable without color and needs no animation. */
+.dataset-access-state {
+  display: flex;
+  justify-content: center;
+  padding: var(--atlas-space-8) var(--atlas-space-4);
+}
+
+.dataset-access-state__panel {
+  width: 100%;
+  max-width: 36rem;
+  box-sizing: border-box;
+  display: grid;
+  gap: var(--atlas-space-3);
+  padding: var(--atlas-space-6);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-lg);
+  background: var(--atlas-color-surface);
+  text-align: center;
+  justify-items: center;
+}
+
+.dataset-access-state__heading {
+  margin: 0;
+  font-size: var(--atlas-text-xl);
+  font-weight: 800;
+  color: var(--atlas-color-text);
+}
+
+.dataset-access-state__body {
+  margin: 0;
+  max-width: 30rem;
+  color: var(--atlas-color-text-muted);
+  line-height: var(--atlas-line-relaxed);
+}
+
+.dataset-access-state__action {
+  margin-top: var(--atlas-space-3);
+  color: var(--atlas-color-accent-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.dataset-access-state__action:hover {
+  text-decoration: underline;
+}
+
+.dataset-access-state__action:focus-visible {
+  outline: none;
+  border-radius: var(--atlas-radius-sm, 0.25rem);
+  box-shadow: var(--atlas-focus-ring);
+}
+
+@media (max-width: 640px) {
+  .dataset-access-state {
+    padding: var(--atlas-space-6) var(--atlas-space-3);
+  }
+
+  .dataset-access-state__panel {
+    padding: var(--atlas-space-4);
+  }
+}
+
 .dataset-detail {
   display: grid;
   gap: var(--atlas-space-8);

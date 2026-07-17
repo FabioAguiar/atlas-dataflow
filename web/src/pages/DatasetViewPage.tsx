@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import DatasetAccessState, { classifyDatasetAccessError } from "../components/DatasetDetail/DatasetAccessState";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
 import type { BinaryResultContract, BinaryResultPresentation } from "../components/ResultCard/types";
 import LoadingState from "../components/LoadingState/LoadingState";
@@ -18,6 +19,7 @@ type ViewPayload = {
 type ViewState =
   | { status: "loading" }
   | { status: "ready"; data: ViewPayload }
+  | { status: "maintenance" }
   | { status: "not_found" }
   | { status: "unavailable" };
 
@@ -57,26 +59,29 @@ export default function DatasetViewPage() {
       return;
     }
 
+    // Project Spec S0117: reset to loading immediately on every slug/view
+    // change so a switch never briefly shows the previous view's content
+    // or a premature not-found state before the new response arrives.
+    setViewState({ status: "loading" });
+
     const controller = new AbortController();
 
     fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/views/${encodeURIComponent(viewId)}`, {
       signal: controller.signal,
     })
-      .then((res) => {
-        if (res.status === 404) {
-          setViewState({ status: "not_found" });
-          return null;
-        }
-        if (!res.ok) {
-          setViewState({ status: "unavailable" });
-          return null;
-        }
-        return res.json() as Promise<ViewPayload>;
-      })
-      .then((data) => {
-        if (data) {
+      .then(async (res) => {
+        if (res.ok) {
+          const data = (await res.json()) as ViewPayload;
           setViewState({ status: "ready", data });
+          return;
         }
+        let body: unknown = null;
+        try {
+          body = await res.json();
+        } catch {
+          body = null;
+        }
+        setViewState({ status: classifyDatasetAccessError(body) });
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
@@ -87,9 +92,18 @@ export default function DatasetViewPage() {
     return () => controller.abort();
   }, [slug, viewId]);
 
+  // Project Spec S0117: contract/customization/context requests only start
+  // once the primary view request is ready -- never for maintenance or
+  // not_found.
+  const primaryReady = viewState.status === "ready";
+
   useEffect(() => {
     if (!slug) {
       setContractState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setContractState({ status: "loading" });
       return;
     }
 
@@ -124,10 +138,10 @@ export default function DatasetViewPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   useEffect(() => {
-    if (!slug || !viewId) {
+    if (!slug || !primaryReady || !viewId) {
       setCustomizationState({ status: "ready", data: null });
       return;
     }
@@ -161,15 +175,20 @@ export default function DatasetViewPage() {
       });
 
     return () => controller.abort();
-  }, [slug, viewId]);
+  }, [slug, primaryReady, viewId]);
 
   // Project Spec S0110: legacy fallback source for when this view's
   // customization has no submit_button_label yet. Loads only the safe
   // public context/presentation overlay -- never a private profile draft --
   // and never blocks the form on failure (falls through to "Submit").
+  // Project Spec S0117: gated behind primaryReady like the sections above.
   useEffect(() => {
     if (!slug) {
       setContextState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setContextState({ status: "loading" });
       return;
     }
 
@@ -197,7 +216,7 @@ export default function DatasetViewPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   if (viewState.status === "loading") {
     return (
@@ -207,20 +226,8 @@ export default function DatasetViewPage() {
     );
   }
 
-  if (viewState.status === "not_found") {
-    return (
-      <>
-        <p>This predict view is not available.</p>
-      </>
-    );
-  }
-
-  if (viewState.status === "unavailable") {
-    return (
-      <>
-        <ErrorState message="This predict view is temporarily unavailable. Please try again later." />
-      </>
-    );
+  if (viewState.status !== "ready") {
+    return <DatasetAccessState kind={viewState.status} />;
   }
 
   const view = viewState.data;

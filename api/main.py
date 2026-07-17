@@ -22,6 +22,7 @@ from contract_loader import ContractUnavailableError, load_contract  # noqa: E40
 from payload_validator import TYPE_MISMATCH, ValidationFailure, validate_payload  # noqa: E402
 from public_errors import (  # noqa: E402
     CONTRACT_UNAVAILABLE,
+    DATASET_MAINTENANCE,
     DATASET_NOT_FOUND,
     INFERENCE_FAILURE,
     PUBLIC_CONTRACT_UNAVAILABLE,
@@ -254,6 +255,36 @@ from registry.update import (  # noqa: E402
 )
 
 
+def _resolve_public_dataset_detail_access(dataset_slug: str):
+    """
+    Resolve dataset_slug and classify public Dataset Detail access in one
+    place, so every guarded route enforces the same order: resolve the
+    registered dataset and its active release, classify public access,
+    only then let endpoint-specific loading proceed. Project Spec S0117.
+
+    Returns the resolved dataset (registry.resolve.ResolvedDataset) when
+    access is ready. Returns a bounded JSONResponse
+    (DATASET_NOT_FOUND / DATASET_MAINTENANCE / RELEASE_UNAVAILABLE /
+    REGISTRY_UNAVAILABLE) otherwise -- callers must check the return type
+    before using it. A hidden or needs_review dataset always maps to the
+    same generic DATASET_MAINTENANCE response; the private reason is never
+    exposed here.
+    """
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    if not resolve_dataset_visibility(dataset_slug) or is_dataset_needs_review(dataset_slug):
+        return public_error_response(DATASET_MAINTENANCE)
+
+    return resolved
+
+
 def _resolve_problem_type(dataset_slug: str) -> str | None:
     """
     Resolve the real problem_type for dataset_slug via its active release's
@@ -440,16 +471,10 @@ def list_datasets_endpoint():
 
 @app.get("/datasets/{dataset_slug}")
 def get_dataset(dataset_slug: str):
-    try:
-        resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
-    if not resolve_dataset_visibility(dataset_slug) or is_dataset_needs_review(dataset_slug):
-        return public_error_response(DATASET_NOT_FOUND)
+    guard = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(guard, JSONResponse):
+        return guard
+
     try:
         all_listed = list_datasets()
     except RegistryInvalidError:
@@ -475,14 +500,9 @@ def get_dataset(dataset_slug: str):
 
 @app.get("/datasets/{dataset_slug}/contract")
 def get_public_contract(dataset_slug: str):
-    try:
-        resolved = resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
 
     try:
         public_contract = load_public_contract(resolved.active_release)
@@ -529,6 +549,15 @@ def validate_dataset_inference_payload(
     dataset_slug: str,
     payload=Body(...),
 ):
+    # Project Spec S0117: access classification must run before payload
+    # type/schema validation, contract loading, bundle loading, model
+    # loading, or prediction -- a malformed body must never leak whether a
+    # hidden/needs_review dataset exists, and no runtime work should happen
+    # for a dataset that is not ready.
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+
     if not isinstance(payload, dict):
         return validation_error_response(
             [
@@ -540,15 +569,6 @@ def validate_dataset_inference_payload(
                 )
             ]
         )
-
-    try:
-        resolved = resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
 
     try:
         runtime_contract = load_contract(resolved.active_release)
@@ -595,14 +615,9 @@ def validate_dataset_inference_payload(
 
 @app.get("/datasets/{dataset_slug}/metrics")
 def get_public_metrics(dataset_slug: str):
-    try:
-        resolved = resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
 
     try:
         metrics = load_public_metrics(resolved.active_release)
@@ -617,17 +632,9 @@ def get_public_metrics(dataset_slug: str):
 
 @app.get("/datasets/{dataset_slug}/context")
 def get_public_context(dataset_slug: str):
-    try:
-        resolved = resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
-
-    if not resolve_dataset_visibility(dataset_slug):
-        return public_error_response(DATASET_NOT_FOUND)
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
 
     try:
         context = load_public_context(resolved.active_release)
@@ -645,14 +652,9 @@ def get_public_context(dataset_slug: str):
 
 @app.get("/datasets/{dataset_slug}/model-card")
 def get_public_model_card(dataset_slug: str):
-    try:
-        resolved = resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
 
     try:
         model_card = load_public_model_card(resolved.active_release)
@@ -667,14 +669,9 @@ def get_public_model_card(dataset_slug: str):
 
 @app.get("/datasets/{dataset_slug}/visualizations")
 def get_public_visualizations(dataset_slug: str):
-    try:
-        resolved = resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
 
     try:
         visualizations = load_public_visualizations(resolved.active_release)
@@ -689,14 +686,9 @@ def get_public_visualizations(dataset_slug: str):
 
 @app.get("/datasets/{dataset_slug}/views")
 def list_predict_views(dataset_slug: str):
-    try:
-        resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
+    guard = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(guard, JSONResponse):
+        return guard
 
     try:
         views = load_public_predict_view_list(dataset_slug)
@@ -711,14 +703,13 @@ def list_predict_views(dataset_slug: str):
 
 @app.get("/datasets/{dataset_slug}/views/{view_id}")
 def get_predict_view(dataset_slug: str, view_id: str):
-    try:
-        resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
+    # Project Spec S0117: access must be classified before the view itself
+    # is looked up, so a maintenance dataset with an unknown view_id still
+    # returns DATASET_MAINTENANCE, never VIEW_NOT_FOUND -- this must not
+    # reveal whether a hidden dataset contains a requested view.
+    guard = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(guard, JSONResponse):
+        return guard
 
     try:
         view = load_public_predict_view(dataset_slug, view_id)
@@ -732,14 +723,9 @@ def get_predict_view(dataset_slug: str, view_id: str):
 
 @app.get("/datasets/{dataset_slug}/views/{view_id}/customization")
 def get_predict_view_customization(dataset_slug: str, view_id: str):
-    try:
-        resolve_dataset(dataset_slug)
-    except DatasetUnavailableError:
-        return public_error_response(DATASET_NOT_FOUND)
-    except ReleaseUnavailableError:
-        return public_error_response(RELEASE_UNAVAILABLE)
-    except RegistryInvalidError:
-        return public_error_response(REGISTRY_UNAVAILABLE)
+    guard = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(guard, JSONResponse):
+        return guard
 
     try:
         customization = load_public_predict_view_customization(dataset_slug, view_id)

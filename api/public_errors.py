@@ -30,6 +30,20 @@ DATASET_NOT_FOUND = PublicError(
     message="The requested dataset is not available.",
 )
 
+# Project Spec S0117: generic, dataset-agnostic maintenance state for a
+# registered dataset that is currently hidden (Visible Publicly off) or
+# still needs_review. The message is deliberately generic -- no dataset
+# slug, title, visibility state, review state, active release, or blocker
+# list is ever included, so this response never distinguishes one hidden
+# dataset from another or from a dataset temporarily blocked for any other
+# reason covered by this same code.
+DATASET_MAINTENANCE = PublicError(
+    status_code=503,
+    error_type="dataset_maintenance",
+    error_code="DATASET_MAINTENANCE",
+    message="The requested dataset page is temporarily unavailable.",
+)
+
 RELEASE_UNAVAILABLE = PublicError(
     status_code=503,
     error_type="release_unavailable",

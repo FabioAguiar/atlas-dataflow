@@ -483,7 +483,7 @@ _VALID_CUSTOMIZATION = {
 }
 
 
-def test_customization_endpoint_returns_200_with_payload():
+def test_customization_endpoint_returns_200_with_payload(monkeypatch):
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view_customization
     try:
@@ -491,6 +491,11 @@ def test_customization_endpoint_returns_200_with_payload():
             dataset_slug=dataset_slug,
             active_release="release-20260622-001",
         )
+        # telco-customer-churn's real registry entry is needs_review, which
+        # the shared S0117 access guard now enforces on this route too --
+        # isolate the loader behavior under test from that access gate.
+        monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+        monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
         api_main.load_public_predict_view_customization = (
             lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
         )
@@ -510,7 +515,7 @@ def test_customization_endpoint_returns_200_with_payload():
         api_main.load_public_predict_view_customization = original_load
 
 
-def test_customization_endpoint_returns_customization_not_found_when_absent():
+def test_customization_endpoint_returns_customization_not_found_when_absent(monkeypatch):
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view_customization
     try:
@@ -518,6 +523,8 @@ def test_customization_endpoint_returns_customization_not_found_when_absent():
             dataset_slug=dataset_slug,
             active_release="release-20260622-001",
         )
+        monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+        monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
 
         def raise_not_found(dataset_slug, view_id):
             raise api_main.CustomizationNotFoundError("No customization for this view.")
@@ -547,7 +554,7 @@ def test_customization_endpoint_unknown_dataset_returns_dataset_not_found():
         api_main.resolve_dataset = original_resolve
 
 
-def test_customization_response_structure_matches_expected_fields():
+def test_customization_response_structure_matches_expected_fields(monkeypatch):
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view_customization
     try:
@@ -555,6 +562,8 @@ def test_customization_response_structure_matches_expected_fields():
             dataset_slug=dataset_slug,
             active_release="release-20260622-001",
         )
+        monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+        monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
         api_main.load_public_predict_view_customization = (
             lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
         )
@@ -776,10 +785,16 @@ def test_real_release_dataset_home_model_card_payload_shape():
         _assert_no_internal_public_exposure(response)
 
 
-def test_real_release_dataset_home_visualizations_degrade_safely():
+def test_real_release_dataset_home_visualizations_degrade_safely(monkeypatch):
     original_resolve_dataset = api_main.resolve_dataset
     original_load_public_visualizations = api_main.load_public_visualizations
     try:
+        # telco-customer-churn's real registry entry is needs_review; the
+        # shared S0117 access guard would otherwise return DATASET_MAINTENANCE
+        # before this test's loader-degradation behavior is ever exercised.
+        monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+        monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+
         for resolved in _real_release_dataset_pairs():
             api_main.resolve_dataset = lambda dataset_slug, resolved=resolved: SimpleNamespace(
                 dataset_slug=dataset_slug,
@@ -1008,16 +1023,25 @@ def _assert_invalid_payload_response(response, expected_field, expected_code, ex
     _assert_no_internal_public_exposure(payload)
 
 
-def test_real_route_non_object_prediction_payload_fails_before_runtime_resolution():
+def test_real_route_non_object_prediction_payload_fails_before_contract_and_prediction():
+    """
+    Project Spec S0117: access classification now runs before payload
+    validation, so dataset resolution genuinely happens for a malformed
+    payload on a ready dataset -- but contract loading, bundle loading, and
+    prediction execution still must never run for an invalid payload.
+    """
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_visibility = api_main.resolve_dataset_visibility
+    original_needs_review = api_main.is_dataset_needs_review
     try:
-        api_main.resolve_dataset = (
-            lambda _dataset_slug: (_ for _ in ()).throw(
-                AssertionError("non-object payload should fail before dataset resolution")
-            )
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-m27-fixture",
         )
+        api_main.resolve_dataset_visibility = lambda _dataset_slug: True
+        api_main.is_dataset_needs_review = lambda _dataset_slug: False
         api_main.load_contract = (
             lambda _active_release: (_ for _ in ()).throw(
                 AssertionError("non-object payload should fail before contract loading")
@@ -1042,6 +1066,40 @@ def test_real_route_non_object_prediction_payload_fails_before_runtime_resolutio
         )
     finally:
         api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        api_main.resolve_dataset_visibility = original_visibility
+        api_main.is_dataset_needs_review = original_needs_review
+
+
+def test_real_route_non_object_prediction_payload_returns_not_found_for_unknown_dataset():
+    """
+    Project Spec S0117 required precedence: unknown dataset + malformed
+    body returns DATASET_NOT_FOUND, never a payload-validation error --
+    access classification happens first.
+    """
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    try:
+        api_main.load_contract = (
+            lambda _active_release: (_ for _ in ()).throw(
+                AssertionError("unknown dataset should never reach contract loading")
+            )
+        )
+        api_main.execute_prediction = (
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("unknown dataset should never reach prediction execution")
+            )
+        )
+
+        response = api_main.validate_dataset_inference_payload(
+            "dataset-that-does-not-exist",
+            payload=["not", "an", "object"],
+        )
+
+        assert response.status_code == 404
+        assert _response_json(response)["error_code"] == "DATASET_NOT_FOUND"
+    finally:
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
 

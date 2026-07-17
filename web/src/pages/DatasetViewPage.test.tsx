@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import DatasetViewPage from "./DatasetViewPage";
@@ -186,6 +186,152 @@ function renderDatasetViewPage() {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+// Mocks only the primary /datasets/{slug}/views/{viewId} route with the
+// given error envelope; any other request is treated as a bug (a secondary
+// request fired even though the primary route never reached "ready").
+function installDatasetViewPageErrorFetchMock(errorBody: unknown, status: number) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith(`/datasets/${slug}/views/${viewId}`)) {
+      return jsonResponse(errorBody, status);
+    }
+    throw new Error(`unexpected secondary fetch for a non-ready primary state: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("DatasetViewPage access states (Project Spec S0117)", () => {
+  it("renders the shared maintenance state and fires no secondary requests", async () => {
+    const fetchMock = installDatasetViewPageErrorFetchMock(
+      {
+        error_type: "dataset_maintenance",
+        error_code: "DATASET_MAINTENANCE",
+        message: "The requested dataset page is temporarily unavailable.",
+      },
+      503,
+    );
+
+    renderDatasetViewPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dataset page under maintenance" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the shared not-found state and fires no secondary requests", async () => {
+    const fetchMock = installDatasetViewPageErrorFetchMock(
+      { error_type: "dataset_not_found", error_code: "DATASET_NOT_FOUND", message: "The requested dataset is not available." },
+      404,
+    );
+
+    renderDatasetViewPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Dataset not found" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies a non-maintenance, non-not-found error as unavailable using error_code, not status alone", async () => {
+    const fetchMock = installDatasetViewPageErrorFetchMock(
+      { error_type: "release_unavailable", error_code: "RELEASE_UNAVAILABLE", message: "No active release is available for this dataset." },
+      503,
+    );
+
+    renderDatasetViewPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dataset information is currently unavailable" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders unavailable for a malformed (non-JSON) error body", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/views/${viewId}`)) {
+        return {
+          ok: false,
+          status: 503,
+          json: async () => {
+            throw new Error("not valid json");
+          },
+        };
+      }
+      throw new Error(`unexpected secondary fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetViewPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dataset information is currently unavailable" }),
+    ).toBeInTheDocument();
+  });
+
+  it("fires contract/customization/context requests only after the primary view request reaches ready", async () => {
+    const { fetchMock } = installFetchMock();
+
+    renderDatasetViewPage();
+
+    await screen.findByRole("heading", { name: "Churn Risk Overview" });
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/contract`))).toBe(true);
+      expect(
+        fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/views/${viewId}/customization`)),
+      ).toBe(true);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/context`))).toBe(true);
+    });
+  });
+
+  it("clears prior view state on a view switch and never flashes a not-found state", async () => {
+    const viewIdA = viewId;
+    const viewIdB = "another-view";
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      for (const v of [viewIdA, viewIdB]) {
+        if (url.endsWith(`/datasets/${slug}/views/${v}`)) {
+          return jsonResponse({ ...viewPayload, view_id: v, display: { title: v === viewIdA ? "Churn Risk Overview" : "Another View" } });
+        }
+        if (url.endsWith(`/datasets/${slug}/views/${v}/customization`)) return jsonResponse({}, 404);
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: { legacy_submit_button_label: null, result_card: resultCardPresentation } });
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={[`/dataset/${slug}/view/${viewIdA}`]}>
+        <Routes>
+          <Route
+            path="/dataset/:slug/view/:viewId"
+            element={
+              <>
+                <Link to={`/dataset/${slug}/view/${viewIdB}`}>Go to view B</Link>
+                <DatasetViewPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("heading", { name: "Churn Risk Overview" });
+    fireEvent.click(screen.getByRole("link", { name: "Go to view B" }));
+
+    expect(screen.queryByRole("heading", { name: "Churn Risk Overview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Dataset not found" })).not.toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { name: "Another View" })).toBeInTheDocument();
+  });
 });
 
 // Project Spec S0110: DatasetViewPage already loads its explicit view

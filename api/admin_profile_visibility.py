@@ -127,12 +127,13 @@ def get_dataset_publication_state(
         observations.append("snapshot_stale")
     elif snapshot["status"] == "invalid":
         observations.append("snapshot_invalid")
-    if (
-        visibility_record["visible"] is False
-        and snapshot["status"] == "missing"
-        and effective_visible
-    ):
-        observations.append("configured_hidden_but_effectively_visible_without_snapshot")
+    # Project Spec S0117: resolve_dataset_visibility() no longer treats a
+    # missing snapshot as an override of an explicit configured-hidden
+    # preference, so effective_visible now always agrees with
+    # visibility_record["visible"] for a valid record -- the prior
+    # "configured_hidden_but_effectively_visible_without_snapshot"
+    # discrepancy can no longer occur and has been removed. snapshot_missing
+    # above remains a non-blocking observation on its own.
 
     return {
         "dataset_slug": resolved.dataset_slug,

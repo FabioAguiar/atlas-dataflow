@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import DatasetPage from "./DatasetPage";
@@ -184,21 +184,248 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// Mocks only the primary /datasets/{slug} route with the given error
+// envelope; any other request is treated as a bug (an auxiliary request
+// fired even though the primary route never reached "ready").
+function installDatasetPageErrorFetchMock(errorBody: unknown, status: number) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith(`/datasets/${slug}`)) {
+      return jsonResponse(errorBody, status);
+    }
+    throw new Error(`unexpected auxiliary fetch for a non-ready primary state: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("DatasetPage access states (Project Spec S0117)", () => {
+  it("renders the shared maintenance state and fires no auxiliary requests", async () => {
+    const fetchMock = installDatasetPageErrorFetchMock(
+      {
+        error_type: "dataset_maintenance",
+        error_code: "DATASET_MAINTENANCE",
+        message: "The requested dataset page is temporarily unavailable.",
+      },
+      503,
+    );
+
+    renderDatasetPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dataset page under maintenance" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("This dataset page is temporarily unavailable. Please try again later."),
+    ).toBeInTheDocument();
+    // Maintenance must expose no dataset title/summary.
+    expect(screen.queryByText(datasetMetadata.title)).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the shared not-found state and fires no auxiliary requests", async () => {
+    const fetchMock = installDatasetPageErrorFetchMock(
+      { error_type: "dataset_not_found", error_code: "DATASET_NOT_FOUND", message: "The requested dataset is not available." },
+      404,
+    );
+
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Dataset not found" })).toBeInTheDocument();
+    expect(
+      screen.getByText("The dataset or link you tried to access does not exist."),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies a registry/release failure as unavailable using error_code, never status alone", async () => {
+    const fetchMock = installDatasetPageErrorFetchMock(
+      { error_type: "registry_unavailable", error_code: "REGISTRY_UNAVAILABLE", message: "The registry is not currently available." },
+      503,
+    );
+
+    renderDatasetPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dataset information is currently unavailable" }),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders unavailable for a malformed (non-JSON) error body instead of crashing or misclassifying", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return {
+          ok: false,
+          status: 503,
+          json: async () => {
+            throw new Error("not valid json");
+          },
+        };
+      }
+      throw new Error(`unexpected auxiliary fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Dataset information is currently unavailable" }),
+    ).toBeInTheDocument();
+  });
+
+  it("fires auxiliary requests only after the primary route reaches ready", async () => {
+    const fetchMock = installDatasetPageFetchMock();
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/context`)),
+      ).toBe(true);
+    });
+  });
+
+  it("clears prior content immediately on a slug switch and never flashes a not-found state", async () => {
+    const slugA = slug;
+    const slugB = "another-synthetic-dataset";
+    const datasetBMetadata = { ...datasetMetadata, dataset_slug: slugB, title: "Another Synthetic Dataset" };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      for (const s of [slugA, slugB]) {
+        // Give each slug's context a distinct title so the assertions below
+        // can tell whether the primary payload's own title (state.data.title)
+        // is what's rendering, not a stale/shared context fixture.
+        if (url.endsWith(`/datasets/${s}/context`))
+          return jsonResponse({ dataset_slug: s, context: { ...contextPayload, title: s === slugA ? datasetMetadata.title : datasetBMetadata.title } });
+        if (url.endsWith(`/datasets/${s}/metrics`)) return jsonResponse({ dataset_slug: s, metrics: metricsPayload });
+        if (url.endsWith(`/datasets/${s}/model-card`)) return jsonResponse({ dataset_slug: s, model_card: modelCardPayload });
+        if (url.endsWith(`/datasets/${s}/visualizations`))
+          return jsonResponse({ dataset_slug: s, visualizations: visualizationsPayload });
+        if (url.endsWith(`/datasets/${s}/contract`))
+          return jsonResponse({ dataset_slug: s, contract: contractPayload, result_contract: resultContractAvailable });
+        if (url.endsWith(`/datasets/${s}/views`)) return jsonResponse(viewsPayload);
+      }
+      if (url.endsWith(`/datasets/${slugA}`)) return jsonResponse(datasetMetadata);
+      if (url.endsWith(`/datasets/${slugB}`)) return jsonResponse(datasetBMetadata);
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={[`/dataset/${slugA}`]}>
+        <Routes>
+          <Route
+            path="/dataset/:slug"
+            element={
+              <>
+                <Link to={`/dataset/${slugB}`}>Go to B</Link>
+                <DatasetPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("link", { name: "Go to B" }));
+
+    // Immediately after the switch (before the new response resolves) the
+    // page must not show the old dataset's heading or flash a false
+    // not-found state.
+    expect(screen.queryByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Dataset not found" })).not.toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { name: "Another Synthetic Dataset", level: 1 })).toBeInTheDocument();
+  });
+
+  it("aborts the stale primary request when the slug changes before it resolves", async () => {
+    const slugA = slug;
+    const slugB = "another-synthetic-dataset";
+    let slugASignal: AbortSignal | undefined;
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slugA}`)) {
+        slugASignal = init?.signal ?? undefined;
+        return new Promise(() => {
+          /* never resolves -- this request must be aborted, not raced */
+        });
+      }
+      if (url.endsWith(`/datasets/${slugB}`)) {
+        return Promise.resolve(
+          jsonResponse({ ...datasetMetadata, dataset_slug: slugB, title: "Another Synthetic Dataset" }),
+        );
+      }
+      for (const s of [slugB]) {
+        if (url.endsWith(`/datasets/${s}/context`)) return Promise.resolve(jsonResponse({ dataset_slug: s, context: contextPayload }));
+        if (url.endsWith(`/datasets/${s}/metrics`)) return Promise.resolve(jsonResponse({ dataset_slug: s, metrics: metricsPayload }));
+        if (url.endsWith(`/datasets/${s}/model-card`))
+          return Promise.resolve(jsonResponse({ dataset_slug: s, model_card: modelCardPayload }));
+        if (url.endsWith(`/datasets/${s}/visualizations`))
+          return Promise.resolve(jsonResponse({ dataset_slug: s, visualizations: visualizationsPayload }));
+        if (url.endsWith(`/datasets/${s}/contract`))
+          return Promise.resolve(
+            jsonResponse({ dataset_slug: s, contract: contractPayload, result_contract: resultContractAvailable }),
+          );
+        if (url.endsWith(`/datasets/${s}/views`)) return Promise.resolve(jsonResponse(viewsPayload));
+      }
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={[`/dataset/${slugA}`]}>
+        <Routes>
+          <Route
+            path="/dataset/:slug"
+            element={
+              <>
+                <Link to={`/dataset/${slugB}`}>Go to B</Link>
+                <DatasetPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(slugASignal).toBeDefined());
+    expect(slugASignal?.aborted).toBe(false);
+
+    fireEvent.click(screen.getByRole("link", { name: "Go to B" }));
+
+    expect(await screen.findByRole("heading", { name: "Another Synthetic Dataset", level: 1 })).toBeInTheDocument();
+    expect(slugASignal?.aborted).toBe(true);
+  });
+});
+
 describe("DatasetPage synthetic-slug rendering", () => {
   it("hydrates the published detail theme and falls back for an unsupported context value", async () => {
     installDatasetPageFetchMock({ ...contextPayload, theme_preset: "crimson-night" });
     const { container } = renderDatasetPage();
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
 
+    // Project Spec S0117: the theme comes from the /context response, which
+    // only starts fetching once the primary route is ready -- wait for it
+    // rather than asserting synchronously right after the primary heading.
+    await waitFor(() => {
+      expect(container.querySelector(".dataset-detail")).toHaveAttribute("data-theme-preset", "crimson-night");
+    });
     const detail = container.querySelector<HTMLElement>(".dataset-detail")!;
-    expect(detail).toHaveAttribute("data-theme-preset", "crimson-night");
     expect(detail.style.getPropertyValue("--dataset-theme-canvas")).toBe("#160b17");
 
     cleanup();
     installDatasetPageFetchMock({ ...contextPayload, theme_preset: "custom-rainbow" });
     const fallbackRender = renderDatasetPage();
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
-    expect(fallbackRender.container.querySelector(".dataset-detail")).toHaveAttribute("data-theme-preset", "atlas-green");
+    await waitFor(() => {
+      expect(fallbackRender.container.querySelector(".dataset-detail")).toHaveAttribute("data-theme-preset", "atlas-green");
+    });
   });
 
   it("renders the correct title, metadata, and badge for a synthetic, non-Telco/Bank dataset_slug", async () => {
@@ -207,9 +434,11 @@ describe("DatasetPage synthetic-slug rendering", () => {
     renderDatasetPage();
 
     expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("binary_classification")).toBeInTheDocument();
+    // Project Spec S0117: context/metrics/contract only fetch once the
+    // primary route is ready -- await the first auxiliary-derived assertion.
+    expect(await screen.findByText("binary_classification")).toBeInTheDocument();
     expect(screen.getByText("Whether the synthetic target event occurs.")).toBeInTheDocument();
-    expect(screen.getByText("1,234")).toBeInTheDocument();
+    expect(await screen.findByText("1,234")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument();
 
     expect(screen.queryByText(/telco/i)).not.toBeInTheDocument();
@@ -243,7 +472,9 @@ describe("DatasetPage synthetic-slug rendering", () => {
     const { container } = renderDatasetPage();
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
 
-    expect(screen.getByText("Positive-class detection")).toBeInTheDocument();
+    // Project Spec S0117: metrics/context only fetch once the primary route
+    // is ready -- await the first auxiliary-derived assertion.
+    expect(await screen.findByText("Positive-class detection")).toBeInTheDocument();
     expect(screen.getByText("57.4%")).toBeInTheDocument();
     expect(screen.queryByText("AUC ROC")).not.toBeInTheDocument();
     const scores = Array.from(container.querySelectorAll(".performance-summary__score dt"));
@@ -261,7 +492,9 @@ describe("DatasetPage synthetic-slug rendering", () => {
     const inferenceTab = screen.getByRole("tab", { name: "Inference" });
 
     expect(overviewTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("Synthetic public-safe context summary.")).toBeInTheDocument();
+    // Project Spec S0117: context only fetches once the primary route is
+    // ready -- await it rather than asserting synchronously.
+    expect(await screen.findByText("Synthetic public-safe context summary.")).toBeInTheDocument();
 
     fireEvent.click(inferenceTab);
 
@@ -638,11 +871,13 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     renderTelcoDatasetPage();
 
     expect(await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("binary_classification")).toBeInTheDocument();
+    // Project Spec S0117: context/metrics/contract only fetch once the
+    // primary route is ready -- await the first auxiliary-derived assertion.
+    expect(await screen.findByText("binary_classification")).toBeInTheDocument();
     expect(screen.getByText("Whether a customer will cancel their service (churn).")).toBeInTheDocument();
     // Instances metadata reads metrics.evaluation.sample_size (the real
     // release's held-out test split size), not the full 7,043-row dataset.
-    expect(screen.getByText("1,408")).toBeInTheDocument();
+    expect(await screen.findByText("1,408")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
@@ -676,8 +911,9 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 })).toBeInTheDocument();
     // Metrics and model card remain available and rendered even though
     // visualizations failed independently -- one section's unavailability
-    // must not block the rest of the page.
-    expect(screen.getByText("1,408")).toBeInTheDocument();
+    // must not block the rest of the page. Metrics only fetches once the
+    // primary route is ready (Project Spec S0117).
+    expect(await screen.findByText("1,408")).toBeInTheDocument();
 
     expect((await screen.findAllByText("Visualization not generated")).length).toBe(2);
     expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(2);

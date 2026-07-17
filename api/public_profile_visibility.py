@@ -3,15 +3,16 @@ Public dataset visibility resolution for M36-05.
 
 Provides the single entry point the public HTTP routes use to determine
 whether a dataset_slug's published profile snapshot may currently be
-exposed publicly: resolve_dataset_visibility composes
-registry/dataset_public_profile_snapshot_store.py's get_snapshot with
+exposed publicly: resolve_dataset_visibility reads
 registry/dataset_public_profile_publication_store.py's get_visibility.
 
-A dataset with no published snapshot yet (SnapshotNotFoundError) is always
-treated as visible: "no snapshot exists yet" is a distinct case from "a
-snapshot exists but Visible Publicly is off", and the existing generated
-fallback profile behavior for a dataset with no snapshot is unaffected by
-this issue.
+Project Spec S0117: the normalized Visible Publicly publication preference
+is authoritative regardless of whether a published profile snapshot
+exists yet -- an explicit configured-hidden record is effective even with
+no snapshot. Snapshot existence/status remains relevant for presentation
+fallback (resolve_public_presentation_overlay below) and Admin diagnostics
+(api/admin_profile_visibility.py's snapshot projection), but it no longer
+overrides explicit configured visibility here.
 
 This module is deliberately separate from api/public_profile_loader.py,
 whose load_dataset_profile composes the PRIVATE draft store
@@ -33,27 +34,55 @@ from registry.dataset_public_profile_snapshot_store import (
     get_snapshot,
 )
 from registry.dataset_public_profile_validate import normalize_binary_result_presentation
+from registry.list import is_dataset_needs_review
+
+PUBLIC_DATASET_ACCESS_READY = "ready"
+PUBLIC_DATASET_ACCESS_MAINTENANCE = "maintenance"
 
 
 def resolve_dataset_visibility(dataset_slug: str, repo_root: Path | None = None) -> bool:
     """
     Return whether dataset_slug is currently publicly visible.
 
-    Returns True when no published snapshot exists yet for dataset_slug
-    (SnapshotNotFoundError), regardless of any publication record --
-    absence of a snapshot is not the same as being hidden. Otherwise
-    returns the publication record's visible value (defaulting to True
-    when no publication record exists yet).
+    Returns the normalized Visible Publicly publication preference
+    (registry/dataset_public_profile_publication_store.py's get_visibility):
+    an explicit True/False record is authoritative regardless of whether a
+    published profile snapshot exists yet; a missing or invalid record
+    keeps get_visibility's own DEFAULT_VISIBLE fallback. Never consults
+    snapshot existence.
 
     Raises ValueError if dataset_slug is missing or does not match the
-    required pattern, propagated from get_snapshot/get_visibility.
+    required pattern, propagated from get_visibility.
     """
-    try:
-        get_snapshot(dataset_slug, repo_root=repo_root)
-    except SnapshotNotFoundError:
-        return True
-
     return get_visibility(dataset_slug, repo_root=repo_root)
+
+
+def resolve_public_dataset_access(
+    dataset_slug: str,
+    repo_root: Path | None = None,
+    registry_path: Path | None = None,
+) -> str:
+    """
+    Classify a resolved dataset's public Dataset Detail access as "ready"
+    or "maintenance" -- to be called only after the dataset itself has
+    already been resolved (registered dataset + active release).
+
+    Combines resolve_dataset_visibility(dataset_slug) with
+    not is_dataset_needs_review(dataset_slug): either being hidden or
+    still needs_review is bounded to the same generic "maintenance"
+    result. Deterministic, read-only; performs no HTTP call, no
+    public-list membership lookup, no private Admin endpoint call, no
+    model loading, and no inference. Never exposes which of the two
+    conditions caused maintenance -- callers building a public response
+    must not surface the reason. Internal callers/tests may still call
+    resolve_dataset_visibility/is_dataset_needs_review directly to
+    distinguish the two for non-public purposes.
+    """
+    if not resolve_dataset_visibility(dataset_slug, repo_root=repo_root):
+        return PUBLIC_DATASET_ACCESS_MAINTENANCE
+    if is_dataset_needs_review(dataset_slug, registry_path=registry_path):
+        return PUBLIC_DATASET_ACCESS_MAINTENANCE
+    return PUBLIC_DATASET_ACCESS_READY
 
 
 def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | None = None) -> dict:

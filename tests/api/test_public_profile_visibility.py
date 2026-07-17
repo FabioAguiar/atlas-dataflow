@@ -9,10 +9,10 @@ persistence module (registry/dataset_public_profile_publication_store.py)
 directly.
 
 GET /datasets must exclude a hidden dataset entirely. GET /datasets/{slug}
-must return, for a hidden dataset, a response byte-for-byte identical in
-shape to the existing DATASET_NOT_FOUND response already used for a
-dataset_slug that does not exist at all -- proving no information about a
-hidden dataset's existence leaks publicly.
+must return, for a hidden dataset, the generic DATASET_MAINTENANCE response
+(Project Spec S0117) -- distinct from DATASET_NOT_FOUND, which remains
+reserved for a dataset_slug that does not exist at all -- proving no
+information about a hidden dataset's existence or reason leaks publicly.
 
 Route-level visibility filtering is isolated by monkeypatching the
 module-level api_main.resolve_dataset_visibility and
@@ -46,8 +46,11 @@ import main as api_main  # noqa: E402
 import admin_profile_visibility  # noqa: E402
 from fastapi import Request  # noqa: E402
 from public_context_loader import PublicContextUnavailableError  # noqa: E402
+from public_errors import DATASET_MAINTENANCE  # noqa: E402
+from public_predict_view_loader import ViewNotFoundError  # noqa: E402
 from public_profile_visibility import (  # noqa: E402
     resolve_dataset_visibility,
+    resolve_public_dataset_access,
     resolve_public_presentation_overlay,
 )
 from registry.dataset_public_profile_publication_store import (  # noqa: E402
@@ -56,7 +59,7 @@ from registry.dataset_public_profile_publication_store import (  # noqa: E402
     set_visibility,
 )
 from registry.list import ListedDataset, _snapshot_overlay_fields, is_dataset_needs_review  # noqa: E402
-from registry.resolve import ReleaseUnavailableError  # noqa: E402
+from registry.resolve import DatasetUnavailableError, RegistryInvalidError, ReleaseUnavailableError  # noqa: E402
 
 _SEEDED_DATASET_SLUGS = ["telco-customer-churn", "bank-marketing"]
 _TARGET_SLUG = "telco-customer-churn"
@@ -230,11 +233,38 @@ def test_visibility_record_reader_classifies_unreadable_record():
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_visibility_true_when_no_snapshot_exists_regardless_of_publication_record():
+def test_resolve_visibility_false_when_hidden_and_no_snapshot_exists():
+    """
+    Project Spec S0117: an explicit hidden ("visible": false) publication
+    preference is effective even when no published snapshot exists yet.
+    Snapshot absence no longer overrides explicit configured visibility --
+    this replaces the pre-S0117 "always visible when no snapshot" behavior.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = Path(tmp)
         set_visibility(_TARGET_SLUG, False, repo_root=fake_repo)
+        assert resolve_dataset_visibility(_TARGET_SLUG, repo_root=fake_repo) is False
+
+
+def test_resolve_visibility_true_when_explicitly_visible_and_no_snapshot_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        set_visibility(_TARGET_SLUG, True, repo_root=fake_repo)
         assert resolve_dataset_visibility(_TARGET_SLUG, repo_root=fake_repo) is True
+
+
+def test_resolve_visibility_true_when_no_publication_record_and_no_snapshot():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        assert resolve_dataset_visibility(_TARGET_SLUG, repo_root=fake_repo) is True
+
+
+def test_resolve_visibility_performs_no_write():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        resolve_dataset_visibility(_TARGET_SLUG, repo_root=fake_repo)
+        assert not (fake_repo / "registry" / "profile-publications").exists()
+        assert not (fake_repo / "registry" / "profile-snapshots").exists()
 
 
 def test_resolve_visibility_true_when_snapshot_exists_and_no_publication_record():
@@ -258,6 +288,57 @@ def test_resolve_visibility_true_when_snapshot_exists_and_explicitly_visible():
         _write_fake_snapshot(fake_repo, _TARGET_SLUG)
         set_visibility(_TARGET_SLUG, True, repo_root=fake_repo)
         assert resolve_dataset_visibility(_TARGET_SLUG, repo_root=fake_repo) is True
+
+
+# ---------------------------------------------------------------------------
+# api.public_profile_visibility.resolve_public_dataset_access: the shared
+# bounded public-access resolver combining resolve_dataset_visibility with
+# not is_dataset_needs_review. Project Spec S0117.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_public_dataset_access_ready_when_visible_and_not_needs_review():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        registry_path = fake_repo / "registry" / "datasets.json"
+        assert (
+            resolve_public_dataset_access(_TARGET_SLUG, repo_root=fake_repo, registry_path=registry_path)
+            == "ready"
+        )
+
+
+def test_resolve_public_dataset_access_maintenance_when_hidden():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        set_visibility(_TARGET_SLUG, False, repo_root=fake_repo)
+        registry_path = fake_repo / "registry" / "datasets.json"
+        assert (
+            resolve_public_dataset_access(_TARGET_SLUG, repo_root=fake_repo, registry_path=registry_path)
+            == "maintenance"
+        )
+
+
+def test_resolve_public_dataset_access_maintenance_when_needs_review():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        _write_registry_with_review_status(fake_repo, _TARGET_SLUG, "needs_review")
+        registry_path = fake_repo / "registry" / "datasets.json"
+        assert (
+            resolve_public_dataset_access(_TARGET_SLUG, repo_root=fake_repo, registry_path=registry_path)
+            == "maintenance"
+        )
+
+
+def test_resolve_public_dataset_access_maintenance_when_both_hidden_and_needs_review():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        set_visibility(_TARGET_SLUG, False, repo_root=fake_repo)
+        _write_registry_with_review_status(fake_repo, _TARGET_SLUG, "needs_review")
+        registry_path = fake_repo / "registry" / "datasets.json"
+        assert (
+            resolve_public_dataset_access(_TARGET_SLUG, repo_root=fake_repo, registry_path=registry_path)
+            == "maintenance"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -297,22 +378,30 @@ def test_list_datasets_endpoint_includes_all_when_all_visible(monkeypatch):
     assert set(_SEEDED_DATASET_SLUGS) <= slugs
 
 
-def test_get_dataset_returns_dataset_not_found_shape_when_hidden():
-    original = api_main.resolve_dataset_visibility
+def test_get_dataset_returns_dataset_maintenance_when_hidden(monkeypatch):
+    """
+    Project Spec S0117: a registered dataset that is hidden now returns the
+    generic DATASET_MAINTENANCE response, distinct from DATASET_NOT_FOUND
+    (previously a hidden dataset was made byte-for-byte identical to an
+    unknown one; that boundary now lives on DATASET_MAINTENANCE instead).
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: False)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
 
-    api_main.resolve_dataset_visibility = lambda dataset_slug: False
-    try:
-        hidden_response = api_main.get_dataset(_TARGET_SLUG)
-    finally:
-        api_main.resolve_dataset_visibility = original
+    hidden_response = api_main.get_dataset(_TARGET_SLUG)
 
+    assert hidden_response.status_code == 503
+    hidden_payload = json.loads(hidden_response.body.decode("utf-8"))
+    assert hidden_payload["error_code"] == "DATASET_MAINTENANCE"
+    assert hidden_payload["error_type"] == "dataset_maintenance"
+    assert _TARGET_SLUG not in json.dumps(hidden_payload)
+
+
+def test_get_dataset_returns_dataset_not_found_for_unknown_slug():
     nonexistent_response = api_main.get_dataset("dataset-that-does-not-exist")
-
-    assert hidden_response.status_code == nonexistent_response.status_code
-    assert (
-        json.loads(hidden_response.body.decode("utf-8"))
-        == json.loads(nonexistent_response.body.decode("utf-8"))
-    )
+    assert nonexistent_response.status_code == 404
+    assert json.loads(nonexistent_response.body.decode("utf-8"))["error_code"] == "DATASET_NOT_FOUND"
 
 
 def test_get_dataset_returns_data_when_visible(monkeypatch):
@@ -492,7 +581,15 @@ def test_publication_state_projects_current_snapshot_and_reachable(monkeypatch):
     assert state["public_access"] == {"reachable": True, "blockers": [], "observations": []}
 
 
-def test_publication_state_preserves_hidden_no_snapshot_discrepancy(monkeypatch):
+def test_publication_state_hidden_no_snapshot_is_unreachable(monkeypatch):
+    """
+    Project Spec S0117: resolve_dataset_visibility() no longer treats a
+    missing snapshot as an override of an explicit configured-hidden
+    preference, so this state is now unreachable -- the prior
+    "configured_hidden_but_effectively_visible_without_snapshot"
+    discrepancy can no longer occur and is absent from observations.
+    snapshot_missing remains a non-blocking observation on its own.
+    """
     _publication_state_dependencies(
         monkeypatch,
         configured={
@@ -501,16 +598,60 @@ def test_publication_state_preserves_hidden_no_snapshot_discrepancy(monkeypatch)
             "record_status": "valid",
             "updated_at": "2026-07-16T21:00:00Z",
         },
-        effective=True,
+        effective=False,
         review=False,
         snapshot=None,
     )
     state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["visibility"]["effective_visible"] is False
+    assert state["public_access"]["reachable"] is False
+    assert state["public_access"]["blockers"] == ["visibility_disabled"]
+    assert state["public_access"]["observations"] == ["snapshot_missing"]
+    assert "configured_hidden_but_effectively_visible_without_snapshot" not in state["public_access"]["observations"]
+
+
+def test_publication_state_integration_hidden_no_snapshot_real_functions(monkeypatch, tmp_path):
+    """
+    End-to-end proof, without mocking resolve_dataset_visibility or
+    get_visibility_record, that the real store/resolver chain agrees:
+    configured hidden + missing snapshot is genuinely unreachable.
+    """
+    set_visibility(_TARGET_SLUG, False, repo_root=tmp_path)
+
+    monkeypatch.setattr(
+        admin_profile_visibility,
+        "resolve_dataset",
+        lambda _slug, registry_path=None: SimpleNamespace(
+            dataset_slug=_TARGET_SLUG, active_release="release-20260716-001"
+        ),
+    )
+    monkeypatch.setattr(admin_profile_visibility, "is_dataset_needs_review", lambda _slug, registry_path=None: False)
+
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG, repo_root=tmp_path)
+
+    assert state["visibility"]["effective_visible"] is False
+    assert state["public_access"]["reachable"] is False
+    assert "visibility_disabled" in state["public_access"]["blockers"]
+    assert "snapshot_missing" in state["public_access"]["observations"]
+    assert "configured_hidden_but_effectively_visible_without_snapshot" not in state["public_access"]["observations"]
+
+
+def test_publication_state_integration_visible_no_snapshot_is_reachable(monkeypatch, tmp_path):
+    set_visibility(_TARGET_SLUG, True, repo_root=tmp_path)
+
+    monkeypatch.setattr(
+        admin_profile_visibility,
+        "resolve_dataset",
+        lambda _slug, registry_path=None: SimpleNamespace(
+            dataset_slug=_TARGET_SLUG, active_release="release-20260716-001"
+        ),
+    )
+    monkeypatch.setattr(admin_profile_visibility, "is_dataset_needs_review", lambda _slug, registry_path=None: False)
+
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG, repo_root=tmp_path)
+
     assert state["public_access"]["reachable"] is True
-    assert state["public_access"]["observations"] == [
-        "snapshot_missing",
-        "configured_hidden_but_effectively_visible_without_snapshot",
-    ]
+    assert state["public_access"]["blockers"] == []
 
 
 def test_publication_state_has_deterministic_blockers_and_observations(monkeypatch):
@@ -666,25 +807,47 @@ _CURATED_PUBLIC_PROFILE_OVERLAY = {
 }
 
 
-def test_get_public_context_returns_dataset_not_found_shape_when_hidden():
-    original = api_main.resolve_dataset_visibility
-    api_main.resolve_dataset_visibility = lambda dataset_slug: False
-    try:
-        hidden_response = api_main.get_public_context(_TARGET_SLUG)
-    finally:
-        api_main.resolve_dataset_visibility = original
+def test_get_public_context_returns_dataset_maintenance_when_hidden(monkeypatch):
+    """
+    Project Spec S0117: GET /datasets/{slug}/context is now guarded by the
+    same shared access resolver as every other Dataset Detail route -- a
+    hidden dataset returns DATASET_MAINTENANCE, not DATASET_NOT_FOUND.
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: False)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
 
+    hidden_response = api_main.get_public_context(_TARGET_SLUG)
+
+    assert hidden_response.status_code == 503
+    assert json.loads(hidden_response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_get_public_context_returns_dataset_maintenance_when_needs_review(monkeypatch):
+    """
+    Project Spec S0117: prior to this spec, GET /datasets/{slug}/context
+    performed no needs_review check at all. The shared guard now enforces
+    it here too.
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: True)
+
+    response = api_main.get_public_context(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_get_public_context_returns_dataset_not_found_for_unknown_slug():
     nonexistent_response = api_main.get_public_context("dataset-that-does-not-exist")
-
-    assert hidden_response.status_code == nonexistent_response.status_code
-    assert (
-        json.loads(hidden_response.body.decode("utf-8"))
-        == json.loads(nonexistent_response.body.decode("utf-8"))
-    )
+    assert nonexistent_response.status_code == 404
+    assert json.loads(nonexistent_response.body.decode("utf-8"))["error_code"] == "DATASET_NOT_FOUND"
 
 
 def test_get_public_context_returns_context_when_visible(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
+    original_resolve_dataset = api_main.resolve_dataset
     original_loader = api_main.load_public_context
     original_overlay = api_main.resolve_public_presentation_overlay
 
@@ -692,10 +855,12 @@ def test_get_public_context_returns_context_when_visible(monkeypatch):
     api_main.resolve_dataset = _fixture_resolve_dataset
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
         api_main.resolve_dataset_visibility = original_visibility
+        api_main.resolve_dataset = original_resolve_dataset
         monkeypatch.undo()
         api_main.load_public_context = original_loader
         api_main.resolve_public_presentation_overlay = original_overlay
@@ -712,6 +877,7 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published(monke
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     try:
@@ -745,6 +911,7 @@ def test_get_public_context_includes_curated_overlay_fields_when_published(monke
 
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_CURATED_PUBLIC_PROFILE_OVERLAY)
     try:
@@ -1101,25 +1268,21 @@ def test_list_datasets_endpoint_includes_dataset_when_not_needs_review(monkeypat
     assert _TARGET_SLUG in slugs
 
 
-def test_get_dataset_returns_dataset_not_found_shape_when_needs_review():
-    original_visibility = api_main.resolve_dataset_visibility
-    original_needs_review = api_main.is_dataset_needs_review
+def test_get_dataset_returns_dataset_maintenance_when_needs_review(monkeypatch):
+    """
+    Project Spec S0117: a needs_review dataset now returns the same generic
+    DATASET_MAINTENANCE response as a hidden dataset -- the public wire
+    response never distinguishes which of the two conditions applies.
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: True)
 
-    api_main.resolve_dataset_visibility = lambda dataset_slug: True
-    api_main.is_dataset_needs_review = lambda dataset_slug: True
-    try:
-        needs_review_response = api_main.get_dataset(_TARGET_SLUG)
-    finally:
-        api_main.resolve_dataset_visibility = original_visibility
-        api_main.is_dataset_needs_review = original_needs_review
+    needs_review_response = api_main.get_dataset(_TARGET_SLUG)
 
-    nonexistent_response = api_main.get_dataset("dataset-that-does-not-exist")
-
-    assert needs_review_response.status_code == nonexistent_response.status_code
-    assert (
-        json.loads(needs_review_response.body.decode("utf-8"))
-        == json.loads(nonexistent_response.body.decode("utf-8"))
-    )
+    assert needs_review_response.status_code == 503
+    payload = json.loads(needs_review_response.body.decode("utf-8"))
+    assert payload["error_code"] == "DATASET_MAINTENANCE"
 
 
 def test_get_dataset_returns_data_when_visible_and_not_needs_review(monkeypatch):
@@ -1137,6 +1300,230 @@ def test_get_dataset_returns_data_when_visible_and_not_needs_review(monkeypatch)
         api_main.is_dataset_needs_review = original_needs_review
 
     assert response["dataset_slug"] == _TARGET_SLUG
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0117: the public error contract, the shared route-level
+# access guard (api/main.py's _resolve_public_dataset_detail_access), and
+# the uniform boundary/precedence rules it enforces across every guarded
+# public Dataset Detail route.
+# ---------------------------------------------------------------------------
+
+
+def test_dataset_maintenance_error_contract():
+    assert DATASET_MAINTENANCE.status_code == 503
+    assert DATASET_MAINTENANCE.error_type == "dataset_maintenance"
+    assert DATASET_MAINTENANCE.error_code == "DATASET_MAINTENANCE"
+
+    response = DATASET_MAINTENANCE.response()
+    assert response.status_code == 503
+    payload = json.loads(response.body.decode("utf-8"))
+    assert payload == {
+        "error_type": "dataset_maintenance",
+        "error_code": "DATASET_MAINTENANCE",
+        "message": DATASET_MAINTENANCE.message,
+    }
+    # Generic message only -- no dataset slug, title, visibility state,
+    # review state, active release, or blocker list.
+    assert set(payload.keys()) == {"error_type", "error_code", "message"}
+
+
+def test_access_guard_returns_dataset_not_found_for_unknown_dataset(monkeypatch):
+    def raise_unavailable(_slug):
+        raise DatasetUnavailableError("missing")
+
+    monkeypatch.setattr(api_main, "resolve_dataset", raise_unavailable)
+    response = api_main._resolve_public_dataset_detail_access("unknown-slug")
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_NOT_FOUND"
+
+
+def test_access_guard_returns_release_unavailable(monkeypatch):
+    def raise_release_unavailable(_slug):
+        raise ReleaseUnavailableError("no release")
+
+    monkeypatch.setattr(api_main, "resolve_dataset", raise_release_unavailable)
+    response = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "RELEASE_UNAVAILABLE"
+
+
+def test_access_guard_returns_registry_unavailable(monkeypatch):
+    def raise_registry_invalid(_slug):
+        raise RegistryInvalidError("bad registry")
+
+    monkeypatch.setattr(api_main, "resolve_dataset", raise_registry_invalid)
+    response = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "REGISTRY_UNAVAILABLE"
+
+
+def test_access_guard_returns_dataset_maintenance_when_hidden(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: False)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+
+    response = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    payload = json.loads(response.body.decode("utf-8"))
+    assert payload["error_code"] == "DATASET_MAINTENANCE"
+    assert _TARGET_SLUG not in json.dumps(payload)
+    assert set(payload.keys()) == {"error_type", "error_code", "message"}
+
+
+def test_access_guard_returns_dataset_maintenance_when_needs_review(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: True)
+
+    response = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_access_guard_returns_resolved_dataset_when_ready(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+
+    resolved = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert not hasattr(resolved, "status_code")
+    assert resolved.dataset_slug == _TARGET_SLUG
+    assert resolved.active_release == "release-fixture-001"
+
+
+def _maintenance_guard_response(_slug):
+    return api_main.public_error_response(DATASET_MAINTENANCE)
+
+
+def test_all_guarded_get_routes_return_maintenance_without_loading_resources(monkeypatch):
+    """
+    Uniform backend boundary: every guarded GET route delegates to the same
+    access guard, and none of them load endpoint-specific resources when
+    that guard reports maintenance.
+    """
+    monkeypatch.setattr(api_main, "_resolve_public_dataset_detail_access", _maintenance_guard_response)
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("resource loader must not run when access is maintenance")
+
+    for name in (
+        "load_public_contract",
+        "load_public_metrics",
+        "load_public_context",
+        "load_public_model_card",
+        "load_public_visualizations",
+        "load_public_predict_view_list",
+        "load_public_predict_view",
+        "load_public_predict_view_customization",
+    ):
+        monkeypatch.setattr(api_main, name, _forbidden)
+
+    calls = [
+        lambda: api_main.get_dataset(_TARGET_SLUG),
+        lambda: api_main.get_public_contract(_TARGET_SLUG),
+        lambda: api_main.get_public_metrics(_TARGET_SLUG),
+        lambda: api_main.get_public_context(_TARGET_SLUG),
+        lambda: api_main.get_public_model_card(_TARGET_SLUG),
+        lambda: api_main.get_public_visualizations(_TARGET_SLUG),
+        lambda: api_main.list_predict_views(_TARGET_SLUG),
+        lambda: api_main.get_predict_view(_TARGET_SLUG, "unknown-view"),
+        lambda: api_main.get_predict_view_customization(_TARGET_SLUG, "unknown-view"),
+    ]
+
+    for call in calls:
+        response = call()
+        assert response.status_code == 503
+        assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_inference_route_returns_maintenance_before_payload_validation(monkeypatch):
+    monkeypatch.setattr(api_main, "_resolve_public_dataset_detail_access", _maintenance_guard_response)
+    monkeypatch.setattr(
+        api_main,
+        "load_contract",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("contract must not load for maintenance")),
+    )
+
+    response = api_main.validate_dataset_inference_payload(_TARGET_SLUG, payload="not-a-dict")
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_inference_route_returns_not_found_before_payload_validation_for_unknown_dataset():
+    response = api_main.validate_dataset_inference_payload("dataset-that-does-not-exist", payload="not-a-dict")
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_NOT_FOUND"
+
+
+def test_inference_route_ready_dataset_malformed_payload_retains_validation_error(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+
+    response = api_main.validate_dataset_inference_payload(_TARGET_SLUG, payload="not-a-dict")
+
+    assert response.status_code == 422
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "INVALID_PAYLOAD"
+
+
+def test_predict_view_route_returns_maintenance_for_unknown_view_when_hidden(monkeypatch):
+    monkeypatch.setattr(api_main, "_resolve_public_dataset_detail_access", _maintenance_guard_response)
+    monkeypatch.setattr(
+        api_main,
+        "load_public_predict_view",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("view must not be looked up for maintenance")),
+    )
+
+    response = api_main.get_predict_view(_TARGET_SLUG, "unknown-view")
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_predict_view_route_returns_not_found_for_unknown_dataset_regardless_of_view():
+    response = api_main.get_predict_view("dataset-that-does-not-exist", "any-view")
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_NOT_FOUND"
+
+
+def test_predict_view_route_ready_dataset_unknown_view_retains_view_not_found(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "load_public_predict_view",
+        lambda *_a, **_k: (_ for _ in ()).throw(ViewNotFoundError("no such view")),
+    )
+
+    response = api_main.get_predict_view(_TARGET_SLUG, "unknown-view")
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "VIEW_NOT_FOUND"
+
+
+def test_predict_view_customization_route_returns_maintenance_for_unknown_view_when_needs_review(monkeypatch):
+    monkeypatch.setattr(api_main, "_resolve_public_dataset_detail_access", _maintenance_guard_response)
+    monkeypatch.setattr(
+        api_main,
+        "load_public_predict_view_customization",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("customization must not load for maintenance")),
+    )
+
+    response = api_main.get_predict_view_customization(_TARGET_SLUG, "unknown-view")
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
 
 
 if __name__ == "__main__":

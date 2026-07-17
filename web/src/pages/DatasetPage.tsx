@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import DatasetAccessState, { classifyDatasetAccessError } from "../components/DatasetDetail/DatasetAccessState";
 import DatasetDetailHeader, {
   type DatasetDetailMetadataItem,
 } from "../components/DatasetDetail/DatasetDetailHeader";
@@ -66,6 +67,7 @@ type ModelCardPayload = {
 type PageState =
   | { status: "loading" }
   | { status: "ready"; data: DatasetMetadata }
+  | { status: "maintenance" }
   | { status: "not_found" }
   | { status: "unavailable" };
 
@@ -113,26 +115,30 @@ export default function DatasetPage() {
       return;
     }
 
+    // Project Spec S0117: reset to loading immediately on every slug
+    // change so a slug switch never briefly shows the previous dataset's
+    // content or a premature not-found state before the new response
+    // arrives.
+    setState({ status: "loading" });
+
     const controller = new AbortController();
 
     fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}`, {
       signal: controller.signal,
     })
-      .then((res) => {
-        if (res.status === 404) {
-          setState({ status: "not_found" });
-          return null;
-        }
-        if (!res.ok) {
-          setState({ status: "unavailable" });
-          return null;
-        }
-        return res.json() as Promise<DatasetMetadata>;
-      })
-      .then((data) => {
-        if (data) {
+      .then(async (res) => {
+        if (res.ok) {
+          const data = (await res.json()) as DatasetMetadata;
           setState({ status: "ready", data });
+          return;
         }
+        let body: unknown = null;
+        try {
+          body = await res.json();
+        } catch {
+          body = null;
+        }
+        setState({ status: classifyDatasetAccessError(body) });
       })
       .catch((err: Error) => {
         if (err.name !== "AbortError") {
@@ -143,9 +149,20 @@ export default function DatasetPage() {
     return () => controller.abort();
   }, [slug]);
 
+  // Project Spec S0117: every auxiliary request below is gated behind the
+  // primary route request reaching "ready" -- no context/contract/metrics/
+  // model-card/visualizations/views/bound-view-customization request is
+  // ever sent while the primary state is loading, maintenance, not_found,
+  // or unavailable.
+  const primaryReady = state.status === "ready";
+
   useEffect(() => {
     if (!slug) {
       setContextState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setContextState({ status: "loading" });
       return;
     }
 
@@ -173,7 +190,7 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   // Project Spec S0110: resolves the published bound predict view's
   // customization for the default route's submit-button copy. Never
@@ -184,7 +201,7 @@ export default function DatasetPage() {
   const boundPredictViewId = contextState.status === "ready" ? contextState.data.bound_predict_view_id : null;
 
   useEffect(() => {
-    if (!slug || !boundPredictViewId) {
+    if (!slug || !primaryReady || !boundPredictViewId) {
       setBoundViewCustomizationState({ status: "ready", data: null });
       return;
     }
@@ -218,11 +235,15 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug, boundPredictViewId]);
+  }, [slug, primaryReady, boundPredictViewId]);
 
   useEffect(() => {
     if (!slug) {
       setMetricsState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setMetricsState({ status: "loading" });
       return;
     }
 
@@ -250,11 +271,15 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   useEffect(() => {
     if (!slug) {
       setModelCardState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setModelCardState({ status: "loading" });
       return;
     }
 
@@ -282,11 +307,15 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   useEffect(() => {
     if (!slug) {
       setVisualizationsState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setVisualizationsState({ status: "loading" });
       return;
     }
 
@@ -314,11 +343,15 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   useEffect(() => {
     if (!slug) {
       setContractState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setContractState({ status: "loading" });
       return;
     }
 
@@ -353,11 +386,15 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   useEffect(() => {
     if (!slug) {
       setViewsState({ status: "unavailable" });
+      return;
+    }
+    if (!primaryReady) {
+      setViewsState({ status: "loading" });
       return;
     }
 
@@ -385,7 +422,7 @@ export default function DatasetPage() {
       });
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, primaryReady]);
 
   if (state.status === "loading") {
     return (
@@ -395,20 +432,8 @@ export default function DatasetPage() {
     );
   }
 
-  if (state.status === "not_found") {
-    return (
-      <>
-        <p>Dataset not found.</p>
-      </>
-    );
-  }
-
-  if (state.status === "unavailable") {
-    return (
-      <>
-        <p>Dataset information is currently unavailable. Please try again later.</p>
-      </>
-    );
+  if (state.status !== "ready") {
+    return <DatasetAccessState kind={state.status} />;
   }
 
   const context = contextState.status === "ready" ? contextState.data : null;

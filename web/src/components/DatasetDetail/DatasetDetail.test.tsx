@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { DatasetDetailHeader, DatasetDetailTabs, PerformanceSummary, type DatasetDetailMetadataItem } from ".";
 import FeatureImportance from "./FeatureImportance";
 import TargetDistribution from "./TargetDistribution";
+import { presentDatasetDateOnly, safePublicSourceUrl } from "../../lib/datasetPresentation";
 
 function renderHeader(metadata: DatasetDetailMetadataItem[]) {
   return render(
@@ -50,6 +51,47 @@ describe("DatasetDetailHeader metadata rendering (M39-03)", () => {
     expect(screen.getByText("01/07/2026")).toBeInTheDocument();
     expect(screen.getByText("Format: dd/mm/yyyy")).toBeInTheDocument();
     expect(screen.queryByText("Pending")).not.toBeInTheDocument();
+  });
+
+  it("renders an approved source URL as a safely isolated link", () => {
+    renderHeader([
+      { label: "Source", value: "Example Org", href: "https://example.org/data" },
+      { label: "Release", value: null },
+    ]);
+
+    expect(screen.getByRole("link", { name: "Example Org" })).toHaveAttribute("href", "https://example.org/data");
+    expect(screen.getByRole("link", { name: "Example Org" })).toHaveAttribute("target", "_blank");
+    expect(screen.getByRole("link", { name: "Example Org" })).toHaveAttribute("rel", "noreferrer noopener");
+  });
+});
+
+describe("Dataset Detail bounded presentation helpers (S0118)", () => {
+  it.each([
+    ["dd/mm/yyyy", "12/07/2026"],
+    ["mm/dd/yyyy", "07/12/2026"],
+    ["yyyy-mm-dd", "2026-07-12"],
+    [null, "12/07/2026"],
+  ] as const)("formats canonical date-only content as %s", (format, expected) => {
+    expect(presentDatasetDateOnly("2026-07-12", format)?.value).toBe(expected);
+  });
+
+  it("validates date-only calendar values, including leap days", () => {
+    expect(presentDatasetDateOnly("2024-02-29", "dd/mm/yyyy")?.value).toBe("29/02/2024");
+    for (const value of ["2026-02-30", "2026-13-01", "not-a-date", ""]) {
+      expect(presentDatasetDateOnly(value, "dd/mm/yyyy")).toBeNull();
+    }
+  });
+
+  it.each([
+    ["https://example.org/data", "https://example.org/data"],
+    ["http://example.org/data", "http://example.org/data"],
+    ["javascript:alert(1)", null],
+    ["data:text/plain,bad", null],
+    ["file:///tmp/data", null],
+    ["/relative", null],
+    ["not a url", null],
+  ])("bounds public source URL %s", (value, expected) => {
+    expect(safePublicSourceUrl(value)).toBe(expected);
   });
 });
 

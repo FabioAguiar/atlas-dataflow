@@ -191,6 +191,53 @@ export function normalizeDatasetDateOnly(value: string | null | undefined): stri
     : "";
 }
 
+export type DatasetDateFormat = "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd";
+
+export type DatasetDateOnlyPresentation = {
+  value: string;
+  effectiveFormat: DatasetDateFormat;
+};
+
+/** Formats date-only editorial content without constructing a timestamp. */
+export function presentDatasetDateOnly(
+  value: string | null | undefined,
+  format: DatasetDateFormat | null | undefined,
+): DatasetDateOnlyPresentation | null {
+  const effectiveFormat: DatasetDateFormat =
+    format === "mm/dd/yyyy" || format === "yyyy-mm-dd" ? format : "dd/mm/yyyy";
+  const canonical = normalizeDatasetDateOnly(value);
+
+  if (canonical) {
+    const [year, month, day] = canonical.split("-");
+    if (effectiveFormat === "dd/mm/yyyy") return { value: `${day}/${month}/${year}`, effectiveFormat };
+    if (effectiveFormat === "mm/dd/yyyy") return { value: `${month}/${day}/${year}`, effectiveFormat };
+    return { value: canonical, effectiveFormat };
+  }
+
+  // Preserve valid legacy DD/MM/YYYY display content without reinterpreting
+  // it as a timestamp. Canonical snapshot values continue to use YYYY-MM-DD.
+  const legacyMatch = typeof value === "string" ? /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value) : null;
+  if (legacyMatch) {
+    const [, day, month, year] = legacyMatch;
+    if (normalizeDatasetDateOnly(`${year}-${month}-${day}`)) {
+      return { value: legacyMatch[0], effectiveFormat: "dd/mm/yyyy" };
+    }
+  }
+
+  return null;
+}
+
+/** Returns only absolute public HTTP(S) links suitable for source metadata. */
+export function safePublicSourceUrl(value: string | null | undefined): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * GET /datasets (registry/list.py ListedDataset) returns only dataset_slug,
  * title, summary, domain, visibility and tags today, never problem_type. This

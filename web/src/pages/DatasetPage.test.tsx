@@ -83,6 +83,17 @@ const contextPayload = {
 };
 
 type ContextPayloadFixture = typeof contextPayload & {
+  description?: string;
+  display_title?: string | null;
+  display_subtitle?: string | null;
+  short_description?: string | null;
+  problem_summary_title?: string | null;
+  problem_summary_body?: string | null;
+  source_name?: string | null;
+  source_url?: string | null;
+  release_date_label?: string | null;
+  date_format?: "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd" | null;
+  canonical_name_fallback?: boolean | null;
   theme_preset?: string | null;
   performance_focus?: {
     focus_id: "overall_discrimination" | "positive_class_detection" | "balanced_classification" | "probability_quality" | "operational_decision";
@@ -136,7 +147,14 @@ const viewsPayload = {
 // (/datasets/{slug}, /context, /metrics, /model-card, /visualizations,
 // /contract, /views); each endpoint's mocked shape mirrors this handoff's
 // grounding of the page's own response-parsing code.
-function installDatasetPageFetchMock(context: ContextPayloadFixture = contextPayload) {
+function installDatasetPageFetchMock(
+  context: ContextPayloadFixture = contextPayload,
+  metadata: typeof datasetMetadata & {
+    display_title?: string | null;
+    display_subtitle?: string | null;
+    short_description?: string | null;
+  } = datasetMetadata,
+) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
 
@@ -159,7 +177,7 @@ function installDatasetPageFetchMock(context: ContextPayloadFixture = contextPay
       return jsonResponse(viewsPayload);
     }
     if (url.endsWith(`/datasets/${slug}`)) {
-      return jsonResponse(datasetMetadata);
+      return jsonResponse(metadata);
     }
 
     return jsonResponse({}, 404);
@@ -405,6 +423,46 @@ describe("DatasetPage access states (Project Spec S0117)", () => {
 });
 
 describe("DatasetPage synthetic-slug rendering", () => {
+  it("keeps Dataset Detail copy under display and problem-summary ownership", async () => {
+    installDatasetPageFetchMock(
+      {
+        ...contextPayload,
+        display_title: "  ",
+        display_subtitle: "Published detail subtitle",
+        short_description: "Home-card-only context copy",
+        problem_summary_title: "Curated question",
+        problem_summary_body: "Curated answer",
+        canonical_name_fallback: true,
+      },
+      {
+        ...datasetMetadata,
+        display_subtitle: "Metadata detail subtitle",
+        short_description: "Home-card-only metadata copy",
+      },
+    );
+
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { level: 1, name: datasetMetadata.title })).toBeInTheDocument();
+    expect(await screen.findByText("Published detail subtitle")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "Curated question" })).toBeInTheDocument();
+    expect(screen.getByText("Curated answer")).toBeInTheDocument();
+    expect(screen.queryByText("Home-card-only context copy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Home-card-only metadata copy")).not.toBeInTheDocument();
+  });
+
+  it("falls back from whitespace curated problem copy to deterministic technical copy", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      description: "Technical description fallback",
+      problem_summary_title: "  ",
+      problem_summary_body: "\n",
+    });
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { level: 3, name: "Problem summary" })).toBeInTheDocument();
+    expect(screen.getByText("Technical description fallback")).toBeInTheDocument();
+  });
   it("hydrates the published detail theme and falls back for an unsupported context value", async () => {
     installDatasetPageFetchMock({ ...contextPayload, theme_preset: "crimson-night" });
     const { container } = renderDatasetPage();

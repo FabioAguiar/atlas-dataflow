@@ -14,7 +14,12 @@ import type { BinaryResultContract, BinaryResultPresentation } from "../componen
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 import PredictViewList, { PredictViewItem } from "../components/PredictViewList/PredictViewList";
-import { datasetThemeStyle, resolveDatasetThemePreset } from "../lib/datasetPresentation";
+import {
+  datasetThemeStyle,
+  presentDatasetDateOnly,
+  resolveDatasetThemePreset,
+  safePublicSourceUrl,
+} from "../lib/datasetPresentation";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -42,8 +47,13 @@ type PublicContextPayload = {
   display_title?: string | null;
   display_subtitle?: string | null;
   short_description?: string | null;
+  problem_summary_title?: string | null;
+  problem_summary_body?: string | null;
   source_name?: string | null;
+  source_url?: string | null;
   release_date_label?: string | null;
+  date_format?: "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd" | null;
+  canonical_name_fallback?: boolean | null;
   primary_metric_key?: string | null;
   performance_focus?: PerformanceFocus | null;
   theme_preset?: string | null;
@@ -81,8 +91,16 @@ type PredictViewListPayload = {
   views: PredictViewItem[];
 };
 
+function nonBlank(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed || null;
+}
+
 function getProblemSummaryText(context: PublicContextPayload | null): string | null {
-  return context?.description || context?.use_case || context?.summary || null;
+  return nonBlank(context?.problem_summary_body)
+    || nonBlank(context?.description)
+    || nonBlank(context?.use_case)
+    || nonBlank(context?.summary);
 }
 
 function extractInstanceCount(metrics: MetricsData): string | null {
@@ -439,18 +457,23 @@ export default function DatasetPage() {
   const context = contextState.status === "ready" ? contextState.data : null;
   const resolvedTheme = resolveDatasetThemePreset(context?.theme_preset);
 
-  const curatedTitle = context?.display_title || state.data.display_title;
-  const datasetTitle = curatedTitle || context?.title || state.data.title;
-  const curatedSubtitle =
-    context?.short_description ||
-    context?.display_subtitle ||
-    state.data.short_description ||
-    state.data.display_subtitle;
-  const datasetSubtitle = curatedSubtitle || context?.summary || context?.description || state.data.summary;
+  const datasetTitle = nonBlank(context?.display_title)
+    || nonBlank(state.data.display_title)
+    || nonBlank(context?.title)
+    || state.data.title;
+  const datasetSubtitle = nonBlank(context?.display_subtitle)
+    || nonBlank(state.data.display_subtitle)
+    || nonBlank(context?.summary)
+    || nonBlank(context?.description)
+    || nonBlank(state.data.summary)
+    || undefined;
   const analysisType = context?.problem_type;
+  const sourceName = nonBlank(context?.source_name);
+  const sourceHref = sourceName ? safePublicSourceUrl(context?.source_url) : null;
+  const release = presentDatasetDateOnly(context?.release_date_label, context?.date_format);
 
   const metadataItems: DatasetDetailMetadataItem[] = [
-    { label: "Source", value: context?.source_name || null },
+    { label: "Source", value: sourceName, href: sourceHref ?? undefined },
     {
       label: "Instances",
       value: metricsState.status === "ready" ? extractInstanceCount(metricsState.data) : null,
@@ -463,7 +486,11 @@ export default function DatasetPage() {
       label: "Target",
       value: context?.prediction_target_description || context?.problem_type || null,
     },
-    { label: "Release", value: context?.release_date_label || null, hint: "Format: dd/mm/yyyy" },
+    {
+      label: "Release",
+      value: release?.value ?? null,
+      hint: release ? `Format: ${release.effectiveFormat}` : undefined,
+    },
   ];
 
   // Project Spec S0110: same precedence rule DatasetViewPage.tsx applies --
@@ -496,13 +523,14 @@ export default function DatasetPage() {
   );
 
   const problemSummaryText = getProblemSummaryText(context);
+  const problemSummaryTitle = nonBlank(context?.problem_summary_title) || "Problem summary";
 
   const overviewContent = (
     <div className="dataset-detail-overview">
       {contextState.status === "loading" && <LoadingState />}
       {contextState.status === "ready" && problemSummaryText && (
         <section className="dataset-detail-overview__problem-summary">
-          <h3>Problem summary</h3>
+          <h3>{problemSummaryTitle}</h3>
           <p>{problemSummaryText}</p>
         </section>
       )}

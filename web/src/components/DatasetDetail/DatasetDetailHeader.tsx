@@ -5,6 +5,7 @@ export type DatasetDetailMetadataItem = {
   label: "Source" | "Instances" | "Features" | "Target" | "Release";
   value: string | null;
   hint?: string;
+  href?: string;
 };
 
 type DatasetDetailHeaderProps = {
@@ -40,7 +41,11 @@ export default function DatasetDetailHeader({
           <div key={item.label} className="dataset-detail-header__metadata-item">
             <dt>{item.label}</dt>
             <dd>
-              {item.value ?? (
+              {item.value && item.href ? (
+                <a href={item.href} target="_blank" rel="noreferrer noopener">
+                  {item.value}
+                </a>
+              ) : item.value ?? (
                 <span className="dataset-detail-header__metadata-pending">Pending</span>
               )}
             </dd>

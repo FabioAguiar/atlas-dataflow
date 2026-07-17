@@ -109,6 +109,9 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
     defaults = {
         "display_title": None,
         "display_subtitle": None,
+        "problem_summary_title": None,
+        "problem_summary_body": None,
+        "canonical_name_fallback": None,
         "home_card_icon": None,
         "short_description": None,
         "home_card_media_ref": None,
@@ -143,6 +146,15 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
     return {
         "display_title": display.get("title") if isinstance(display, dict) else None,
         "display_subtitle": display.get("subtitle") if isinstance(display, dict) else None,
+        "problem_summary_title": (
+            display.get("problem_summary_title") if isinstance(display, dict) else None
+        ),
+        "problem_summary_body": (
+            display.get("problem_summary_body") if isinstance(display, dict) else None
+        ),
+        "canonical_name_fallback": (
+            display.get("canonical_name_fallback") if isinstance(display, dict) else None
+        ),
         "home_card_icon": home_card.get("icon") if isinstance(home_card, dict) else None,
         "short_description": home_card.get("short_description") if isinstance(home_card, dict) else None,
         "home_card_media_ref": home_card.get("background_image_ref") if isinstance(home_card, dict) else None,

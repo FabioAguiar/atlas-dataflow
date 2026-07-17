@@ -72,6 +72,9 @@ _PUBLIC_LISTING_KEYS = {
 _EMPTY_PUBLIC_CONTEXT_OVERLAY = {
     "display_title": None,
     "display_subtitle": None,
+    "problem_summary_title": None,
+    "problem_summary_body": None,
+    "canonical_name_fallback": None,
     "home_card_icon": None,
     "short_description": None,
     "theme_preset": None,

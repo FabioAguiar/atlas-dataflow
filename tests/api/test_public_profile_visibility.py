@@ -765,6 +765,9 @@ _CURATED_OVERLAY = {
 _EMPTY_PUBLIC_PROFILE_OVERLAY = {
     **_EMPTY_OVERLAY,
     "home_card_media_ref": None,
+    "problem_summary_title": None,
+    "problem_summary_body": None,
+    "canonical_name_fallback": None,
     "source_name": None,
     "source_url": None,
     "release_date_label": None,
@@ -789,6 +792,9 @@ _EMPTY_PUBLIC_PROFILE_OVERLAY = {
 _CURATED_PUBLIC_PROFILE_OVERLAY = {
     **_CURATED_OVERLAY,
     "home_card_media_ref": None,
+    "problem_summary_title": "Why this matters",
+    "problem_summary_body": "Curated public problem summary.",
+    "canonical_name_fallback": False,
     "source_name": "Original Source Org",
     "source_url": "https://example.org/dataset",
     "release_date_label": "01/07/2026",
@@ -890,6 +896,9 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published(monke
     context = response["context"]
     assert context["display_title"] is None
     assert context["display_subtitle"] is None
+    assert context["problem_summary_title"] is None
+    assert context["problem_summary_body"] is None
+    assert context["canonical_name_fallback"] is None
     assert context["home_card_icon"] is None
     assert context["short_description"] is None
     assert context["theme_preset"] is None
@@ -924,6 +933,9 @@ def test_get_public_context_includes_curated_overlay_fields_when_published(monke
     context = response["context"]
     assert context["display_title"] == "Curated Title"
     assert context["display_subtitle"] == "Curated subtitle."
+    assert context["problem_summary_title"] == "Why this matters"
+    assert context["problem_summary_body"] == "Curated public problem summary."
+    assert context["canonical_name_fallback"] is False
     assert context["home_card_icon"] == "bank"
     assert context["short_description"] == "Curated short description."
     assert context["theme_preset"] == "atlas-green"
@@ -994,6 +1006,9 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
                         "display": {
                             "title": "Curated Title",
                             "subtitle": "Curated subtitle.",
+                            "problem_summary_title": "Why this matters",
+                            "problem_summary_body": "Curated public problem summary.",
+                            "canonical_name_fallback": False,
                             "source_name": "Original Source Org",
                             "source_url": "https://example.org/dataset",
                             "release_date_label": "01/07/2026",
@@ -1026,6 +1041,30 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
         assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == dict(
             _CURATED_PUBLIC_PROFILE_OVERLAY
         )
+
+
+def test_public_presentation_overlay_treats_malformed_display_as_missing():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        snapshots_dir = fake_repo / "registry" / "profile-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        (snapshots_dir / f"{_TARGET_SLUG}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "dataset_slug": _TARGET_SLUG,
+                    "published_at": "2026-07-01T00:00:00Z",
+                    "active_release_at_publish_time": "release-20260101-001",
+                    "profile": {"display": ["not", "an", "object"]},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        overlay = resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+        assert overlay["problem_summary_title"] is None
+        assert overlay["problem_summary_body"] is None
+        assert overlay["canonical_name_fallback"] is None
 
 
 # ---------------------------------------------------------------------------

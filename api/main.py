@@ -87,7 +87,7 @@ from admin_profile_publish import (  # noqa: E402
     resolve_home_card_media_path,
     store_home_card_image,
 )
-from admin_profile_visibility import set_dataset_visibility  # noqa: E402
+from admin_profile_visibility import get_dataset_publication_state, set_dataset_visibility  # noqa: E402
 from admin_settings import read_admin_settings, write_admin_settings  # noqa: E402
 from admin_predict_view_customizations import (  # noqa: E402
     read_predict_view_customization,
@@ -1064,6 +1064,22 @@ def put_admin_profile_visibility(
         return set_dataset_visibility(dataset_slug, visible)
     except ValueError:
         return public_error_response(PROFILE_VISIBILITY_DATASET_SLUG_INVALID)
+
+
+@app.get("/admin/datasets/{dataset_slug}/publication-state")
+def get_admin_profile_publication_state(dataset_slug: str, request: Request):
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+    try:
+        return get_dataset_publication_state(dataset_slug)
+    except ValueError:
+        return public_error_response(PROFILE_VISIBILITY_DATASET_SLUG_INVALID)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
 
 
 @app.get("/admin/datasets/{dataset_slug}/views/{view_id}/customization")

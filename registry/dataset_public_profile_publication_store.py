@@ -75,27 +75,60 @@ def get_visibility(dataset_slug: str, repo_root: Path | None = None) -> bool:
     record exists yet, the file is not readable, is not valid JSON, or is
     not a JSON object -- this module never raises for a missing record.
     """
+    return get_visibility_record(dataset_slug, repo_root=repo_root)["visible"]
+
+
+def _valid_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def get_visibility_record(dataset_slug: str, repo_root: Path | None = None) -> dict:
+    """Return bounded publication-record state without writing or raising on bad data."""
     repo_root = _resolve_repo_root(repo_root)
     path = _publication_path(dataset_slug, repo_root)
 
+    fallback = {
+        "visible": DEFAULT_VISIBLE,
+        "source": "default_visible",
+        "record_status": "missing",
+        "updated_at": None,
+    }
+
     try:
         content = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return fallback
     except OSError:
-        return DEFAULT_VISIBLE
+        return {**fallback, "record_status": "unreadable"}
 
     try:
         record = json.loads(content)
     except json.JSONDecodeError:
-        return DEFAULT_VISIBLE
+        return {**fallback, "record_status": "invalid_json"}
 
     if not isinstance(record, dict):
-        return DEFAULT_VISIBLE
+        return {**fallback, "record_status": "invalid_shape"}
 
     visible = record.get("visible")
     if not isinstance(visible, bool):
-        return DEFAULT_VISIBLE
+        return {**fallback, "record_status": "invalid_visible"}
 
-    return visible
+    updated_at = record.get("updated_at")
+    if not _valid_timestamp(updated_at):
+        return {**fallback, "record_status": "invalid_updated_at"}
+
+    return {
+        "visible": visible,
+        "source": "explicit_record",
+        "record_status": "valid",
+        "updated_at": updated_at,
+    }
 
 
 def set_visibility(dataset_slug: str, visible: bool, repo_root: Path | None = None) -> dict:

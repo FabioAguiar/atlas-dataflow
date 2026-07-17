@@ -295,14 +295,66 @@ type ProfileHydration = {
   active_release: string | null;
 };
 
+// Project Spec S0116: this state no longer carries a visibility flag -- it
+// tracks only the content-publication ("Publish changes") lifecycle for the
+// workspace toolbar. Public/private visibility now flows exclusively through
+// PublicationProjectionState below, hydrated from the S0115 authority.
 type PublicationState =
-  | { status: "idle"; visible: boolean; publishedProfile: ProfileDraft | null; message: string }
-  | { status: "publishing"; visible: boolean; publishedProfile: ProfileDraft | null }
-  | { status: "saving_visibility"; visible: boolean; publishedProfile: ProfileDraft | null }
-  | { status: "published"; visible: boolean; publishedProfile: ProfileDraft; publishedAt?: string }
-  | { status: "visibility_saved"; visible: boolean; publishedProfile: ProfileDraft | null; updatedAt?: string }
-  | { status: "invalid"; visible: boolean; publishedProfile: ProfileDraft | null; errors: DraftError[] }
-  | { status: "unavailable"; visible: boolean; publishedProfile: ProfileDraft | null; message: string };
+  | { status: "idle"; publishedProfile: ProfileDraft | null; message: string }
+  | { status: "publishing"; publishedProfile: ProfileDraft | null }
+  | { status: "published"; publishedProfile: ProfileDraft; publishedAt?: string }
+  | { status: "invalid"; publishedProfile: ProfileDraft | null; errors: DraftError[] }
+  | { status: "unavailable"; publishedProfile: ProfileDraft | null; message: string };
+
+// Project Spec S0116: strict local type for GET
+// /admin/datasets/{slug}/publication-state's response (api/admin_profile_visibility.py's
+// get_dataset_publication_state). This is the sole authority for the
+// Publishing tab's switch, the header Public/Private badge, the "Open public
+// Dataset Detail page" action, and the operational console -- never
+// reconstructed from the public dataset listing or from PublicationState.
+type AdminPublicationStateProjection = {
+  dataset_slug: string;
+  active_release: string | null;
+  visibility: {
+    configured_visible: boolean;
+    source: "explicit_record" | "default_visible";
+    record_status:
+      | "valid"
+      | "missing"
+      | "unreadable"
+      | "invalid_json"
+      | "invalid_shape"
+      | "invalid_visible"
+      | "invalid_updated_at";
+    updated_at: string | null;
+    effective_visible: boolean;
+  };
+  review: {
+    status: "ready" | "needs_review";
+  };
+  snapshot: {
+    status: "missing" | "current_release" | "stale_release" | "invalid";
+    exists: boolean;
+    published_at: string | null;
+    active_release_at_publish_time: string | null;
+    matches_active_release: boolean | null;
+  };
+  public_access: {
+    reachable: boolean;
+    blockers: string[];
+    observations: string[];
+  };
+};
+
+// Bounded request-state machine for the publication-state GET, keyed to the
+// selected dataset so a superseded response can never overwrite a newer
+// selection (see the publicationProjectionRequestRef guard below).
+type PublicationProjectionState =
+  | { status: "idle" }
+  | { status: "loading"; datasetSlug: string }
+  | { status: "ready"; datasetSlug: string; projection: AdminPublicationStateProjection }
+  | { status: "saving"; datasetSlug: string; projection: AdminPublicationStateProjection; pendingVisible: boolean }
+  | { status: "unavailable"; datasetSlug: string; message: string };
 
 type DraftState =
   | { status: "idle"; message: string }
@@ -842,10 +894,11 @@ const emptyReadOnlyData: ReadOnlyData = {
 
 const emptyPublicationState: PublicationState = {
   status: "idle",
-  visible: true,
   publishedProfile: null,
   message: "No published snapshot is known in this admin session.",
 };
+
+const emptyPublicationProjectionState: PublicationProjectionState = { status: "idle" };
 
 const adminTabs: TabItem[] = [
   {
@@ -1840,6 +1893,108 @@ async function fetchJson<T>(path: string, signal: AbortSignal): Promise<SectionS
   }
 }
 
+const VISIBILITY_SOURCE_VALUES = new Set(["explicit_record", "default_visible"]);
+const VISIBILITY_RECORD_STATUS_VALUES = new Set([
+  "valid",
+  "missing",
+  "unreadable",
+  "invalid_json",
+  "invalid_shape",
+  "invalid_visible",
+  "invalid_updated_at",
+]);
+const REVIEW_STATUS_VALUES = new Set(["ready", "needs_review"]);
+const SNAPSHOT_STATUS_VALUES = new Set(["missing", "current_release", "stale_release", "invalid"]);
+
+// Bounded runtime validation for GET /admin/datasets/{slug}/publication-state
+// (Project Spec S0116). A response outside this exact shape is treated as
+// unavailable rather than partially trusted -- the frontend must never guess
+// at, coerce, or partially render a malformed backend projection.
+function parseAdminPublicationStateProjection(body: unknown): AdminPublicationStateProjection | null {
+  if (typeof body !== "object" || body === null) {
+    return null;
+  }
+  const root = body as Record<string, unknown>;
+  if (typeof root.dataset_slug !== "string" || !root.dataset_slug) {
+    return null;
+  }
+  if (root.active_release !== null && typeof root.active_release !== "string") {
+    return null;
+  }
+
+  const visibility = root.visibility as Record<string, unknown> | undefined;
+  if (
+    typeof visibility !== "object" ||
+    visibility === null ||
+    typeof visibility.configured_visible !== "boolean" ||
+    typeof visibility.source !== "string" ||
+    !VISIBILITY_SOURCE_VALUES.has(visibility.source) ||
+    typeof visibility.record_status !== "string" ||
+    !VISIBILITY_RECORD_STATUS_VALUES.has(visibility.record_status) ||
+    (visibility.updated_at !== null && typeof visibility.updated_at !== "string") ||
+    typeof visibility.effective_visible !== "boolean"
+  ) {
+    return null;
+  }
+
+  const review = root.review as Record<string, unknown> | undefined;
+  if (typeof review !== "object" || review === null || typeof review.status !== "string" || !REVIEW_STATUS_VALUES.has(review.status)) {
+    return null;
+  }
+
+  const snapshot = root.snapshot as Record<string, unknown> | undefined;
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    typeof snapshot.status !== "string" ||
+    !SNAPSHOT_STATUS_VALUES.has(snapshot.status) ||
+    typeof snapshot.exists !== "boolean" ||
+    (snapshot.published_at !== null && typeof snapshot.published_at !== "string") ||
+    (snapshot.active_release_at_publish_time !== null && typeof snapshot.active_release_at_publish_time !== "string") ||
+    (snapshot.matches_active_release !== null && typeof snapshot.matches_active_release !== "boolean")
+  ) {
+    return null;
+  }
+
+  const publicAccess = root.public_access as Record<string, unknown> | undefined;
+  if (
+    typeof publicAccess !== "object" ||
+    publicAccess === null ||
+    typeof publicAccess.reachable !== "boolean" ||
+    !Array.isArray(publicAccess.blockers) ||
+    !publicAccess.blockers.every((code) => typeof code === "string") ||
+    !Array.isArray(publicAccess.observations) ||
+    !publicAccess.observations.every((code) => typeof code === "string")
+  ) {
+    return null;
+  }
+
+  return {
+    dataset_slug: root.dataset_slug,
+    active_release: (root.active_release as string | null) ?? null,
+    visibility: {
+      configured_visible: visibility.configured_visible,
+      source: visibility.source as AdminPublicationStateProjection["visibility"]["source"],
+      record_status: visibility.record_status as AdminPublicationStateProjection["visibility"]["record_status"],
+      updated_at: (visibility.updated_at as string | null) ?? null,
+      effective_visible: visibility.effective_visible,
+    },
+    review: { status: review.status as AdminPublicationStateProjection["review"]["status"] },
+    snapshot: {
+      status: snapshot.status as AdminPublicationStateProjection["snapshot"]["status"],
+      exists: snapshot.exists,
+      published_at: (snapshot.published_at as string | null) ?? null,
+      active_release_at_publish_time: (snapshot.active_release_at_publish_time as string | null) ?? null,
+      matches_active_release: (snapshot.matches_active_release as boolean | null) ?? null,
+    },
+    public_access: {
+      reachable: publicAccess.reachable,
+      blockers: publicAccess.blockers as string[],
+      observations: publicAccess.observations as string[],
+    },
+  };
+}
+
 function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
   if (draftState.status === "ready") {
     return <span data-testid="dataset-admin-draft-ready" hidden />;
@@ -1873,18 +2028,6 @@ function DraftStatusPanel({ draftState }: { draftState: DraftState }) {
     return <p style={mutedTextStyle}>Loading content...</p>;
   }
   return <p style={mutedTextStyle}>{draftState.message}</p>;
-}
-
-function ErrorList({ errors }: { errors: DraftError[] }) {
-  return (
-    <ul style={{ margin: 0, paddingLeft: "var(--atlas-space-5)" }}>
-      {errors.map((error, index) => (
-        <li key={`${error.code ?? "error"}-${error.field ?? "field"}-${index}`}>
-          {[error.field, error.code, error.message].filter(Boolean).join(" - ")}
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 function PublicContentTab({
@@ -3119,65 +3262,8 @@ function ResultCardTab({
   );
 }
 
-function publishingStatusLabel({
-  draftState,
-  hasPublishedSnapshot,
-  hasUnpublishedChanges,
-  hasUnsavedDraftChanges,
-  visible,
-}: {
-  draftState: DraftState;
-  hasPublishedSnapshot: boolean;
-  hasUnpublishedChanges: boolean;
-  hasUnsavedDraftChanges: boolean;
-  visible: boolean;
-}) {
-  if (hasPublishedSnapshot && !visible) {
-    return "Hidden";
-  }
-  if (hasPublishedSnapshot && hasUnpublishedChanges) {
-    return "Unpublished Changes";
-  }
-  if (hasPublishedSnapshot) {
-    return "Published";
-  }
-  if (hasUnsavedDraftChanges || draftState.status === "ready" || draftState.status === "saved" || draftState.status === "invalid") {
-    return "Draft";
-  }
-  return "Not Published";
-}
-
-// Project Spec S0060: publish-first, visibility-aware feedback for a
-// successful Publish changes. Phrased distinctly from
-// toolbarPublicationFeedback below (which reuses the same publicationState)
-// so the two can render at the same time -- this tab panel and the
-// always-visible workspace toolbar line -- without colliding on identical
-// text when the Publishing tab happens to be selected.
-function publicationMessage(publicationState: PublicationState): string {
-  switch (publicationState.status) {
-    case "published": {
-      const timestamp = publicationState.publishedAt ? `Published at ${publicationState.publishedAt}. ` : "Published. ";
-      return publicationState.visible ? `${timestamp}Public content is live.` : `${timestamp}Public visibility is currently off.`;
-    }
-    case "visibility_saved":
-      return publicationState.visible ? "Latest published snapshot is visible publicly." : "Latest published snapshot is hidden publicly.";
-    case "publishing":
-      return "Publishing changes...";
-    case "saving_visibility":
-      return "Saving public exposure setting...";
-    case "invalid":
-      return "Publishing action rejected by backend validation.";
-    case "unavailable":
-      return publicationState.message;
-    case "idle":
-    default:
-      return publicationState.message;
-  }
-}
-
 // The workspace toolbar keeps successful publish feedback intentionally
-// compact. Visibility detail remains available in the Publishing tab, while
-// the toolbar only confirms that the requested changes were saved.
+// compact.
 function toolbarPublicationFeedback(publicationState: PublicationState): string | null {
   if (publicationState.status !== "published") {
     return null;
@@ -3185,187 +3271,274 @@ function toolbarPublicationFeedback(publicationState: PublicationState): string 
   return "Changes saved.";
 }
 
-function visibilityCopy(publicationState: PublicationState, hasPublishedSnapshot: boolean): string {
-  if (!hasPublishedSnapshot) {
-    return "Public access is locked until a first published snapshot exists.";
+// Project Spec S0116: canonical console severities. Color is never the only
+// signal -- every line's bracketed text (e.g. "[BLOCKED]") is always present.
+type ConsoleSeverity = "OK" | "INFO" | "WARN" | "BLOCKED" | "ERROR";
+type ConsoleLine = { id: string; severity: ConsoleSeverity; text: string };
+
+// Canonical S0115 blocker codes -> operational console text. An unrecognized
+// code renders a bounded generic line instead of the raw code (Section 4,
+// "Render backend blockers").
+const KNOWN_BLOCKER_LINES: Record<string, string> = {
+  visibility_disabled: "Public access is disabled by the effective visibility policy.",
+  review_pending: "Dataset review state prevents public access.",
+};
+
+// Canonical S0115 observation codes -> operational console severity/text. An
+// unrecognized code renders a bounded generic INFO line (Section 4, "Render
+// backend observations").
+const KNOWN_OBSERVATION_LINES: Record<string, { severity: "INFO" | "WARN"; text: string }> = {
+  visibility_default_applied: { severity: "INFO", text: "Default visibility fallback is active." },
+  visibility_record_invalid: { severity: "WARN", text: "Visibility record is invalid; the backend fallback is active." },
+  snapshot_missing: { severity: "WARN", text: "No published snapshot is available; generated fallback behavior may apply." },
+  snapshot_stale: { severity: "WARN", text: "Published snapshot belongs to a different active release." },
+  snapshot_invalid: { severity: "WARN", text: "Published snapshot metadata is invalid." },
+  configured_hidden_but_effectively_visible_without_snapshot: {
+    severity: "WARN",
+    text: "Configured visibility is hidden, but current no-snapshot policy still leaves the public route effectively visible.",
+  },
+};
+
+function snapshotStatusLabel(status: AdminPublicationStateProjection["snapshot"]["status"]): string {
+  switch (status) {
+    case "current_release":
+      return "current release";
+    case "stale_release":
+      return "stale release";
+    case "invalid":
+      return "invalid";
+    case "missing":
+    default:
+      return "missing";
   }
-  if (publicationState.visible) {
-    return "The latest published snapshot is accessible from the public Dataset Detail page and Home card.";
-  }
-  return "The latest published snapshot exists, but public access is hidden.";
 }
 
-function draftStateSummary(draftState: DraftState, hasUnsavedDraftChanges: boolean, hasUnpublishedChanges: boolean): string {
-  if (hasUnsavedDraftChanges) {
-    return "Unsaved local changes.";
+function snapshotAlignmentLabel(snapshot: AdminPublicationStateProjection["snapshot"]): string {
+  if (snapshot.matches_active_release === true) {
+    return "current";
   }
-  if (hasUnpublishedChanges) {
-    return "Saved with unpublished changes.";
+  if (snapshot.matches_active_release === false) {
+    return "stale";
   }
-  if (draftState.status === "saved") {
-    return "Saved and matches public snapshot.";
-  }
-  if (draftState.status === "ready") {
-    return "Loaded private draft.";
-  }
-  if (draftState.status === "invalid") {
-    return "Validation needs attention.";
-  }
-  return "Editable draft.";
+  return "not available";
 }
 
-function publicSnapshotSummary(hasPublishedSnapshot: boolean): string {
-  return hasPublishedSnapshot ? "Available." : "Not published yet.";
-}
+// The deterministic, ordered set of console lines derived from one loaded
+// S0115 projection -- core facts first (Section 4, "Render core console
+// lines"), then backend blockers, then backend observations, both in the
+// same order the backend already returned them.
+function projectionConsoleLines(projection: AdminPublicationStateProjection): ConsoleLine[] {
+  const lines: ConsoleLine[] = [
+    { id: "dataset", severity: "OK", text: `Dataset selected: ${projection.dataset_slug}` },
+    {
+      id: "configured-visibility",
+      severity: projection.visibility.configured_visible ? "OK" : "INFO",
+      text: `Configured visibility: ${projection.visibility.configured_visible ? "visible" : "hidden"}`,
+    },
+    {
+      id: "visibility-source",
+      severity: projection.visibility.source === "explicit_record" ? "OK" : "WARN",
+      text: `Visibility source: ${projection.visibility.source === "explicit_record" ? "explicit record" : "default fallback"}`,
+    },
+    {
+      id: "visibility-record",
+      severity: projection.visibility.record_status === "valid" ? "OK" : "WARN",
+      text: `Visibility record: ${projection.visibility.record_status}`,
+    },
+    {
+      id: "effective-visibility",
+      severity: projection.visibility.effective_visible ? "OK" : "WARN",
+      text: `Effective visibility: ${projection.visibility.effective_visible ? "visible" : "hidden"}`,
+    },
+    {
+      id: "review-state",
+      severity: projection.review.status === "ready" ? "OK" : "BLOCKED",
+      text: `Review state: ${projection.review.status === "ready" ? "ready" : "needs review"}`,
+    },
+    {
+      id: "published-snapshot",
+      severity: projection.snapshot.status === "current_release" ? "OK" : "WARN",
+      text: `Published snapshot: ${snapshotStatusLabel(projection.snapshot.status)}`,
+    },
+    {
+      id: "snapshot-alignment",
+      severity: projection.snapshot.matches_active_release === true ? "OK" : "WARN",
+      text: `Snapshot release alignment: ${snapshotAlignmentLabel(projection.snapshot)}`,
+    },
+    {
+      id: "public-route",
+      severity: projection.public_access.reachable ? "OK" : "BLOCKED",
+      text: `Public Dataset Detail route: ${projection.public_access.reachable ? "reachable" : "not reachable"}`,
+    },
+  ];
 
-function visibilitySummary(publicationState: PublicationState, hasPublishedSnapshot: boolean): string {
-  if (!hasPublishedSnapshot) {
-    return "Locked until first publish.";
-  }
-  return publicationState.visible ? "Public." : "Hidden.";
-}
-
-function PublishingTab({
-  draftState,
-  hasPublishedSnapshot,
-  hasUnpublishedChanges,
-  hasUnsavedDraftChanges,
-  lastPublishedAt,
-  onPreviewDraft,
-  onPublish,
-  onSaveDraft,
-  onSetVisibility,
-  publicationState,
-  publishDisabledReason,
-  selectedSlug,
-}: {
-  draftState: DraftState;
-  hasPublishedSnapshot: boolean;
-  hasUnpublishedChanges: boolean;
-  hasUnsavedDraftChanges: boolean;
-  lastPublishedAt: string | undefined;
-  onPreviewDraft: () => void;
-  onPublish: () => void;
-  onSaveDraft: () => void;
-  onSetVisibility: (visible: boolean) => void;
-  publicationState: PublicationState;
-  publishDisabledReason: string | null;
-  selectedSlug: string;
-}) {
-  const busy = publicationState.status === "publishing" || publicationState.status === "saving_visibility";
-  const publishDisabled = Boolean(publishDisabledReason) || busy;
-  const visibilityDisabled = !selectedSlug || !hasPublishedSnapshot || busy;
-  const statusLabel = publishingStatusLabel({
-    draftState,
-    hasPublishedSnapshot,
-    hasUnpublishedChanges,
-    hasUnsavedDraftChanges,
-    visible: publicationState.visible,
+  projection.public_access.blockers.forEach((code, index) => {
+    lines.push({
+      id: `blocker-${index}-${code}`,
+      severity: "BLOCKED",
+      text: KNOWN_BLOCKER_LINES[code] ?? "Public access is blocked by an unrecognized backend condition.",
+    });
   });
 
-  return (
-    <>
-      <div className="dataset-admin-publishing-layout">
-        <Card className="dataset-admin-config-card dataset-admin-publishing-card">
-          <span className="dataset-admin-tab-workspace__eyebrow">Public visibility</span>
-          <div className="dataset-admin-visibility-row">
-            <div>
-              <strong>Visible publicly</strong>
-              <p>{visibilityCopy(publicationState, hasPublishedSnapshot)}</p>
-            </div>
-            <label className="dataset-admin-switch" aria-label="Visible Publicly">
-              <input
-                checked={publicationState.visible}
-                disabled={visibilityDisabled}
-                onChange={(event) => onSetVisibility(event.target.checked)}
-                type="checkbox"
-              />
-              <span aria-hidden="true" />
-            </label>
-          </div>
-          <p className="dataset-admin-visibility-note">
-            {hasPublishedSnapshot && publicationState.visible
-              ? "Public access is enabled for the latest published snapshot."
-              : hasPublishedSnapshot
-              ? "Public access is disabled; the published snapshot is preserved."
-              : "Publish changes before enabling public access."}
-          </p>
-          <div className="dataset-admin-last-published">
-            <span>Last published</span>
-            <strong>{lastPublishedAt ? `${lastPublishedAt} (this session)` : "Not published in this session"}</strong>
-          </div>
-          <div className="dataset-admin-publish-rule-card" aria-label="Publishing rule summary">
-            <strong>Content and access are separate</strong>
-            <p>
-              <b>Publish changes</b> updates the public snapshot. <b>Visible publicly</b> only controls whether that
-              snapshot can be accessed.
-            </p>
-          </div>
-        </Card>
+  projection.public_access.observations.forEach((code, index) => {
+    const known = KNOWN_OBSERVATION_LINES[code];
+    lines.push({
+      id: `observation-${index}-${code}`,
+      severity: known?.severity ?? "INFO",
+      text: known?.text ?? "An additional backend operational observation is present.",
+    });
+  });
 
-        <Card className="dataset-admin-config-card dataset-admin-publishing-card">
-          <span className="dataset-admin-tab-workspace__eyebrow">Actions</span>
-          <div className="dataset-admin-publishing-actions">
-            <button disabled={!selectedSlug || draftState.status === "loading"} onClick={onSaveDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
-              Save draft
-            </button>
-            <button disabled={!selectedSlug} onClick={onPreviewDraft} style={selectedSlug ? secondaryButtonStyle : disabledButtonStyle} type="button">
-              Preview
-            </button>
-            <button disabled={publishDisabled} onClick={onPublish} style={publishDisabled ? disabledButtonStyle : actionButtonStyle} type="button">
-              Publish changes
-            </button>
+  return lines;
+}
+
+// Translates the bounded publication-state request machine, plus local
+// visibility-write failure, into the console's full deterministic line set
+// (Section 4, "Render local request states" and "Avoid duplicate or stale
+// lines"). Never renders raw response bodies, stack traces, or paths.
+function buildOperationalConsoleLines(
+  projectionState: PublicationProjectionState,
+  visibilityWriteFailed: boolean,
+): ConsoleLine[] {
+  if (projectionState.status === "idle") {
+    return [{ id: "no-dataset", severity: "INFO", text: "Select a dataset to inspect publication state." }];
+  }
+  if (projectionState.status === "loading") {
+    return [{ id: "loading", severity: "INFO", text: "Checking publication state..." }];
+  }
+  if (projectionState.status === "unavailable") {
+    return [
+      { id: "unavailable", severity: "ERROR", text: "Publication state could not be loaded from the private Admin API." },
+    ];
+  }
+
+  const lines = projectionConsoleLines(projectionState.projection);
+
+  if (projectionState.status === "saving") {
+    lines.push({ id: "saving", severity: "INFO", text: "Saving configured visibility..." });
+  } else if (visibilityWriteFailed) {
+    lines.push({
+      id: "visibility-write-error",
+      severity: "ERROR",
+      text: "Configured visibility could not be saved. The previous confirmed value remains active.",
+    });
+  }
+
+  const seen = new Set<string>();
+  return lines.filter((line) => {
+    if (seen.has(line.text)) {
+      return false;
+    }
+    seen.add(line.text);
+    return true;
+  });
+}
+
+// Read-only operational status surface (Section 4, "Create the operational
+// console"): no input, no command prompt, only the bounded deterministic
+// lines computed above.
+function OperationalConsole({ lines }: { lines: ConsoleLine[] }) {
+  return (
+    <div
+      aria-label="Dataset publication operational status"
+      aria-live="polite"
+      className="dataset-admin-console"
+      role="log"
+    >
+      {lines.map((line) => (
+        <p className={`dataset-admin-console-line dataset-admin-console-line--${line.severity.toLowerCase()}`} key={line.id}>
+          <span className="dataset-admin-console-severity">[{line.severity}]</span> {line.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+// Shared authority for the header badge and the "Open public Dataset Detail
+// page" action (Section 4, "Replace the header badge authority" / "Align the
+// Open public page action") -- both must read the same value.
+function publicationBadgeLabel(
+  projectionState: PublicationProjectionState,
+): "No dataset selected" | "Checking..." | "Public" | "Private" {
+  if (projectionState.status === "idle") {
+    return "No dataset selected";
+  }
+  if (projectionState.status === "loading") {
+    return "Checking...";
+  }
+  if (projectionState.status === "unavailable") {
+    return "Private";
+  }
+  return projectionState.projection.public_access.reachable ? "Public" : "Private";
+}
+
+function publicationReachable(projectionState: PublicationProjectionState): boolean {
+  return (
+    (projectionState.status === "ready" || projectionState.status === "saving") &&
+    projectionState.projection.public_access.reachable
+  );
+}
+
+// Project Spec S0116: the tab is reduced to exactly two surfaces -- the
+// Visible publicly switch and the read-only operational console. The switch
+// is controlled by visibility.configured_visible (never effective_visible)
+// and is disabled only for no-dataset/loading/saving/unavailable, never
+// merely because a snapshot is missing or stale.
+function PublishingTab({
+  onToggleVisibility,
+  projectionState,
+  selectedSlug,
+  visibilityWriteFailed,
+}: {
+  onToggleVisibility: (visible: boolean) => void;
+  projectionState: PublicationProjectionState;
+  selectedSlug: string;
+  visibilityWriteFailed: boolean;
+}) {
+  const switchChecked =
+    projectionState.status === "saving"
+      ? projectionState.pendingVisible
+      : projectionState.status === "ready"
+      ? projectionState.projection.visibility.configured_visible
+      : false;
+  const switchDisabled =
+    !selectedSlug ||
+    projectionState.status === "idle" ||
+    projectionState.status === "loading" ||
+    projectionState.status === "saving" ||
+    projectionState.status === "unavailable";
+  const switchStatusText =
+    projectionState.status === "saving"
+      ? "Saving..."
+      : projectionState.status === "loading"
+      ? "Checking..."
+      : visibilityWriteFailed
+      ? "Save failed. Previous value restored."
+      : null;
+  const consoleLines = buildOperationalConsoleLines(projectionState, visibilityWriteFailed);
+
+  return (
+    <div className="dataset-admin-publishing-panel">
+      <Card className="dataset-admin-config-card dataset-admin-publishing-panel__card">
+        <span className="dataset-admin-tab-workspace__eyebrow">Public visibility</span>
+        <div className="dataset-admin-visibility-row">
+          <div>
+            <strong>Visible publicly</strong>
+            {switchStatusText && <p role="status">{switchStatusText}</p>}
           </div>
-          <p className="dataset-admin-publishing-rule-text">
-            Draft changes are private until published. Preview uses the current draft. Publishing creates the public snapshot.
-          </p>
-          <div className="dataset-admin-current-state-card" aria-label="Current publication state">
-            <span className="dataset-admin-tab-workspace__eyebrow">Current state</span>
-            <ul className="dataset-admin-state-list">
-              <li>
-                <strong>Draft</strong>
-                <span>{draftStateSummary(draftState, hasUnsavedDraftChanges, hasUnpublishedChanges)}</span>
-              </li>
-              <li>
-                <strong>Public snapshot</strong>
-                <span>{publicSnapshotSummary(hasPublishedSnapshot)}</span>
-              </li>
-              <li>
-                <strong>Visibility</strong>
-                <span>{visibilitySummary(publicationState, hasPublishedSnapshot)}</span>
-              </li>
-            </ul>
-          </div>
-          <ul className="dataset-admin-state-list dataset-admin-state-list--rules" aria-label="Documented publication states">
-            <li>
-              <strong>Save draft</strong>
-              <span>Persists admin edits without changing the public version.</span>
-            </li>
-            <li>
-              <strong>Preview</strong>
-              <span>Simulates the current draft without changing public state.</span>
-            </li>
-            <li>
-              <strong>Publish changes</strong>
-              <span>Creates or replaces the public snapshot from the draft.</span>
-            </li>
-            <li>
-              <strong>Visible publicly</strong>
-              <span>Controls access to the latest published snapshot only.</span>
-            </li>
-          </ul>
-        </Card>
-      </div>
-      {publishDisabledReason && <p style={mutedTextStyle}>{publishDisabledReason}</p>}
-      <article
-        className={publicationState.status === "published" || publicationState.status === "visibility_saved" ? "atlas-status-pill atlas-status-pill--success" : undefined}
-        role="status"
-        style={publicationState.status === "invalid" || publicationState.status === "unavailable" ? alertStyle : undefined}
-      >
-        <strong>{publicationMessage(publicationState)}</strong>
-        {publicationState.status === "invalid" && <ErrorList errors={publicationState.errors} />}
-      </article>
-    </>
+          <label aria-label="Visible Publicly" className="dataset-admin-switch">
+            <input
+              checked={switchChecked}
+              disabled={switchDisabled}
+              onChange={(event) => onToggleVisibility(event.target.checked)}
+              type="checkbox"
+            />
+            <span aria-hidden="true" />
+          </label>
+        </div>
+      </Card>
+      <OperationalConsole lines={consoleLines} />
+    </div>
   );
 }
 
@@ -3623,33 +3796,20 @@ function renderSelectedTab(
   selectedSlug: string,
   customizationEditorState: CustomizationEditorState,
   onRetryCustomization: () => void,
-  onPreviewDraft: () => void,
-  onPublish: () => void,
-  onSaveDraft: () => void,
-  onSetVisibility: (visible: boolean) => void,
+  onToggleVisibility: (visible: boolean) => void,
   onUpdateCustomizationDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void,
   publicationState: PublicationState,
-  lastPublishedAt: string | undefined,
+  projectionState: PublicationProjectionState,
+  visibilityWriteFailed: boolean,
 ) {
-  // Shared by the Publishing and Live Preview cases below so Live Preview can
-  // classify its own draft-vs-published state (S0009) using the same
-  // comparison Publishing already derives, instead of a second, divergent
-  // notion of "matches published".
+  // Shared by the Live Preview case below so it can classify its own
+  // draft-vs-published state (S0009) using the same comparison Publishing
+  // used to derive, instead of a second, divergent notion of "matches
+  // published".
   const currentProfile = selectedSlug ? profileFromForm(form, selectedSlug) : null;
-  const lastBackendDraft = backendDraftProfile(draftState);
-  const hasUnsavedDraftChanges = Boolean(currentProfile && lastBackendDraft && !sameProfile(currentProfile, lastBackendDraft));
   const publishedProfile = publicationState.publishedProfile;
   const hasPublishedSnapshot = Boolean(publishedProfile);
   const hasUnpublishedChanges = Boolean(currentProfile && publishedProfile && !sameProfile(currentProfile, publishedProfile));
-  // Project Spec S0061: Publish changes no longer requires a prior saved
-  // profile-draft, so its own enablement is judged only against the last
-  // successfully published snapshot (or "nothing published yet this
-  // session", which is always publishable) -- distinct from
-  // hasUnpublishedChanges above, which stays gated on a real published
-  // snapshot existing so the "Unpublished Changes" status label (and
-  // draftStateSummary's "Loaded private draft."/"Saved and matches public
-  // snapshot." wording) are unaffected by this change.
-  const hasPublishableChanges = Boolean(currentProfile) && (!publishedProfile || !sameProfile(currentProfile, publishedProfile));
 
   switch (selectedTab) {
     case "metadata-card":
@@ -3672,30 +3832,14 @@ function renderSelectedTab(
     case "documentation":
       return <div aria-label="Documentation placeholder" />;
     case "publishing":
-      {
-        const publishDisabledReason = !selectedSlug
-          ? "Select a dataset before publishing."
-          : !hasPublishableChanges
-          ? "No changes to publish."
-          : null;
-
-        return (
-          <PublishingTab
-            draftState={draftState}
-            hasPublishedSnapshot={hasPublishedSnapshot}
-            hasUnpublishedChanges={hasUnpublishedChanges}
-            hasUnsavedDraftChanges={hasUnsavedDraftChanges}
-            lastPublishedAt={lastPublishedAt}
-            onPreviewDraft={onPreviewDraft}
-            onPublish={onPublish}
-            onSaveDraft={onSaveDraft}
-            onSetVisibility={onSetVisibility}
-            publicationState={publicationState}
-            publishDisabledReason={publishDisabledReason}
-            selectedSlug={selectedSlug}
-          />
-        );
-      }
+      return (
+        <PublishingTab
+          onToggleVisibility={onToggleVisibility}
+          projectionState={projectionState}
+          selectedSlug={selectedSlug}
+          visibilityWriteFailed={visibilityWriteFailed}
+        />
+      );
     case "live-preview":
       return (
         <LivePreviewTab
@@ -3754,8 +3898,25 @@ export default function DatasetAdminPage() {
   const [workspacePublishFeedback, setWorkspacePublishFeedback] = useState<
     { tone: "success" | "error"; text: string } | null
   >(null);
-  const [lastPublishedAt, setLastPublishedAt] = useState<string | undefined>(undefined);
   const [refreshRevision, setRefreshRevision] = useState(0);
+  // Project Spec S0116: the sole authority for the Publishing tab's switch,
+  // the header Public/Private badge, the "Open public Dataset Detail page"
+  // action, and the operational console -- hydrated from GET
+  // /admin/datasets/{slug}/publication-state, never reconstructed from
+  // PublicationState or the public dataset listing.
+  const [publicationProjection, setPublicationProjection] = useState<PublicationProjectionState>(
+    emptyPublicationProjectionState,
+  );
+  // Set only by a failed visibility PUT and cleared by the next dataset
+  // switch or the next toggle attempt -- drives the console's transient
+  // "[ERROR] Configured visibility could not be saved..." line without
+  // needing a raw error message from the backend.
+  const [visibilityWriteFailed, setVisibilityWriteFailed] = useState(false);
+  // Guards a superseded publication-state response from ever applying itself
+  // (mirrors customizationRequestRef below): AbortController alone is not
+  // sufficient because this repo's test fetch mocks do not honor
+  // AbortSignal.
+  const publicationProjectionRequestRef = useRef(0);
   const loadedDatasetSlugRef = useRef("");
   const canonicalDateBySlugRef = useRef<Record<string, string>>({});
   // Project Spec S0098: tracks which selectedSlug the deterministic
@@ -3765,8 +3926,12 @@ export default function DatasetAdminPage() {
   const predictViewRebindAppliedSlugRef = useRef<string | null>(null);
   const draftFormRef = useRef(draftForm);
   const draftStateRef = useRef(draftState);
+  // Project Spec S0116: read by setConfiguredVisibility's async callbacks to
+  // detect a dataset switch that raced an in-flight visibility PUT.
+  const selectedSlugRef = useRef(selectedSlug);
   draftFormRef.current = draftForm;
   draftStateRef.current = draftState;
+  selectedSlugRef.current = selectedSlug;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -3855,7 +4020,11 @@ export default function DatasetAdminPage() {
       setCustomizationBaseline(null);
       setPublicationState(emptyPublicationState);
       setWorkspacePublishFeedback(null);
-      setLastPublishedAt(undefined);
+      // Project Spec S0116: no request is issued and no prior dataset's
+      // projection can leak through when nothing is selected.
+      publicationProjectionRequestRef.current += 1;
+      setPublicationProjection(emptyPublicationProjectionState);
+      setVisibilityWriteFailed(false);
       return;
     }
 
@@ -3867,7 +4036,12 @@ export default function DatasetAdminPage() {
       setCustomizationBaseline(null);
       setPublicationState(emptyPublicationState);
       setWorkspacePublishFeedback(null);
-      setLastPublishedAt(undefined);
+      // Project Spec S0116: a dataset switch must never retain the previous
+      // dataset's publication projection, even for one frame -- reset
+      // synchronously here (same pattern as the sibling resets above) rather
+      // than waiting on the async fetch below to overwrite it.
+      setPublicationProjection({ status: "loading", datasetSlug: selectedSlug });
+      setVisibilityWriteFailed(false);
       // Project Spec S0098: the deterministic predict-view rebind default
       // below applies at most once per dataset selection; switching to a
       // different (or reselecting the same) Dataset Detail must be able to
@@ -3976,13 +4150,11 @@ export default function DatasetAdminPage() {
         }
         setDraftState({ status: "ready", draftExists: data.draft_exists, profile: hydrationProfile });
         if (publishedProfile) {
-          setPublicationState((current) => ({
+          setPublicationState(() => ({
             status: "idle",
-            visible: current.visible,
             publishedProfile,
             message: "Latest published snapshot loaded.",
           }));
-          setLastPublishedAt(data.published_snapshot?.published_at);
         }
       })
       .catch((err: Error) => {
@@ -3990,6 +4162,14 @@ export default function DatasetAdminPage() {
           setDraftState({ status: "unavailable", message: "Content could not be loaded. Check API reachability." });
         }
       });
+
+    // Project Spec S0116: the sole authority for the switch/badge/console --
+    // re-fetched on dataset switch and on every refreshRevision bump
+    // (already the established signal for "a successful profile publish
+    // happened," e.g. performPublish below), on top of the dedicated
+    // re-fetch performPublicVisibilityWrite triggers directly after a
+    // successful visibility PUT.
+    loadPublicationProjection(selectedSlug, controller.signal);
 
     return () => controller.abort();
   }, [selectedSlug, refreshRevision]);
@@ -4047,22 +4227,12 @@ export default function DatasetAdminPage() {
     () => adminDatasets.find((dataset) => dataset.dataset_slug === selectedSlug),
     [adminDatasets, selectedSlug],
   );
-  // A Dataset Detail is genuinely public only when it is both reviewed
-  // ("ready", not "needs_review") and Visible Publicly -- exactly the two
-  // gates GET /datasets composes server-side (resolve_dataset_visibility +
-  // is_dataset_needs_review, api/main.py's list_datasets_endpoint). Rather
-  // than duplicating that boundary client-side, a dataset is treated as
-  // publicly reachable here iff its slug is present in the already-fetched
-  // public listing -- the same source of truth the public site itself uses.
-  const publicDatasetSlugsKnown = state.status === "ready";
-  const selectedDatasetIsPublic = Boolean(selectedSlug) && datasets.some((dataset) => dataset.dataset_slug === selectedSlug);
-  const registryVisibilityLabel = !selectedSlug
-    ? "No dataset selected"
-    : !publicDatasetSlugsKnown
-    ? "Checking..."
-    : selectedDatasetIsPublic
-    ? "Published"
-    : "Private";
+  // Project Spec S0116: the header badge and the "Open public Dataset Detail
+  // page" action both read the same S0115-projected authority --
+  // public_access.reachable -- never the public dataset listing.
+  const registryVisibilityLabel = publicationBadgeLabel(publicationProjection);
+  const selectedDatasetIsPublic = registryVisibilityLabel === "Public";
+  const publicPageActionEnabled = publicationReachable(publicationProjection);
   const lastBackendDraft = backendDraftProfile(draftState);
   const hasBackendDraftProfile = Boolean(lastBackendDraft);
   // Dataset Detail display title shown in Admin/Dashboard (registry/list.py's
@@ -4134,7 +4304,6 @@ export default function DatasetAdminPage() {
   const toolbarPublishBusy =
     draftState.status === "loading" ||
     publicationState.status === "publishing" ||
-    publicationState.status === "saving_visibility" ||
     customizationEditorState.status === "saving";
   const toolbarPublishDisabled =
     !selectedSlug || (!hasUnpublishedWorkspaceChanges && !hasUnpublishedCustomizationChanges) || toolbarPublishBusy;
@@ -4181,54 +4350,6 @@ export default function DatasetAdminPage() {
     setDraftForm((current) => ({ ...current, [key]: value }));
   }
 
-  // Save draft remains available for operators who still want to persist an
-  // in-progress edit privately without publishing it (Project Spec S0061
-  // keeps legacy draft endpoint behavior for compatibility), but is no
-  // longer a precondition of Publish changes below.
-  function saveDraft() {
-    if (!selectedSlug) {
-      return;
-    }
-
-    const profile = profileFromForm(draftForm, selectedSlug);
-    setDraftState({ status: "loading" });
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/profile-draft`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(profile),
-    })
-      .then((response) => {
-        if (response.status === 404) {
-          setDraftState({
-            status: "unavailable",
-            message: "Content saving is unavailable for this admin session. Confirm API configuration.",
-          });
-          return null;
-        }
-        return response.json().then((body: { saved?: boolean; profile?: ProfileDraft; errors?: DraftError[] }) => ({
-          ok: response.ok,
-          body,
-        }));
-      })
-      .then((result) => {
-        if (!result) {
-          return;
-        }
-        if (!result.ok || !result.body.saved) {
-          setDraftState({ status: "invalid", errors: result.body.errors ?? [{ message: "Content failed validation." }] });
-          return;
-        }
-        const savedProfile = result.body.profile ?? profile;
-        setDraftForm(formFromProfile(savedProfile, selectedSlug));
-        setDraftState({ status: "saved", profile: savedProfile });
-      })
-      .catch(() => {
-        setDraftState({ status: "unavailable", message: "Content could not be saved. Check API reachability." });
-      });
-  }
-
   const boundPredictViewId = draftForm.bound_predict_view_id;
 
   // Project Spec S0061: Publish changes sends the current form payload
@@ -4243,7 +4364,6 @@ export default function DatasetAdminPage() {
   function performPublish(profileToPublish: ProfileDraft, callbacks?: { onSuccess?: () => void; onFailure?: () => void }) {
     setPublicationState((current) => ({
       status: "publishing",
-      visible: current.visible,
       publishedProfile: current.publishedProfile,
     }));
     fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/publish`, {
@@ -4260,7 +4380,6 @@ export default function DatasetAdminPage() {
         if (response.status === 404) {
           setPublicationState((current) => ({
             status: "unavailable",
-            visible: current.visible,
             publishedProfile: current.publishedProfile,
             message: "Publish endpoint unavailable for this private admin session. Confirm API configuration.",
           }));
@@ -4279,7 +4398,6 @@ export default function DatasetAdminPage() {
         if (!result.ok || !result.body.published) {
           setPublicationState((current) => ({
             status: "invalid",
-            visible: current.visible,
             publishedProfile: current.publishedProfile,
             errors: result.body.errors ?? [{ message: "Profile publish failed validation." }],
           }));
@@ -4289,16 +4407,14 @@ export default function DatasetAdminPage() {
         const publishedProfile = profileFromSnapshot(result.body.snapshot, selectedSlug) ?? profileToPublish;
         // A successful publish also becomes the new local dirty-state
         // baseline (Project Spec S0061 acceptance criteria), reusing the
-        // same draftState/lastBackendDraft plumbing draftStateSummary and
-        // the workspace toolbar's own Public-Content-scoped comparison
-        // already key off, so Publish changes disables again immediately
-        // until the form changes further -- without requiring an explicit
-        // Save draft call.
+        // same draftState/lastBackendDraft plumbing the workspace toolbar's
+        // own Public-Content-scoped comparison already keys off, so Publish
+        // changes disables again immediately until the form changes further
+        // -- without requiring an explicit Save draft call.
         setDraftForm(formFromProfile(publishedProfile, selectedSlug));
         setDraftState({ status: "saved", profile: publishedProfile });
-        setPublicationState((current) => ({
+        setPublicationState(() => ({
           status: "published",
-          visible: current.visible,
           publishedProfile,
           publishedAt: result.body.snapshot?.published_at,
         }));
@@ -4316,14 +4432,17 @@ export default function DatasetAdminPage() {
           );
           setDatasetQuery((current) => (current === getDatasetSelectorValue(selectedAdminDataset) ? nextDisplayTitle : current));
         }
-        setLastPublishedAt(result.body.snapshot?.published_at);
+        // Project Spec S0116: a successful content publish can change
+        // review/snapshot/reachability, so the publication-state projection
+        // (badge/console/switch authority) is reconciled too -- refreshRevision
+        // already re-triggers the dataset-switch effect's loadPublicationProjection
+        // call for the current selectedSlug.
         setRefreshRevision((current) => current + 1);
         callbacks?.onSuccess?.();
       })
       .catch(() => {
         setPublicationState((current) => ({
           status: "unavailable",
-          visible: current.visible,
           publishedProfile: current.publishedProfile,
           message: "Profile could not be published. Check private admin API reachability.",
         }));
@@ -4331,26 +4450,16 @@ export default function DatasetAdminPage() {
       });
   }
 
-  // Shared by the Publishing tab's own Publish changes button and the
-  // workspace toolbar's Publish changes button (Project Spec S0061/S0103):
-  // determines which of the two resources (Inference Form customization,
-  // Dataset Detail profile) are actually dirty and orchestrates them --
-  // customization always precedes profile publication so a known-invalid
-  // form layout can never be accompanied by a newly published profile in the
-  // same action, only dirty resources are mutated, and a resource's baseline
-  // only updates once its own operation actually succeeds.
-  //
-  // profileDirty is supplied by the caller rather than computed once here,
-  // because the two buttons have always had intentionally different
-  // enablement semantics that predate S0103: the workspace toolbar gates on
-  // hasUnpublishedWorkspaceChanges (differs from the last loaded draft),
-  // while the Publishing tab's own button gates on hasPublishableChanges
-  // (differs from the last published snapshot, so it stays true the first
-  // time anything is published at all) and has always published
-  // unconditionally whenever clicked. Recomputing one universal definition
-  // here would either silently no-op a legitimate Publishing-tab publish or
-  // send a redundant profile publish alongside a customization-only toolbar
-  // edit -- passing each caller's own notion of profileDirty preserves both.
+  // Used by the workspace toolbar's Publish changes button (Project Spec
+  // S0061/S0103; the Publishing tab's own former Publish changes button was
+  // removed by Project Spec S0116): determines which of the two resources
+  // (Inference Form customization, Dataset Detail profile) are actually
+  // dirty and orchestrates them -- customization always precedes profile
+  // publication so a known-invalid form layout can never be accompanied by a
+  // newly published profile in the same action, only dirty resources are
+  // mutated, and a resource's baseline only updates once its own operation
+  // actually succeeds. profileDirty is the toolbar's own
+  // hasUnpublishedWorkspaceChanges (differs from the last loaded draft).
   function publishChanges(profileDirty: boolean) {
     if (!selectedSlug) {
       return;
@@ -4411,65 +4520,110 @@ export default function DatasetAdminPage() {
     performPublish(currentProfileForPublish);
   }
 
-  function setPublicVisibility(visible: boolean) {
-    if (!selectedSlug) {
+  // Project Spec S0116: the sole loader for GET
+  // /admin/datasets/{slug}/publication-state. Guarded by
+  // publicationProjectionRequestRef (incremented on every call) rather than
+  // relying solely on AbortSignal, since this repo's test fetch mocks do not
+  // honor abort -- a response is only ever applied when it is still the most
+  // recent request AND its own dataset_slug matches what was asked for.
+  function loadPublicationProjection(slug: string, signal?: AbortSignal) {
+    const requestId = publicationProjectionRequestRef.current + 1;
+    publicationProjectionRequestRef.current = requestId;
+
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/publication-state`, signal ? { signal } : undefined)
+      .then((response): Promise<{ ok: boolean; body: unknown }> => {
+        if (response.status === 404) {
+          return Promise.resolve({ ok: false, body: null });
+        }
+        return response.json().then((body: unknown) => ({ ok: response.ok, body }));
+      })
+      .then((result) => {
+        if (publicationProjectionRequestRef.current !== requestId) {
+          return;
+        }
+        if (!result.ok) {
+          setPublicationProjection({
+            status: "unavailable",
+            datasetSlug: slug,
+            message: "Publication state could not be loaded from the private Admin API.",
+          });
+          return;
+        }
+        const projection = parseAdminPublicationStateProjection(result.body);
+        if (!projection || projection.dataset_slug !== slug) {
+          setPublicationProjection({
+            status: "unavailable",
+            datasetSlug: slug,
+            message: "Publication state response was not in the expected shape.",
+          });
+          return;
+        }
+        setPublicationProjection({ status: "ready", datasetSlug: slug, projection });
+      })
+      .catch((err: Error) => {
+        if (err.name === "AbortError" || publicationProjectionRequestRef.current !== requestId) {
+          return;
+        }
+        setPublicationProjection({
+          status: "unavailable",
+          datasetSlug: slug,
+          message: "Publication state could not be loaded. Check private admin API reachability.",
+        });
+      });
+  }
+
+  // Project Spec S0116: the switch's only write path -- unchanged PUT
+  // route/payload. Only usable from the "ready" projection state (the switch
+  // itself is disabled otherwise), so a prior authoritative projection is
+  // always available to roll back to on failure. selectedSlugRef guards
+  // against a dataset switch racing an in-flight write: neither the success
+  // nor the failure branch may touch state once the operator has moved on to
+  // a different dataset -- that dataset's own effect-driven fetch already
+  // owns its state by then.
+  function setConfiguredVisibility(visible: boolean) {
+    if (publicationProjection.status !== "ready") {
       return;
     }
+    const slug = publicationProjection.datasetSlug;
+    const priorProjection = publicationProjection.projection;
 
-    setPublicationState((current) => ({
-      status: "saving_visibility",
-      visible: current.visible,
-      publishedProfile: current.publishedProfile,
-    }));
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/visibility`, {
+    setVisibilityWriteFailed(false);
+    setPublicationProjection({ status: "saving", datasetSlug: slug, projection: priorProjection, pendingVisible: visible });
+
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/visibility`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ visible }),
     })
-      .then((response) => {
+      .then((response): Promise<{ ok: boolean; body: { visible?: boolean; error_code?: string; message?: string; errors?: DraftError[] } | null }> => {
         if (response.status === 404) {
-          setPublicationState((current) => ({
-            status: "unavailable",
-            visible: current.visible,
-            publishedProfile: current.publishedProfile,
-            message: "Visibility endpoint unavailable for this private admin session. Confirm API configuration.",
-          }));
-          return null;
+          return Promise.resolve({ ok: false, body: null });
         }
-        return response.json().then((body: { visible?: boolean; updated_at?: string; error_code?: string; message?: string; errors?: DraftError[] }) => ({
+        return response.json().then((body: { visible?: boolean; error_code?: string; message?: string; errors?: DraftError[] }) => ({
           ok: response.ok,
           body,
         }));
       })
       .then((result) => {
-        if (!result) {
+        if (selectedSlugRef.current !== slug) {
           return;
         }
-        if (!result.ok || typeof result.body.visible !== "boolean") {
-          setPublicationState((current) => ({
-            status: "invalid",
-            visible: current.visible,
-            publishedProfile: current.publishedProfile,
-            errors:
-              result.body.errors ??
-              [{ code: result.body.error_code, message: result.body.message ?? "Visibility change failed validation." }],
-          }));
+        if (!result.ok || typeof result.body?.visible !== "boolean") {
+          setVisibilityWriteFailed(true);
+          setPublicationProjection({ status: "ready", datasetSlug: slug, projection: priorProjection });
           return;
         }
-        setPublicationState((current) => ({
-          status: "visibility_saved",
-          visible: result.body.visible ?? visible,
-          publishedProfile: current.publishedProfile,
-          updatedAt: result.body.updated_at,
-        }));
+        // Authoritative reconciliation: re-fetch rather than trust the PUT's
+        // own echoed value, so configured/effective/reachable and every
+        // console fact stay consistent with the read projection.
+        loadPublicationProjection(slug);
       })
       .catch(() => {
-        setPublicationState((current) => ({
-          status: "unavailable",
-          visible: current.visible,
-          publishedProfile: current.publishedProfile,
-          message: "Public exposure could not be saved. Check private admin API reachability.",
-        }));
+        if (selectedSlugRef.current !== slug) {
+          return;
+        }
+        setVisibilityWriteFailed(true);
+        setPublicationProjection({ status: "ready", datasetSlug: slug, projection: priorProjection });
       });
   }
 
@@ -4750,9 +4904,9 @@ export default function DatasetAdminPage() {
           <button
             className="dataset-admin-public-page-action"
             aria-label="Open public Dataset Detail page"
-            disabled={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic}
+            disabled={!publicPageActionEnabled}
             onClick={() => window.open(`/dataset/${encodeURIComponent(selectedSlug)}`, "_blank", "noopener,noreferrer")}
-            style={!selectedSlug || !publicDatasetSlugsKnown || !selectedDatasetIsPublic ? iconActionButtonDisabledStyle : iconActionButtonStyle}
+            style={!publicPageActionEnabled ? iconActionButtonDisabledStyle : iconActionButtonStyle}
             type="button"
           >
             <svg aria-hidden="true" style={actionIconStyle} viewBox="0 0 24 24">
@@ -4829,21 +4983,11 @@ export default function DatasetAdminPage() {
             selectedSlug,
             customizationEditorState,
             retryCustomization,
-            () => setSelectedTab("live-preview"),
-            // The Publishing tab's own Publish changes button has always
-            // published unconditionally whenever clicked (Project Spec
-            // S0061), gated only by its own disabled attribute
-            // (publishDisabledReason) -- pass profileDirty: true so S0103's
-            // resource-aware orchestration never second-guesses that.
-            () => publishChanges(true),
-            // Publishing tab's own Save draft button passes its onClick
-            // SyntheticEvent straight through as this callback's first
-            // argument -- wrap so it never reaches saveDraft.
-            () => saveDraft(),
-            setPublicVisibility,
+            setConfiguredVisibility,
             updateCustomizationDraft,
             publicationState,
-            lastPublishedAt,
+            publicationProjection,
+            visibilityWriteFailed,
           )}
         </div>
       </section>

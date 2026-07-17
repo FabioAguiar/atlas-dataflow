@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
+import admin_profile_visibility  # noqa: E402
 from fastapi import Request  # noqa: E402
 from public_context_loader import PublicContextUnavailableError  # noqa: E402
 from public_profile_visibility import (  # noqa: E402
@@ -50,6 +51,7 @@ from public_profile_visibility import (  # noqa: E402
     resolve_public_presentation_overlay,
 )
 from registry.dataset_public_profile_publication_store import (  # noqa: E402
+    get_visibility_record,
     get_visibility,
     set_visibility,
 )
@@ -163,6 +165,64 @@ def test_set_visibility_rejects_invalid_dataset_slug():
             raise AssertionError("expected ValueError for invalid dataset_slug")
         except ValueError:
             pass
+
+
+def _write_publication_content(fake_repo: Path, content: str) -> Path:
+    publications = fake_repo / "registry" / "profile-publications"
+    publications.mkdir(parents=True, exist_ok=True)
+    path = publications / f"{_TARGET_SLUG}.json"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def test_visibility_record_reader_projects_valid_explicit_metadata():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        record = set_visibility(_TARGET_SLUG, False, repo_root=fake_repo)
+        state = get_visibility_record(_TARGET_SLUG, repo_root=fake_repo)
+        assert state == {
+            "visible": False,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": record["updated_at"],
+        }
+
+
+def test_visibility_record_reader_classifies_missing_without_creating_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        state = get_visibility_record(_TARGET_SLUG, repo_root=fake_repo)
+        assert state["record_status"] == "missing"
+        assert state["source"] == "default_visible"
+        assert not (fake_repo / "registry" / "profile-publications").exists()
+
+
+def test_visibility_record_reader_classifies_malformed_states():
+    cases = [
+        ("not json", "invalid_json"),
+        (json.dumps([]), "invalid_shape"),
+        (json.dumps({"visible": "yes", "updated_at": "2026-07-16T21:00:00Z"}), "invalid_visible"),
+        (json.dumps({"visible": False, "updated_at": "yesterday"}), "invalid_updated_at"),
+    ]
+    for content, expected in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_repo = Path(tmp)
+            _write_publication_content(fake_repo, content)
+            state = get_visibility_record(_TARGET_SLUG, repo_root=fake_repo)
+            assert state == {
+                "visible": True,
+                "source": "default_visible",
+                "record_status": expected,
+                "updated_at": None,
+            }
+
+
+def test_visibility_record_reader_classifies_unreadable_record():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        path = fake_repo / "registry" / "profile-publications" / f"{_TARGET_SLUG}.json"
+        path.mkdir(parents=True)
+        assert get_visibility_record(_TARGET_SLUG, repo_root=fake_repo)["record_status"] == "unreadable"
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +429,167 @@ def test_visibility_route_registered_only_under_admin():
 
     public_paths = {path for path in paths if not path.startswith("/admin")}
     assert not any("visibility" in path for path in public_paths)
+
+
+# ---------------------------------------------------------------------------
+# S0115 private publication-state projection
+# ---------------------------------------------------------------------------
+
+
+def _publication_state_dependencies(monkeypatch, *, configured, effective, review, snapshot):
+    monkeypatch.setattr(
+        admin_profile_visibility,
+        "resolve_dataset",
+        lambda _slug, registry_path=None: SimpleNamespace(
+            dataset_slug=_TARGET_SLUG, active_release="release-20260716-001"
+        ),
+    )
+    monkeypatch.setattr(
+        admin_profile_visibility,
+        "get_visibility_record",
+        lambda _slug, repo_root=None: configured,
+    )
+    monkeypatch.setattr(
+        admin_profile_visibility,
+        "resolve_dataset_visibility",
+        lambda _slug, repo_root=None: effective,
+    )
+    monkeypatch.setattr(
+        admin_profile_visibility,
+        "is_dataset_needs_review",
+        lambda _slug, registry_path=None: review,
+    )
+    if snapshot is None:
+        def missing(_slug, repo_root=None):
+            from registry.dataset_public_profile_snapshot_store import SnapshotNotFoundError
+            raise SnapshotNotFoundError()
+        monkeypatch.setattr(admin_profile_visibility, "get_snapshot", missing)
+    else:
+        monkeypatch.setattr(
+            admin_profile_visibility, "get_snapshot", lambda _slug, repo_root=None: snapshot
+        )
+
+
+def test_publication_state_projects_current_snapshot_and_reachable(monkeypatch):
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": True,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=True,
+        review=False,
+        snapshot={
+            "dataset_slug": _TARGET_SLUG,
+            "published_at": "2026-07-16T20:30:00Z",
+            "active_release_at_publish_time": "release-20260716-001",
+        },
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["snapshot"]["status"] == "current_release"
+    assert state["public_access"] == {"reachable": True, "blockers": [], "observations": []}
+
+
+def test_publication_state_preserves_hidden_no_snapshot_discrepancy(monkeypatch):
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": False,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=True,
+        review=False,
+        snapshot=None,
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["public_access"]["reachable"] is True
+    assert state["public_access"]["observations"] == [
+        "snapshot_missing",
+        "configured_hidden_but_effectively_visible_without_snapshot",
+    ]
+
+
+def test_publication_state_has_deterministic_blockers_and_observations(monkeypatch):
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": True,
+            "source": "default_visible",
+            "record_status": "invalid_json",
+            "updated_at": None,
+        },
+        effective=False,
+        review=True,
+        snapshot={
+            "dataset_slug": _TARGET_SLUG,
+            "published_at": "2026-07-16T20:30:00Z",
+            "active_release_at_publish_time": "release-20260715-001",
+        },
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["snapshot"]["status"] == "stale_release"
+    assert state["public_access"] == {
+        "reachable": False,
+        "blockers": ["visibility_disabled", "review_pending"],
+        "observations": [
+            "visibility_default_applied",
+            "visibility_record_invalid",
+            "snapshot_stale",
+        ],
+    }
+
+
+def test_publication_state_projects_invalid_snapshot_without_raw_content(monkeypatch):
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": True,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=True,
+        review=False,
+        snapshot={"dataset_slug": _TARGET_SLUG, "published_at": "bad", "profile": {"private": True}},
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["snapshot"] == {
+        "status": "invalid",
+        "exists": True,
+        "published_at": None,
+        "active_release_at_publish_time": None,
+        "matches_active_release": None,
+    }
+    assert "profile" not in json.dumps(state)
+
+
+def test_publication_state_route_is_private_and_registered(monkeypatch):
+    path = "/admin/datasets/{dataset_slug}/publication-state"
+    assert path in {route.path for route in api_main.app.routes}
+    assert not any(
+        route.path.endswith("/publication-state") and not route.path.startswith("/admin/")
+        for route in api_main.app.routes
+    )
+
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    response = api_main.get_admin_profile_publication_state(
+        _TARGET_SLUG, _make_request({}, method="GET", path=path)
+    )
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    monkeypatch.setattr(api_main, "get_dataset_publication_state", lambda slug: {"dataset_slug": slug})
+    try:
+        assert api_main.get_admin_profile_publication_state(
+            _TARGET_SLUG, _make_request({}, method="GET", path=path)
+        ) == {"dataset_slug": _TARGET_SLUG}
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
 
 
 # ---------------------------------------------------------------------------

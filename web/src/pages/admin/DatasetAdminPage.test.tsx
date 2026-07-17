@@ -218,6 +218,23 @@ function installFetchMock(
     // required/optional default rule applied only to a field the loaded
     // overlay never covered.
     extraContractFields?: Array<{ name: string; label: string; optional: boolean }>;
+    // Project Spec S0116: GET /admin/datasets/{slug}/publication-state.
+    // publicationStateUnavailable simulates the private route returning 404
+    // (Admin runtime disabled/unreachable). publicationStateMalformed
+    // returns valid JSON that fails the frontend's bounded shape validation.
+    // publicationStateDeferredOnce leaves the first GET unresolved until the
+    // returned fetch mock's releaseDeferredPublicationState() is called, for
+    // exercising the "Checking..." loading state deterministically.
+    // initialConfiguredVisible seeds the mutable configured-visibility value
+    // the mock tracks across visibility PUT writes (default true).
+    // publicationStateBuilder fully overrides the projection shape (blockers,
+    // observations, snapshot/review state, discrepancies) -- receives the
+    // mock's current mutable configured-visibility value.
+    publicationStateUnavailable?: boolean;
+    publicationStateMalformed?: boolean;
+    publicationStateDeferredOnce?: boolean;
+    initialConfiguredVisible?: boolean;
+    publicationStateBuilder?: (configuredVisible: boolean) => Record<string, unknown>;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -227,6 +244,36 @@ function installFetchMock(
   let customizationLoadFailurePending = options.customizationLoadFailsOnce ?? false;
   let customizationLoadDeferredPending = options.customizationLoadDeferredOnce ?? false;
   let releaseDeferredCustomizationLoad: (() => void) | null = null;
+  let configuredVisible = options.initialConfiguredVisible ?? true;
+  let publicationStateDeferredPending = options.publicationStateDeferredOnce ?? false;
+  let releaseDeferredPublicationState: (() => void) | null = null;
+
+  function defaultPublicationState(visible: boolean): Record<string, unknown> {
+    return {
+      dataset_slug: datasetSlug,
+      active_release: "release-20260619-001",
+      visibility: {
+        configured_visible: visible,
+        source: "explicit_record",
+        record_status: "valid",
+        updated_at: "2026-07-03T17:35:00Z",
+        effective_visible: visible,
+      },
+      review: { status: "ready" },
+      snapshot: {
+        status: "current_release",
+        exists: true,
+        published_at: "2026-07-11T14:00:00Z",
+        active_release_at_publish_time: "release-20260619-001",
+        matches_active_release: true,
+      },
+      public_access: {
+        reachable: visible,
+        blockers: visible ? [] : ["visibility_disabled"],
+        observations: [],
+      },
+    };
+  }
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
@@ -399,11 +446,28 @@ function installFetchMock(
         );
       }
       const body = typeof init.body === "string" ? (JSON.parse(init.body) as { visible?: boolean }) : {};
+      configuredVisible = body.visible ?? true;
       return jsonResponse({
         dataset_slug: datasetSlug,
         visible: body.visible ?? true,
         updated_at: "2026-07-03T17:35:00Z",
       });
+    }
+    if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`)) {
+      if (options.publicationStateUnavailable) {
+        return jsonResponse({}, 404);
+      }
+      if (publicationStateDeferredPending) {
+        publicationStateDeferredPending = false;
+        return new Promise<MockResponse>((resolve) => {
+          releaseDeferredPublicationState = () =>
+            resolve(jsonResponse((options.publicationStateBuilder ?? defaultPublicationState)(configuredVisible)));
+        });
+      }
+      if (options.publicationStateMalformed) {
+        return jsonResponse({ dataset_slug: datasetSlug });
+      }
+      return jsonResponse((options.publicationStateBuilder ?? defaultPublicationState)(configuredVisible));
     }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) && init?.method === "PUT") {
       if (options.rejectProfileSave) {
@@ -553,6 +617,7 @@ function installFetchMock(
   vi.stubGlobal("fetch", fetchMock);
   return Object.assign(fetchMock, {
     releaseDeferredCustomizationLoad: () => releaseDeferredCustomizationLoad?.(),
+    releaseDeferredPublicationState: () => releaseDeferredPublicationState?.(),
   });
 }
 
@@ -592,14 +657,13 @@ describe("DatasetAdminPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("wires Publishing tab actions and derives lifecycle labels from saved, published, and visibility state", async () => {
-    const fetchMock = installFetchMock();
+  it("reduces the Publishing tab to exactly the Visible publicly switch and the operational console (Project Spec S0116)", async () => {
+    installFetchMock();
     renderAdminPage();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
     });
-    expect(screen.getByRole("heading", { name: "Dataset — Curated churn profile" })).toBeInTheDocument();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Public Content",
       "Metadata & Card",
@@ -611,70 +675,582 @@ describe("DatasetAdminPage", () => {
       "Live Preview",
     ]);
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeDisabled();
-    expect(screen.getByText("Not published in this session")).toBeInTheDocument();
+    const panel = screen.getByRole("tabpanel");
 
-    await loadDraftOnly();
-    expect(within(screen.getByRole("tabpanel")).getByText("Loaded private draft.")).toBeInTheDocument();
+    expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).toBeInTheDocument();
+    expect(within(panel).getByRole("log", { name: "Dataset publication operational status" })).toBeInTheDocument();
 
-    const callsBeforePreview = fetchMock.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
-    expect(screen.getByRole("heading", { name: "Curated churn profile" })).toBeInTheDocument();
-    expect(fetchMock.mock.calls).toHaveLength(callsBeforePreview);
-    expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(0);
-    expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`))).toHaveLength(0);
+    expect(within(panel).queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Preview" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Publish changes" })).not.toBeInTheDocument();
+    expect(within(panel).queryByLabelText("Publishing rule summary")).not.toBeInTheDocument();
+    expect(within(panel).queryByLabelText("Current publication state")).not.toBeInTheDocument();
+    expect(within(panel).queryByLabelText("Documented publication states")).not.toBeInTheDocument();
+    expect(within(panel).queryByText("Last published")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    // Save draft/Publish changes only exist inside the Publishing tab's own
-    // panel now that the top-level workspace-shell button has been removed
-    // (S0055) and a separate, differently-scoped Publish changes button now
-    // lives in the workspace toolbar (S0058) -- scope to the tabpanel so
-    // these queries never collide with the toolbar's own button.
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByTestId("dataset-admin-draft-saved")).toBeInTheDocument();
-    expect(screen.queryByText("Changes saved.")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByText("Saved and matches public snapshot.")).toBeInTheDocument();
+    // The global workspace toolbar's own Publish changes action remains.
+    expect(
+      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+        name: "Publish changes",
+      }),
+    ).toBeInTheDocument();
+  });
 
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z. Public content is live.")).toBeInTheDocument());
-    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).not.toBeDisabled();
-    expect(screen.getByText("2026-07-03T17:30:00Z (this session)")).toBeInTheDocument();
+  it("hydrates the switch from configured_visible, saves a PUT on toggle, and reconciles via re-fetch on success (Project Spec S0116)", async () => {
+    const fetchMock = installFetchMock({ initialConfiguredVisible: true });
+    renderAdminPage();
 
-    const publishCall = fetchMock.mock.calls.find((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`));
-    // Project Spec S0061: Publish changes sends the current form payload
-    // directly in the request body -- no persisted profile-draft is read by
-    // the backend along this path.
-    expect(publishCall?.[1]).toMatchObject({
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
     });
-    expect(JSON.parse(String((publishCall?.[1] as RequestInit).body)).dataset_slug).toBe(datasetSlug);
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const switchInput = await screen.findByRole("checkbox", { name: "Visible Publicly" });
+    await waitFor(() => expect(switchInput).toBeChecked());
+    expect(switchInput).not.toBeDisabled();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
-    await waitFor(() => expect(screen.getByText("Latest published snapshot is hidden publicly.")).toBeInTheDocument());
-    expect(screen.getByText("2026-07-03T17:30:00Z (this session)")).toBeInTheDocument();
+    const callsBeforeToggle = fetchMock.mock.calls.length;
+    fireEvent.click(switchInput);
+    await waitFor(() => expect(switchInput).toBeDisabled());
+    await waitFor(() => expect(switchInput).not.toBeChecked());
+    await waitFor(() => expect(switchInput).not.toBeDisabled());
 
-    const visibilityCalls = fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`));
+    const visibilityCalls = fetchMock.mock.calls
+      .slice(callsBeforeToggle)
+      .filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/visibility`));
     expect(visibilityCalls).toHaveLength(1);
     expect(visibilityCalls[0]?.[1]).toMatchObject({
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ visible: false }),
     });
-    expect(fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`))).toHaveLength(1);
+    // Successful PUT triggers an authoritative re-fetch of publication-state.
+    const publicationStateCallsAfter = fetchMock.mock.calls
+      .slice(callsBeforeToggle)
+      .filter((call: unknown[]) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publication-state`));
+    expect(publicationStateCallsAfter.length).toBeGreaterThanOrEqual(1);
+  });
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
-    await waitFor(() => expect(screen.getByText("Latest published snapshot is visible publicly.")).toBeInTheDocument());
+  it("toggles false to true and restores the previous authoritative value with a safe console error on PUT failure, without touching the header badge (Project Spec S0116)", async () => {
+    installFetchMock({ initialConfiguredVisible: false, rejectVisibility: true });
+    renderAdminPage();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
-    fireEvent.change(screen.getByLabelText("Display title"), { target: { value: "Edited churn profile" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    // A configured-hidden, effective-hidden dataset is not publicly
+    // reachable under this mock's default builder.
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    // The edit differs from the last saved backend draft (still tracked for
-    // status-line wording), but Project Spec S0061 no longer requires that
-    // draft to be saved before Publish changes is available again.
-    expect(within(screen.getByRole("tabpanel")).getByText("Unsaved local changes.")).toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
-    expect(screen.queryByText(/Save Draft before publishing/)).not.toBeInTheDocument();
+    const switchInput = await screen.findByRole("checkbox", { name: "Visible Publicly" });
+    await waitFor(() => expect(switchInput).not.toBeChecked());
+
+    fireEvent.click(switchInput);
+    await waitFor(() => expect(switchInput).toBeChecked());
+    await waitFor(() => expect(switchInput).not.toBeChecked());
+    expect(switchInput).not.toBeDisabled();
+
+    const panel = screen.getByRole("tabpanel");
+    expect(
+      within(panel).getByText("Configured visibility could not be saved. The previous confirmed value remains active.", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    // The header badge is never altered from unverified local state on a
+    // failed write -- it still reflects the last authoritative (hidden,
+    // unreachable) projection.
+    expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private");
+  });
+
+  it("does not dirty the profile workspace or enable the global Publish changes button when only the visibility switch is toggled (Project Spec S0116)", async () => {
+    installFetchMock();
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const switchInput = await screen.findByRole("checkbox", { name: "Visible Publicly" });
+    await waitFor(() => expect(switchInput).toBeChecked());
+
+    fireEvent.click(switchInput);
+    await waitFor(() => expect(switchInput).not.toBeDisabled());
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
+  });
+
+  it("does not disable the switch when the published snapshot is missing or stale (Project Spec S0116)", async () => {
+    installFetchMock({
+      publicationStateBuilder: (visible) => ({
+        dataset_slug: datasetSlug,
+        active_release: "release-20260619-001",
+        visibility: {
+          configured_visible: visible,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-07-03T17:35:00Z",
+          effective_visible: true,
+        },
+        review: { status: "ready" },
+        snapshot: {
+          status: "missing",
+          exists: false,
+          published_at: null,
+          active_release_at_publish_time: null,
+          matches_active_release: null,
+        },
+        public_access: { reachable: true, blockers: [], observations: ["snapshot_missing"] },
+      }),
+    });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const switchInput = await screen.findByRole("checkbox", { name: "Visible Publicly" });
+    await waitFor(() => expect(switchInput).not.toBeDisabled());
+  });
+
+  it("shows Checking... while loading and reports a safe error when the private publication-state API is unavailable (Project Spec S0116)", async () => {
+    installFetchMock({ publicationStateUnavailable: true });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+    expect(
+      within(panel).getByText("Publication state could not be loaded from the private Admin API.", { exact: false }),
+    ).toBeInTheDocument();
+    expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).toBeDisabled();
+  });
+
+  it("treats an invalid/malformed publication-state response as unavailable rather than partially rendering it (Project Spec S0116)", async () => {
+    installFetchMock({ publicationStateMalformed: true });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+
+    await waitFor(() =>
+      expect(within(panel).getByText(/Publication state (could not be loaded|response was not in the expected shape)/)).toBeInTheDocument(),
+    );
+    expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).toBeDisabled();
+  });
+
+  it("shows a Checking... loading line and header while the publication-state request is in flight (Project Spec S0116)", async () => {
+    const fetchMock = installFetchMock({ publicationStateDeferredOnce: true });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+
+    expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Checking...");
+    expect(within(panel).getByText("Checking publication state...", { exact: false })).toBeInTheDocument();
+    expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).toBeDisabled();
+
+    fetchMock.releaseDeferredPublicationState();
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
+  });
+
+  it("reports the review-pending blocker and marks the route not reachable when review status is needs_review (Project Spec S0116)", async () => {
+    installFetchMock({
+      publicationStateBuilder: (visible) => ({
+        dataset_slug: datasetSlug,
+        active_release: "release-20260619-001",
+        visibility: {
+          configured_visible: visible,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-07-03T17:35:00Z",
+          effective_visible: true,
+        },
+        review: { status: "needs_review" },
+        snapshot: {
+          status: "current_release",
+          exists: true,
+          published_at: "2026-07-11T14:00:00Z",
+          active_release_at_publish_time: "release-20260619-001",
+          matches_active_release: true,
+        },
+        public_access: { reachable: false, blockers: ["review_pending"], observations: [] },
+      }),
+    });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+    expect(
+      within(panel).getByText("Dataset review state prevents public access.", { exact: false }),
+    ).toBeInTheDocument();
+    // The switch still follows configured_visible (true here) even while
+    // the route is not reachable -- the frontend never forces these to
+    // match.
+    expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).toBeChecked();
+  });
+
+  it("reports both the visibility_disabled and review_pending blockers together, in deterministic order (Project Spec S0116)", async () => {
+    installFetchMock({
+      publicationStateBuilder: () => ({
+        dataset_slug: datasetSlug,
+        active_release: "release-20260619-001",
+        visibility: {
+          configured_visible: false,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-07-03T17:35:00Z",
+          effective_visible: false,
+        },
+        review: { status: "needs_review" },
+        snapshot: {
+          status: "current_release",
+          exists: true,
+          published_at: "2026-07-11T14:00:00Z",
+          active_release_at_publish_time: "release-20260619-001",
+          matches_active_release: true,
+        },
+        public_access: {
+          reachable: false,
+          blockers: ["visibility_disabled", "review_pending"],
+          observations: [],
+        },
+      }),
+    });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+    const consoleEl = within(panel).getByRole("log", { name: "Dataset publication operational status" });
+    await waitFor(() =>
+      expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).not.toBeDisabled(),
+    );
+    const lineTexts = Array.from(consoleEl.querySelectorAll(".dataset-admin-console-line")).map(
+      (el) => el.textContent ?? "",
+    );
+    const disabledIndex = lineTexts.findIndex((text) => text.includes("disabled by the effective visibility policy"));
+    const reviewIndex = lineTexts.findIndex((text) => text.includes("review state prevents public access"));
+    expect(disabledIndex).toBeGreaterThanOrEqual(0);
+    expect(reviewIndex).toBeGreaterThan(disabledIndex);
+  });
+
+  it("renders an unrecognized blocker/observation code as a bounded generic line without exposing the raw code (Project Spec S0116)", async () => {
+    installFetchMock({
+      publicationStateBuilder: () => ({
+        dataset_slug: datasetSlug,
+        active_release: "release-20260619-001",
+        visibility: {
+          configured_visible: true,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-07-03T17:35:00Z",
+          effective_visible: true,
+        },
+        review: { status: "ready" },
+        snapshot: {
+          status: "current_release",
+          exists: true,
+          published_at: "2026-07-11T14:00:00Z",
+          active_release_at_publish_time: "release-20260619-001",
+          matches_active_release: true,
+        },
+        public_access: {
+          reachable: true,
+          blockers: ["some_future_backend_blocker_code"],
+          observations: ["some_future_backend_observation_code"],
+        },
+      }),
+    });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+    await waitFor(() =>
+      expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).not.toBeDisabled(),
+    );
+    expect(
+      within(panel).getByText("Public access is blocked by an unrecognized backend condition.", { exact: false }),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("An additional backend operational observation is present.", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("some_future_backend_blocker_code")).not.toBeInTheDocument();
+    expect(screen.queryByText("some_future_backend_observation_code")).not.toBeInTheDocument();
+  });
+
+  it("shows the configured-hidden/effectively-visible discrepancy as a warning without forcing the values to match (Project Spec S0116)", async () => {
+    installFetchMock({
+      publicationStateBuilder: () => ({
+        dataset_slug: datasetSlug,
+        active_release: "release-20260619-001",
+        visibility: {
+          configured_visible: false,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-07-03T17:35:00Z",
+          effective_visible: true,
+        },
+        review: { status: "ready" },
+        snapshot: {
+          status: "missing",
+          exists: false,
+          published_at: null,
+          active_release_at_publish_time: null,
+          matches_active_release: null,
+        },
+        public_access: {
+          reachable: true,
+          blockers: [],
+          observations: ["snapshot_missing", "configured_hidden_but_effectively_visible_without_snapshot"],
+        },
+      }),
+    });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    // The badge follows public_access.reachable (true) even though the
+    // switch (configured_visible) is unchecked -- two distinct facts.
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+    expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).not.toBeChecked();
+    expect(
+      within(panel).getByText(
+        "Configured visibility is hidden, but current no-snapshot policy still leaves the public route effectively visible.",
+        { exact: false },
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByText("No published snapshot is available; generated fallback behavior may apply.", { exact: false }),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a stale snapshot and a visibility-record observation without disabling the switch (Project Spec S0116)", async () => {
+    installFetchMock({
+      publicationStateBuilder: (visible) => ({
+        dataset_slug: datasetSlug,
+        active_release: "release-20260701-001",
+        visibility: {
+          configured_visible: visible,
+          source: "default_visible",
+          record_status: "invalid_json",
+          updated_at: null,
+          effective_visible: true,
+        },
+        review: { status: "ready" },
+        snapshot: {
+          status: "stale_release",
+          exists: true,
+          published_at: "2026-06-01T00:00:00Z",
+          active_release_at_publish_time: "release-20260619-001",
+          matches_active_release: false,
+        },
+        public_access: {
+          reachable: true,
+          blockers: [],
+          observations: ["visibility_record_invalid", "snapshot_stale"],
+        },
+      }),
+    });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const panel = screen.getByRole("tabpanel");
+    await waitFor(() => expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).not.toBeDisabled());
+    expect(
+      within(panel).getByText("Visibility record is invalid; the backend fallback is active.", { exact: false }),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByText("Published snapshot belongs to a different active release.", { exact: false }),
+    ).toBeInTheDocument();
+  });
+
+  it("resets the previous dataset's publication projection immediately and ignores a superseded response on dataset switch (Project Spec S0116)", async () => {
+    const otherSlug = "energy-consumption-forecast";
+    const firstSlugResponseHolder: { release: (() => void) | null } = { release: null };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: datasetSlug,
+              title: "Telco Customer Churn",
+              display_title: null,
+              summary: "s",
+              domain: "telecom",
+              tags: [],
+              active_release: "release-20260619-001",
+              publication_status: "ready",
+              last_updated: "2026-06-19T12:00:00Z",
+            },
+            {
+              dataset_slug: otherSlug,
+              title: "Energy Consumption Forecast",
+              display_title: null,
+              summary: "s",
+              domain: "energy",
+              tags: [],
+              active_release: "release-20260701-001",
+              publication_status: "ready",
+              last_updated: "2026-07-01T12:00:00Z",
+            },
+          ],
+        });
+      }
+      // The public /datasets listing seeds the initial selectedSlug; it is
+      // unrelated to the header badge authority under test here.
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({
+          datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`)) {
+        // Deliberately slow/deferred: resolves only after the operator has
+        // already switched to otherSlug below, so this response must never
+        // be allowed to overwrite otherSlug's own projection.
+        return new Promise((resolve) => {
+          firstSlugResponseHolder.release = () =>
+            resolve(
+              jsonResponse({
+                dataset_slug: datasetSlug,
+                active_release: "release-20260619-001",
+                visibility: {
+                  configured_visible: true,
+                  source: "explicit_record",
+                  record_status: "valid",
+                  updated_at: "2026-07-03T17:35:00Z",
+                  effective_visible: true,
+                },
+                review: { status: "ready" },
+                snapshot: {
+                  status: "current_release",
+                  exists: true,
+                  published_at: "2026-07-11T14:00:00Z",
+                  active_release_at_publish_time: "release-20260619-001",
+                  matches_active_release: true,
+                },
+                public_access: { reachable: true, blockers: [], observations: [] },
+              }),
+            );
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)) {
+        return jsonResponse({
+          dataset_slug: otherSlug,
+          active_release: "release-20260701-001",
+          visibility: {
+            configured_visible: false,
+            source: "explicit_record",
+            record_status: "valid",
+            updated_at: "2026-07-01T00:00:00Z",
+            effective_visible: false,
+          },
+          review: { status: "ready" },
+          snapshot: {
+            status: "missing",
+            exists: false,
+            published_at: null,
+            active_release_at_publish_time: null,
+            matches_active_release: null,
+          },
+          public_access: { reachable: false, blockers: ["visibility_disabled"], observations: [] },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAdminPage();
+
+    const selector = await screen.findByRole("button", { name: "Dataset" });
+    await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Dataset — Energy Consumption Forecast" })).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+
+    // Now let the superseded first-dataset response resolve -- it must be
+    // rejected (its own dataset_slug no longer matches the current
+    // selection) and must not flip the header back to Public.
+    firstSlugResponseHolder.release?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private");
+  });
+
+  it("reconciles the publication-state projection after a successful global Publish changes (Project Spec S0116)", async () => {
+    let reviewStatus: "ready" | "needs_review" = "needs_review";
+    const fetchMock = installFetchMock({
+      publicationStateBuilder: () => ({
+        dataset_slug: datasetSlug,
+        active_release: "release-20260619-001",
+        visibility: {
+          configured_visible: true,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-07-03T17:35:00Z",
+          effective_visible: true,
+        },
+        review: { status: reviewStatus },
+        snapshot: {
+          status: reviewStatus === "ready" ? "current_release" : "missing",
+          exists: reviewStatus === "ready",
+          published_at: reviewStatus === "ready" ? "2026-07-03T17:30:00Z" : null,
+          active_release_at_publish_time: reviewStatus === "ready" ? "release-20260619-001" : null,
+          matches_active_release: reviewStatus === "ready" ? true : null,
+        },
+        public_access: {
+          reachable: reviewStatus === "ready",
+          blockers: reviewStatus === "ready" ? [] : ["review_pending"],
+          observations: reviewStatus === "ready" ? [] : ["snapshot_missing"],
+        },
+      }),
+    });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
+
+    // A successful publish (the mock always reports review ready afterward)
+    // must reconcile review/snapshot/reachability through a fresh
+    // publication-state fetch, not just the profile-publish response.
+    reviewStatus = "ready";
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Publish-triggers-reconciliation" } });
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
+    expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
+    void fetchMock;
   });
 
   it("marks the active workspace tab as selected via aria-selected and updates it when switching tabs", async () => {
@@ -722,7 +1298,7 @@ describe("DatasetAdminPage", () => {
     // on the right. The Dataset Detail selector and Publish changes button
     // now live in the workspace toolbar below (asserted separately).
     expect(screen.getByRole("heading", { name: "Dataset — Curated churn profile" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published");
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
     expect(screen.getByLabelText("Dataset Detail visibility")).toHaveClass(
       "dataset-admin-registry-visibility-pill",
     );
@@ -757,11 +1333,14 @@ describe("DatasetAdminPage", () => {
       "Live Preview",
     ]);
 
-    // The Publishing tab's own Save draft/Publish changes actions are
-    // preserved, distinct from the workspace toolbar's own Publish changes.
+    // The Publishing tab itself renders only the switch and the operational
+    // console (Project Spec S0116) -- no tab-local publish/save actions.
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" })).toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeInTheDocument();
+    const panel = screen.getByRole("tabpanel");
+    expect(within(panel).getByRole("checkbox", { name: "Visible Publicly" })).toBeInTheDocument();
+    expect(within(panel).getByRole("log", { name: "Dataset publication operational status" })).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Publish changes" })).not.toBeInTheDocument();
   });
 
   it("keeps the full desktop tab bar, dataset selector, and status/action controls present and interactive at the compact 1360x768 desktop viewport baseline (Project Spec S0057)", async () => {
@@ -814,7 +1393,7 @@ describe("DatasetAdminPage", () => {
     installFetchMock();
     renderAdminPage();
 
-    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
     fireEvent.click(screen.getByRole("button", { name: "Open public Dataset Detail page" }));
@@ -894,9 +1473,6 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Telecom users" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByLabelText("Performance focus")).toHaveValue("positive_class_detection");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(within(screen.getByRole("tabpanel")).getByText("Not published yet.")).toBeInTheDocument();
   });
 
   it("renders Release date label as a normalized date input seeded from Dashboard Last updated (Project Spec S0064)", async () => {
@@ -1032,11 +1608,6 @@ describe("DatasetAdminPage", () => {
     expect(publishCall).toBeDefined();
     expect(publishCall?.[1]).toMatchObject({ method: "PUT", headers: { "Content-Type": "application/json" } });
     expect(JSON.parse(String((publishCall?.[1] as RequestInit).body)).display?.subtitle).toBe("Toolbar-edited subtitle");
-
-    // The Publishing tab's own status reflects the same successful publish,
-    // using the existing frontend/backend boundary rather than a new one.
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(await screen.findByText(/^Published at /)).toBeInTheDocument();
   });
 
   it("surfaces a safe error message from the workspace toolbar when publishing Public Content changes fails, without exposing raw internals (Project Spec S0061)", async () => {
@@ -1082,84 +1653,49 @@ describe("DatasetAdminPage", () => {
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(mutationCallsBefore);
   });
 
-  it("surfaces backend profile validation feedback without publishing side effects", async () => {
-    installFetchMock({ rejectProfileSave: true });
-    renderAdminPage();
-
-    await loadDraftAndCustomization();
-
-    // Save draft only exists inside the Publishing tab's own panel now that
-    // the top-level workspace-shell button has been removed (S0055).
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-
-    expect(await screen.findByText("Profile draft rejected by backend validation")).toBeInTheDocument();
-    expect(screen.getByText(/display.title - TITLE_REQUIRED - Title is required./)).toBeInTheDocument();
-  });
-
-  it("surfaces publish validation feedback without changing visibility state", async () => {
+  it("surfaces publish validation feedback from the workspace toolbar without changing the visibility switch (Project Spec S0116)", async () => {
     installFetchMock({ rejectPublish: true });
     renderAdminPage();
 
-    await loadDraftOnly();
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Toolbar-edited subtitle" } });
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+        name: "Publish changes",
+      }),
+    );
+    expect(
+      await screen.findByText("Inference Form saved; Dataset Detail publication failed."),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-
-    expect(await screen.findByText("Publishing action rejected by backend validation.")).toBeInTheDocument();
-    expect(screen.getByText(/profile - PROFILE_PUBLISH_FAILED - Snapshot validation failed./)).toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByText("Loaded private draft.")).toBeInTheDocument();
+    const switchInput = await screen.findByRole("checkbox", { name: "Visible Publicly" });
+    await waitFor(() => expect(switchInput).toBeChecked());
   });
 
-  it("surfaces visibility validation feedback without changing public exposure", async () => {
+  it("surfaces a safe visibility validation error and keeps the switch checked when the write is rejected (Project Spec S0116)", async () => {
     installFetchMock({ rejectVisibility: true });
     renderAdminPage();
 
-    await loadDraftOnly();
-
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Curated churn profile");
+    });
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z. Public content is live.")).toBeInTheDocument());
-    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeChecked();
+    const switchInput = await screen.findByRole("checkbox", { name: "Visible Publicly" });
+    await waitFor(() => expect(switchInput).toBeChecked());
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
+    fireEvent.click(switchInput);
 
-    expect(await screen.findByText("Publishing action rejected by backend validation.")).toBeInTheDocument();
-    expect(screen.getByText(/PROFILE_VISIBILITY_PAYLOAD_INVALID - Visibility payload is invalid./)).toBeInTheDocument();
-    // The rejected visibility change never touched publicationState.visible,
-    // so the Current state card's Visibility row still reads "Public." even
-    // while the status article above shows the rejection message.
-    expect(within(screen.getByRole("tabpanel")).getByText("Public.")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Visible Publicly" })).toBeChecked();
-  });
-
-  it("observes a Theme Preset edit in Publishing's derived status and re-enables Publish changes without requiring a save (Project Spec S0061)", async () => {
-    installFetchMock({ themePresetOverride: "ocean-blue", trackProfileDraftSaves: true });
-    renderAdminPage();
-
-    await loadDraftOnly();
-
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(screen.getByText("Published at 2026-07-03T17:30:00Z. Public content is live.")).toBeInTheDocument());
-    // A successful publish becomes the new baseline, so with nothing changed
-    // since, Publish changes disables again immediately.
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
-    fireEvent.click(screen.getByRole("button", { name: "Atlas Green" }));
-
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    // Differs from the last saved backend draft (ocean-blue), which takes
-    // precedence over the also-true unpublished-relative-to-published
-    // comparison in draftStateSummary -- but Project Spec S0061 no longer
-    // requires a Save draft click before Publish changes is available again.
-    expect(within(screen.getByRole("tabpanel")).getByText("Unsaved local changes.")).toBeInTheDocument();
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
-
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeDisabled());
-    expect(within(screen.getByRole("tabpanel")).getByText("Saved and matches public snapshot.")).toBeInTheDocument();
+    await waitFor(() => expect(switchInput).toBeChecked());
+    expect(switchInput).not.toBeDisabled();
+    const panel = screen.getByRole("tabpanel");
+    expect(
+      within(panel).getByText("Configured visibility could not be saved. The previous confirmed value remains active.", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    // No raw backend error code is ever shown.
+    expect(screen.queryByText(/PROFILE_VISIBILITY_PAYLOAD_INVALID/)).not.toBeInTheDocument();
   });
 
   it("saves a schema-valid profile-draft payload for supported icon, performance focus, theme preset, and result-card values", async () => {
@@ -1210,19 +1746,29 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Badge preset"), { target: { value: "risk" } });
     fireEvent.change(screen.getByLabelText("High label"), { target: { value: "Severe risk" } });
 
-    // Save draft only exists inside the Publishing tab's own panel now that
-    // the top-level workspace-shell button has been removed (S0055).
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    // Project Spec S0116 removes the tab-local Save draft action -- the
+    // global workspace toolbar's Publish changes button is now the only UI
+    // path that sends the accumulated form edits, via the same
+    // profileFromForm serialization the old profile-draft PUT used.
     const callsBeforeSave = fetchMock.mock.calls.length;
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    await screen.findByTestId("dataset-admin-draft-saved");
-    expect(screen.queryByText("Changes saved.")).not.toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+        name: "Publish changes",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+          name: "Publish changes",
+        }),
+      ).toBeDisabled(),
+    );
 
     const saveCall = fetchMock.mock.calls
       .slice(callsBeforeSave)
       .find(
         (call: unknown[]) =>
-          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) &&
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
           (call[1] as RequestInit | undefined)?.method === "PUT",
       );
     expect(saveCall).toBeDefined();
@@ -1378,14 +1924,14 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Theme Preset" }));
     fireEvent.click(screen.getByRole("button", { name: label }));
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
     const callsBeforeSave = fetchMock.mock.calls.length;
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    await screen.findByTestId("dataset-admin-draft-saved");
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled());
 
     const saveCall = fetchMock.mock.calls.slice(callsBeforeSave).find(
       (call: unknown[]) =>
-        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) &&
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
         (call[1] as RequestInit | undefined)?.method === "PUT",
     );
     const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as { theme?: { preset?: string } };
@@ -1486,8 +2032,11 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Home card description")).toHaveValue("Unsaved card copy");
     expect(screen.getByLabelText("Performance focus")).toHaveValue("balanced_classification");
     expect(container.querySelector(".dataset-admin-preview-card .dataset-card__media")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    expect(
+      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+        name: "Publish changes",
+      }),
+    ).toBeEnabled();
   });
 
   it("binds controlled icon and short-description textarea to the local preview", async () => {
@@ -1535,8 +2084,11 @@ describe("DatasetAdminPage", () => {
       expect(container.querySelector(".dataset-admin-preview-card .dataset-card__icon svg")).toBeInTheDocument();
     }
 
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    expect(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    expect(
+      within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+        name: "Publish changes",
+      }),
+    ).toBeEnabled();
   });
 
   it("renders the tightened Metadata & Card copy and English public-card labels", async () => {
@@ -2521,11 +3073,10 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeDisabled();
   });
 
-  it("populates the filterable Admin dataset selector for a multi-dataset listing including a synthetic non-Telco/Bank dataset and updates the header on selection change", async () => {
+  it("populates the filterable Admin dataset selector for a multi-dataset listing including a synthetic non-Telco/Bank dataset and updates the header from publication-state on selection change (Project Spec S0116)", async () => {
     // AdminDatasetListing shape (GET /admin/datasets, registry/list.py's
     // list_admin_datasets) -- distinct from the public DatasetListing shape
-    // (visibility, no active_release/publication_status) used by the
-    // separate GET /datasets fetch below.
+    // used by the separate GET /datasets fetch below.
     const adminDatasetOne = {
       dataset_slug: "synthetic-retail-forecast",
       title: "Synthetic Retail Forecast",
@@ -2556,28 +3107,53 @@ describe("DatasetAdminPage", () => {
       active_release: "release-20260701-003",
       publication_status: "ready",
     };
-    // Only datasetOne and datasetThree are publicly reachable (present in
-    // GET /datasets); datasetTwo is Admin-visible only (needs_review),
-    // exercising the header's Published/Private distinction.
-    const publicDatasetOne = { ...adminDatasetOne, visibility: "public" };
-    const publicDatasetThree = { ...adminDatasetThree, visibility: "public" };
+    // Project Spec S0116: the header badge is driven exclusively by each
+    // dataset's own publication-state public_access.reachable value, never
+    // by public-listing membership -- datasetOne and datasetThree are
+    // reachable, datasetTwo (needs_review) is not, exercising the header's
+    // Public/Private distinction through the new authority.
+    function publicationStateFor(slug: string, reachable: boolean) {
+      return jsonResponse({
+        dataset_slug: slug,
+        active_release: "release-20260701-001",
+        visibility: {
+          configured_visible: true,
+          source: "explicit_record",
+          record_status: "valid",
+          updated_at: "2026-07-01T00:00:00Z",
+          effective_visible: true,
+        },
+        review: { status: reachable ? "ready" : "needs_review" },
+        snapshot: {
+          status: "current_release",
+          exists: true,
+          published_at: "2026-07-01T00:00:00Z",
+          active_release_at_publish_time: "release-20260701-001",
+          matches_active_release: true,
+        },
+        public_access: { reachable, blockers: reachable ? [] : ["review_pending"], observations: [] },
+      });
+    }
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/admin/datasets")) {
         return jsonResponse({ datasets: [adminDatasetOne, adminDatasetTwo, adminDatasetThree] });
       }
+      // The public /datasets listing still seeds the initial selectedSlug
+      // (unrelated to the header badge authority under test here), so it
+      // must include at least the first dataset for auto-selection to occur.
       if (url.endsWith("/datasets")) {
-        return jsonResponse({ datasets: [publicDatasetOne, publicDatasetThree] });
+        return jsonResponse({ datasets: [{ ...adminDatasetOne, visibility: "public" }] });
       }
-      if (url.endsWith(`/datasets/${adminDatasetOne.dataset_slug}`)) {
-        return jsonResponse(publicDatasetOne);
+      if (url.endsWith(`/admin/datasets/${adminDatasetOne.dataset_slug}/publication-state`)) {
+        return publicationStateFor(adminDatasetOne.dataset_slug, true);
       }
-      if (url.endsWith(`/datasets/${adminDatasetTwo.dataset_slug}`)) {
-        return jsonResponse({}, 404);
+      if (url.endsWith(`/admin/datasets/${adminDatasetTwo.dataset_slug}/publication-state`)) {
+        return publicationStateFor(adminDatasetTwo.dataset_slug, false);
       }
-      if (url.endsWith(`/datasets/${adminDatasetThree.dataset_slug}`)) {
-        return jsonResponse(publicDatasetThree);
+      if (url.endsWith(`/admin/datasets/${adminDatasetThree.dataset_slug}/publication-state`)) {
+        return publicationStateFor(adminDatasetThree.dataset_slug, true);
       }
       return jsonResponse({}, 404);
     });
@@ -2590,7 +3166,7 @@ describe("DatasetAdminPage", () => {
       expect(selector).toHaveTextContent(adminDatasetOne.display_title),
     );
     expect(selector).not.toHaveTextContent(adminDatasetOne.dataset_slug);
-    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
 
     fireEvent.click(selector);
     const listbox = screen.getByRole("listbox", { name: "Available datasets" });
@@ -2610,8 +3186,9 @@ describe("DatasetAdminPage", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetTwo.display_title}` })).toBeInTheDocument(),
     );
-    // datasetTwo is needs_review and absent from the public listing, so the
-    // header must show it as Private and keep the public-open action disabled.
+    // datasetTwo's publication-state reports not reachable (needs_review),
+    // so the header must show it as Private and keep the public-open action
+    // disabled.
     await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Private"));
     expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeDisabled();
 
@@ -2625,7 +3202,7 @@ describe("DatasetAdminPage", () => {
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: `Dataset — ${adminDatasetThree.display_title}` })).toBeInTheDocument(),
     );
-    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Published"));
+    await waitFor(() => expect(screen.getByLabelText("Dataset Detail visibility")).toHaveTextContent("Public"));
     expect(screen.getByRole("button", { name: "Open public Dataset Detail page" })).toBeEnabled();
   });
 
@@ -2818,7 +3395,7 @@ describe("DatasetAdminPage", () => {
     expect(within(panel).getByLabelText("Source URL")).toBeInTheDocument();
   });
 
-  it("removes internal draft terminology from Dataset Admin's operator-facing load, save, and publish feedback (Project Spec S0060)", async () => {
+  it("removes internal draft terminology from Dataset Admin's operator-facing load and publish feedback (Project Spec S0060)", async () => {
     installFetchMock();
     renderAdminPage();
 
@@ -2829,15 +3406,11 @@ describe("DatasetAdminPage", () => {
     ).not.toBeInTheDocument();
     expect(forbiddenDraftTermsPresent()).toEqual([]);
 
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Save draft" }));
-    expect(await screen.findByTestId("dataset-admin-draft-saved")).toBeInTheDocument();
-    expect(screen.queryByText("Changes saved.")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Edited subtitle" } });
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled());
     expect(screen.queryByText("Draft saved through the profile draft model.")).not.toBeInTheDocument();
-    expect(forbiddenDraftTermsPresent()).toEqual([]);
-
-    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" }));
-    await waitFor(() => expect(screen.getByText(/^Published at /)).toBeInTheDocument());
     expect(forbiddenDraftTermsPresent()).toEqual([]);
   });
 
@@ -2861,8 +3434,10 @@ describe("DatasetAdminPage", () => {
     await waitFor(() => expect(toolbarPublishButton).toBeDisabled());
 
     fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Visible Publicly" }));
-    await waitFor(() => expect(screen.getByText("Latest published snapshot is hidden publicly.")).toBeInTheDocument());
+    const switchInput = await screen.findByRole("checkbox", { name: "Visible Publicly" });
+    await waitFor(() => expect(switchInput).toBeChecked());
+    fireEvent.click(switchInput);
+    await waitFor(() => expect(switchInput).not.toBeChecked());
 
     fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
     fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: "Second publish-first edit" } });
@@ -3018,28 +3593,26 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Bound predict view")).toHaveValue("");
   });
 
-  it("participates in the existing dirty-state and Publish changes flow once deterministically bound", async () => {
-    // bound_predict_view_id is part of the whole-profile comparison the
-    // Publishing tab's own Publish changes button gates on
-    // (hasPublishableChanges), not the workspace toolbar's narrower
-    // publishable-fields subset -- so this exercises that button.
+  it("applies the deterministic rebind as a draft-only default that never implicitly enables or triggers a publish", async () => {
+    // resolvedBoundPredictViewIdDefault is applied identically to both the
+    // current draftForm and the workspace toolbar's own dirty-state
+    // baseline (workspacePublishSnapshotForm), so the deterministic-only
+    // rebind never by itself enables Publish changes -- only a real operator
+    // edit does. This is a page-load-only default, never an implicit
+    // mutation of the published snapshot.
     installFetchMock({ noExistingDraft: true });
     renderAdminPage();
 
     await loadDraftOnly();
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    // Field bank only renders once boundPredictViewId resolves (the
+    // customization bootstrap effect gates on it), so its presence already
+    // confirms the deterministic single-eligible-view rebind applied.
     await waitFor(() => expect(screen.getByLabelText("Field bank")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
-    const publishButton = within(screen.getByRole("tabpanel")).getByRole("button", { name: "Publish changes" });
-
-    // The deterministic default is a draft-only change until the operator
-    // explicitly publishes -- never an implicit mutation of the published
-    // snapshot merely from page load.
-    await waitFor(() => expect(publishButton).not.toBeDisabled());
-
-    fireEvent.click(publishButton);
-    await waitFor(() => expect(within(screen.getByRole("tabpanel")).getByText(/Published/)).toBeInTheDocument());
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    expect(publishButton).toBeDisabled();
   });
 
   // -------------------------------------------------------------------------

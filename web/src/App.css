@@ -2221,14 +2221,16 @@ h1 {
   line-height: var(--atlas-line-normal);
 }
 
-.dataset-admin-publishing-layout {
+/* Project Spec S0116: the Publishing tab is exactly two stacked surfaces --
+   the visibility control card, then the read-only operational console --
+   replacing the former two-column Publishing/Actions layout. */
+.dataset-admin-publishing-panel {
   display: grid;
   gap: var(--atlas-space-4);
-  grid-template-columns: minmax(18rem, 0.95fr) minmax(22rem, 1.05fr);
-  align-items: start;
+  min-width: 0;
 }
 
-.dataset-admin-publishing-card {
+.dataset-admin-publishing-panel__card {
   align-content: start;
 }
 
@@ -2236,6 +2238,7 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--atlas-space-4);
   border: 1px solid var(--atlas-color-border);
   border-radius: var(--atlas-radius-md);
@@ -2243,19 +2246,15 @@ h1 {
   background: var(--atlas-color-surface-muted);
 }
 
-.dataset-admin-visibility-row strong,
-.dataset-admin-last-published strong,
-.dataset-admin-publish-rule-card strong,
-.dataset-admin-state-list strong {
+.dataset-admin-visibility-row strong {
   color: var(--atlas-color-text);
 }
 
-.dataset-admin-visibility-row p,
-.dataset-admin-publish-rule-card p,
-.dataset-admin-publishing-rule-text {
+.dataset-admin-visibility-row p {
   margin: var(--atlas-space-1) 0 0;
   color: var(--atlas-color-text-muted);
   line-height: var(--atlas-line-relaxed);
+  overflow-wrap: anywhere;
 }
 
 .dataset-admin-switch {
@@ -2316,66 +2315,61 @@ h1 {
   cursor: not-allowed;
 }
 
-.dataset-admin-visibility-note {
-  margin: 0;
+/* Project Spec S0116: the read-only operational console. Bounded height with
+   its own vertical scroll (never expands the page indefinitely); horizontal
+   overflow is structurally impossible since every line wraps via
+   overflow-wrap. Monospace treatment reuses this codebase's existing
+   ui-monospace stack (see .binary-classification-result__technical span). No
+   terminal prompt or command-input styling is used. */
+.dataset-admin-console {
+  display: grid;
+  gap: var(--atlas-space-1);
+  max-height: 22rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--atlas-color-border);
   border-radius: var(--atlas-radius-md);
-  padding: var(--atlas-space-3);
-  color: var(--atlas-color-accent-strong);
-  background: var(--atlas-color-accent-muted);
+  padding: var(--atlas-space-3) var(--atlas-space-4);
+  background: var(--atlas-color-canvas);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--atlas-text-sm);
+  line-height: var(--atlas-line-relaxed);
+}
+
+.dataset-admin-console-line {
+  margin: 0;
+  padding: var(--atlas-space-1) 0;
+  border-bottom: 1px solid var(--atlas-color-border);
+  color: var(--atlas-color-text);
+  overflow-wrap: anywhere;
+}
+
+.dataset-admin-console-line:last-child {
+  border-bottom: 0;
+}
+
+/* Severity is never color-only: the bracketed [OK]/[INFO]/[WARN]/[BLOCKED]/
+   [ERROR] text is always present alongside this color accent. */
+.dataset-admin-console-severity {
+  margin-right: var(--atlas-space-1);
   font-weight: 800;
 }
 
-.dataset-admin-last-published {
-  display: grid;
-  gap: var(--atlas-space-1);
+.dataset-admin-console-line--ok .dataset-admin-console-severity {
+  color: var(--atlas-color-success);
 }
 
-.dataset-admin-last-published span {
-  color: var(--atlas-color-text-subtle);
-  font-size: var(--atlas-text-xs);
-  font-weight: 900;
-  text-transform: uppercase;
+.dataset-admin-console-line--info .dataset-admin-console-severity {
+  color: var(--atlas-color-info);
 }
 
-.dataset-admin-publish-rule-card,
-.dataset-admin-current-state-card {
-  display: grid;
-  gap: var(--atlas-space-3);
-  border: 1px solid var(--atlas-color-border);
-  border-radius: var(--atlas-radius-md);
-  padding: var(--atlas-space-4);
-  background: var(--atlas-color-surface-muted);
+.dataset-admin-console-line--warn .dataset-admin-console-severity {
+  color: var(--atlas-color-warning);
 }
 
-.dataset-admin-publishing-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--atlas-space-2);
-  align-items: center;
-}
-
-.dataset-admin-state-list {
-  display: grid;
-  gap: var(--atlas-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.dataset-admin-state-list li {
-  display: grid;
-  gap: var(--atlas-space-1);
-  grid-template-columns: minmax(8rem, 0.35fr) minmax(0, 0.65fr);
-  align-items: start;
-}
-
-.dataset-admin-state-list span {
-  color: var(--atlas-color-text-muted);
-}
-
-.dataset-admin-state-list--rules {
-  border-top: 1px solid var(--atlas-color-border);
-  padding-top: var(--atlas-space-3);
+.dataset-admin-console-line--blocked .dataset-admin-console-severity,
+.dataset-admin-console-line--error .dataset-admin-console-severity {
+  color: var(--atlas-color-danger);
 }
 
 .dataset-admin-preview-switcher {
@@ -2489,8 +2483,7 @@ h1 {
   }
 
   .dataset-admin-card-grid--split,
-  .dataset-admin-metadata-layout,
-  .dataset-admin-publishing-layout {
+  .dataset-admin-metadata-layout {
     grid-template-columns: 1fr;
   }
 

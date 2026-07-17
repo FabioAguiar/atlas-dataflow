@@ -2145,9 +2145,14 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByText(/derived from the Atlas dataset and model contract/i)).not.toBeInTheDocument();
   });
 
+  // Project Spec S0120: Dataset Detail Live Preview now renders the exact
+  // shared DatasetDetailSurface (S0119) used by /dataset/:slug -- one
+  // instance, its own real three-tab system (Overview/Inference/
+  // Documentation, Overview selected initially), no duplicated Admin
+  // markup, and no Model Card (dropped entirely from this surface).
   it("renders Live Preview subviews from real public components and the loaded customization", async () => {
-    installFetchMock();
-    renderAdminPage();
+    const fetchMock = installFetchMock();
+    const { container } = renderAdminPage();
 
     await loadDraftAndCustomization();
 
@@ -2155,21 +2160,104 @@ describe("DatasetAdminPage", () => {
     // Level-scoped heading role proves DatasetDetailHeader's real <h1>, not
     // just coincidentally matching text from a divergent mockup.
     expect(screen.getByRole("heading", { level: 1, name: "Curated churn profile" })).toBeInTheDocument();
+    // The dedicated draft display_subtitle owns the Dataset Detail subtitle
+    // -- the Home Card's own short_description ("Curated home card copy")
+    // never leaks into it.
+    expect(screen.getByText("Operator-authored public subtitle")).toBeInTheDocument();
+    expect(screen.queryByText("Curated home card copy")).not.toBeInTheDocument();
 
     expect(screen.getByRole("tab", { name: "Dataset Detail", selected: true })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Prediction result" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
+
+    // The bounded documentation frame's non-interactive public rail
+    // miniature is present but excluded from navigation semantics.
+    expect(container.querySelector(".dataset-admin-detail-preview-frame")).toBeInTheDocument();
+    const rail = container.querySelector(".dataset-admin-detail-preview-rail");
+    expect(rail).toHaveAttribute("aria-hidden", "true");
+    expect(rail?.querySelector("a")).not.toBeInTheDocument();
+
+    // Exactly three internal public tabs, Overview selected by default, and
+    // its Problem Summary/analytical slots render from the loaded draft.
+    // Scoped to the shared surface's own tablist -- the outer Admin tab bar
+    // has an unrelated "Documentation" tab of its own.
+    const detailTabs = within(screen.getByRole("tablist", { name: "Dataset detail sections" }));
+    expect(detailTabs.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Overview",
+      "Inference",
+      "Documentation",
+    ]);
+    expect(detailTabs.getByRole("tab", { name: "Overview", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Churn context" })).toBeInTheDocument();
+    expect(screen.getByText("Explains customer churn for a public audience.")).toBeInTheDocument();
+    expect(container.querySelectorAll(".performance-summary")).toHaveLength(1);
+    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
+
+    fireEvent.click(detailTabs.getByRole("tab", { name: "Inference" }));
+    expect(screen.getByText(/Preview only — no inference request is executed./)).toBeInTheDocument();
+    const resultRegion = screen.getByRole("region", { name: "Prediction result" });
+    expect(within(resultRegion).getByText("Churn probability")).toBeInTheDocument();
+    expect(screen.getByText("Account profile")).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Run prediction/ })).toBeDisabled();
+
+    fireEvent.click(detailTabs.getByRole("tab", { name: "Documentation" }));
+    const documentationPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])");
+    expect(documentationPanel).toBeEmptyDOMElement();
+
+    // No Model Card anywhere in the Dataset Detail preview, and the Admin
+    // read-only load never requests the technical Model Card endpoint.
+    expect(screen.queryByText(/model card/i)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
 
     fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
     // Level-scoped heading role proves DatasetCard's real <h3> title element.
     expect(screen.getByRole("heading", { level: 3, name: "Curated churn profile" })).toBeInTheDocument();
     expect(screen.getByText("Curated home card copy")).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
-    expect(screen.getByText(/Preview only — no inference request is executed./)).toBeInTheDocument();
-    const resultRegion = screen.getByRole("region", { name: "Prediction result" });
-    expect(within(resultRegion).getByText("Churn probability")).toBeInTheDocument();
-    expect(screen.getByText("Account profile")).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
+    // Remounting the shared surface resets its internal tab state back to
+    // Overview, matching a fresh visit to /dataset/:slug.
+    expect(screen.getByRole("tab", { name: "Overview", selected: true })).toBeInTheDocument();
+  });
+
+  // Project Spec S0120: the Dataset Detail preview reuses the same
+  // safePublicSourceUrl safety contract the public page applies -- a safe
+  // http(s) URL links the Source name, an unsafe/missing URL still shows the
+  // plain Source name, and a missing Source name renders Pending even when a
+  // URL is present, never an invented label.
+  it("projects Source name/URL safety into the Dataset Detail preview", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await loadDraftAndCustomization();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    // The shared publicProfile fixture never curates a Source name.
+    const sourceRow = screen.getByText("Source").nextElementSibling;
+    expect(sourceRow).toHaveTextContent("Pending");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Source name"), { target: { value: "Atlas Release Registry" } });
+    fireEvent.change(screen.getByLabelText("Source URL"), { target: { value: "https://example.org/registry" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    const safeLink = screen.getByRole("link", { name: "Atlas Release Registry" });
+    expect(safeLink).toHaveAttribute("href", "https://example.org/registry");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Source URL"), { target: { value: "javascript:alert(1)" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    expect(screen.queryByRole("link", { name: "Atlas Release Registry" })).not.toBeInTheDocument();
+    expect(screen.getByText("Atlas Release Registry")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Public Content" }));
+    fireEvent.change(screen.getByLabelText("Source name"), { target: { value: "" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    expect(screen.queryByText("Atlas Release Registry")).not.toBeInTheDocument();
+    expect(screen.getByText("Source").nextElementSibling).toHaveTextContent("Pending");
   });
 
   it("updates each Live Preview mode's rendered output when a fed draft or customization field is edited", async () => {
@@ -2220,18 +2308,16 @@ describe("DatasetAdminPage", () => {
     // data-theme-preset now reflects the just-edited "atlas-green" selection,
     // not the "ocean-blue" value the draft was originally seeded with --
     // proving the attribute is live-bound to form.theme_preset rather than a
-    // static initial prop.
-    expect(container.querySelector(".dataset-admin-preview-stage")).toHaveAttribute(
+    // static initial prop. Project Spec S0120: the shared DatasetDetailSurface
+    // owns Dataset Detail theme identity directly (not the outer Admin
+    // preview stage), matching the same theme-scope contract DatasetPage.tsx
+    // relies on.
+    expect(container.querySelector(".dataset-detail-surface")).toHaveAttribute(
       "data-theme-preset",
       "atlas-green",
     );
-    expect((container.querySelector(".dataset-admin-preview-stage") as HTMLElement).style.getPropertyValue("--dataset-theme-accent"))
+    expect((container.querySelector(".dataset-detail-surface") as HTMLElement).style.getPropertyValue("--dataset-theme-accent"))
       .toBe("#2f6f4e");
-
-    // Detail preview sub-tabs (e.g. separating this Theme/token view from the
-    // Result Card and Inference Form sub-panels rendered below it) remain a
-    // documented deferral per docs/design-prototype-behavior-inventory.md's
-    // "deferred" classification; not implemented by this issue.
 
     fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
     expect(screen.getByRole("heading", { level: 3, name: "Edited home title" })).toBeInTheDocument();
@@ -2247,20 +2333,24 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
     expect(screen.getByRole("heading", { level: 1, name: "Edited home title" })).toBeInTheDocument();
     expect(screen.getByText("2026-08-01")).toBeInTheDocument();
-    // Release hint stays fixed at "Format: dd/mm/yyyy" regardless of the
-    // edited date_format, matching what the public Dataset Detail page
-    // currently and always renders (decision-02).
-    expect(screen.getByText("Format: dd/mm/yyyy")).toBeInTheDocument();
+    // Project Spec S0120: the Admin workaround that forced the Release hint
+    // to a fixed "dd/mm/yyyy" wording is removed -- the hint now reflects
+    // the actually-edited date_format, reusing the same shared
+    // presentDatasetDateOnly contract the public Dataset Detail page uses.
+    expect(screen.getByText("Format: yyyy-mm-dd")).toBeInTheDocument();
+
+    // The draft performance-focus projection moves the highlight and public
+    // presentation value before publish. This lives in the Overview tab,
+    // which is selected by default.
+    expect(screen.getByText("Highlighted").closest("dt")).toHaveTextContent("Precision");
+    expect(screen.getByText("Highlighted").closest("div")?.querySelector("dd")).toHaveTextContent("0.81");
 
     // The contract-derived positive scenario is 0.8 for a 0.6 threshold,
     // which selects the governed high band and its edited presentation copy.
+    // Both live in the shared surface's Inference tab.
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
     expect(screen.getByText("Elevated risk (edited)")).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure (edited)")).toBeInTheDocument();
-
-    // The draft performance-focus projection moves the highlight and public
-    // presentation value before publish.
-    expect(screen.getByText("Highlighted").closest("dt")).toHaveTextContent("Precision");
-    expect(screen.getByText("Highlighted").closest("div")?.querySelector("dd")).toHaveTextContent("0.81");
   });
 
   it("constrains highlighted scores to visible rows and synchronizes values", async () => {
@@ -4170,6 +4260,11 @@ describe("DatasetAdminPage", () => {
     await loadDraftAndCustomization();
 
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    // Project Spec S0120: the Admin-only preview-mode Inference Form now
+    // lives inside the shared surface's own Inference tab (Overview is
+    // selected by default), rather than being flatly visible below the
+    // header.
+    fireEvent.click(within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", { name: "Inference" }));
     const initialPreviewButton = screen.getByRole("button", { name: "Estimate churn risk" });
     expect(initialPreviewButton).toBeDisabled();
 
@@ -4177,6 +4272,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Submit button label"), { target: { value: "Updated live label" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    fireEvent.click(within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", { name: "Inference" }));
     expect(screen.getByRole("button", { name: "Updated live label" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Estimate churn risk" })).not.toBeInTheDocument();
   });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import * as livePreviewProjection from "./livePreviewProjection";
 import {
   negativeScenarioProbability,
   positiveScenarioProbability,
@@ -22,12 +23,28 @@ const dataset = {
 const draftForm = {
   display_title: "Curated churn profile",
   display_subtitle: "Operator-authored public subtitle",
+  problem_summary_title: "Curated problem summary title",
+  problem_summary_body: "Curated problem summary body",
   source_name: "Atlas Release Registry",
+  source_url: "https://example.org/registry",
   release_date_label: "2026-07-04",
   date_format: "yyyy-mm-dd" as const,
+  canonical_name_fallback: true,
   home_card_icon: "telecom" as const,
   short_description: "Curated home card copy",
 };
+
+const context = {
+  title: "Context title",
+  summary: "Context summary",
+  description: "Context description",
+  use_case: "Context use case",
+  problem_type: "binary_classification",
+  prediction_target_description: "Customer churn",
+};
+
+const contract = { fields: [{ name: "tenure" }, { name: "MonthlyCharges" }] };
+const metrics = { evaluation: { sample_size: 7043 } };
 
 describe("projectHomeCardPreview", () => {
   it("passes problemType from the loaded public context into the Home card props", () => {
@@ -50,40 +67,310 @@ describe("projectHomeCardPreview", () => {
 
     expect(preview.problemType).toBeUndefined();
   });
-});
 
-describe("projectDatasetDetailPreview", () => {
-  it("keeps Source and Release metadata projected from the draft form", () => {
-    const preview = projectDatasetDetailPreview(
+  it("still owns short_description as the Home card summary (unchanged behavior)", () => {
+    const preview = projectHomeCardPreview(
       dataset,
-      draftForm,
-      {
-        title: "Context title",
-        summary: "Context summary",
-        problem_type: "binary_classification",
-        prediction_target_description: "Customer churn",
-      },
-      {
-        fields: [{ name: "tenure" }, { name: "MonthlyCharges" }],
-      },
-      {
-        evaluation: {
-          sample_size: 7043,
-        },
-      },
+      { ...draftForm, short_description: "  ", display_subtitle: "Subtitle fallback" },
+      null,
     );
 
+    expect(preview.summary).toBe("Subtitle fallback");
+  });
+});
+
+describe("projectDatasetDetailPreview: title precedence", () => {
+  it("prefers the draft display_title over every fallback", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+    expect(preview.datasetTitle).toBe("Curated churn profile");
+  });
+
+  it("falls back to technical context title when draft title is blank", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, display_title: "   " },
+      context,
+      contract,
+      metrics,
+    );
+    expect(preview.datasetTitle).toBe("Context title");
+  });
+
+  it("falls back to the dataset listing title when draft and context titles are blank", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, display_title: "" },
+      { ...context, title: undefined },
+      contract,
+      metrics,
+    );
+    expect(preview.datasetTitle).toBe("Telco Customer Churn");
+  });
+
+  it("never renders an empty title, falling back to the dataset slug", () => {
+    const preview = projectDatasetDetailPreview(
+      { ...dataset, title: "" },
+      { ...draftForm, display_title: "" },
+      { ...context, title: undefined },
+      contract,
+      metrics,
+    );
+    expect(preview.datasetTitle).toBe("telco-customer-churn");
+  });
+});
+
+describe("projectDatasetDetailPreview: subtitle ownership", () => {
+  it("uses the dedicated draft display_subtitle for the Dataset Detail subtitle", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+    expect(preview.subtitle).toBe("Operator-authored public subtitle");
+  });
+
+  it("falls back to technical context summary, then description, when subtitle is blank", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, display_subtitle: "" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(preview.subtitle).toBe("Context summary");
+
+    const descriptionOnly = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, display_subtitle: "" },
+      { ...context, summary: undefined },
+      contract,
+      metrics,
+    );
+    expect(descriptionOnly.subtitle).toBe("Context description");
+  });
+
+  it("never lets short_description or Home Card short description leak into the Dataset Detail subtitle", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, display_subtitle: "", short_description: "Home card only copy" } as typeof draftForm,
+      { ...context, summary: undefined, description: undefined },
+      contract,
+      metrics,
+    );
+    expect(preview.subtitle).not.toBe("Home card only copy");
+    expect(preview.subtitle).toBe(dataset.summary);
+  });
+});
+
+describe("projectDatasetDetailPreview: Problem Summary", () => {
+  it("prefers the draft Problem Summary title/body", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+    expect(preview.problemSummaryTitle).toBe("Curated problem summary title");
+    expect(preview.problemSummaryBody).toBe("Curated problem summary body");
+  });
+
+  it("falls back to 'Problem summary' when the draft title is blank", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, problem_summary_title: "   " },
+      context,
+      contract,
+      metrics,
+    );
+    expect(preview.problemSummaryTitle).toBe("Problem summary");
+  });
+
+  it("falls back deterministically to technical context description, use_case, then summary", () => {
+    const blankBody = { ...draftForm, problem_summary_body: "" };
+
+    expect(
+      projectDatasetDetailPreview(dataset, blankBody, context, contract, metrics).problemSummaryBody,
+    ).toBe("Context description");
+
+    expect(
+      projectDatasetDetailPreview(
+        dataset,
+        blankBody,
+        { ...context, description: undefined },
+        contract,
+        metrics,
+      ).problemSummaryBody,
+    ).toBe("Context use case");
+
+    expect(
+      projectDatasetDetailPreview(
+        dataset,
+        blankBody,
+        { ...context, description: undefined, use_case: undefined },
+        contract,
+        metrics,
+      ).problemSummaryBody,
+    ).toBe("Context summary");
+
+    expect(
+      projectDatasetDetailPreview(
+        dataset,
+        blankBody,
+        { ...context, description: undefined, use_case: undefined, summary: undefined },
+        contract,
+        metrics,
+      ).problemSummaryBody,
+    ).toBeNull();
+  });
+
+  it("never uses short_description as Problem Summary body", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      {
+        ...draftForm,
+        problem_summary_body: "",
+        short_description: "Home card only copy",
+      } as typeof draftForm,
+      { ...context, description: undefined, use_case: undefined, summary: undefined },
+      contract,
+      metrics,
+    );
+    expect(preview.problemSummaryBody).toBeNull();
+  });
+});
+
+describe("projectDatasetDetailPreview: Source", () => {
+  it("links the Source name when the URL is safe", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+    const source = preview.metadata.find((item) => item.label === "Source");
+    expect(source).toEqual({ label: "Source", value: "Atlas Release Registry", href: "https://example.org/registry" });
+  });
+
+  it("renders the plain Source name when the URL is missing or unsafe", () => {
+    const missingUrl = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, source_url: "" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(missingUrl.metadata.find((item) => item.label === "Source")).toEqual({
+      label: "Source",
+      value: "Atlas Release Registry",
+      href: undefined,
+    });
+
+    const unsafeUrl = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, source_url: "javascript:alert(1)" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(unsafeUrl.metadata.find((item) => item.label === "Source")).toEqual({
+      label: "Source",
+      value: "Atlas Release Registry",
+      href: undefined,
+    });
+  });
+
+  it("renders Pending (a null value) when Source name is missing, even if a URL exists", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, source_name: "   " },
+      context,
+      contract,
+      metrics,
+    );
+    expect(preview.metadata.find((item) => item.label === "Source")).toEqual({
+      label: "Source",
+      value: null,
+      href: undefined,
+    });
+  });
+});
+
+describe("projectDatasetDetailPreview: Release date", () => {
+  it("formats a valid date-only value in all three supported formats", () => {
+    const ddmmyyyy = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, release_date_label: "2026-07-12", date_format: "dd/mm/yyyy" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(ddmmyyyy.metadata.find((item) => item.label === "Release")).toEqual({
+      label: "Release",
+      value: "12/07/2026",
+      hint: "Format: dd/mm/yyyy",
+    });
+
+    const mmddyyyy = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, release_date_label: "2026-07-12", date_format: "mm/dd/yyyy" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(mmddyyyy.metadata.find((item) => item.label === "Release")).toEqual({
+      label: "Release",
+      value: "07/12/2026",
+      hint: "Format: mm/dd/yyyy",
+    });
+
+    const yyyymmdd = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, release_date_label: "2026-07-12", date_format: "yyyy-mm-dd" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(yyyymmdd.metadata.find((item) => item.label === "Release")).toEqual({
+      label: "Release",
+      value: "2026-07-12",
+      hint: "Format: yyyy-mm-dd",
+    });
+  });
+
+  it("renders Pending with no hint for an invalid date-only value", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, release_date_label: "2026-02-30", date_format: "yyyy-mm-dd" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(preview.metadata.find((item) => item.label === "Release")).toEqual({
+      label: "Release",
+      value: null,
+      hint: undefined,
+    });
+  });
+
+  it("renders Pending with no hint for a missing date value", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, release_date_label: "", date_format: "yyyy-mm-dd" },
+      context,
+      contract,
+      metrics,
+    );
+    expect(preview.metadata.find((item) => item.label === "Release")).toEqual({
+      label: "Release",
+      value: null,
+      hint: undefined,
+    });
+  });
+});
+
+describe("projectDatasetDetailPreview: remaining metadata", () => {
+  it("keeps Instances, Features and Target metadata from technical context/contract/metrics", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
     expect(preview.metadata).toEqual([
-      { label: "Source", value: "Atlas Release Registry" },
+      { label: "Source", value: "Atlas Release Registry", href: "https://example.org/registry" },
       { label: "Instances", value: "7,043" },
       { label: "Features", value: "2" },
       { label: "Target", value: "Customer churn" },
-      {
-        label: "Release",
-        value: "2026-07-04",
-        hint: "Format: yyyy-mm-dd",
-      },
+      { label: "Release", value: "2026-07-04", hint: "Format: yyyy-mm-dd" },
     ]);
+  });
+});
+
+describe("no Model Card projection export", () => {
+  it("no longer exports a Model Card preview projection", () => {
+    expect("projectModelCardPreview" in livePreviewProjection).toBe(false);
+    expect("ModelCardPreview" in livePreviewProjection).toBe(false);
   });
 });
 

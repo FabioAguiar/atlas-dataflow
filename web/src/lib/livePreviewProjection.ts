@@ -8,6 +8,7 @@ import type {
 } from "../components/ResultCard/types";
 import type { DatasetIconName } from "./datasetPresentation";
 import type { PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
+import { presentDatasetDateOnly, safePublicSourceUrl, type DatasetDateFormat } from "./datasetPresentation";
 
 /**
  * Live Preview input shapes are declared locally (structurally compatible
@@ -51,17 +52,21 @@ type PreviewContract = {
 
 type PreviewMetrics = Record<string, unknown>;
 
-type PreviewModelCard = {
-  content?: string;
-  format?: string;
-};
-
+// Project Spec S0120: the draft fields required to feed the shared public
+// Dataset Detail surface (title/subtitle/Problem Summary/Source/Release) plus
+// the pre-existing Home card draft fields, kept in one type so both
+// projection functions below draw from the same real Admin draft shape via
+// Pick<> rather than each declaring an overlapping, drift-prone subset.
 type PreviewDraftForm = {
   display_title: string;
   display_subtitle: string;
+  problem_summary_title: string;
+  problem_summary_body: string;
   source_name: string;
+  source_url: string;
   release_date_label: string;
-  date_format: "" | "dd/mm/yyyy" | "mm/dd/yyyy" | "yyyy-mm-dd";
+  date_format: "" | DatasetDateFormat;
+  canonical_name_fallback: boolean;
   home_card_icon: "" | "telecom" | "bank" | "generic";
   short_description: string;
 };
@@ -87,11 +92,8 @@ export type DatasetDetailPreview = {
   subtitle?: string;
   analysisType?: string;
   metadata: DatasetDetailMetadataItem[];
-};
-
-export type ModelCardPreview = {
-  content: string;
-  format: "markdown";
+  problemSummaryTitle: string;
+  problemSummaryBody: string | null;
 };
 
 function contractFields(contract: PreviewContract | null): PreviewContractField[] {
@@ -107,6 +109,12 @@ function extractInstanceCount(metrics: PreviewMetrics | null): string | null {
     }
   }
   return null;
+}
+
+/** Trims a draft/context string field, treating whitespace-only content as absent. */
+function nonBlank(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed || null;
 }
 
 /**
@@ -136,38 +144,68 @@ export function projectHomeCardPreview(
 }
 
 /**
- * Projects the draft detail header onto DatasetDetailHeader's public props.
- * Draft title/subtitle fields win over context and dataset fallbacks, Source
- * and Release come from the editable draft display fields, and all other
- * metadata is derived from the read-only context, contract, and metrics
- * already loaded for the public Dataset Detail surface.
+ * Projects the draft Dataset Detail fields onto DatasetDetailSurfaceProps'
+ * (Project Spec S0119) semantic shape. Title, subtitle and Problem Summary
+ * each follow their own documented precedence (Project Spec S0120) --
+ * short_description never participates, since it remains Home Card-only.
+ * Source and Release reuse the same shared public safety/date-only
+ * contracts DatasetPage.tsx applies (safePublicSourceUrl,
+ * presentDatasetDateOnly) so Live Preview can never render an unsafe link or
+ * a JavaScript-timestamp-derived date.
  */
 export function projectDatasetDetailPreview(
   dataset: PreviewDataset | undefined,
-  form: PreviewDraftForm,
+  form: Pick<
+    PreviewDraftForm,
+    | "display_title"
+    | "display_subtitle"
+    | "problem_summary_title"
+    | "problem_summary_body"
+    | "source_name"
+    | "source_url"
+    | "release_date_label"
+    | "date_format"
+  >,
   context: PreviewContext | null,
   contract: PreviewContract | null,
   metrics: PreviewMetrics | null,
 ): DatasetDetailPreview {
-  const datasetTitle = form.display_title.trim() || context?.title || dataset?.title || dataset?.dataset_slug || "";
+  const datasetTitle =
+    nonBlank(form.display_title) ||
+    nonBlank(context?.title) ||
+    nonBlank(dataset?.title) ||
+    nonBlank(dataset?.dataset_slug) ||
+    "";
   const subtitle =
-    form.short_description.trim() ||
-    form.display_subtitle.trim() ||
-    context?.summary ||
-    context?.description ||
-    dataset?.summary;
+    nonBlank(form.display_subtitle) ||
+    nonBlank(context?.summary) ||
+    nonBlank(context?.description) ||
+    nonBlank(dataset?.summary) ||
+    undefined;
+
+  const problemSummaryTitle = nonBlank(form.problem_summary_title) || "Problem summary";
+  const problemSummaryBody =
+    nonBlank(form.problem_summary_body) ||
+    nonBlank(context?.description) ||
+    nonBlank(context?.use_case) ||
+    nonBlank(context?.summary) ||
+    null;
 
   const fields = contractFields(contract);
 
+  const sourceName = nonBlank(form.source_name);
+  const sourceHref = sourceName ? safePublicSourceUrl(form.source_url) : null;
+  const release = presentDatasetDateOnly(form.release_date_label, form.date_format || undefined);
+
   const metadata: DatasetDetailMetadataItem[] = [
-    { label: "Source", value: form.source_name.trim() || null },
+    { label: "Source", value: sourceName, href: sourceHref ?? undefined },
     { label: "Instances", value: extractInstanceCount(metrics) },
     { label: "Features", value: fields.length ? String(fields.length) : null },
     { label: "Target", value: context?.prediction_target_description || context?.problem_type || null },
     {
       label: "Release",
-      value: form.release_date_label.trim() || null,
-      hint: `Format: ${form.date_format || "dd/mm/yyyy"}`,
+      value: release?.value ?? null,
+      hint: release ? `Format: ${release.effectiveFormat}` : undefined,
     },
   ];
 
@@ -176,19 +214,14 @@ export function projectDatasetDetailPreview(
     subtitle,
     analysisType: context?.problem_type,
     metadata,
+    problemSummaryTitle,
+    problemSummaryBody,
   };
 }
 
 export function toVisualizationsPayload(value: unknown): VisualizationsPayload | null {
   if (value && typeof value === "object" && "charts" in value) {
     return value as VisualizationsPayload;
-  }
-  return null;
-}
-
-export function projectModelCardPreview(modelCard: PreviewModelCard | null): ModelCardPreview | null {
-  if (modelCard?.content) {
-    return { content: modelCard.content, format: "markdown" };
   }
   return null;
 }

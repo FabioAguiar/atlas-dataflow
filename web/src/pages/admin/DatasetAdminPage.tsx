@@ -11,11 +11,10 @@ import {
 import { Badge, Card, FormRow, StatusPill, Tabs, type TabItem } from "../../components/ui";
 import DatasetCard from "../../components/DatasetCard";
 import { DatasetIcon } from "../../components/DatasetCard/DatasetCard";
-import DatasetDetailHeader from "../../components/DatasetDetail/DatasetDetailHeader";
+import DatasetDetailSurface from "../../components/DatasetDetail/DatasetDetailSurface";
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
-import ModelCard from "../../components/ModelCard/ModelCard";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
 import ResultCardShell from "../../components/ResultCard/ResultCardShell";
 import {
@@ -34,7 +33,6 @@ import {
   projectDatasetDetailPreview,
   projectHomeCardPreview,
   projectPerformanceFocusPreview,
-  projectModelCardPreview,
   negativeScenarioProbability,
   positiveScenarioProbability,
   projectBinaryResultPreview,
@@ -43,7 +41,6 @@ import {
 import {
   DATASET_THEME_PRESETS,
   DEFAULT_DATASET_THEME_PRESET,
-  datasetThemeStyle,
   isDatasetThemePresetId,
   normalizeDatasetDateOnly,
   presentDatasetOperationalTimestamp,
@@ -56,20 +53,6 @@ import {
 // A curator may hand-select any of these regardless of dataset domain,
 // independent of the automatic domain-keyword fallback in
 // datasetPresentation.ts's getDatasetIcon.
-// livePreviewProjection.ts's PreviewDraftForm.home_card_icon is still
-// declared as the original closed "" | "telecom" | "bank" | "generic" union
-// (out of this issue's edit scope, same as projectDatasetDetailPreview's
-// {fields?} shape below). projectDatasetDetailPreview's own body never
-// actually reads home_card_icon (Dataset Detail preview has no icon), so
-// this narrowing only satisfies that stale parameter type and has no
-// effect on what's rendered; adapt the shape here rather than modifying
-// livePreviewProjection.ts.
-function toLegacyPreviewIcon(
-  icon: DraftForm["home_card_icon"],
-): "" | "telecom" | "bank" | "generic" {
-  return icon === "telecom" || icon === "bank" || icon === "generic" ? icon : "";
-}
-
 const HOME_CARD_ICON_OPTIONS: Array<{ value: DatasetIconName; label: string }> = [
   { value: "telecom-users", label: "Telecom users" },
   { value: "bank-building", label: "Bank building" },
@@ -412,11 +395,6 @@ type ContextPayload = {
   prediction_target_description?: string;
 };
 
-type ModelCardPayload = {
-  content?: string;
-  format?: string;
-};
-
 type PredictView = {
   view_id?: string;
   dataset_slug?: string;
@@ -433,7 +411,6 @@ type ReadOnlyData = {
   contract: SectionState<ContractPayload>;
   resultContract: ResultContractState;
   metrics: SectionState<MetricsPayload>;
-  modelCard: SectionState<ModelCardPayload>;
   visualizations: SectionState<unknown>;
   views: SectionState<PredictView[]>;
 };
@@ -887,7 +864,6 @@ const emptyReadOnlyData: ReadOnlyData = {
   contract: { status: "idle" },
   resultContract: { status: "idle" },
   metrics: { status: "idle" },
-  modelCard: { status: "idle" },
   visualizations: { status: "idle" },
   views: { status: "idle" },
 };
@@ -3542,19 +3518,29 @@ function PublishingTab({
   );
 }
 
+// Project Spec S0120: renders the same shared public DatasetDetailSurface
+// (S0119) used by /dataset/:slug, fed entirely by the current Admin draft
+// and already-loaded read-only technical context. This component owns only
+// data adaptation -- contract shape, metric/visualization selection, and the
+// Admin-only Inference/Result composition -- while the shared surface owns
+// header/metadata/tabs/Overview/Inference/Documentation placement and its
+// own theme scope.
 function DatasetDetailLivePreview({
   dataset,
   form,
   readOnlyData,
+  selectedSlug,
+  customizationEditorState,
 }: {
   dataset?: DatasetListing;
   form: DraftForm;
   readOnlyData: ReadOnlyData;
+  selectedSlug: string;
+  customizationEditorState: CustomizationEditorState;
 }) {
   const context = stateValue(readOnlyData.context);
   const contract = stateValue(readOnlyData.contract);
   const metrics = stateValue(readOnlyData.metrics);
-  const modelCard = stateValue(readOnlyData.modelCard);
   const visualizations = toVisualizationsPayload(stateValue(readOnlyData.visualizations));
 
   // livePreviewProjection.ts's projectDatasetDetailPreview expects its own
@@ -3562,38 +3548,46 @@ function DatasetDetailLivePreview({
   // the real {features} contract shape into that shape here rather than
   // modifying livePreviewProjection.ts.
   const previewContract = contract ? { fields: contract.features } : null;
-  // Force the Release hint to the same fixed "dd/mm/yyyy" wording the public
-  // Dataset Detail page currently and always renders (web/src/pages/DatasetPage.tsx
-  // hardcodes this; its PublicContextPayload type never declares a date_format
-  // field), instead of exposing per-dataset precision the public page does not
-  // yet honor. Clamped here rather than in livePreviewProjection.ts because
-  // that module's colocated unit test (livePreviewProjection.test.ts) asserts
-  // the general date_format-forwarding contract in isolation and is outside
-  // this issue's declared edit scope.
-  const previewForm = {
-    ...form,
-    date_format: "" as DraftForm["date_format"],
-    home_card_icon: toLegacyPreviewIcon(form.home_card_icon),
-  };
-  const preview = projectDatasetDetailPreview(dataset, previewForm, context, previewContract, metrics);
-  const modelCardPreview = projectModelCardPreview(modelCard);
+  const preview = projectDatasetDetailPreview(dataset, form, context, previewContract, metrics);
+
+  const performanceContent = (
+    <PerformanceSummary
+      metrics={metrics ?? {}}
+      performanceFocus={projectPerformanceFocusPreview(form.performance_focus)}
+    />
+  );
+  const targetDistributionContent = <TargetDistribution visualizations={visualizations} />;
+  const featureImportanceContent = <FeatureImportance visualizations={visualizations} />;
+
+  // Reuses the public S0112 two-column form/result layout contract
+  // (public-inference-surface) so the Admin-only preview-mode Inference Form
+  // and synthetic Result Card render with the same structure as the real
+  // public Inference tab, instead of a second divergent Admin layout.
+  const inferenceContent = (
+    <div className="public-inference-surface">
+      <FormLayoutLivePreview
+        customizationEditorState={customizationEditorState}
+        readOnlyData={readOnlyData}
+        selectedSlug={selectedSlug}
+      />
+      <ResultCardLivePreview form={form} resetKey={selectedSlug} resultContract={readOnlyData.resultContract} />
+    </div>
+  );
 
   return (
-    <div style={{ display: "grid", gap: "var(--atlas-space-4)" }}>
-      <DatasetDetailHeader
-        analysisType={preview.analysisType}
-        datasetTitle={preview.datasetTitle}
-        metadata={preview.metadata}
-        subtitle={preview.subtitle}
-      />
-      <PerformanceSummary
-        metrics={metrics ?? {}}
-        performanceFocus={projectPerformanceFocusPreview(form.performance_focus)}
-      />
-      <TargetDistribution visualizations={visualizations} />
-      <FeatureImportance visualizations={visualizations} />
-      {modelCardPreview && <ModelCard modelCard={modelCardPreview} />}
-    </div>
+    <DatasetDetailSurface
+      analysisType={preview.analysisType}
+      datasetSubtitle={preview.subtitle}
+      datasetTitle={preview.datasetTitle}
+      featureImportanceContent={featureImportanceContent}
+      inferenceContent={inferenceContent}
+      metadata={preview.metadata}
+      performanceContent={performanceContent}
+      problemSummaryBody={preview.problemSummaryBody}
+      problemSummaryTitle={preview.problemSummaryTitle}
+      targetDistributionContent={targetDistributionContent}
+      themePresetId={form.theme_preset}
+    />
   );
 }
 
@@ -3738,11 +3732,7 @@ function LivePreviewTab({
           </button>
         ))}
       </div>
-      <div
-        className="dataset-admin-preview-stage dataset-theme-scope"
-        data-theme-preset={form.theme_preset}
-        style={datasetThemeStyle(form.theme_preset)}
-      >
+      <div className="dataset-admin-preview-stage">
         {previewMode === "card" && (
           <article className="dataset-admin-preview-panel dataset-admin-preview-panel--card" aria-label="Home Card preview">
             <DatasetCard
@@ -3770,14 +3760,37 @@ function LivePreviewTab({
         )}
         {previewMode === "detail" && (
           <article className="dataset-admin-preview-panel dataset-admin-preview-panel--detail" aria-label="Dataset Detail preview">
-            <DatasetDetailLivePreview dataset={dataset} form={form} readOnlyData={readOnlyData} />
-            <div className="dataset-admin-detail-preview-grid">
-              <ResultCardLivePreview form={form} resultContract={readOnlyData.resultContract} resetKey={selectedSlug} />
-              <FormLayoutLivePreview
-                customizationEditorState={customizationEditorState}
-                readOnlyData={readOnlyData}
-                selectedSlug={selectedSlug}
-              />
+            {/*
+              Neutral documentation frame around the shared DatasetDetailSurface
+              (Project Spec S0120): a non-interactive miniature of the public
+              side rail matches the Dataset Admin design reference without
+              mounting real navigation, PublicShell, or a second public data
+              load -- the rail is presentation-only and excluded from
+              navigation semantics via aria-hidden.
+            */}
+            <div className="dataset-admin-detail-preview-frame">
+              <aside aria-hidden="true" className="dataset-admin-detail-preview-rail">
+                <span className="dataset-admin-detail-preview-menu">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <nav className="dataset-admin-detail-preview-nav">
+                  <span>Home</span>
+                  <span>Projetos</span>
+                  <span>GitHub</span>
+                  <span>Contato</span>
+                </nav>
+              </aside>
+              <div className="dataset-admin-detail-preview-page">
+                <DatasetDetailLivePreview
+                  customizationEditorState={customizationEditorState}
+                  dataset={dataset}
+                  form={form}
+                  readOnlyData={readOnlyData}
+                  selectedSlug={selectedSlug}
+                />
+              </div>
             </div>
           </article>
         )}
@@ -4058,7 +4071,6 @@ export default function DatasetAdminPage() {
         contract: { status: "loading" },
         resultContract: { status: "loading" },
         metrics: { status: "loading" },
-        modelCard: { status: "loading" },
         visualizations: { status: "loading" },
         views: { status: "loading" },
       });
@@ -4066,12 +4078,11 @@ export default function DatasetAdminPage() {
 
     async function loadReadOnlyAtlasValues() {
       const encoded = encodeURIComponent(selectedSlug);
-      const [dataset, context, contract, metrics, modelCard, visualizations, viewsResponse] = await Promise.all([
+      const [dataset, context, contract, metrics, visualizations, viewsResponse] = await Promise.all([
         fetchJson<DatasetListing>(`/datasets/${encoded}`, controller.signal),
         fetchJson<{ context: ContextPayload }>(`/datasets/${encoded}/context`, controller.signal),
         fetchJson<ContractEnvelope>(`/datasets/${encoded}/contract`, controller.signal),
         fetchJson<{ metrics: MetricsPayload }>(`/datasets/${encoded}/metrics`, controller.signal),
-        fetchJson<{ model_card: ModelCardPayload }>(`/datasets/${encoded}/model-card`, controller.signal),
         fetchJson<{ visualizations: unknown }>(`/datasets/${encoded}/visualizations`, controller.signal),
         fetchJson<{ views: PredictView[] }>(`/datasets/${encoded}/views`, controller.signal),
       ]);
@@ -4086,7 +4097,6 @@ export default function DatasetAdminPage() {
         contract: mapSection(contract, (data) => data.contract),
         resultContract,
         metrics: mapSection(metrics, (data) => data.metrics),
-        modelCard: mapSection(modelCard, (data) => data.model_card),
         visualizations: mapSection(visualizations, (data) => data.visualizations),
         views: mapSection(viewsResponse, (data) => data.views),
       });

@@ -116,11 +116,6 @@ const metricsPayload = {
   evaluation: { sample_size: 1234 },
 };
 
-const modelCardPayload = {
-  content: "# Synthetic Model Card\n\nDescribes the synthetic demo model.",
-  format: "markdown" as const,
-};
-
 const visualizationsPayload = {
   charts: [],
 };
@@ -138,15 +133,10 @@ const contractPayload = {
   ],
 };
 
-const viewsPayload = {
-  dataset_slug: slug,
-  views: [],
-};
-
-// Mirrors DatasetPage.tsx's own seven independent per-section fetches
-// (/datasets/{slug}, /context, /metrics, /model-card, /visualizations,
-// /contract, /views); each endpoint's mocked shape mirrors this handoff's
-// grounding of the page's own response-parsing code.
+// Mirrors DatasetPage.tsx's own five independent per-section fetches
+// (/datasets/{slug}, /context, /metrics, /visualizations, /contract) --
+// Project Spec S0119 removed the default route's /model-card and /views
+// list requests entirely.
 function installDatasetPageFetchMock(
   context: ContextPayloadFixture = contextPayload,
   metadata: typeof datasetMetadata & {
@@ -164,17 +154,11 @@ function installDatasetPageFetchMock(
     if (url.endsWith(`/datasets/${slug}/metrics`)) {
       return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
     }
-    if (url.endsWith(`/datasets/${slug}/model-card`)) {
-      return jsonResponse({ dataset_slug: slug, model_card: modelCardPayload });
-    }
     if (url.endsWith(`/datasets/${slug}/visualizations`)) {
       return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
     }
     if (url.endsWith(`/datasets/${slug}/contract`)) {
       return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
-    }
-    if (url.endsWith(`/datasets/${slug}/views`)) {
-      return jsonResponse(viewsPayload);
     }
     if (url.endsWith(`/datasets/${slug}`)) {
       return jsonResponse(metadata);
@@ -320,12 +304,10 @@ describe("DatasetPage access states (Project Spec S0117)", () => {
         if (url.endsWith(`/datasets/${s}/context`))
           return jsonResponse({ dataset_slug: s, context: { ...contextPayload, title: s === slugA ? datasetMetadata.title : datasetBMetadata.title } });
         if (url.endsWith(`/datasets/${s}/metrics`)) return jsonResponse({ dataset_slug: s, metrics: metricsPayload });
-        if (url.endsWith(`/datasets/${s}/model-card`)) return jsonResponse({ dataset_slug: s, model_card: modelCardPayload });
         if (url.endsWith(`/datasets/${s}/visualizations`))
           return jsonResponse({ dataset_slug: s, visualizations: visualizationsPayload });
         if (url.endsWith(`/datasets/${s}/contract`))
           return jsonResponse({ dataset_slug: s, contract: contractPayload, result_contract: resultContractAvailable });
-        if (url.endsWith(`/datasets/${s}/views`)) return jsonResponse(viewsPayload);
       }
       if (url.endsWith(`/datasets/${slugA}`)) return jsonResponse(datasetMetadata);
       if (url.endsWith(`/datasets/${slugB}`)) return jsonResponse(datasetBMetadata);
@@ -382,15 +364,12 @@ describe("DatasetPage access states (Project Spec S0117)", () => {
       for (const s of [slugB]) {
         if (url.endsWith(`/datasets/${s}/context`)) return Promise.resolve(jsonResponse({ dataset_slug: s, context: contextPayload }));
         if (url.endsWith(`/datasets/${s}/metrics`)) return Promise.resolve(jsonResponse({ dataset_slug: s, metrics: metricsPayload }));
-        if (url.endsWith(`/datasets/${s}/model-card`))
-          return Promise.resolve(jsonResponse({ dataset_slug: s, model_card: modelCardPayload }));
         if (url.endsWith(`/datasets/${s}/visualizations`))
           return Promise.resolve(jsonResponse({ dataset_slug: s, visualizations: visualizationsPayload }));
         if (url.endsWith(`/datasets/${s}/contract`))
           return Promise.resolve(
             jsonResponse({ dataset_slug: s, contract: contractPayload, result_contract: resultContractAvailable }),
           );
-        if (url.endsWith(`/datasets/${s}/views`)) return Promise.resolve(jsonResponse(viewsPayload));
       }
       return Promise.resolve(jsonResponse({}, 404));
     });
@@ -472,9 +451,9 @@ describe("DatasetPage synthetic-slug rendering", () => {
     // only starts fetching once the primary route is ready -- wait for it
     // rather than asserting synchronously right after the primary heading.
     await waitFor(() => {
-      expect(container.querySelector(".dataset-detail")).toHaveAttribute("data-theme-preset", "crimson-night");
+      expect(container.querySelector(".dataset-detail-surface")).toHaveAttribute("data-theme-preset", "crimson-night");
     });
-    const detail = container.querySelector<HTMLElement>(".dataset-detail")!;
+    const detail = container.querySelector<HTMLElement>(".dataset-detail-surface")!;
     expect(detail.style.getPropertyValue("--dataset-theme-canvas")).toBe("#160b17");
 
     cleanup();
@@ -482,7 +461,7 @@ describe("DatasetPage synthetic-slug rendering", () => {
     const fallbackRender = renderDatasetPage();
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
     await waitFor(() => {
-      expect(fallbackRender.container.querySelector(".dataset-detail")).toHaveAttribute("data-theme-preset", "atlas-green");
+      expect(fallbackRender.container.querySelector(".dataset-detail-surface")).toHaveAttribute("data-theme-preset", "atlas-green");
     });
   });
 
@@ -501,6 +480,36 @@ describe("DatasetPage synthetic-slug rendering", () => {
 
     expect(screen.queryByText(/telco/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/bank/i)).not.toBeInTheDocument();
+  });
+
+  // Project Spec S0119: the default route dropped Model Card and Predict
+  // View list entirely -- both requests and both components are gone, while
+  // the shared three-tab surface (Overview/Inference/Documentation) and the
+  // once-only analytical slots remain.
+  it("renders the shared three-tab surface without Model Card or Predict View list, and requests only the reduced endpoint set", async () => {
+    const fetchMock = installDatasetPageFetchMock();
+
+    const { container } = renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByText("1,234")).toBeInTheDocument();
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Overview",
+      "Inference",
+      "Documentation",
+    ]);
+    expect(container.querySelector(".dataset-detail-surface")).toBeInTheDocument();
+
+    expect(container.querySelectorAll(".performance-summary")).toHaveLength(1);
+    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
+
+    expect(screen.queryByText(/model card/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /model card/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Predict views are temporarily unavailable.")).not.toBeInTheDocument();
+
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/model-card"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/views`))).toBe(false);
   });
 
   it("shows 'Pending' for Source and Release when context has no curated values (M39-03)", async () => {
@@ -617,17 +626,11 @@ describe("DatasetPage bound predict view submit-label resolution (Project Spec S
       if (url.endsWith(`/datasets/${slug}/metrics`)) {
         return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
       }
-      if (url.endsWith(`/datasets/${slug}/model-card`)) {
-        return jsonResponse({ dataset_slug: slug, model_card: modelCardPayload });
-      }
       if (url.endsWith(`/datasets/${slug}/visualizations`)) {
         return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
       }
       if (url.endsWith(`/datasets/${slug}/contract`)) {
         return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
-      }
-      if (url.endsWith(`/datasets/${slug}/views`)) {
-        return jsonResponse(viewsPayload);
       }
       if (url.endsWith(`/datasets/${slug}`)) {
         return jsonResponse(datasetMetadata);
@@ -722,17 +725,11 @@ describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () =
       if (url.endsWith(`/datasets/${slug}/metrics`)) {
         return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
       }
-      if (url.endsWith(`/datasets/${slug}/model-card`)) {
-        return jsonResponse({ dataset_slug: slug, model_card: modelCardPayload });
-      }
       if (url.endsWith(`/datasets/${slug}/visualizations`)) {
         return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
       }
       if (url.endsWith(`/datasets/${slug}/contract`)) {
         return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
-      }
-      if (url.endsWith(`/datasets/${slug}/views`)) {
-        return jsonResponse(viewsPayload);
       }
       if (url.endsWith(`/datasets/${slug}`)) {
         return jsonResponse(datasetMetadata);
@@ -801,15 +798,6 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     evaluation: { sample_size: 1408 },
   };
 
-  const telcoModelCardPayload = {
-    content: JSON.stringify({
-      model_summary: "Binary classification model predicting customer churn for a telecommunications company.",
-      problem_type: "binary_classification",
-      prediction_target: "customer_churn",
-    }),
-    format: "markdown" as const,
-  };
-
   // Reduced Telco target-distribution/feature-importance facts from the
   // spec's own verifiable_objective section (No = 5174, Yes = 1869;
   // TotalCharges blank-value note), delivered as mocked chart data -- these
@@ -868,11 +856,6 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     ],
   };
 
-  const telcoViewsPayload = {
-    dataset_slug: telcoSlug,
-    views: [{ view_id: "churn-risk-overview", display: { title: "Churn risk overview" } }],
-  };
-
   function installTelcoFetchMock(overrides: { visualizationsStatus?: number } = {}) {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -882,9 +865,6 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
       }
       if (url.endsWith(`/datasets/${telcoSlug}/metrics`)) {
         return jsonResponse({ dataset_slug: telcoSlug, metrics: telcoMetricsPayload });
-      }
-      if (url.endsWith(`/datasets/${telcoSlug}/model-card`)) {
-        return jsonResponse({ dataset_slug: telcoSlug, model_card: telcoModelCardPayload });
       }
       if (url.endsWith(`/datasets/${telcoSlug}/visualizations`)) {
         if (overrides.visualizationsStatus) {
@@ -898,9 +878,6 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
           contract: telcoContractPayload,
           result_contract: resultContractAvailable,
         });
-      }
-      if (url.endsWith(`/datasets/${telcoSlug}/views`)) {
-        return jsonResponse(telcoViewsPayload);
       }
       if (url.endsWith(`/datasets/${telcoSlug}`)) {
         return jsonResponse(telcoDatasetMetadata);
@@ -923,8 +900,8 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     );
   }
 
-  it("renders public context, metrics, model card, contract, and target distribution/feature importance from real-shaped API payloads", async () => {
-    installTelcoFetchMock();
+  it("renders public context, metrics, contract, and target distribution/feature importance from real-shaped API payloads, without requesting model-card or views", async () => {
+    const fetchMock = installTelcoFetchMock();
 
     renderTelcoDatasetPage();
 
@@ -953,6 +930,9 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(targetDistributionChart).toBeInTheDocument();
     const featureImportanceChart = screen.getByLabelText("feature importance");
     expect(featureImportanceChart).toBeInTheDocument();
+
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/model-card"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${telcoSlug}/views`))).toBe(false);
   });
 
   it("shows an explicit unavailable state for target distribution and feature importance when the visualizations endpoint fails, without blocking the rest of the page", async () => {

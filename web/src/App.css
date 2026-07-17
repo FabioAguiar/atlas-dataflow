@@ -587,15 +587,18 @@ h1 {
   }
 }
 
-.dataset-detail {
+.dataset-detail-surface {
   display: grid;
   gap: var(--atlas-space-8);
 }
 
-.dataset-detail.dataset-theme-scope {
-  border: 1px solid var(--atlas-color-border);
-  border-radius: var(--atlas-radius-lg);
-  padding: var(--atlas-space-6);
+/*
+ * Project Spec S0119: the shared root is a themed canvas, not one large
+ * enclosing card -- no border, shadow, or oversized padding here. Individual
+ * regions (metadata items, problem summary, analytical cards, inference
+ * form/result) keep their own card treatment below.
+ */
+.dataset-detail-surface.dataset-theme-scope {
   background: var(--atlas-color-canvas);
 }
 
@@ -705,6 +708,37 @@ h1 {
 .dataset-detail-tabs {
   display: grid;
   gap: var(--atlas-space-5);
+}
+
+/*
+ * Project Spec S0119: Dataset Detail tabs use a quiet underlined
+ * presentation, distinct from the generic pill-style atlas-tab used
+ * elsewhere (e.g. Dataset Admin) -- scoped to this wrapper only so no other
+ * atlas-tabs consumer is affected.
+ */
+.dataset-detail-tabs .atlas-tabs {
+  flex-wrap: nowrap;
+  gap: var(--atlas-space-6);
+  padding-bottom: 0;
+  border-bottom: 1px solid var(--atlas-color-border);
+  overflow-x: auto;
+}
+
+.dataset-detail-tabs .atlas-tab {
+  flex: 0 0 auto;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: var(--atlas-space-3) var(--atlas-space-1);
+  background: transparent;
+  white-space: nowrap;
+  color: var(--atlas-color-text-muted);
+}
+
+.dataset-detail-tabs .atlas-tab.is-selected {
+  border-bottom-color: var(--atlas-color-accent-strong);
+  color: var(--atlas-color-accent-strong);
+  background: transparent;
 }
 
 .dataset-detail-tabs__panel {
@@ -1086,8 +1120,21 @@ h1 {
     width: min(100% - 8rem, 1180px);
   }
 
+  /*
+   * Project Spec S0119: Dataset Detail may use a wider desktop content
+   * width than Home, scoped to the shell that actually contains the shared
+   * surface -- Home and other public pages keep the rule above untouched.
+   */
+  .app-shell:has(.dataset-detail-surface) {
+    width: min(100% - 8rem, 1360px);
+  }
+
   .featured-datasets__grid {
     grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  }
+
+  .dataset-detail-header__metadata {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .dataset-detail-overview__analytics {

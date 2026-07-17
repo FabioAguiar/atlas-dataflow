@@ -1,9 +1,16 @@
 import "@testing-library/jest-dom/vitest";
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
-import { DatasetDetailHeader, DatasetDetailTabs, PerformanceSummary, type DatasetDetailMetadataItem } from ".";
+import {
+  DatasetDetailHeader,
+  DatasetDetailSurface,
+  DatasetDetailTabs,
+  PerformanceSummary,
+  type DatasetDetailMetadataItem,
+} from ".";
 import FeatureImportance from "./FeatureImportance";
 import TargetDistribution from "./TargetDistribution";
 import { presentDatasetDateOnly, safePublicSourceUrl } from "../../lib/datasetPresentation";
@@ -169,5 +176,107 @@ describe("Dataset Detail semantic chart colors", () => {
       expect(chart).toHaveAttribute("data-chart-secondary", "var(--dataset-theme-chart-secondary)");
       expect(chart).toHaveAttribute("data-chart-grid", "var(--dataset-theme-chart-grid)");
     }
+  });
+});
+
+// Project Spec S0119: DatasetDetailSurface is the pure shared presentational
+// composition reused today by DatasetPage.tsx and later (S0120) by Dataset
+// Admin Live Preview. These tests exercise it directly, with synthetic
+// content -- never fixed Telco values -- passed entirely via props.
+describe("DatasetDetailSurface shared composition (S0119)", () => {
+  const metadata: DatasetDetailMetadataItem[] = [
+    { label: "Source", value: "Example Org", href: "https://example.org/data" },
+    { label: "Instances", value: "500" },
+    { label: "Features", value: "4" },
+    { label: "Target", value: "Synthetic target" },
+    { label: "Release", value: "01/07/2026", hint: "Format: dd/mm/yyyy" },
+  ];
+
+  function renderSurface(overrides: Partial<ComponentProps<typeof DatasetDetailSurface>> = {}) {
+    return render(
+      <MemoryRouter>
+        <DatasetDetailSurface
+          analysisType="Binary Classification"
+          datasetSubtitle="Synthetic surface subtitle"
+          datasetTitle="Synthetic Surface Dataset"
+          featureImportanceContent={<div data-testid="feature-importance-slot">Feature importance content</div>}
+          inferenceContent={<div data-testid="inference-slot">Inference content</div>}
+          metadata={metadata}
+          performanceContent={<div data-testid="performance-slot">Performance content</div>}
+          problemSummaryBody="Synthetic problem summary body."
+          problemSummaryTitle="Problem summary"
+          targetDistributionContent={<div data-testid="target-distribution-slot">Target distribution content</div>}
+          themePresetId="ocean-blue"
+          {...overrides}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("renders exactly one header and applies the selected theme identity/style at a stable root class", () => {
+    const { container } = renderSurface();
+
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    const root = container.querySelector(".dataset-detail-surface");
+    expect(root).toBeInTheDocument();
+    expect(root).toHaveAttribute("data-theme-preset", "ocean-blue");
+    expect((root as HTMLElement).style.getPropertyValue("--dataset-theme-accent")).toBe("#2563eb");
+  });
+
+  it("renders exactly three tabs labeled Overview, Inference and Documentation", () => {
+    renderSurface();
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Overview", "Inference", "Documentation"]);
+  });
+
+  it("defaults the Documentation panel to blank", () => {
+    renderSurface();
+    fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("");
+  });
+
+  it("renders provided Documentation content only inside its own panel", () => {
+    renderSurface({ documentationContent: <p>Extra guidance</p> });
+    fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+    const documentationPanel = screen.getByRole("tabpanel");
+    expect(documentationPanel).toHaveTextContent("Extra guidance");
+    expect(documentationPanel).not.toHaveTextContent("Synthetic problem summary body.");
+  });
+
+  it("renders the problem-summary slot before the analytical slots, each exactly once", () => {
+    renderSurface();
+
+    expect(screen.getAllByTestId("performance-slot")).toHaveLength(1);
+    expect(screen.getAllByTestId("target-distribution-slot")).toHaveLength(1);
+    expect(screen.getAllByTestId("feature-importance-slot")).toHaveLength(1);
+
+    const problemSummary = screen.getByText("Synthetic problem summary body.");
+    const performanceSlot = screen.getByTestId("performance-slot");
+    expect(
+      problemSummary.compareDocumentPosition(performanceSlot) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("switches tabs and preserves accessible panel visibility", () => {
+    renderSurface();
+    const overviewTab = screen.getByRole("tab", { name: "Overview" });
+    const inferenceTab = screen.getByRole("tab", { name: "Inference" });
+
+    expect(overviewTab).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(inferenceTab);
+
+    expect(inferenceTab).toHaveAttribute("aria-selected", "true");
+    expect(overviewTab).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByTestId("inference-slot").closest('[role="tabpanel"]')).not.toHaveAttribute("hidden");
+  });
+
+  it("still renders safe metadata links and date hints", () => {
+    renderSurface();
+    expect(screen.getByRole("link", { name: "Example Org" })).toHaveAttribute(
+      "href",
+      "https://example.org/data",
+    );
+    expect(screen.getByText("Format: dd/mm/yyyy")).toBeInTheDocument();
   });
 });

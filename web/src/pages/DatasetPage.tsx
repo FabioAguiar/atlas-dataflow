@@ -1,23 +1,18 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import DatasetAccessState, { classifyDatasetAccessError } from "../components/DatasetDetail/DatasetAccessState";
-import DatasetDetailHeader, {
+import DatasetDetailSurface, {
   type DatasetDetailMetadataItem,
-} from "../components/DatasetDetail/DatasetDetailHeader";
-import DatasetDetailTabs from "../components/DatasetDetail/DatasetDetailTabs";
+} from "../components/DatasetDetail/DatasetDetailSurface";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
-import ModelCard from "../components/ModelCard/ModelCard";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
 import type { BinaryResultContract, BinaryResultPresentation } from "../components/ResultCard/types";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
-import PredictViewList, { PredictViewItem } from "../components/PredictViewList/PredictViewList";
 import {
-  datasetThemeStyle,
   presentDatasetDateOnly,
-  resolveDatasetThemePreset,
   safePublicSourceUrl,
 } from "../lib/datasetPresentation";
 
@@ -69,11 +64,6 @@ type ContractEnvelope = {
 
 type MetricsData = Record<string, unknown>;
 
-type ModelCardPayload = {
-  content: string;
-  format: "markdown";
-};
-
 type PageState =
   | { status: "loading" }
   | { status: "ready"; data: DatasetMetadata }
@@ -85,11 +75,6 @@ type SectionState<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }
   | { status: "unavailable" };
-
-type PredictViewListPayload = {
-  dataset_slug: string;
-  views: PredictViewItem[];
-};
 
 function nonBlank(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
@@ -118,11 +103,9 @@ export default function DatasetPage() {
   const { slug } = useParams<{ slug: string }>();
   const [state, setState] = useState<PageState>({ status: "loading" });
   const [metricsState, setMetricsState] = useState<SectionState<MetricsData>>({ status: "loading" });
-  const [modelCardState, setModelCardState] = useState<SectionState<ModelCardPayload>>({ status: "loading" });
   const [visualizationsState, setVisualizationsState] = useState<SectionState<VisualizationsPayload>>({ status: "loading" });
   const [contractState, setContractState] = useState<SectionState<ContractEnvelope>>({ status: "loading" });
   const [contextState, setContextState] = useState<SectionState<PublicContextPayload>>({ status: "loading" });
-  const [viewsState, setViewsState] = useState<SectionState<PredictViewListPayload>>({ status: "loading" });
   const [boundViewCustomizationState, setBoundViewCustomizationState] = useState<
     SectionState<PredictViewCustomization | null>
   >({ status: "loading" });
@@ -169,9 +152,8 @@ export default function DatasetPage() {
 
   // Project Spec S0117: every auxiliary request below is gated behind the
   // primary route request reaching "ready" -- no context/contract/metrics/
-  // model-card/visualizations/views/bound-view-customization request is
-  // ever sent while the primary state is loading, maintenance, not_found,
-  // or unavailable.
+  // visualizations/bound-view-customization request is ever sent while the
+  // primary state is loading, maintenance, not_found, or unavailable.
   const primaryReady = state.status === "ready";
 
   useEffect(() => {
@@ -293,42 +275,6 @@ export default function DatasetPage() {
 
   useEffect(() => {
     if (!slug) {
-      setModelCardState({ status: "unavailable" });
-      return;
-    }
-    if (!primaryReady) {
-      setModelCardState({ status: "loading" });
-      return;
-    }
-
-    const controller = new AbortController();
-
-    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/model-card`, {
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) {
-          setModelCardState({ status: "unavailable" });
-          return null;
-        }
-        return res.json() as Promise<{ dataset_slug: string; model_card: ModelCardPayload }>;
-      })
-      .then((data) => {
-        if (data) {
-          setModelCardState({ status: "ready", data: data.model_card });
-        }
-      })
-      .catch((err: Error) => {
-        if (err.name !== "AbortError") {
-          setModelCardState({ status: "unavailable" });
-        }
-      });
-
-    return () => controller.abort();
-  }, [slug, primaryReady]);
-
-  useEffect(() => {
-    if (!slug) {
       setVisualizationsState({ status: "unavailable" });
       return;
     }
@@ -406,42 +352,6 @@ export default function DatasetPage() {
     return () => controller.abort();
   }, [slug, primaryReady]);
 
-  useEffect(() => {
-    if (!slug) {
-      setViewsState({ status: "unavailable" });
-      return;
-    }
-    if (!primaryReady) {
-      setViewsState({ status: "loading" });
-      return;
-    }
-
-    const controller = new AbortController();
-
-    fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/views`, {
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) {
-          setViewsState({ status: "unavailable" });
-          return null;
-        }
-        return res.json() as Promise<PredictViewListPayload>;
-      })
-      .then((data) => {
-        if (data) {
-          setViewsState({ status: "ready", data });
-        }
-      })
-      .catch((err: Error) => {
-        if (err.name !== "AbortError") {
-          setViewsState({ status: "unavailable" });
-        }
-      });
-
-    return () => controller.abort();
-  }, [slug, primaryReady]);
-
   if (state.status === "loading") {
     return (
       <>
@@ -455,7 +365,6 @@ export default function DatasetPage() {
   }
 
   const context = contextState.status === "ready" ? contextState.data : null;
-  const resolvedTheme = resolveDatasetThemePreset(context?.theme_preset);
 
   const datasetTitle = nonBlank(context?.display_title)
     || nonBlank(state.data.display_title)
@@ -525,74 +434,57 @@ export default function DatasetPage() {
   const problemSummaryText = getProblemSummaryText(context);
   const problemSummaryTitle = nonBlank(context?.problem_summary_title) || "Problem summary";
 
-  const overviewContent = (
-    <div className="dataset-detail-overview">
-      {contextState.status === "loading" && <LoadingState />}
-      {contextState.status === "ready" && problemSummaryText && (
-        <section className="dataset-detail-overview__problem-summary">
-          <h3>{problemSummaryTitle}</h3>
-          <p>{problemSummaryText}</p>
-        </section>
+  const performanceContent = (
+    <>
+      {metricsState.status === "loading" && <LoadingState />}
+      {metricsState.status === "ready" && (
+        <PerformanceSummary
+          metrics={metricsState.data}
+          emphasizedMetricKey={context?.primary_metric_key}
+          performanceFocus={context?.performance_focus}
+        />
       )}
+      {metricsState.status === "unavailable" && (
+        <ErrorState message="Metrics are temporarily unavailable." />
+      )}
+    </>
+  );
 
-      <div className="dataset-detail-overview__analytics">
-        {metricsState.status === "loading" && <LoadingState />}
-        {metricsState.status === "ready" && (
-          <PerformanceSummary
-            metrics={metricsState.data}
-            emphasizedMetricKey={context?.primary_metric_key}
-            performanceFocus={context?.performance_focus}
-          />
-        )}
-        {metricsState.status === "unavailable" && (
-          <ErrorState message="Metrics are temporarily unavailable." />
-        )}
+  const targetDistributionContent = (
+    <>
+      {visualizationsState.status === "loading" && <LoadingState />}
+      {visualizationsState.status !== "loading" && (
+        <TargetDistribution
+          visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
+        />
+      )}
+    </>
+  );
 
-        {visualizationsState.status === "loading" && <LoadingState />}
-        {visualizationsState.status !== "loading" && (
-          <>
-            <TargetDistribution
-              visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
-            />
-            <FeatureImportance
-              visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
-            />
-          </>
-        )}
-      </div>
-    </div>
+  const featureImportanceContent = (
+    <>
+      {visualizationsState.status === "loading" && <LoadingState />}
+      {visualizationsState.status !== "loading" && (
+        <FeatureImportance
+          visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
+        />
+      )}
+    </>
   );
 
   return (
-    <div
-      className="dataset-detail dataset-theme-scope"
-      data-theme-preset={resolvedTheme.id}
-      style={datasetThemeStyle(resolvedTheme.id)}
-    >
-      <DatasetDetailHeader
-        analysisType={analysisType}
-        datasetTitle={datasetTitle}
-        metadata={metadataItems}
-        subtitle={datasetSubtitle}
-      />
-
-      <DatasetDetailTabs overviewContent={overviewContent} inferenceContent={inferenceContent} />
-
-      {modelCardState.status === "loading" && <LoadingState />}
-      {modelCardState.status === "ready" && (
-        <ModelCard modelCard={modelCardState.data} />
-      )}
-      {modelCardState.status === "unavailable" && (
-        <ErrorState message="The model card is temporarily unavailable." />
-      )}
-
-      {viewsState.status === "loading" && <LoadingState />}
-      {viewsState.status === "ready" && (
-        <PredictViewList views={viewsState.data.views} slug={slug!} />
-      )}
-      {viewsState.status === "unavailable" && (
-        <ErrorState message="Predict views are temporarily unavailable." />
-      )}
-    </div>
+    <DatasetDetailSurface
+      analysisType={analysisType}
+      datasetSubtitle={datasetSubtitle}
+      datasetTitle={datasetTitle}
+      featureImportanceContent={featureImportanceContent}
+      inferenceContent={inferenceContent}
+      metadata={metadataItems}
+      performanceContent={performanceContent}
+      problemSummaryBody={problemSummaryText}
+      problemSummaryTitle={problemSummaryTitle}
+      targetDistributionContent={targetDistributionContent}
+      themePresetId={context?.theme_preset}
+    />
   );
 }

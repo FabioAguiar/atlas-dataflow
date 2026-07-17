@@ -1,8 +1,10 @@
 export { default as DatasetAccessState, classifyDatasetAccessError } from "./DatasetAccessState";
 export { default as DatasetDetailHeader } from "./DatasetDetailHeader";
+export { default as DatasetDetailSurface } from "./DatasetDetailSurface";
 export { default as DatasetDetailTabs } from "./DatasetDetailTabs";
 export { default as FeatureImportance } from "./FeatureImportance";
 export { default as PerformanceSummary } from "./PerformanceSummary";
 export { default as TargetDistribution } from "./TargetDistribution";
 export type { DatasetAccessStateKind } from "./DatasetAccessState";
 export type { DatasetDetailMetadataItem } from "./DatasetDetailHeader";
+export type { DatasetDetailSurfaceProps } from "./DatasetDetailSurface";

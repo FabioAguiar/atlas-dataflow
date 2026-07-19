@@ -14,22 +14,5 @@
       "description": "Each published dataset must declare exactly one active_release value. The active release is explicit registry data and must not be inferred from file scanning, latest runs, timestamps, directory order, or fallback artifacts."
     }
   },
-  "datasets": [
-    {
-      "dataset_slug": "telco-customer-churn",
-      "active_release": "release-20260716t210022z",
-      "public_metadata": {
-        "title": "Telco Customer Churn",
-        "summary": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
-        "domain": "telco",
-        "visibility": "public",
-        "tags": [
-          "telco",
-          "churn",
-          "classification"
-        ]
-      },
-      "review_status": "needs_review"
-    }
-  ]
+  "datasets": []
 }

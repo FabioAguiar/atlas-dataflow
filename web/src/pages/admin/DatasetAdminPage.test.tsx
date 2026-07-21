@@ -178,6 +178,21 @@ function installFetchMock(
     // GET /datasets/{slug}/views returns. Defaults to the shared single-view
     // fixture ([{ view_id: viewId, ... }]) every other test relies on.
     viewsOverride?: Array<{ view_id: string; display?: { title?: string } }>;
+    // Project Spec S0121: GET /admin/datasets/{slug}/authoring-context.
+    // authoringContextTransportFailureOnce fails the first request only
+    // (non-ok response), auto-clearing so a subsequent automatic
+    // reload/Retry succeeds normally -- mirrors customizationLoadFailsOnce's
+    // established pattern. viewsResourceUnavailable/contractResourceUnavailable
+    // make just that one resource within an otherwise-200 envelope carry a
+    // bounded unavailable state, exercising per-resource availability
+    // separation. authoringContextDeferredOnce leaves the first request
+    // unresolved until the returned fetch mock's
+    // releaseDeferredAuthoringContext() is called, for exercising late-
+    // response-after-dataset-switch protection.
+    authoringContextTransportFailureOnce?: boolean;
+    viewsResourceUnavailable?: boolean;
+    contractResourceUnavailable?: boolean;
+    authoringContextDeferredOnce?: boolean;
     // Project Spec S0098: overrides the profile draft's
     // inference_presentation.bound_predict_view_id independently of the
     // shared publicProfile fixture (which always carries the valid viewId),
@@ -247,6 +262,128 @@ function installFetchMock(
   let configuredVisible = options.initialConfiguredVisible ?? true;
   let publicationStateDeferredPending = options.publicationStateDeferredOnce ?? false;
   let releaseDeferredPublicationState: (() => void) | null = null;
+  let authoringContextTransportFailurePending = options.authoringContextTransportFailureOnce ?? false;
+  let authoringContextDeferredPending = options.authoringContextDeferredOnce ?? false;
+  let releaseDeferredAuthoringContext: (() => void) | null = null;
+
+  // Project Spec S0121: the single GET /admin/datasets/{slug}/authoring-context
+  // envelope Dataset Admin now loads its entire technical ReadOnlyData from,
+  // replacing the six separate public-technical-read fixtures below (kept in
+  // place, but no longer requested by the app -- see the boundary test
+  // asserting they are never called). Resource content mirrors those retired
+  // fixtures exactly so every existing assertion about rendered contract
+  // fields, context copy, metrics, or eligible views keeps passing unchanged.
+  function authoringContextEnvelope(): Record<string, unknown> {
+    return {
+      dataset_slug: datasetSlug,
+      active_release: "release-20260619-001",
+      dataset: {
+        status: "ready",
+        data: {
+          dataset_slug: datasetSlug,
+          title: "Telco Customer Churn",
+          display_title: options.noExistingDraft
+            ? null
+            : publishedProfile?.display.title ?? publicProfile.display.title,
+          summary: "Customer churn prediction dataset",
+          domain: "telecom",
+          tags: ["telecom"],
+          active_release: "release-20260619-001",
+          publication_status: "ready",
+        },
+      },
+      context: {
+        status: "ready",
+        data: {
+          title: "Telco Customer Churn",
+          summary: "Baseline churn problem summary",
+          domain: "telecom",
+          tags: ["telecom"],
+          problem_type: "binary_classification",
+          prediction_target_description: "Customer churn",
+        },
+      },
+      contract: options.contractResourceUnavailable
+        ? {
+            status: "unavailable",
+            error: {
+              type: "contract_unavailable",
+              code: "PUBLIC_CONTRACT_UNAVAILABLE",
+              message: "The public contract for this dataset is temporarily unavailable.",
+            },
+          }
+        : {
+            status: "ready",
+            data: {
+              contract: {
+                schema_version: "1.0.0",
+                features: [
+                  {
+                    name: "tenure",
+                    label: "Tenure",
+                    input_type: "number",
+                    optional: options.requiredFieldOverride === "tenure" ? false : true,
+                    display_order: 1,
+                  },
+                  {
+                    name: "MonthlyCharges",
+                    label: "Monthly charges",
+                    input_type: "number",
+                    optional: options.requiredFieldOverride === "MonthlyCharges" ? false : true,
+                    display_order: 2,
+                  },
+                  ...(options.extraContractFields ?? []).map((field, index) => ({
+                    name: field.name,
+                    label: field.label,
+                    input_type: "number" as const,
+                    optional: field.optional,
+                    display_order: 3 + index,
+                  })),
+                ],
+              },
+              result_contract: {
+                status: "available",
+                semantics: {
+                  schema_version: "binary-result-semantics.v1",
+                  problem_type: "binary_classification",
+                  result_schema_version: "binary-classification-result.v1",
+                  primary_output: "positive_class_probability",
+                  positive_class: { class_id: "churn", event_label: "Customer churn" },
+                  negative_class: { class_id: "retained" },
+                  decision: { threshold: 0.6 },
+                  interpretation: {
+                    preset: "risk",
+                    bands: [
+                      { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+                      { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+                      { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+                    ],
+                  },
+                  model_descriptor: { model_family: "linear", display_name: "Retention model" },
+                },
+              },
+            },
+          },
+      metrics: {
+        status: "ready",
+        data: { evaluation: { metrics: options.metricsOverride ?? { auc_roc: 0.93, accuracy: 0.86 } } },
+      },
+      visualizations: { status: "ready", data: {} },
+      views: options.viewsResourceUnavailable
+        ? {
+            status: "unavailable",
+            error: {
+              type: "predict_view_registry_unavailable",
+              code: "PREDICT_VIEW_REGISTRY_UNAVAILABLE",
+              message: "The Predict View registry is temporarily unavailable.",
+            },
+          }
+        : {
+            status: "ready",
+            data: options.viewsOverride ?? [{ view_id: viewId, display: { title: "Churn risk overview" } }],
+          },
+    };
+  }
 
   function defaultPublicationState(visible: boolean): Record<string, unknown> {
     return {
@@ -317,6 +454,19 @@ function installFetchMock(
           },
         ],
       });
+    }
+    if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+      if (authoringContextDeferredPending) {
+        authoringContextDeferredPending = false;
+        return new Promise<MockResponse>((resolve) => {
+          releaseDeferredAuthoringContext = () => resolve(jsonResponse(authoringContextEnvelope()));
+        });
+      }
+      if (authoringContextTransportFailurePending) {
+        authoringContextTransportFailurePending = false;
+        return jsonResponse({}, 503);
+      }
+      return jsonResponse(authoringContextEnvelope());
     }
     if (url.includes("/context")) {
       return jsonResponse({
@@ -618,6 +768,7 @@ function installFetchMock(
   return Object.assign(fetchMock, {
     releaseDeferredCustomizationLoad: () => releaseDeferredCustomizationLoad?.(),
     releaseDeferredPublicationState: () => releaseDeferredPublicationState?.(),
+    releaseDeferredAuthoringContext: () => releaseDeferredAuthoringContext?.(),
   });
 }
 
@@ -3872,6 +4023,184 @@ describe("DatasetAdminPage", () => {
 
     expect(screen.getByText("No predict view bound")).toBeInTheDocument();
     expect(screen.queryByText("Customization loaded")).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------
+  // Project Spec S0121: private authoring-context read model availability
+  // separation (GET /admin/datasets/{slug}/authoring-context).
+  // ---------------------------------------------------------------------
+
+  it("shows a Predict views unavailable message with Retry when the authoring-context request fails, and Retry recovers the tab (Project Spec S0121)", async () => {
+    installFetchMock({ authoringContextTransportFailureOnce: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    expect(await screen.findByText("Predict views unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText("The private authoring context could not load the eligible Predict Views for this dataset."),
+    ).toBeInTheDocument();
+    // A transport failure must never render the true empty state.
+    expect(screen.queryByText("No predict views are available for this dataset yet.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    // authoringContextTransportFailureOnce auto-clears after the first
+    // request, so Retry's re-fetch succeeds and the normal single-view
+    // customization builder renders.
+    expect(await screen.findByLabelText("Field bank")).toBeInTheDocument();
+    expect(screen.queryByText("Predict views unavailable")).not.toBeInTheDocument();
+  });
+
+  it("renders a distinct unavailable message, never the true empty state, when only the views resource is bounded-unavailable (Project Spec S0121)", async () => {
+    installFetchMock({ viewsResourceUnavailable: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    expect(await screen.findByText("Predict views unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText("The private authoring context could not load the eligible Predict Views for this dataset."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No predict views are available for this dataset yet.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add subgroup" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a bounded contract-unavailable authoring resource distinct from views availability (Project Spec S0121)", async () => {
+    installFetchMock({ contractResourceUnavailable: true });
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    // Views stayed ready (one eligible view), so the tab never renders its
+    // own views-unavailable branch -- only the pre-existing contract-
+    // specific notice fires, proving the two bounded failure identities
+    // are never conflated with each other.
+    expect(await screen.findByText("Public contract unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Predict views unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("No predict views are available for this dataset yet.")).not.toBeInTheDocument();
+  });
+
+  it("ignores a late authoring-context response from a superseded dataset selection (Project Spec S0121)", async () => {
+    const otherSlug = "energy-consumption-forecast";
+    const otherViewId = "load-forecast-overview";
+    const firstSlugResponseHolder: { release: (() => void) | null } = { release: null };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: datasetSlug,
+              title: "Telco Customer Churn",
+              display_title: null,
+              summary: "s",
+              domain: "telecom",
+              tags: [],
+              active_release: "release-20260619-001",
+              publication_status: "ready",
+              last_updated: "2026-06-19T12:00:00Z",
+            },
+            {
+              dataset_slug: otherSlug,
+              title: "Energy Consumption Forecast",
+              display_title: null,
+              summary: "s",
+              domain: "energy",
+              tags: [],
+              active_release: "release-20260701-001",
+              publication_status: "ready",
+              last_updated: "2026-07-01T12:00:00Z",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({
+          datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+        // Deliberately slow/deferred: resolves only after the operator has
+        // already switched to otherSlug below, so this response must never
+        // be allowed to overwrite otherSlug's own authoring context.
+        return new Promise((resolve) => {
+          firstSlugResponseHolder.release = () =>
+            resolve(
+              jsonResponse({
+                dataset_slug: datasetSlug,
+                active_release: "release-20260619-001",
+                dataset: { status: "ready", data: { dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", tags: [] } },
+                context: { status: "ready", data: {} },
+                contract: { status: "ready", data: { contract: { schema_version: "1.0.0", features: [] }, result_contract: { status: "unavailable", reason: "n/a" } } },
+                metrics: { status: "ready", data: {} },
+                visualizations: { status: "ready", data: {} },
+                views: { status: "ready", data: [{ view_id: viewId, display: { title: "Churn risk overview" } }] },
+              }),
+            );
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+        return jsonResponse({
+          dataset_slug: otherSlug,
+          active_release: "release-20260701-001",
+          dataset: { status: "ready", data: { dataset_slug: otherSlug, title: "Energy Consumption Forecast", summary: "s", domain: "energy", tags: [] } },
+          context: { status: "ready", data: {} },
+          contract: { status: "ready", data: { contract: { schema_version: "1.0.0", features: [] }, result_contract: { status: "unavailable", reason: "n/a" } } },
+          metrics: { status: "ready", data: {} },
+          visualizations: { status: "ready", data: {} },
+          views: { status: "ready", data: [{ view_id: otherViewId, display: { title: "Load Forecast Overview" } }] },
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) || url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)) {
+        return jsonResponse({ draft_exists: false, profile: null });
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) || url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)) {
+        return jsonResponse({}, 404);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderAdminPage();
+
+    const selector = await screen.findByRole("button", { name: "Dataset" });
+    await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Inference Form" }));
+    await waitFor(() => expect(screen.getByLabelText("Submit button label")).toBeInTheDocument());
+
+    // Now let the superseded first-dataset (telco) authoring-context
+    // response resolve -- it must be rejected outright and must never
+    // overwrite otherSlug's already-current eligible views.
+    firstSlugResponseHolder.release?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Predict views unavailable")).not.toBeInTheDocument();
+  });
+
+  it("requests only the private authoring-context endpoint for ReadOnlyData, never the six retired public technical read routes (Project Spec S0121)", async () => {
+    const fetchMock = installFetchMock();
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await screen.findByLabelText("Field bank");
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(calledUrls.some((url) => url.endsWith(`/datasets/${datasetSlug}`))).toBe(false);
+    expect(calledUrls.some((url) => url.includes(`/datasets/${datasetSlug}/context`))).toBe(false);
+    expect(calledUrls.some((url) => url.includes(`/datasets/${datasetSlug}/contract`))).toBe(false);
+    expect(calledUrls.some((url) => url.includes(`/datasets/${datasetSlug}/metrics`))).toBe(false);
+    expect(calledUrls.some((url) => url.includes(`/datasets/${datasetSlug}/visualizations`))).toBe(false);
+    expect(calledUrls.some((url) => url.endsWith(`/datasets/${datasetSlug}/views`))).toBe(false);
+    expect(calledUrls.some((url) => url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`))).toBe(true);
   });
 
   it("keeps automatic reload consistent after a successful save", async () => {

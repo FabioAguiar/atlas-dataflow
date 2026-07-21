@@ -13,6 +13,7 @@ or directly:
 """
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -24,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
+from fastapi import Request  # noqa: E402
 from registry.list import ListedDataset, list_admin_datasets, list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
@@ -1644,6 +1646,364 @@ def test_public_contract_loader_does_not_fall_back_to_repository_level_contract(
         except api_main.PublicContractUnavailableError:
             raised = True
         assert raised, "Expected PublicContractUnavailableError with no repository-level fallback"
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/datasets/{dataset_slug}/authoring-context: Project Spec S0121
+# private authoring read model. Uses the real telco-customer-churn registry
+# entry/active release wherever possible (it is currently needs_review, per
+# the spec's own "Current reproduction" section) and monkeypatches only the
+# specific loader needed for each bounded-failure scenario, matching this
+# file's existing style.
+# ---------------------------------------------------------------------------
+
+_AUTHORING_FIXTURE_VIEW = {
+    "view_id": "fixture-view",
+    "dataset_slug": "fixture-dataset",
+    "display": {"title": "Fixture View", "summary": "Fixture summary."},
+    "intent": {"prediction_goal": "test", "audience": "test", "usage_notes": "test"},
+    "release_mode": "active",
+}
+
+
+def _resolved_authoring_fixture(dataset_slug: str):
+    return SimpleNamespace(dataset_slug=dataset_slug, active_release="release-fixture-001")
+
+
+def _authoring_request(dataset_slug: str = "telco-customer-churn") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": f"/admin/datasets/{dataset_slug}/authoring-context",
+            "headers": [],
+        }
+    )
+
+
+def test_authoring_context_returns_generic_not_found_when_admin_runtime_disabled():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    response = api_main.get_admin_dataset_authoring_context(
+        "telco-customer-churn", _authoring_request()
+    )
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_authoring_context_real_needs_review_telco_dataset_reproduces_spec_scenario():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    try:
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+    assert response["dataset_slug"] == "telco-customer-churn"
+    assert response["active_release"] == "release-20260719t111131z"
+    assert response["dataset"]["status"] == "ready"
+    assert response["dataset"]["data"]["publication_status"] == "needs_review"
+    assert response["context"]["status"] == "ready"
+    assert response["contract"]["status"] == "ready"
+    assert "result_contract" in response["contract"]["data"]
+    assert response["views"] == {
+        "status": "ready",
+        "data": response["views"]["data"],
+    }
+    view_ids = [item["view_id"] for item in response["views"]["data"]]
+    assert view_ids == ["churn-risk-overview"]
+
+    # The public S0117 boundary must be completely unaffected by the private
+    # read model resolving the very same needs_review dataset above.
+    public_response = api_main.get_dataset("telco-customer-churn")
+    assert public_response.status_code == 503
+    assert _response_json(public_response)["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_authoring_context_never_calls_resolve_public_dataset_detail_access():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original = api_main._resolve_public_dataset_detail_access
+
+    def _fail(*_args, **_kwargs):
+        raise AssertionError("must not call _resolve_public_dataset_detail_access")
+
+    api_main._resolve_public_dataset_detail_access = _fail
+    try:
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+        assert response["dataset_slug"] == "telco-customer-churn"
+    finally:
+        api_main._resolve_public_dataset_detail_access = original
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_hidden_dataset_still_resolves_privately():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_visibility = api_main.resolve_dataset_visibility
+    api_main.resolve_dataset_visibility = lambda _dataset_slug: False
+    try:
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+        assert response["views"]["status"] == "ready"
+        assert response["views"]["data"][0]["view_id"] == "churn-risk-overview"
+    finally:
+        api_main.resolve_dataset_visibility = original_visibility
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_ready_public_dataset_still_resolves_privately():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_needs_review = api_main.is_dataset_needs_review
+    api_main.is_dataset_needs_review = lambda _dataset_slug: False
+    try:
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+        assert response["views"]["status"] == "ready"
+        assert response["views"]["data"][0]["view_id"] == "churn-risk-overview"
+    finally:
+        api_main.is_dataset_needs_review = original_needs_review
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_zero_eligible_views_returns_ready_empty_list():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_resolve = api_main.resolve_dataset
+    original_views = api_main.load_public_predict_view_list
+    try:
+        api_main.resolve_dataset = lambda slug: _resolved_authoring_fixture(slug)
+        api_main.load_public_predict_view_list = lambda slug: []
+        response = api_main.get_admin_dataset_authoring_context(
+            "fixture-dataset", _authoring_request("fixture-dataset")
+        )
+        assert response["views"] == {"status": "ready", "data": []}
+    finally:
+        api_main.resolve_dataset = original_resolve
+        api_main.load_public_predict_view_list = original_views
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_multiple_eligible_views_returns_every_projection():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_resolve = api_main.resolve_dataset
+    original_views = api_main.load_public_predict_view_list
+    try:
+        api_main.resolve_dataset = lambda slug: _resolved_authoring_fixture(slug)
+        api_main.load_public_predict_view_list = lambda slug: [
+            dict(_AUTHORING_FIXTURE_VIEW, view_id="view-one"),
+            dict(_AUTHORING_FIXTURE_VIEW, view_id="view-two"),
+        ]
+        response = api_main.get_admin_dataset_authoring_context(
+            "fixture-dataset", _authoring_request("fixture-dataset")
+        )
+        assert response["views"]["status"] == "ready"
+        assert [v["view_id"] for v in response["views"]["data"]] == ["view-one", "view-two"]
+    finally:
+        api_main.resolve_dataset = original_resolve
+        api_main.load_public_predict_view_list = original_views
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_unknown_dataset_returns_dataset_not_found():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_resolve = api_main.resolve_dataset
+    try:
+        def _raise(_slug):
+            raise DatasetUnavailableError("missing")
+
+        api_main.resolve_dataset = _raise
+        response = api_main.get_admin_dataset_authoring_context(
+            "unknown-dataset", _authoring_request("unknown-dataset")
+        )
+        assert response.status_code == 404
+        assert _response_json(response)["error_code"] == "DATASET_NOT_FOUND"
+    finally:
+        api_main.resolve_dataset = original_resolve
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_release_unavailable_returns_release_unavailable():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_resolve = api_main.resolve_dataset
+    try:
+        def _raise(_slug):
+            raise ReleaseUnavailableError("no release")
+
+        api_main.resolve_dataset = _raise
+        response = api_main.get_admin_dataset_authoring_context(
+            "fixture-dataset", _authoring_request("fixture-dataset")
+        )
+        assert response.status_code == 503
+        assert _response_json(response)["error_code"] == "RELEASE_UNAVAILABLE"
+    finally:
+        api_main.resolve_dataset = original_resolve
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_registry_invalid_returns_registry_unavailable():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_resolve = api_main.resolve_dataset
+    try:
+        def _raise(_slug):
+            raise RegistryInvalidError("bad registry")
+
+        api_main.resolve_dataset = _raise
+        response = api_main.get_admin_dataset_authoring_context(
+            "fixture-dataset", _authoring_request("fixture-dataset")
+        )
+        assert response.status_code == 503
+        assert _response_json(response)["error_code"] == "REGISTRY_UNAVAILABLE"
+    finally:
+        api_main.resolve_dataset = original_resolve
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_predict_view_registry_unavailable_is_bounded_not_empty_list():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_resolve = api_main.resolve_dataset
+    original_views = api_main.load_public_predict_view_list
+    try:
+        api_main.resolve_dataset = lambda slug: _resolved_authoring_fixture(slug)
+
+        def _raise(_slug):
+            raise api_main.ViewNotFoundError("registry unavailable")
+
+        api_main.load_public_predict_view_list = _raise
+        response = api_main.get_admin_dataset_authoring_context(
+            "fixture-dataset", _authoring_request("fixture-dataset")
+        )
+        assert response["views"]["status"] == "unavailable"
+        assert response["views"]["error"]["code"] == "PREDICT_VIEW_REGISTRY_UNAVAILABLE"
+        assert response["views"] != {"status": "ready", "data": []}
+    finally:
+        api_main.resolve_dataset = original_resolve
+        api_main.load_public_predict_view_list = original_views
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_binding_inconsistent_view_is_never_selected(tmp_path):
+    from public_predict_view_loader import load_public_predict_view_list as _real_load_list
+
+    registry_data = {
+        "schema_version": "atlas.dataflow.predict-views.v1",
+        "predict_views": [
+            {
+                "view_id": "valid-view",
+                "dataset_slug": "fixture-dataset",
+                "display": {"title": "Valid", "summary": "Valid view."},
+                "intent": {"prediction_goal": "t", "audience": "t", "usage_notes": "t"},
+                "binding": {"dataset_slug": "fixture-dataset", "release": {"mode": "active"}},
+            },
+            {
+                "view_id": "inconsistent-view",
+                "dataset_slug": "fixture-dataset",
+                "display": {"title": "Inconsistent", "summary": "Mismatch."},
+                "intent": {"prediction_goal": "t", "audience": "t", "usage_notes": "t"},
+                "binding": {"dataset_slug": "OTHER-DATASET", "release": {"mode": "active"}},
+            },
+        ],
+    }
+    registry_path = tmp_path / "predict-views.json"
+    registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
+
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_resolve = api_main.resolve_dataset
+    original_views = api_main.load_public_predict_view_list
+    try:
+        api_main.resolve_dataset = lambda slug: _resolved_authoring_fixture(slug)
+        api_main.load_public_predict_view_list = lambda slug: _real_load_list(
+            slug, predict_views_path=registry_path
+        )
+        response = api_main.get_admin_dataset_authoring_context(
+            "fixture-dataset", _authoring_request("fixture-dataset")
+        )
+        view_ids = [v["view_id"] for v in response["views"]["data"]]
+        assert view_ids == ["valid-view"]
+    finally:
+        api_main.resolve_dataset = original_resolve
+        api_main.load_public_predict_view_list = original_views
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_contract_unavailable_does_not_erase_views():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_contract = api_main.load_public_contract
+    try:
+        def _raise(_release):
+            raise api_main.PublicContractUnavailableError("no contract")
+
+        api_main.load_public_contract = _raise
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+        assert response["contract"]["status"] == "unavailable"
+        assert response["contract"]["error"]["code"] == "PUBLIC_CONTRACT_UNAVAILABLE"
+        assert response["contract"]["error"]["message"]
+        assert response["views"]["status"] == "ready"
+        assert len(response["views"]["data"]) == 1
+    finally:
+        api_main.load_public_contract = original_contract
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_metrics_unavailable_does_not_block_contract_or_views():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_metrics = api_main.load_public_metrics
+    try:
+        def _raise(_release):
+            raise api_main.PublicMetricsUnavailableError("no metrics")
+
+        api_main.load_public_metrics = _raise
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+        assert response["metrics"]["status"] == "unavailable"
+        assert response["metrics"]["error"]["code"] == "METRICS_UNAVAILABLE"
+        assert response["contract"]["status"] == "ready"
+        assert response["views"]["status"] == "ready"
+    finally:
+        api_main.load_public_metrics = original_metrics
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_visualizations_unavailable_does_not_block_contract_or_views():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_visualizations = api_main.load_public_visualizations
+    try:
+        def _raise(_release):
+            raise api_main.PublicVisualizationsUnavailableError("no visualizations")
+
+        api_main.load_public_visualizations = _raise
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+        assert response["visualizations"]["status"] == "unavailable"
+        assert response["visualizations"]["error"]["code"] == "VISUALIZATIONS_UNAVAILABLE"
+        assert response["contract"]["status"] == "ready"
+        assert response["views"]["status"] == "ready"
+    finally:
+        api_main.load_public_visualizations = original_visualizations
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_authoring_context_route_never_mutates_registry_or_predict_views_files():
+    registry_path = REPO_ROOT / "registry" / "datasets.json"
+    predict_views_path = REPO_ROOT / "registry" / "predict-views.json"
+    before_registry = registry_path.read_bytes()
+    before_predict_views = predict_views_path.read_bytes()
+
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    try:
+        api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+    assert registry_path.read_bytes() == before_registry
+    assert predict_views_path.read_bytes() == before_predict_views
 
 
 # ---------------------------------------------------------------------------

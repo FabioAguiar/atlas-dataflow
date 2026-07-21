@@ -3,7 +3,7 @@
   "validation_kind": "release_candidate_cross_artifact_consistency",
   "candidate_identity": {
     "dataset_slug": "telco-customer-churn",
-    "release_id": "release-20260719t111131z",
+    "release_id": "release-20260721t124721z",
     "release_version": "1.0.0-rc.1"
   },
   "source_candidate": {
@@ -20,7 +20,7 @@
       "manifest_input",
       "candidate_metadata"
     ],
-    "candidate_reference": "release-candidate-v1:telco-customer-churn/release-20260719t111131z"
+    "candidate_reference": "release-candidate-v1:telco-customer-churn/release-20260721t124721z"
   },
   "validation_outcome": "accepted",
   "required_artifact_role_results": {

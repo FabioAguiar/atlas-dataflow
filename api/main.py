@@ -144,6 +144,18 @@ CUSTOMIZATION_NOT_FOUND = PublicError(
     message="No customization is available for this predict view.",
 )
 
+# Project Spec S0121: bounded per-resource error for the private authoring
+# read model's `views` resource, distinct from REGISTRY_UNAVAILABLE (which is
+# a top-level resolution failure) -- the dataset registry and active release
+# are already confirmed readable by the time this resource is projected, so
+# only the Predict View registry itself is in question here.
+PREDICT_VIEW_REGISTRY_UNAVAILABLE = PublicError(
+    status_code=503,
+    error_type="predict_view_registry_unavailable",
+    error_code="PREDICT_VIEW_REGISTRY_UNAVAILABLE",
+    message="The Predict View registry is temporarily unavailable.",
+)
+
 PROFILE_DRAFT_DATASET_SLUG_INVALID = PublicError(
     status_code=422,
     error_type="profile_draft_dataset_slug_invalid",
@@ -1093,6 +1105,120 @@ def put_admin_predict_view_customization(
         return PREDICT_VIEW_CUSTOMIZATION_INVALID.response(errors=result["errors"])
 
     return result
+
+
+def _authoring_resource_ready(data) -> dict:
+    return {"status": "ready", "data": data}
+
+
+def _authoring_resource_unavailable(public_error: PublicError) -> dict:
+    return {
+        "status": "unavailable",
+        "error": {
+            "type": public_error.error_type,
+            "code": public_error.error_code,
+            "message": public_error.message,
+        },
+    }
+
+
+def _project_admin_authoring_dataset_identity(dataset_slug: str) -> dict | None:
+    """
+    Admin-safe `dataset` resource projection for the private authoring read
+    model. Reuses the existing Admin dataset listing projection (Project
+    Spec S0052) rather than the public dataset route, so this never depends
+    on _resolve_public_dataset_detail_access() or public visibility/review
+    state. Returns None only when the registry itself cannot be read --
+    which resolve_dataset() above has already ruled out in practice, but this
+    stays defensively bounded rather than assuming that can never change.
+    """
+    try:
+        admin_datasets = list_admin_datasets()
+    except RegistryInvalidError:
+        return None
+    for dataset in admin_datasets:
+        if dataset.dataset_slug == dataset_slug:
+            return dataset._asdict()
+    return None
+
+
+@app.get("/admin/datasets/{dataset_slug}/authoring-context")
+def get_admin_dataset_authoring_context(dataset_slug: str, request: Request):
+    """
+    Project Spec S0121: private, read-only Admin authoring read model.
+
+    Deliberately resolves the registered dataset and active release via
+    resolve_dataset() directly -- never via
+    _resolve_public_dataset_detail_access() -- so configured visibility and
+    review_status never gate this route; a hidden or needs_review dataset
+    must still be authorable in Dataset Admin. Every resource below is
+    projected independently into an explicit ready/unavailable state so one
+    unavailable optional resource never erases the others.
+    """
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    dataset_projection = _project_admin_authoring_dataset_identity(resolved.dataset_slug)
+    dataset_resource = (
+        _authoring_resource_ready(dataset_projection)
+        if dataset_projection is not None
+        else _authoring_resource_unavailable(REGISTRY_UNAVAILABLE)
+    )
+
+    try:
+        context = load_public_context(resolved.active_release)
+        context_resource = _authoring_resource_ready(context)
+    except PublicContextUnavailableError:
+        context_resource = _authoring_resource_unavailable(CONTEXT_UNAVAILABLE)
+
+    try:
+        public_contract = load_public_contract(resolved.active_release)
+        contract_resource = _authoring_resource_ready(
+            {
+                "contract": public_contract,
+                "result_contract": _project_result_contract_safely(resolved.active_release),
+            }
+        )
+    except PublicContractUnavailableError:
+        contract_resource = _authoring_resource_unavailable(PUBLIC_CONTRACT_UNAVAILABLE)
+
+    try:
+        metrics = load_public_metrics(resolved.active_release)
+        metrics_resource = _authoring_resource_ready(metrics)
+    except PublicMetricsUnavailableError:
+        metrics_resource = _authoring_resource_unavailable(METRICS_UNAVAILABLE)
+
+    try:
+        visualizations = load_public_visualizations(resolved.active_release)
+        visualizations_resource = _authoring_resource_ready(visualizations)
+    except PublicVisualizationsUnavailableError:
+        visualizations_resource = _authoring_resource_unavailable(VISUALIZATIONS_UNAVAILABLE)
+
+    try:
+        views = load_public_predict_view_list(resolved.dataset_slug)
+        views_resource = _authoring_resource_ready(views)
+    except ViewNotFoundError:
+        views_resource = _authoring_resource_unavailable(PREDICT_VIEW_REGISTRY_UNAVAILABLE)
+
+    return {
+        "dataset_slug": resolved.dataset_slug,
+        "active_release": resolved.active_release,
+        "dataset": dataset_resource,
+        "context": context_resource,
+        "contract": contract_resource,
+        "metrics": metrics_resource,
+        "visualizations": visualizations_resource,
+        "views": views_resource,
+    }
 
 
 if __name__ == "__main__":

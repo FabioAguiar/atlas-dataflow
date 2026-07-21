@@ -130,10 +130,15 @@ type AdminDatasetState =
   | { status: "ready"; datasets: AdminDatasetListing[] }
   | { status: "error"; message: string };
 
+// Project Spec S0121: `code` is optional so every pre-existing unavailable
+// literal in this file (which never set it) remains valid -- it is only
+// populated for resources sourced from the private authoring-context read
+// model, so the bounded error identity the backend already computed
+// survives into frontend state instead of being discarded.
 type SectionState<T> =
   | { status: "idle" | "loading" }
   | { status: "ready"; data: T }
-  | { status: "unavailable"; message: string };
+  | { status: "unavailable"; message: string; code?: string };
 
 type ProfileDraft = {
   schema_version: string;
@@ -405,8 +410,43 @@ type PredictView = {
   };
 };
 
+// GET /admin/datasets/{slug}/authoring-context's `dataset` resource
+// projection (Project Spec S0121, registry/list.py's AdminListedDataset
+// shape) -- deliberately not DatasetListing, which is the *public*
+// /datasets/{slug} shape and carries a `visibility` field this private,
+// visibility-independent read model has no reason to expose.
+type AuthoringDatasetProjection = {
+  dataset_slug: string;
+  title: string;
+  display_title?: string | null;
+  summary: string;
+  domain: string;
+  tags: string[];
+  active_release?: string | null;
+  publication_status?: string;
+};
+
+// Project Spec S0121: the bounded per-resource shape every field of
+// GET /admin/datasets/{slug}/authoring-context's envelope uses -- either
+// `{status: "ready", data}` or `{status: "unavailable", error}`, never a bare
+// null/{}/[] standing in for failure.
+type AuthoringResourceEnvelope<T> =
+  | { status: "ready"; data: T }
+  | { status: "unavailable"; error: { type: string; code: string; message: string } };
+
+type AuthoringContextEnvelope = {
+  dataset_slug: string;
+  active_release: string;
+  dataset: AuthoringResourceEnvelope<AuthoringDatasetProjection>;
+  context: AuthoringResourceEnvelope<ContextPayload>;
+  contract: AuthoringResourceEnvelope<ContractEnvelope>;
+  metrics: AuthoringResourceEnvelope<MetricsPayload>;
+  visualizations: AuthoringResourceEnvelope<unknown>;
+  views: AuthoringResourceEnvelope<PredictView[]>;
+};
+
 type ReadOnlyData = {
-  dataset: SectionState<DatasetListing>;
+  dataset: SectionState<AuthoringDatasetProjection>;
   context: SectionState<ContextPayload>;
   contract: SectionState<ContractPayload>;
   resultContract: ResultContractState;
@@ -1810,6 +1850,21 @@ function mapSection<T, U>(state: SectionState<T>, mapper: (data: T) => U): Secti
   return state;
 }
 
+// Project Spec S0121: converts one GET /admin/datasets/{slug}/authoring-context
+// resource envelope into the shared SectionState shape, preserving the
+// backend's bounded error code/message (resource identity is implicit in
+// which ReadOnlyData field the caller assigns this into) rather than
+// collapsing an unavailable resource into a bare null/[]/{}.
+function authoringResourceState<T>(resource: AuthoringResourceEnvelope<T> | undefined): SectionState<T> {
+  if (!resource) {
+    return { status: "unavailable", message: "This resource was not included in the authoring context response." };
+  }
+  if (resource.status === "ready") {
+    return { status: "ready", data: resource.data };
+  }
+  return { status: "unavailable", message: resource.error.message, code: resource.error.code };
+}
+
 function metricKeys(metrics: MetricsPayload | null): string[] {
   const values = metrics?.evaluation?.metrics;
   return values && typeof values === "object" ? Object.keys(values) : [];
@@ -2114,6 +2169,14 @@ function MetadataCardTab({
   selectedSlug: string;
 }) {
   const context = stateValue(readOnlyData.context);
+  // Project Spec S0121: readOnlyData.dataset is now the private admin dataset
+  // projection (AuthoringDatasetProjection), which has no `visibility` field
+  // -- projectHomeCardPreview's PreviewDataset shape still declares one
+  // (unused by the function body) purely for structural compatibility with
+  // its other, public-listing-fed call site, so it is filled with an unused
+  // placeholder here rather than widening the shared lib's type.
+  const authoringDataset = stateValue(readOnlyData.dataset);
+  const previewDataset = authoringDataset ? { ...authoringDataset, visibility: "" } : undefined;
   const lockedProblemType = {
     machineId: "binary_classification",
     optionValue: "binary-classification",
@@ -2214,7 +2277,7 @@ function MetadataCardTab({
             </div>
             <DatasetCard
               {...projectHomeCardPreview(
-                stateValue(readOnlyData.dataset) ?? undefined,
+                previewDataset,
                 {
                   ...form,
                   home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
@@ -3048,6 +3111,7 @@ function InferenceFormTab({
   readOnlyData,
   customizationEditorState,
   onRetryCustomization,
+  onRetryAuthoringContext,
   onUpdateDraft,
 }: {
   form: DraftForm;
@@ -3055,14 +3119,47 @@ function InferenceFormTab({
   readOnlyData: ReadOnlyData;
   customizationEditorState: CustomizationEditorState;
   onRetryCustomization: () => void;
+  onRetryAuthoringContext: () => void;
   onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
 }) {
-  const views = stateValue(readOnlyData.views) ?? [];
+  const viewsState = readOnlyData.views;
   const draft = customizationDraftOf(customizationEditorState);
   const contractFieldsByName = useMemo(
     () => new Map(contractFields(stateValue(readOnlyData.contract)).map((field) => [field.name, field])),
     [readOnlyData.contract],
   );
+
+  // Project Spec S0121: semantic availability must be classified from
+  // viewsState.status directly -- never `stateValue(readOnlyData.views) ?? []`
+  // -- so a genuine zero-view result (status "ready", data []) renders the
+  // true empty state below, while a private authoring-context/views-resource
+  // failure (status "unavailable") renders a distinct unavailable message
+  // with Retry, and an in-flight request (status "idle"/"loading") renders
+  // neither.
+  if (viewsState.status === "unavailable") {
+    return (
+      <div className="dataset-admin-tab-workspace dataset-admin-inference-workspace">
+        <article className="dataset-admin-exceptional-notice dataset-admin-exceptional-notice--danger" role="status">
+          <strong>Predict views unavailable</strong>
+          <p className="dataset-admin-exceptional-notice__text">
+            The private authoring context could not load the eligible Predict Views for this dataset.
+          </p>
+          <button onClick={onRetryAuthoringContext} style={secondaryButtonStyle} type="button">
+            Retry
+          </button>
+        </article>
+      </div>
+    );
+  }
+  if (viewsState.status !== "ready") {
+    return (
+      <div className="dataset-admin-tab-workspace dataset-admin-inference-workspace">
+        <p className="dataset-admin-inline-status">Loading predict views...</p>
+      </div>
+    );
+  }
+
+  const views = viewsState.data;
 
   // Project Spec S0100: the normal path (the common, single-eligible-view
   // dataset shape every current fixture and real dataset uses) never shows a
@@ -3814,6 +3911,7 @@ function renderSelectedTab(
   publicationState: PublicationState,
   projectionState: PublicationProjectionState,
   visibilityWriteFailed: boolean,
+  onRetryAuthoringContext: () => void,
 ) {
   // Shared by the Live Preview case below so it can classify its own
   // draft-vs-published state (S0009) using the same comparison Publishing
@@ -3834,6 +3932,7 @@ function renderSelectedTab(
         <InferenceFormTab
           customizationEditorState={customizationEditorState}
           form={form}
+          onRetryAuthoringContext={onRetryAuthoringContext}
           onRetryCustomization={onRetryCustomization}
           onUpdateDraft={onUpdateCustomizationDraft}
           readOnlyData={readOnlyData}
@@ -3931,6 +4030,14 @@ export default function DatasetAdminPage() {
   // AbortSignal.
   const publicationProjectionRequestRef = useRef(0);
   const loadedDatasetSlugRef = useRef("");
+  // Project Spec S0121: own request-id/background-refresh tracking for the
+  // dedicated authoring-context effect below, kept separate from
+  // loadedDatasetSlugRef (owned by the profile-draft/publication-projection
+  // effect) so bumping authoringContextRetryNonce re-requests only the
+  // authoring context, never those other reads.
+  const authoringContextRequestRef = useRef(0);
+  const authoringContextLoadedSlugRef = useRef("");
+  const [authoringContextRetryNonce, setAuthoringContextRetryNonce] = useState(0);
   const canonicalDateBySlugRef = useRef<Record<string, string>>({});
   // Project Spec S0098: tracks which selectedSlug the deterministic
   // predict-view rebind default has already been applied for, so it runs
@@ -4027,7 +4134,6 @@ export default function DatasetAdminPage() {
 
   useEffect(() => {
     if (!selectedSlug) {
-      setReadOnlyData(emptyReadOnlyData);
       setDraftForm(emptyDraftForm());
       setCustomizationEditorState(emptyCustomizationEditorState);
       setCustomizationBaseline(null);
@@ -4064,45 +4170,6 @@ export default function DatasetAdminPage() {
     loadedDatasetSlugRef.current = selectedSlug;
 
     const controller = new AbortController();
-    if (!isBackgroundRefresh) {
-      setReadOnlyData({
-        dataset: { status: "loading" },
-        context: { status: "loading" },
-        contract: { status: "loading" },
-        resultContract: { status: "loading" },
-        metrics: { status: "loading" },
-        visualizations: { status: "loading" },
-        views: { status: "loading" },
-      });
-    }
-
-    async function loadReadOnlyAtlasValues() {
-      const encoded = encodeURIComponent(selectedSlug);
-      const [dataset, context, contract, metrics, visualizations, viewsResponse] = await Promise.all([
-        fetchJson<DatasetListing>(`/datasets/${encoded}`, controller.signal),
-        fetchJson<{ context: ContextPayload }>(`/datasets/${encoded}/context`, controller.signal),
-        fetchJson<ContractEnvelope>(`/datasets/${encoded}/contract`, controller.signal),
-        fetchJson<{ metrics: MetricsPayload }>(`/datasets/${encoded}/metrics`, controller.signal),
-        fetchJson<{ visualizations: unknown }>(`/datasets/${encoded}/visualizations`, controller.signal),
-        fetchJson<{ views: PredictView[] }>(`/datasets/${encoded}/views`, controller.signal),
-      ]);
-
-      const resultContract: ResultContractState = contract.status === "ready"
-        ? classifyResultContract(contract.data)
-        : { status: "transport_failure", message: "message" in contract ? contract.message : "Result contract request did not complete." };
-
-      setReadOnlyData({
-        dataset,
-        context: mapSection(context, (data) => data.context),
-        contract: mapSection(contract, (data) => data.contract),
-        resultContract,
-        metrics: mapSection(metrics, (data) => data.metrics),
-        visualizations: mapSection(visualizations, (data) => data.visualizations),
-        views: mapSection(viewsResponse, (data) => data.views),
-      });
-    }
-
-    void loadReadOnlyAtlasValues();
 
     // Automatically load the private/admin profile draft for the selected
     // Dataset Detail (Project Spec S0058 removes the manual "Load draft"
@@ -4183,6 +4250,93 @@ export default function DatasetAdminPage() {
 
     return () => controller.abort();
   }, [selectedSlug, refreshRevision]);
+
+  // Project Spec S0121: GET /admin/datasets/{slug}/authoring-context is now
+  // the sole technical read-model source for Dataset Admin authoring,
+  // replacing the six separate public-technical-read fetches
+  // (/datasets/{slug}, .../context, .../contract, .../metrics,
+  // .../visualizations, .../views) the sibling effect above used to issue --
+  // none of those public routes may be requested for ReadOnlyData anymore.
+  // Kept as its own effect (own AbortController, request-id ref, and retry
+  // nonce) so retryAuthoringContext below re-requests only this endpoint,
+  // never the profile-draft/publication-projection reads the sibling effect
+  // still owns. requestId guards a late response from a superseded
+  // slug/retry identity (mirrors customizationRequestRef's established
+  // pattern) since this repo's test fetch mocks do not honor AbortSignal.
+  useEffect(() => {
+    if (!selectedSlug) {
+      authoringContextLoadedSlugRef.current = "";
+      setReadOnlyData(emptyReadOnlyData);
+      return;
+    }
+
+    const requestId = authoringContextRequestRef.current + 1;
+    authoringContextRequestRef.current = requestId;
+
+    const isBackgroundRefresh = authoringContextLoadedSlugRef.current === selectedSlug;
+    authoringContextLoadedSlugRef.current = selectedSlug;
+
+    const controller = new AbortController();
+    if (!isBackgroundRefresh) {
+      setReadOnlyData({
+        dataset: { status: "loading" },
+        context: { status: "loading" },
+        contract: { status: "loading" },
+        resultContract: { status: "loading" },
+        metrics: { status: "loading" },
+        visualizations: { status: "loading" },
+        views: { status: "loading" },
+      });
+    }
+
+    async function loadAuthoringContext() {
+      const encoded = encodeURIComponent(selectedSlug);
+      const authoring = await fetchJson<AuthoringContextEnvelope>(
+        `/admin/datasets/${encoded}/authoring-context`,
+        controller.signal,
+      );
+      if (authoringContextRequestRef.current !== requestId) {
+        return;
+      }
+
+      if (authoring.status !== "ready") {
+        const message = "message" in authoring ? authoring.message : "The authoring context could not be loaded.";
+        setReadOnlyData({
+          dataset: { status: "unavailable", message },
+          context: { status: "unavailable", message },
+          contract: { status: "unavailable", message },
+          resultContract: { status: "transport_failure", message },
+          metrics: { status: "unavailable", message },
+          visualizations: { status: "unavailable", message },
+          views: { status: "unavailable", message },
+        });
+        return;
+      }
+
+      const envelope = authoring.data;
+      const contractResource = authoringResourceState<ContractEnvelope>(envelope.contract);
+      const resultContract: ResultContractState = contractResource.status === "ready"
+        ? classifyResultContract(contractResource.data)
+        : {
+            status: "transport_failure",
+            message: "message" in contractResource ? contractResource.message : "Result contract request did not complete.",
+          };
+
+      setReadOnlyData({
+        dataset: authoringResourceState<AuthoringDatasetProjection>(envelope.dataset),
+        context: authoringResourceState<ContextPayload>(envelope.context),
+        contract: mapSection(contractResource, (data) => data.contract),
+        resultContract,
+        metrics: authoringResourceState<MetricsPayload>(envelope.metrics),
+        visualizations: authoringResourceState<unknown>(envelope.visualizations),
+        views: authoringResourceState<PredictView[]>(envelope.views),
+      });
+    }
+
+    void loadAuthoringContext();
+
+    return () => controller.abort();
+  }, [selectedSlug, refreshRevision, authoringContextRetryNonce]);
 
   // Project Spec S0098: deterministic Dataset Admin authoring rebinding.
   // Runs only after hydration has resolved bound_predict_view_id from the
@@ -4789,6 +4943,16 @@ export default function DatasetAdminPage() {
     setCustomizationRetryNonce((current) => current + 1);
   }
 
+  // Project Spec S0121: shown only by InferenceFormTab's views-unavailable
+  // branch. Re-requests only the current selected dataset's private
+  // authoring context (bumping authoringContextRetryNonce, which the
+  // dedicated authoring-context effect above depends on) -- never a profile
+  // publish, customization save, visibility change, review-status change, or
+  // registry mutation.
+  function retryAuthoringContext() {
+    setAuthoringContextRetryNonce((current) => current + 1);
+  }
+
   // Client-side mirror of the backend's REQUIRED_FIELD_HIDDEN rejection
   // (registry/predict_view_customization_validate.py): lets the shared
   // Publish changes orchestrator below block the request entirely rather
@@ -4998,6 +5162,7 @@ export default function DatasetAdminPage() {
             publicationState,
             publicationProjection,
             visibilityWriteFailed,
+            retryAuthoringContext,
           )}
         </div>
       </section>

@@ -88,6 +88,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
             >
               <dt>{score.display_label}{emphasized && <Badge>Highlighted</Badge>}</dt>
               <dd>{score.value}</dd>
+              <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );
         }) : SCORE_ORDER.map((key) => {
@@ -113,6 +114,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
                   formatScore(value)
                 )}
               </dd>
+              <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );
         })}

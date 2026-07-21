@@ -1,14 +1,4 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 import { Card, EmptyState } from "../ui";
 
 type ChartDataPoint = {
@@ -40,6 +30,15 @@ const CHART_PRIMARY = "var(--dataset-theme-chart-primary)";
 const CHART_SECONDARY = "var(--dataset-theme-chart-secondary)";
 const CHART_GRID = "var(--dataset-theme-chart-grid)";
 
+// Cycled by category index rather than tied to a fixed category count.
+const DONUT_PALETTE = [
+  "var(--dataset-theme-accent)",
+  "var(--dataset-theme-chart-secondary)",
+  "var(--dataset-theme-accent-strong)",
+  "var(--dataset-theme-chart-primary)",
+  "var(--dataset-theme-chart-grid)",
+];
+
 function matchesTargetDistribution(chart: VisualizationChart): boolean {
   if (chart.id === TARGET_DISTRIBUTION_ID) {
     return true;
@@ -47,50 +46,90 @@ function matchesTargetDistribution(chart: VisualizationChart): boolean {
   return chart.title?.trim().toLowerCase() === TARGET_DISTRIBUTION_TITLE;
 }
 
-function renderChart(chart: VisualizationChart) {
-  if (chart.type === "bar") {
-    return (
-      <BarChart data={chart.data}>
-        <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" />
-        <XAxis dataKey="name" stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
-        <YAxis stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
-        <Tooltip contentStyle={{ background: "var(--dataset-theme-surface)", borderColor: CHART_GRID, color: "var(--dataset-theme-text)" }} />
-        <Bar dataKey="value" fill={CHART_PRIMARY} />
-      </BarChart>
-    );
+type ValidDistribution = {
+  data: ChartDataPoint[];
+  total: number;
+};
+
+/**
+ * A donut only renders when every category value is a finite, non-negative
+ * number and the total is strictly positive -- anything malformed, negative,
+ * non-finite, empty or zero-total falls back to the bounded empty state
+ * instead of producing NaN/Infinity arcs or fabricated proportions.
+ */
+function getValidDistribution(chart: VisualizationChart | null): ValidDistribution | null {
+  if (!chart?.data?.length) {
+    return null;
   }
 
-  return (
-    <LineChart data={chart.data}>
-      <CartesianGrid stroke={CHART_GRID} strokeDasharray="3 3" />
-      <XAxis dataKey="name" stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
-      <YAxis stroke={CHART_GRID} tick={{ fill: CHART_SECONDARY }} />
-      <Tooltip contentStyle={{ background: "var(--dataset-theme-surface)", borderColor: CHART_GRID, color: "var(--dataset-theme-text)" }} />
-      <Line type="monotone" dataKey="value" stroke={CHART_PRIMARY} dot={{ fill: CHART_SECONDARY }} />
-    </LineChart>
-  );
+  let total = 0;
+  for (const point of chart.data) {
+    if (typeof point.value !== "number" || !Number.isFinite(point.value) || point.value < 0) {
+      return null;
+    }
+    total += point.value;
+  }
+
+  return total > 0 ? { data: chart.data, total } : null;
+}
+
+function formatPercent(value: number, total: number): string {
+  return `${((value / total) * 100).toFixed(1)}%`;
 }
 
 export default function TargetDistribution({ visualizations }: TargetDistributionProps) {
   const chart = visualizations?.charts?.find(matchesTargetDistribution) ?? null;
+  const distribution = getValidDistribution(chart);
 
   return (
-    <Card className="dataset-detail-visualization">
+    <Card className="dataset-detail-visualization dataset-detail-visualization--donut">
       <h3>Target Distribution</h3>
-      {chart ? (
+      {distribution ? (
         <div
-          className="dataset-detail-visualization__chart"
-          aria-label={chart.title ?? "Target Distribution"}
+          className="dataset-detail-visualization__chart target-distribution__layout"
+          aria-label={chart!.title ?? "Target Distribution"}
           data-chart-grid={CHART_GRID}
           data-chart-primary={CHART_PRIMARY}
           data-chart-secondary={CHART_SECONDARY}
         >
-          <ResponsiveContainer width="100%" height={300}>
-            {renderChart(chart)}
-          </ResponsiveContainer>
+          <div className="target-distribution__donut">
+            <ResponsiveContainer height="100%" width="100%">
+              <PieChart>
+                <Pie
+                  data={distribution.data}
+                  dataKey="value"
+                  innerRadius="62%"
+                  isAnimationActive={false}
+                  nameKey="name"
+                  outerRadius="100%"
+                  paddingAngle={distribution.data.length > 1 ? 2 : 0}
+                >
+                  {distribution.data.map((point, index) => (
+                    <Cell key={point.name} fill={DONUT_PALETTE[index % DONUT_PALETTE.length]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <ul className="target-distribution__legend">
+            {distribution.data.map((point, index) => (
+              <li className="target-distribution__legend-row" key={point.name}>
+                <span
+                  aria-hidden="true"
+                  className="target-distribution__legend-marker"
+                  style={{ background: DONUT_PALETTE[index % DONUT_PALETTE.length] }}
+                />
+                <span className="target-distribution__legend-label">{point.name}</span>
+                <span className="target-distribution__legend-value">
+                  {formatPercent(point.value, distribution.total)}
+                  <em className="target-distribution__legend-raw">({point.value.toLocaleString()})</em>
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : (
-        <EmptyState title="Visualization not generated" message={EMPTY_MESSAGE} />
+        <EmptyState message={EMPTY_MESSAGE} title="Visualization not generated" />
       )}
     </Card>
   );

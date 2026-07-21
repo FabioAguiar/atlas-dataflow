@@ -602,6 +602,24 @@ h1 {
   background: var(--atlas-color-canvas);
 }
 
+/*
+ * Project Spec S0124: Dataset Detail-scoped card treatment (radius, shadow,
+ * padding) closer to the supplied prototype -- scoped under the shared
+ * surface only, so the generic Card/EmptyState primitives used elsewhere
+ * (e.g. Home, Dataset Admin) are untouched.
+ */
+.dataset-detail-surface .atlas-card {
+  border-radius: 1.1rem;
+  padding: 1.1rem;
+  box-shadow: 0 18px 40px rgb(15 23 42 / 6%);
+}
+
+.dataset-detail-surface .dataset-detail-header__metadata-item,
+.dataset-detail-surface .result-panel {
+  border-radius: 1.1rem;
+  box-shadow: 0 18px 40px rgb(15 23 42 / 6%);
+}
+
 .dataset-theme-scope h1,
 .dataset-theme-scope h2,
 .dataset-theme-scope h3,
@@ -645,17 +663,30 @@ h1 {
 
 .dataset-detail-header__heading {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--atlas-space-3);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--atlas-space-2);
 }
 
 .dataset-detail-header__heading h1 {
   margin: 0;
+  min-width: 0;
+}
+
+.dataset-detail-header__heading .atlas-badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  border-color: transparent;
+  color: var(--atlas-color-accent-strong);
+  background: var(--atlas-color-accent-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .dataset-detail-header__subtitle {
-  max-width: 42rem;
+  max-width: 46rem;
   margin: 0;
   color: var(--atlas-color-text-muted);
   font-size: var(--atlas-text-lg);
@@ -761,12 +792,12 @@ h1 {
 }
 
 .dataset-detail-overview__problem-summary h3 {
-  margin: 0 0 var(--atlas-space-2);
+  margin: 0;
 }
 
 .dataset-detail-overview__problem-summary p {
   margin: 0;
-  max-width: 42rem;
+  max-width: 62rem;
   color: var(--atlas-color-text-muted);
   line-height: var(--atlas-line-relaxed);
 }
@@ -785,14 +816,23 @@ h1 {
 
 .performance-summary__scores {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--atlas-space-4);
   margin: 0;
 }
 
+/*
+ * Project Spec S0124: each score is a compact bordered metric tile (not a
+ * plain definition-list cell) -- semantic dt/dd ownership is unchanged, only
+ * the surrounding tile chrome and the decorative rail are new.
+ */
 .performance-summary__score {
   display: grid;
   gap: var(--atlas-space-1);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: 0.9rem;
+  padding: 0.85rem;
+  background: var(--atlas-color-surface);
 }
 
 .performance-summary__score dt {
@@ -812,8 +852,25 @@ h1 {
   font-weight: 700;
 }
 
+.performance-summary__score-rail {
+  display: block;
+  margin-top: 0.2rem;
+  height: 0.3rem;
+  border-radius: var(--atlas-radius-pill);
+  background: linear-gradient(90deg, var(--atlas-color-accent-muted), var(--atlas-color-accent));
+}
+
+.performance-summary__score--emphasized {
+  border-color: var(--atlas-color-accent);
+  background: linear-gradient(180deg, var(--atlas-color-accent-muted), var(--atlas-color-surface));
+}
+
 .performance-summary__score--emphasized dd {
   color: var(--atlas-color-accent-strong);
+}
+
+.performance-summary__score--emphasized .performance-summary__score-rail {
+  background: linear-gradient(90deg, var(--atlas-color-accent), var(--atlas-color-accent-strong));
 }
 
 .performance-summary__score-pending {
@@ -835,6 +892,123 @@ h1 {
 .dataset-detail-visualization__chart {
   width: 100%;
   min-height: 300px;
+}
+
+/*
+ * Project Spec S0124: Target Distribution renders as a donut + legend
+ * (matching the reference grammar) instead of a generic Cartesian chart.
+ */
+.target-distribution__layout {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--atlas-space-4);
+  min-height: 220px;
+}
+
+.target-distribution__donut {
+  width: 9rem;
+  height: 9rem;
+}
+
+.target-distribution__legend {
+  width: 100%;
+  max-width: 18rem;
+  display: grid;
+  gap: var(--atlas-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.target-distribution__legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--atlas-space-2);
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+}
+
+.target-distribution__legend-marker {
+  flex: 0 0 auto;
+  width: 0.78rem;
+  height: 0.78rem;
+  border-radius: 0.22rem;
+}
+
+.target-distribution__legend-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.target-distribution__legend-value {
+  flex: 0 0 auto;
+  color: var(--atlas-color-text);
+  font-weight: 700;
+}
+
+.target-distribution__legend-raw {
+  margin-left: var(--atlas-space-1);
+  color: var(--atlas-color-text-subtle);
+  font-style: normal;
+  font-weight: 500;
+}
+
+/*
+ * Project Spec S0124: Feature Importance renders as a compact ranked
+ * horizontal-bar list (matching the reference grammar) instead of a generic
+ * Cartesian chart. Bar width is normalized for visual comparison only --
+ * the displayed value always stays the source's own raw value.
+ */
+.feature-importance__rows {
+  display: grid;
+  gap: var(--atlas-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.feature-importance__row {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, 7rem) 1fr auto;
+  gap: var(--atlas-space-3);
+  align-items: center;
+}
+
+.feature-importance__label {
+  color: var(--atlas-color-text);
+  font-size: var(--atlas-text-sm);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.feature-importance__track {
+  position: relative;
+  height: 0.5rem;
+  border-radius: var(--atlas-radius-pill);
+  background: var(--atlas-color-surface-muted);
+  overflow: hidden;
+}
+
+.feature-importance__bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: var(--atlas-radius-pill);
+  background: linear-gradient(90deg, var(--atlas-color-accent), var(--atlas-color-accent-strong));
+}
+
+.feature-importance__value {
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+  text-align: right;
+}
+
+@media (min-width: 768px) {
+  .feature-importance__row {
+    grid-template-columns: minmax(6rem, 8rem) 1fr auto;
+  }
 }
 
 /*
@@ -1029,10 +1203,28 @@ h1 {
   }
 
   .dataset-detail-header__metadata-item {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
     border: none;
     border-radius: 0;
     box-shadow: none;
     padding: var(--atlas-space-3) var(--atlas-space-4);
+  }
+
+  .dataset-detail-header__metadata-item dt {
+    flex: 0 0 auto;
+  }
+
+  .dataset-detail-header__metadata-item dd {
+    flex: 1 1 auto;
+    text-align: right;
+  }
+
+  .dataset-detail-header__metadata-item .dataset-detail-header__metadata-hint {
+    flex-basis: 100%;
+    text-align: right;
   }
 
   .dataset-detail-header__metadata-item + .dataset-detail-header__metadata-item {
@@ -1114,6 +1306,43 @@ h1 {
 
   .dataset-detail-overview__analytics > * {
     height: 100%;
+  }
+
+  /*
+   * Project Spec S0124: desktop/tablet separate the title (left) from the
+   * single analysis badge (right) instead of a generic wrapping row.
+   */
+  .dataset-detail-header__heading {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--atlas-space-4);
+  }
+
+  .dataset-detail-header__heading .atlas-badge {
+    margin-top: var(--atlas-space-1);
+  }
+
+  /*
+   * Project Spec S0124: replace the generic auto-fit metadata grid with a
+   * deterministic tablet composition -- a fixed 3-column grid below 960px
+   * (where five columns cannot safely stay uncramped in this shell), and
+   * the full 5-column reference density from 960px up.
+   */
+  .dataset-detail-header__metadata {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dataset-detail-header__metadata-item {
+    min-height: 4.75rem;
+    align-content: center;
+  }
+}
+
+@media (min-width: 960px) {
+  .dataset-detail-header__metadata {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 

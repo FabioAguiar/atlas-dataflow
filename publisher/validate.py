@@ -23,6 +23,8 @@ _DEFAULT_REPO_ROOT = Path(__file__).parent.parent
 _PUBLIC_CONTRACT_ROLE = "public_contract"
 _MODEL_ARTIFACT_ROLE = "model_artifact"
 
+_VISUALIZATIONS_ROLE = "visualizations"
+
 _REQUIRED_ROLES = (
     "contracts",
     "public_contract",
@@ -31,6 +33,7 @@ _REQUIRED_ROLES = (
     "metrics",
     "model_card",
     "public_context",
+    "visualizations",
     "manifest_input",
     "candidate_metadata",
 )
@@ -41,6 +44,7 @@ _SCHEMA_COMPAT_ROLES = frozenset({
     "manifest_input",
     "metrics",
     "model_card",
+    "visualizations",
     "candidate_metadata",
 })
 
@@ -52,6 +56,7 @@ _MISSING_ROLE_CODE = {
     "metrics": "missing_metrics",
     "model_card": "missing_model_card",
     "public_context": "missing_public_context",
+    "visualizations": "missing_visualizations",
     "manifest_input": "missing_manifest_input",
     "candidate_metadata": "missing_candidate_metadata",
 }
@@ -59,10 +64,12 @@ _MISSING_ROLE_CODE = {
 # Project Spec S0107: roles that need path-safety enforcement (absolute,
 # traversal, or candidate-root-escaping references rejected) before the file
 # is even looked up. public_contract already had this; model_artifact is a
-# private binary and gets its own distinct rejection code.
+# private binary and gets its own distinct rejection code. Project Spec
+# S0128 extends this to visualizations.
 _UNSAFE_REFERENCE_CODE = {
     _PUBLIC_CONTRACT_ROLE: "unsafe_candidate_artifact",
     _MODEL_ARTIFACT_ROLE: "unsafe_model_reference",
+    _VISUALIZATIONS_ROLE: "unsafe_visualizations_reference",
 }
 _PATH_SAFETY_CHECKED_ROLES = frozenset(_UNSAFE_REFERENCE_CODE)
 
@@ -72,6 +79,7 @@ _SCHEMA_INCOMPAT_CODE = {
     "manifest_input": "manifest_input_schema_incompatible",
     "metrics": "metrics_schema_incompatible",
     "model_card": "model_card_schema_incompatible",
+    "visualizations": "visualizations_schema_incompatible",
     "candidate_metadata": "candidate_metadata_schema_incompatible",
 }
 
@@ -81,6 +89,7 @@ _JSON_COMPAT_ROLES = (
     "metrics",
     "model_card",
     "public_context",
+    "visualizations",
     "manifest_input",
     "candidate_metadata",
 )
@@ -89,6 +98,7 @@ _PUBLIC_ROLES = frozenset({
     "metrics",
     "model_card",
     "public_context",
+    "visualizations",
 })
 
 _UNSAFE_PUBLIC_KEYS = frozenset({
@@ -207,6 +217,11 @@ def _identity_value(data: dict, identity_key: str) -> str | None:
             ("source_input", identity_key),
             ("bundle_identity", identity_key),
             ("model_identity", identity_key),
+            # Project Spec S0128: analytical-visualizations.v1 (and every
+            # other training-run-produced artifact) declares its dataset/run
+            # identity under training_run_identity, not one of the identity
+            # shapes above.
+            ("training_run_identity", identity_key),
             (identity_key,),
         ),
     )
@@ -258,6 +273,35 @@ def _public_contract_conforms_to_schema(data: dict, repo_root: Path) -> bool:
         return False
     try:
         jsonschema.Draft7Validator(schema).validate(data)
+    except (jsonschema.ValidationError, jsonschema.SchemaError):
+        return False
+    return True
+
+
+def _visualizations_conforms_to_schema(data: dict, repo_root: Path) -> bool:
+    """Validate a parsed visualizations artifact against the
+    repository-authoritative pipeline/analytical-visualizations.schema.json
+    (Project Spec S0128). Fails closed on any missing schema, unreadable
+    schema, or missing jsonschema dependency, matching
+    `_public_contract_conforms_to_schema`'s convention. Unlike that helper,
+    this selects the JSON Schema validator declared by the schema's own
+    `$schema` (draft 2020-12, which the public_contract schema does not use)
+    instead of hardcoding Draft7Validator."""
+    try:
+        import jsonschema
+    except ImportError:
+        return False
+    schema = _load_json_if_possible(
+        repo_root / "pipeline" / "analytical-visualizations.schema.json"
+    )
+    if schema is None:
+        return False
+    try:
+        validator_cls = jsonschema.validators.validator_for(
+            schema, default=jsonschema.Draft202012Validator
+        )
+        validator_cls.check_schema(schema)
+        validator_cls(schema).validate(data)
     except (jsonschema.ValidationError, jsonschema.SchemaError):
         return False
     return True
@@ -497,10 +541,11 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
     if id_mismatch_reasons:
         identifier_consistency["mismatch_reasons"] = id_mismatch_reasons
 
-    # --- Schema compatibility (JSON validity, 6 roles; public_contract also
-    # gets real JSON Schema validation below, not just parseability) ---
+    # --- Schema compatibility (JSON validity, 7 roles; public_contract and
+    # visualizations also get real JSON Schema validation below, not just
+    # parseability) ---
     schema_compatibility: dict[str, dict] = {}
-    for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "candidate_metadata"):
+    for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "visualizations", "candidate_metadata"):
         rr = role_results.get(role, {})
         if rr.get("status") != "present":
             schema_compatibility[role] = {"checked": False, "compatible": False}
@@ -537,6 +582,26 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
             reason = _rejection_reason(
                 incompat_code,
                 "Artifact for role 'public_contract' does not conform to the public contract schema.",
+                role,
+            )
+            rejection_reasons.append(reason)
+            schema_compatibility[role] = {
+                "checked": True,
+                "compatible": False,
+                "reason": reason,
+            }
+            continue
+
+        if role == _VISUALIZATIONS_ROLE and not isinstance(parsed_artifact, dict):
+            parsed_artifact = None
+        if role == _VISUALIZATIONS_ROLE and (
+            parsed_artifact is None
+            or not _visualizations_conforms_to_schema(parsed_artifact, resolved_repo_root)
+        ):
+            reason = _rejection_reason(
+                incompat_code,
+                "Artifact for role 'visualizations' does not conform to the "
+                "analytical visualizations schema.",
                 role,
             )
             rejection_reasons.append(reason)
@@ -839,7 +904,7 @@ def _empty_validation_result(errors: list[dict], candidate_dir: Path) -> dict:
         },
         "schema_compatibility": {
             role: {"checked": False, "compatible": False}
-            for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "candidate_metadata")
+            for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "visualizations", "candidate_metadata")
         },
         "cross_artifact_consistency": {
             "checked": False,
@@ -916,7 +981,7 @@ def _build_validation_result(validation: dict) -> dict:
                 "artifact_reference": None,
             }
 
-    for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "candidate_metadata"):
+    for role in ("contracts", "public_contract", "manifest_input", "metrics", "model_card", "visualizations", "candidate_metadata"):
         if role not in schema_compatibility:
             schema_compatibility[role] = {"checked": False, "compatible": False}
 

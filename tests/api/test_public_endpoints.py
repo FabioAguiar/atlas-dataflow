@@ -1152,6 +1152,270 @@ def test_real_release_dataset_home_visualizations_degrade_safely(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# S0128: analytical visualizations generation and release packaging
+# ---------------------------------------------------------------------------
+
+_S0128_VALID_ARTIFACT = {
+    "schema_version": "analytical-visualizations.v1",
+    "artifact_kind": "analytical_visualizations",
+    "created_at": "2026-07-21T12:47:21Z",
+    "training_run_identity": {
+        "dataset_slug": "telco-customer-churn",
+        "run_id": "train-20260721T124721Z",
+        "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260721T124721Z/",
+    },
+    "charts": [
+        {
+            "id": "target_distribution",
+            "title": "Target Distribution",
+            "type": "bar",
+            "x_label": "Churn",
+            "y_label": "Rows",
+            "data": [{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+        },
+        {
+            "id": "feature_importance",
+            "title": "Feature Importance",
+            "type": "bar",
+            "x_label": "Feature",
+            "y_label": "Importance",
+            "data": [{"name": "tenure", "value": 0.4}, {"name": "Contract", "value": 0.3}],
+        },
+    ],
+    "target_distribution_method": {
+        "population_kind": "prepared_dataset",
+        "row_count": 7043,
+        "target_column": "Churn",
+    },
+    "feature_importance_method": {
+        "model_family": "gradient_boosting",
+        "source": "estimator.feature_importances_",
+        "total_source_feature_count": 19,
+        "omitted_source_feature_count": 9,
+        "public_row_limit": 10,
+    },
+    "evidence_policy": {
+        "raw_logs_prohibited": True,
+        "raw_runtime_prohibited": True,
+        "raw_api_payloads_prohibited": True,
+        "secrets_prohibited": True,
+        "raw_dataset_embedded": False,
+        "model_bytes_embedded": False,
+        "serialized_estimator_state_embedded": False,
+        "raw_transformed_matrices_embedded": False,
+        "notebook_state_embedded": False,
+        "reduced_and_sanitized": True,
+    },
+}
+
+
+def test_public_visualizations_endpoint_returns_ready_payload_for_new_promoted_release(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0128-001"
+        _s0101_write_artifact_file(
+            release_dir, "visualizations/visualizations.json", _S0128_VALID_ARTIFACT
+        )
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+        )
+        monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+        monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset_snapshot_readiness",
+            lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+        )
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset",
+            lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0128-001"
+            ),
+        )
+        monkeypatch.setattr(
+            api_main,
+            "load_public_visualizations",
+            lambda active_release: _load_public_visualizations_real(active_release, releases_root),
+        )
+
+        response = api_main.get_public_visualizations("example-dataset")
+
+        assert response == {
+            "dataset_slug": "example-dataset",
+            "visualizations": {"charts": _S0128_VALID_ARTIFACT["charts"]},
+        }
+
+
+def _load_public_visualizations_real(active_release, releases_root):
+    import public_visualizations_loader
+
+    return public_visualizations_loader.load_public_visualizations(
+        active_release, releases_root=releases_root
+    )
+
+
+def test_public_visualizations_endpoint_invalid_artifact_degrades_to_bounded_unavailable(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0128-002"
+        malformed = {**_S0128_VALID_ARTIFACT, "schema_version": "analytical-visualizations.v0"}
+        _s0101_write_artifact_file(release_dir, "visualizations/visualizations.json", malformed)
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+        )
+        monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+        monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset_snapshot_readiness",
+            lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+        )
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset",
+            lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0128-002"
+            ),
+        )
+        monkeypatch.setattr(
+            api_main,
+            "load_public_visualizations",
+            lambda active_release: _load_public_visualizations_real(active_release, releases_root),
+        )
+
+        response = api_main.get_public_visualizations("example-dataset")
+
+        assert response.status_code == 503
+        payload = _response_json(response)
+        assert payload["error_code"] == "VISUALIZATIONS_UNAVAILABLE"
+        _assert_no_internal_public_exposure(payload)
+
+
+def test_public_visualizations_loader_rejects_path_traversal_reference():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0128-003"
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "visualizations", "reference": "../../etc/passwd"}],
+        )
+        raised = False
+        try:
+            api_main.load_public_visualizations("release-s0128-003", releases_root=releases_root)
+        except api_main.PublicVisualizationsUnavailableError:
+            raised = True
+        assert raised, "Expected PublicVisualizationsUnavailableError for an escaping reference"
+
+
+def test_public_visualizations_loader_filters_internal_keys():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0128-004"
+        artifact_with_internal_key = dict(_S0128_VALID_ARTIFACT)
+        artifact_with_internal_key["internal"] = {"leaked": "should not appear"}
+        _s0101_write_artifact_file(
+            release_dir, "visualizations/visualizations.json", artifact_with_internal_key
+        )
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+        )
+
+        projection = api_main.load_public_visualizations(
+            "release-s0128-004", releases_root=releases_root
+        )
+
+        assert set(projection.keys()) == {"charts"}
+        assert projection["charts"] == _S0128_VALID_ARTIFACT["charts"]
+
+
+def test_public_visualizations_endpoint_never_loads_model_or_executes_inference():
+    """The release directory declares no model_artifact role and contains no
+    model bytes at all -- the loader must still succeed, proving it never
+    needs to load a model or execute inference to build the projection."""
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0128-005"
+        _s0101_write_artifact_file(
+            release_dir, "visualizations/visualizations.json", _S0128_VALID_ARTIFACT
+        )
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+        )
+        assert not any((release_dir).rglob("*.pkl"))
+
+        projection = api_main.load_public_visualizations(
+            "release-s0128-005", releases_root=releases_root
+        )
+        assert projection["charts"]
+
+
+def test_public_visualizations_endpoint_hidden_dataset_returns_maintenance(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: False)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda dataset_slug: SimpleNamespace(dataset_slug=dataset_slug, active_release="irrelevant"),
+    )
+
+    response = api_main.get_public_visualizations("example-dataset")
+
+    assert response.status_code == 503
+    assert _response_json(response)["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_public_visualizations_endpoint_needs_review_dataset_returns_maintenance(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: True)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda dataset_slug: SimpleNamespace(dataset_slug=dataset_slug, active_release="irrelevant"),
+    )
+
+    response = api_main.get_public_visualizations("example-dataset")
+
+    assert response.status_code == 503
+    assert _response_json(response)["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_public_visualizations_endpoint_not_found_dataset(monkeypatch):
+    def _raise(_dataset_slug):
+        raise DatasetUnavailableError("no such dataset")
+
+    monkeypatch.setattr(api_main, "resolve_dataset", _raise)
+
+    response = api_main.get_public_visualizations("does-not-exist")
+
+    assert response.status_code == 404
+    assert _response_json(response)["error_code"] == "DATASET_NOT_FOUND"
+
+
+def test_authoring_context_visualizations_ready_reports_canonical_charts():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    original_visualizations = api_main.load_public_visualizations
+    try:
+        api_main.load_public_visualizations = lambda _release: {
+            "charts": _S0128_VALID_ARTIFACT["charts"]
+        }
+        response = api_main.get_admin_dataset_authoring_context(
+            "telco-customer-churn", _authoring_request()
+        )
+        assert response["visualizations"]["status"] == "ready"
+        assert response["visualizations"]["data"]["charts"] == _S0128_VALID_ARTIFACT["charts"]
+        assert response["contract"]["status"] == "ready"
+        assert response["views"]["status"] == "ready"
+    finally:
+        api_main.load_public_visualizations = original_visualizations
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+# ---------------------------------------------------------------------------
 # Real-release valid prediction flow: M27-03
 # ---------------------------------------------------------------------------
 

@@ -104,10 +104,11 @@
         "training_metrics",
         "model_card",
         "public_context",
+        "visualizations",
         "inference_bundle",
         "internal_evidence_references"
       ],
-      "description": "Governed artifact roles consumed before candidate assembly. Required roles must reference real dataflow outputs with hashes or an explicit hash policy. Visualization references are optional and must not weaken mandatory role rejection.",
+      "description": "Governed artifact roles consumed before candidate assembly. Required roles must reference real dataflow outputs with hashes or an explicit hash policy. The visualizations role is required (Project Spec S0128): a release-bound analytical visualizations artifact reference, not an optional one.",
       "properties": {
         "discovery_evidence": {
           "allOf": [
@@ -326,12 +327,26 @@
             }
           ]
         },
-        "visualization_references": {
-          "type": "array",
-          "description": "Optional visualization references where available. Missing visualization references must be represented by omission or by availability_status='not_available', not by weakening mandatory artifact requirements.",
-          "items": {
-            "$ref": "#/$defs/optional_public_artifact_input"
-          }
+        "visualizations": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/required_public_artifact_input"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "visualizations"
+                },
+                "source_stage": {
+                  "const": "M24"
+                },
+                "contract_version": {
+                  "const": "analytical-visualizations.v1"
+                }
+              }
+            }
+          ],
+          "description": "Project Spec S0128: required, release-bound analytical visualizations artifact reference (Target Distribution and Feature Importance), produced during governed training."
         },
         "inference_bundle": {
           "allOf": [
@@ -393,7 +408,7 @@
         },
         "role_mappings": {
           "type": "array",
-          "minItems": 7,
+          "minItems": 8,
           "items": {
             "$ref": "#/$defs/role_mapping"
           }
@@ -729,47 +744,6 @@
             "availability_status": {
               "const": "real_dataflow_artifact"
             }
-          }
-        }
-      ]
-    },
-    "optional_public_artifact_input": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/artifact_input_base"
-        },
-        {
-          "properties": {
-            "role": {
-              "const": "visualization_reference"
-            },
-            "required": {
-              "const": false
-            },
-            "public_projection": {
-              "enum": [
-                "public_artifact",
-                "public_reference_only"
-              ]
-            },
-            "evidence_classification": {
-              "enum": [
-                "public_artifact",
-                "not_evidence"
-              ]
-            }
-          },
-          "if": {
-            "properties": {
-              "availability_status": {
-                "const": "real_dataflow_artifact"
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "sha256"
-            ]
           }
         }
       ]

@@ -20,6 +20,7 @@ REQUIRED_ROLES = (
     "metrics",
     "model_card",
     "public_context",
+    "visualizations",
     "manifest_input",
     "candidate_metadata",
 )
@@ -56,6 +57,63 @@ def _valid_public_contract_payload(**overrides) -> dict:
     return payload
 
 
+def _valid_visualizations_payload(**overrides) -> dict:
+    payload = {
+        "schema_version": "analytical-visualizations.v1",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-06-19T00:00:00Z",
+        "training_run_identity": {
+            "dataset_slug": DATASET_SLUG,
+            "run_id": "train-20260619T000000Z",
+            "output_directory": f"pipeline/training-runs/{DATASET_SLUG}/train-20260619T000000Z/",
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": "Churn",
+                "y_label": "Rows",
+                "data": [{"name": "No", "value": 3}, {"name": "Yes", "value": 1}],
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": [{"name": "example_feature", "value": 1.0}],
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset",
+            "row_count": 4,
+            "target_column": "example_target",
+        },
+        "feature_importance_method": {
+            "model_family": "gradient_boosting",
+            "source": "estimator.feature_importances_",
+            "total_source_feature_count": 1,
+            "omitted_source_feature_count": 0,
+            "public_row_limit": 10,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _artifact_payload(role: str, **overrides) -> dict:
     if role == "public_contract":
         # A real contracts/public-contract.schema.json instance
@@ -63,6 +121,12 @@ def _artifact_payload(role: str, **overrides) -> dict:
         # dataset_identity/role/etc keys the other roles use below
         # (Project Spec S0101).
         return _valid_public_contract_payload(**overrides)
+    if role == "visualizations":
+        # A real pipeline/analytical-visualizations.schema.json instance
+        # (additionalProperties: false, fixed schema_version/artifact_kind) --
+        # cannot carry the generic dataset_identity/role/etc keys the other
+        # roles use below (Project Spec S0128).
+        return _valid_visualizations_payload(**overrides)
     payload = {
         "role": role,
         "dataset_identity": {"dataset_slug": DATASET_SLUG},
@@ -505,6 +569,7 @@ def _write_s0032_governed_artifacts(repo_root: Path, *, omit_role: str | None = 
         "training_metrics": f"pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json",
         "model_card": f"pipeline/training-runs/{dataset_slug}/{run_id}/model-card.json",
         "public_context": f"contracts/{dataset_slug}/dataset-context.json",
+        "visualizations": f"pipeline/training-runs/{dataset_slug}/{run_id}/analytical-visualizations.json",
         "inference_bundle": f"contracts/{dataset_slug}/inference-bundle.json",
     }
     for role, relative_path in references.items():
@@ -521,6 +586,20 @@ def _write_s0032_governed_artifacts(repo_root: Path, *, omit_role: str | None = 
             # S0101 -- publisher/validate.py now validates this role for
             # real against that schema).
             _write_json(repo_root / relative_path, _valid_public_contract_payload())
+        elif role == "visualizations":
+            # Must be a real pipeline/analytical-visualizations.schema.json
+            # instance (Project Spec S0128), not the generic
+            # role/contract_version placeholder used below.
+            _write_json(
+                repo_root / relative_path,
+                _valid_visualizations_payload(
+                    training_run_identity={
+                        "dataset_slug": dataset_slug,
+                        "run_id": run_id,
+                        "output_directory": f"pipeline/training-runs/{dataset_slug}/{run_id}/",
+                    },
+                ),
+            )
         elif role == "inference_bundle":
             _write_json(
                 repo_root / relative_path,
@@ -627,3 +706,230 @@ def test_assemble_release_candidate_rejects_when_a_referenced_artifact_goes_miss
     assert result["rejection_phase"] == "candidate_artifact_missing"
     assert artifact_references["public_contract"] in result["missing_paths"]
     assert not any((repo_root / "releases").rglob("release-candidate.json"))
+
+
+# --- S0128: visualizations as the tenth required publisher artifact role ---
+
+
+def test_visualizations_accepts_a_conformant_candidate(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert result["role_results"]["visualizations"]["status"] == "present"
+    assert result["schema_compatibility"]["visualizations"] == {"checked": True, "compatible": True}
+
+
+def test_visualizations_missing_role_definition_is_rejected(tmp_path):
+    candidate_dir = _candidate_dir(tmp_path)
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+
+    artifact_roles = {}
+    for role in REQUIRED_ROLES:
+        if role == "visualizations":
+            continue
+        role_path = _role_path(role)
+        artifact_roles[role] = {"role": role, "path": role_path, "required": True}
+        if role == "model_artifact":
+            (candidate_dir / role_path).parent.mkdir(parents=True, exist_ok=True)
+            (candidate_dir / role_path).write_bytes(MODEL_ARTIFACT_BYTES)
+            continue
+        _write_json(candidate_dir / role_path, _artifact_payload(role))
+
+    candidate = {
+        "schema_version": "release-candidate.v1",
+        "candidate_kind": "release_candidate",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG, "dataset_title": "Example Dataset"},
+        "release_identity": {
+            "release_id": RELEASE_ID,
+            "release_version": RELEASE_VERSION,
+            "created_at": "2026-06-19T00:00:00Z",
+        },
+        "source_run": {"run_id": "test-run", "producer": "pytest", "created_at": "2026-06-19T00:00:00Z"},
+        "artifact_roles": artifact_roles,
+        "candidate_metadata": {
+            "assembled_by": "pytest",
+            "assembled_at": "2026-06-19T00:00:00Z",
+            "intended_publisher_action": "validate_candidate",
+            "completeness_validation": {
+                "required_artifact_roles": [r for r in REQUIRED_ROLES if r != "visualizations"],
+                "hash_policy": "publisher_calculates_hashes",
+                "manifest_policy": "publisher_generates_manifest",
+            },
+        },
+        "state_boundaries": {
+            "pipeline_run_is_publishable": False,
+            "candidate_is_published_release": False,
+            "promotion_required": True,
+            "registry_update_allowed_in_candidate": False,
+            "public_upload_required": False,
+            "web_administration_required": False,
+            "database_publication_management_required": False,
+            "runtime_consumes_temporary_pipeline_output": False,
+        },
+    }
+    _write_json(candidate_dir / "release-candidate.json", candidate)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "missing_visualizations" in _rejection_codes(result)
+    assert result["role_results"]["visualizations"]["status"] == "missing"
+
+
+def test_visualizations_missing_file_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    (candidate_dir / "artifacts" / "visualizations.json").unlink()
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "missing_visualizations" in _rejection_codes(result)
+    assert result["role_results"]["visualizations"]["status"] == "missing"
+
+
+def test_visualizations_unsafe_reference_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    candidate["artifact_roles"]["visualizations"]["path"] = "../../../etc/passwd"
+    _write_json(candidate_dir / "release-candidate.json", candidate)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "unsafe_visualizations_reference" in _rejection_codes(result)
+    assert result["role_results"]["visualizations"]["status"] == "unsafe"
+    assert result["role_results"]["visualizations"]["artifact_reference"] is None
+
+
+def test_visualizations_invalid_json_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    artifact_path = candidate_dir / "artifacts" / "visualizations.json"
+    artifact_path.write_text("{not valid json", encoding="utf-8")
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "visualizations_schema_incompatible" in _rejection_codes(result)
+    assert result["schema_compatibility"]["visualizations"]["compatible"] is False
+
+
+def test_visualizations_wrong_schema_version_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "visualizations": {"schema_version": "analytical-visualizations.v0"},
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "visualizations_schema_incompatible" in _rejection_codes(result)
+
+
+def test_visualizations_dataset_identity_mismatch_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "visualizations": {
+                "training_run_identity": {
+                    "dataset_slug": "other-dataset",
+                    "run_id": "train-20260619T000000Z",
+                    "output_directory": "pipeline/training-runs/other-dataset/train-20260619T000000Z/",
+                },
+            },
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "dataset_identifier_mismatch" in _rejection_codes(result)
+
+
+def test_visualizations_missing_required_chart_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "visualizations": {
+                "charts": [
+                    {
+                        "id": "target_distribution",
+                        "title": "Target Distribution",
+                        "type": "bar",
+                        "x_label": "Churn",
+                        "y_label": "Rows",
+                        "data": [{"name": "No", "value": 3}, {"name": "Yes", "value": 1}],
+                    },
+                ],
+            },
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "visualizations_schema_incompatible" in _rejection_codes(result)
+
+
+def test_visualizations_non_finite_or_negative_values_are_rejected(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "visualizations": {
+                "charts": [
+                    {
+                        "id": "target_distribution",
+                        "title": "Target Distribution",
+                        "type": "bar",
+                        "x_label": "Churn",
+                        "y_label": "Rows",
+                        "data": [{"name": "No", "value": -3}, {"name": "Yes", "value": 1}],
+                    },
+                    {
+                        "id": "feature_importance",
+                        "title": "Feature Importance",
+                        "type": "bar",
+                        "x_label": "Feature",
+                        "y_label": "Importance",
+                        "data": [{"name": "example_feature", "value": 1.0}],
+                    },
+                ],
+            },
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "visualizations_schema_incompatible" in _rejection_codes(result)
+
+
+def test_visualizations_unsafe_public_key_is_rejected(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    artifact_path = candidate_dir / "artifacts" / "visualizations.json"
+    payload = json.loads(artifact_path.read_text())
+    payload["internal_evidence"] = {"unsafe": True}
+    _write_json(artifact_path, payload)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "public_projection_unsafe" in _rejection_codes(result)
+    # Schema also independently rejects the additional, unknown key --
+    # both mechanisms agreeing is expected, not a conflict.
+    assert result["schema_compatibility"]["visualizations"]["compatible"] is False
+
+
+def test_visualizations_rejection_reasons_are_sanitized(tmp_path):
+    candidate_dir = _write_candidate(tmp_path)
+    artifact_path = candidate_dir / "artifacts" / "visualizations.json"
+    artifact_path.write_text("{not valid json", encoding="utf-8")
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    for reason in result["rejection_reasons"]:
+        assert str(candidate_dir) not in json.dumps(reason)
+        assert str(tmp_path) not in json.dumps(reason)

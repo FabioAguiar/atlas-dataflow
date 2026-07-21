@@ -395,9 +395,12 @@ _S0101_REQUIRED_ROLES = (
     "metrics",
     "model_card",
     "public_context",
+    "visualizations",
     "manifest_input",
     "candidate_metadata",
 )
+
+_S0128_RUN_ID = "train-20260714T000000Z"
 
 # Project Spec S0107: the model artifact is a private binary, never JSON.
 _S0101_MODEL_ARTIFACT_BYTES = b"pytest-fixture-model-bytes-not-a-real-model"
@@ -423,6 +426,59 @@ def _s0101_artifact_payload(role: str) -> dict:
                     "display_order": 1,
                 }
             ],
+        }
+    if role == "visualizations":
+        return {
+            "schema_version": "analytical-visualizations.v1",
+            "artifact_kind": "analytical_visualizations",
+            "created_at": "2026-07-14T00:00:00Z",
+            "training_run_identity": {
+                "dataset_slug": _S0101_DATASET_SLUG,
+                "run_id": _S0128_RUN_ID,
+                "output_directory": f"pipeline/training-runs/{_S0101_DATASET_SLUG}/{_S0128_RUN_ID}/",
+            },
+            "charts": [
+                {
+                    "id": "target_distribution",
+                    "title": "Target Distribution",
+                    "type": "bar",
+                    "x_label": "Churn",
+                    "y_label": "Rows",
+                    "data": [{"name": "No", "value": 3}, {"name": "Yes", "value": 1}],
+                },
+                {
+                    "id": "feature_importance",
+                    "title": "Feature Importance",
+                    "type": "bar",
+                    "x_label": "Feature",
+                    "y_label": "Importance",
+                    "data": [{"name": "example_feature", "value": 1.0}],
+                },
+            ],
+            "target_distribution_method": {
+                "population_kind": "prepared_dataset",
+                "row_count": 4,
+                "target_column": "example_target",
+            },
+            "feature_importance_method": {
+                "model_family": "gradient_boosting",
+                "source": "estimator.feature_importances_",
+                "total_source_feature_count": 1,
+                "omitted_source_feature_count": 0,
+                "public_row_limit": 10,
+            },
+            "evidence_policy": {
+                "raw_logs_prohibited": True,
+                "raw_runtime_prohibited": True,
+                "raw_api_payloads_prohibited": True,
+                "secrets_prohibited": True,
+                "raw_dataset_embedded": False,
+                "model_bytes_embedded": False,
+                "serialized_estimator_state_embedded": False,
+                "raw_transformed_matrices_embedded": False,
+                "notebook_state_embedded": False,
+                "reduced_and_sanitized": True,
+            },
         }
     payload = {
         "role": role,
@@ -460,6 +516,7 @@ def _s0101_prepare_tmp_repo(tmp_path: Path) -> tuple[Path, Path]:
         "publisher/release-candidate.operational-note.json",
         "publisher/release-manifest.schema.json",
         "contracts/public-contract.schema.json",
+        "pipeline/analytical-visualizations.schema.json",
     ):
         src = REPO_ROOT / relative
         dst = tmp_repo / relative
@@ -622,4 +679,99 @@ def test_model_artifact_promotion_copies_model_and_hashes_match_end_to_end(tmp_p
 
     valid, errors = publisher_manifest.verify(release_dir / "manifest.json", release_dir)
     assert valid is True
+    assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# S0128: release-bound analytical visualizations artifact packaging and
+# manifest integrity -- generic promotion of the tenth required publisher
+# artifact role, through the same real validate -> manifest -> promote
+# pipeline exercised above for public_contract (S0101) / model_artifact
+# (S0107).
+# ---------------------------------------------------------------------------
+
+
+def test_visualizations_hash_in_manifest_and_required_hash_coverage(tmp_path: Path) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    publisher_validate.run(str(candidate_dir), repo_root=tmp_repo)
+    run_dirs = sorted((tmp_repo / "publisher" / "runs").iterdir())
+    run_dir = run_dirs[-1]
+    manifest_result = publisher_manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    manifest_roles = {a["role"]: a for a in manifest_result["artifacts"]}
+    assert "visualizations" in manifest_roles
+    source_path = candidate_dir / "artifacts" / "visualizations.json"
+    expected_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    assert manifest_roles["visualizations"]["hash_value"] == expected_hash
+    assert manifest_roles["visualizations"]["hash_algorithm"] == "sha256"
+    assert "visualizations" in manifest_result["required_hash_coverage"]["required_artifact_roles"]
+
+
+def test_manifest_generation_is_deterministic_for_visualizations(tmp_path: Path) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    manifest_1, errors_1 = publisher_manifest.generate_manifest(candidate_dir)
+    manifest_2, errors_2 = publisher_manifest.generate_manifest(candidate_dir)
+    assert errors_1 == []
+    assert errors_2 == []
+
+    hashes_1 = {a["role"]: a["hash_value"] for a in manifest_1["artifacts"]}
+    hashes_2 = {a["role"]: a["hash_value"] for a in manifest_2["artifacts"]}
+    assert hashes_1["visualizations"] == hashes_2["visualizations"]
+
+
+def test_manifest_hash_verification_detects_visualizations_mutation_after_generation(
+    tmp_path: Path,
+) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    publisher_validate.run(str(candidate_dir), repo_root=tmp_repo)
+    run_dirs = sorted((tmp_repo / "publisher" / "runs").iterdir())
+    run_dir = run_dirs[-1]
+    publisher_manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    # Mutate the candidate's visualizations artifact after manifest
+    # generation but before promotion.
+    visualizations_path = candidate_dir / "artifacts" / "visualizations.json"
+    mutated = json.loads(visualizations_path.read_text(encoding="utf-8"))
+    mutated["charts"][0]["data"][0]["value"] = 999999
+    _s0101_write_json(visualizations_path, mutated)
+
+    valid, errors = publisher_manifest.verify(run_dir / "manifest.json", candidate_dir)
+    assert valid is False
+    assert any(error["code"] == "MANIFEST_HASH_MISMATCH" for error in errors)
+
+
+def test_visualizations_promotion_copies_declared_file_and_no_undeclared_files(
+    tmp_path: Path,
+) -> None:
+    tmp_repo, candidate_dir = _s0101_prepare_tmp_repo(tmp_path)
+
+    publisher_validate.run(str(candidate_dir), repo_root=tmp_repo)
+    run_dirs = sorted((tmp_repo / "publisher" / "runs").iterdir())
+    run_dir = run_dirs[-1]
+    manifest_result = publisher_manifest.run(str(run_dir), repo_root=tmp_repo)
+    manifest_roles = {a["role"]: a for a in manifest_result["artifacts"]}
+
+    promotion_result = publisher_promote.run(str(run_dir), repo_root=tmp_repo)
+    assert promotion_result["promotion_outcome"] == "promoted"
+
+    release_dir = tmp_repo / "releases" / _S0101_RELEASE_ID
+    promoted_path = release_dir / manifest_roles["visualizations"]["reference"]
+    assert manifest_roles["visualizations"]["reference"] == "artifacts/visualizations.json"
+    assert promoted_path.is_file()
+    promoted_data = json.loads(promoted_path.read_text(encoding="utf-8"))
+    assert promoted_data["schema_version"] == "analytical-visualizations.v1"
+
+    # Promotion copies exactly the manifest-declared files -- no undeclared
+    # adjacent file leaks into the promoted release.
+    declared_files = {release_dir / a["reference"] for a in manifest_result["artifacts"]}
+    declared_files.add(release_dir / "manifest.json")
+    actual_files = {p for p in release_dir.rglob("*") if p.is_file()}
+    assert actual_files == declared_files
+
+    valid, errors = publisher_manifest.verify(release_dir / "manifest.json", release_dir)
+    assert valid is True
+    assert errors == []
     assert errors == []

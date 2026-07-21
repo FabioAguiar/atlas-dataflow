@@ -69,7 +69,14 @@ METRICS_ARTIFACT_FILENAME = "metrics.json"
 MODEL_SELECTION_EVIDENCE_FILENAME = "model-selection-evidence.json"
 MODEL_CARD_INPUT_FILENAME = "model-card-input.json"
 MODEL_CARD_FILENAME = "model-card.json"
+ANALYTICAL_VISUALIZATIONS_FILENAME = "analytical-visualizations.json"
 CONTROLLED_ENTRYPOINT_PROVENANCE_VERSION = "controlled-entrypoint-provenance.v1"
+
+# Project Spec S0128: schema identity for the deterministic, reduced
+# analytical-visualizations artifact and the public row limit for its
+# feature_importance chart.
+ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.v1"
+FEATURE_IMPORTANCE_TOP_N = 10
 
 # Columns that must never enter training as a model feature, regardless of
 # what a given execution contract declares (Project Spec S0026). customerID
@@ -126,6 +133,7 @@ class TrainingResult:
     model_selection_evidence_path: str | None
     model_card_input_path: str
     model_card_path: str
+    analytical_visualizations_path: str
     serializer_name: str
     serializer_version: str
     serialization_format_version: str
@@ -156,6 +164,7 @@ class TrainingResult:
             "model_selection_evidence_path": self.model_selection_evidence_path,
             "model_card_input_path": self.model_card_input_path,
             "model_card_path": self.model_card_path,
+            "analytical_visualizations_path": self.analytical_visualizations_path,
             "serializer": {
                 "name": self.serializer_name,
                 "installed_version": self.serializer_version,
@@ -840,6 +849,242 @@ def _class_distribution(rows: list[dict[str, Any]], target_column: str) -> list[
         }
         for label in sorted(counts)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Analytical visualizations generation (Project Spec S0128)
+#
+# `_build_analytical_visualizations_artifact` produces the deterministic,
+# reduced `analytical-visualizations.v1` artifact from the full prepared
+# dataset population and the selected fitted model only -- never from the
+# evaluation split alone and never from an unselected candidate. A failure
+# anywhere in this section raises `TrainingInputError` before any artifact is
+# written, so a failed generation never leaves a malformed or partial file.
+# ---------------------------------------------------------------------------
+
+
+def _target_distribution_chart_data(
+    rows: list[dict[str, Any]],
+    target_column: str,
+) -> tuple[list[dict[str, Any]], int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = row.get(target_column)
+        if _is_missing_dataset_value(value):
+            raise TrainingInputError(
+                "missing_target_value_for_visualization",
+                (
+                    f"prepared dataset row is missing a value for target column "
+                    f"{target_column}; Target Distribution generation requires every "
+                    "governed row to declare a target value."
+                ),
+                field=target_column,
+            )
+        label = str(value)
+        counts[label] = counts.get(label, 0) + 1
+    if not counts:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "prepared dataset population is empty; cannot generate Target Distribution.",
+            field=target_column,
+        )
+    data = [{"name": label, "value": counts[label]} for label in sorted(counts)]
+    return data, sum(counts.values())
+
+
+def _feature_importance_output_source_map(column_transformer: Any) -> list[str]:
+    """Map each transformed output column, in order, back to its governed
+    source feature name using the fitted ColumnTransformer's own
+    `transformers_` (never by re-parsing `get_feature_names_out()` strings,
+    which would be ambiguous for source feature names containing
+    underscores)."""
+    source_names: list[str] = []
+    for name, transformer, columns in column_transformer.transformers_:
+        if name == "numeric":
+            source_names.extend(str(column) for column in columns)
+        elif name == "categorical":
+            encoder = (
+                transformer.named_steps.get("encoder")
+                if hasattr(transformer, "named_steps")
+                else None
+            )
+            categories = getattr(encoder, "categories_", None) if encoder is not None else None
+            if categories is None or len(categories) != len(columns):
+                raise TrainingInputError(
+                    "unmappable_transformed_feature",
+                    "fitted categorical encoder does not expose a per-column category "
+                    "mapping; transformed features cannot be safely mapped back to "
+                    "governed source features.",
+                    field="feature_importance",
+                )
+            for column, column_categories in zip(columns, categories):
+                source_names.extend([str(column)] * len(column_categories))
+        else:
+            raise TrainingInputError(
+                "unmappable_transformed_feature",
+                f"transformed feature block {name!r} has no known source-feature mapping.",
+                field="feature_importance",
+            )
+    return source_names
+
+
+def _feature_importance_raw_values(model_family: str, estimator: Any) -> list[float]:
+    if model_family in ("gradient_boosting", "random_forest"):
+        raw = getattr(estimator, "feature_importances_", None)
+        if raw is None:
+            raise TrainingInputError(
+                "unsupported_estimator_for_feature_importance",
+                f"fitted {model_family} estimator does not expose feature_importances_.",
+                field="feature_importance",
+            )
+        return [float(value) for value in raw]
+    if model_family == "logistic_regression":
+        coefficients = getattr(estimator, "coef_", None)
+        if coefficients is None:
+            raise TrainingInputError(
+                "unsupported_estimator_for_feature_importance",
+                "fitted logistic_regression estimator does not expose coef_.",
+                field="feature_importance",
+            )
+        if len(coefficients) != 1:
+            raise TrainingInputError(
+                "unsupported_estimator_for_feature_importance",
+                (
+                    "multiclass logistic_regression coefficient semantics are not "
+                    "supported for Feature Importance under this spec; only binary "
+                    "classification absolute coefficients are."
+                ),
+                field="feature_importance",
+            )
+        return [abs(float(value)) for value in coefficients[0]]
+    raise TrainingInputError(
+        "unsupported_estimator_for_feature_importance",
+        f"model family {model_family} has no deterministic public Feature "
+        "Importance method under this spec.",
+        field="feature_importance",
+    )
+
+
+def _aggregate_feature_importance(
+    source_names: list[str],
+    raw_values: list[float],
+    feature_columns: list[str],
+) -> tuple[list[dict[str, Any]], int, int]:
+    if len(source_names) != len(raw_values):
+        raise TrainingInputError(
+            "unmappable_transformed_feature",
+            "transformed feature count does not match the fitted model's importance "
+            "value count; Feature Importance cannot be safely aggregated.",
+            field="feature_importance",
+        )
+
+    totals: dict[str, float] = {column: 0.0 for column in feature_columns}
+    for source_name, raw_value in zip(source_names, raw_values):
+        if not math.isfinite(raw_value):
+            raise TrainingInputError(
+                "non_finite_feature_importance",
+                f"Feature Importance value for source feature {source_name} is not finite.",
+                field="feature_importance",
+            )
+        # Non-negative magnitude: a negative signed coefficient must never
+        # produce a negative public bar length.
+        totals[source_name] = totals.get(source_name, 0.0) + abs(raw_value)
+
+    total_magnitude = sum(totals.values())
+    if total_magnitude <= 0:
+        raise TrainingInputError(
+            "zero_total_feature_importance",
+            "aggregated Feature Importance magnitude is zero; this is an explicit "
+            "unavailable condition, not a fabricated ranking.",
+            field="feature_importance",
+        )
+
+    normalized = {name: value / total_magnitude for name, value in totals.items()}
+    ranked = sorted(normalized.items(), key=lambda item: (-item[1], item[0]))
+    total_source_feature_count = len(ranked)
+    top = ranked[:FEATURE_IMPORTANCE_TOP_N]
+    omitted_count = total_source_feature_count - len(top)
+    data = [{"name": name, "value": value} for name, value in top]
+    return data, total_source_feature_count, omitted_count
+
+
+def _build_analytical_visualizations_artifact(
+    *,
+    contract: dict[str, Any],
+    rows: list[dict[str, Any]],
+    model_family: str,
+    model: Any,
+    feature_columns: list[str],
+    output_directory: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    target_column = str(contract["target_column"])
+    target_data, population_row_count = _target_distribution_chart_data(rows, target_column)
+
+    preprocess = model.named_steps["preprocess"]
+    estimator = model.named_steps["model"]
+    source_names = _feature_importance_output_source_map(preprocess)
+    raw_values = _feature_importance_raw_values(model_family, estimator)
+    feature_data, total_source_feature_count, omitted_count = _aggregate_feature_importance(
+        source_names, raw_values, feature_columns
+    )
+
+    return {
+        "schema_version": ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
+        "artifact_kind": "analytical_visualizations",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": target_column,
+                "y_label": "Rows",
+                "data": target_data,
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": feature_data,
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset",
+            "row_count": population_row_count,
+            "target_column": target_column,
+        },
+        "feature_importance_method": {
+            "model_family": model_family,
+            "source": (
+                "estimator.feature_importances_"
+                if model_family in ("gradient_boosting", "random_forest")
+                else "abs(estimator.coef_)"
+            ),
+            "total_source_feature_count": total_source_feature_count,
+            "omitted_source_feature_count": omitted_count,
+            "public_row_limit": FEATURE_IMPORTANCE_TOP_N,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
 
 
 def _estimator_hyperparameters(model: Any) -> dict[str, Any]:
@@ -1865,6 +2110,20 @@ def train_from_paths(
         model=model,
         task_type=task_type,
     )
+    analytical_visualizations_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
+    analytical_visualizations_artifact = _build_analytical_visualizations_artifact(
+        contract=contract,
+        rows=rows,
+        model_family=model_family,
+        model=model,
+        feature_columns=feature_columns,
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
+    analytical_visualizations_sha256 = _write_reduced_json_artifact(
+        analytical_visualizations_path,
+        analytical_visualizations_artifact,
+    )
     controlled_entrypoint_provenance = _controlled_entrypoint_provenance_marker(
         contract_path=contract_path,
         dataset_path=prepared_dataset_path,
@@ -1978,6 +2237,7 @@ def train_from_paths(
         ),
         model_card_input_path=_repo_relative_path(model_card_input_path),
         model_card_path=_repo_relative_path(model_card_path),
+        analytical_visualizations_path=_repo_relative_path(analytical_visualizations_path),
         serializer_name=SERIALIZER_NAME,
         serializer_version=serializer_version,
         serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
@@ -1991,6 +2251,7 @@ def train_from_paths(
             "model_card_input_sha256": model_card_input_sha256,
             "model_card_sha256": model_card_sha256,
             "model_selection_evidence_sha256": model_selection_evidence_sha256,
+            "analytical_visualizations_sha256": analytical_visualizations_sha256,
         },
         metrics=metric_values,
         model_selection_evidence_produced=multiple_candidates_evaluated,

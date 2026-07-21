@@ -1066,6 +1066,67 @@ _S0099_MODEL_ARTIFACT_BYTES = b"not-a-real-model-but-real-bytes"
 _S0099_MODEL_ARTIFACT_SHA256 = hashlib.sha256(_S0099_MODEL_ARTIFACT_BYTES).hexdigest()
 
 
+def _valid_visualizations_artifact(dataset_slug: str, run_id: str) -> dict:
+    """A schema-valid analytical-visualizations.v1 fixture (Project Spec
+    S0128). Unlike the other roles' generic {"role", "contract_version",
+    "schema_version"} placeholder, this schema forbids that shape
+    (additionalProperties: false, no "role" property, "schema_version" is a
+    fixed const) -- real publisher validation now enforces this via
+    publisher.validate._visualizations_conforms_to_schema."""
+    return {
+        "schema_version": "analytical-visualizations.v1",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-07-14T00:00:00Z",
+        "training_run_identity": {
+            "dataset_slug": dataset_slug,
+            "run_id": run_id,
+            "output_directory": f"pipeline/training-runs/{dataset_slug}/{run_id}/",
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": "Churn",
+                "y_label": "Rows",
+                "data": [{"name": "No", "value": 3}, {"name": "Yes", "value": 1}],
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": [{"name": "example_feature", "value": 1.0}],
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset",
+            "row_count": 4,
+            "target_column": "example_target",
+        },
+        "feature_importance_method": {
+            "model_family": "gradient_boosting",
+            "source": "estimator.feature_importances_",
+            "total_source_feature_count": 1,
+            "omitted_source_feature_count": 0,
+            "public_row_limit": 10,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
 def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
     dataset_slug = S0099_DATASET_SLUG
     run_id = S0099_TRAINING_RUN_ID
@@ -1083,6 +1144,7 @@ def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
         "training_metrics": f"pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json",
         "model_card": f"pipeline/training-runs/{dataset_slug}/{run_id}/model-card.json",
         "public_context": f"contracts/{dataset_slug}/dataset-context.json",
+        "visualizations": f"pipeline/training-runs/{dataset_slug}/{run_id}/analytical-visualizations.json",
         "inference_bundle": f"contracts/{dataset_slug}/inference-bundle.json",
     }
     for role, relative_path in references.items():
@@ -1092,6 +1154,8 @@ def _write_s0099_governed_artifacts(repo_root: Path) -> dict:
             path.write_bytes(_S0099_MODEL_ARTIFACT_BYTES)
         elif role == "public_contract":
             path.write_text(json.dumps(_S0099_VALID_PUBLIC_CONTRACT), encoding="utf-8")
+        elif role == "visualizations":
+            path.write_text(json.dumps(_valid_visualizations_artifact(dataset_slug, run_id)), encoding="utf-8")
         elif role == "inference_bundle":
             path.write_text(
                 json.dumps({
@@ -1194,7 +1258,7 @@ def test_assembled_release_candidate_copies_model_artifact_to_canonical_path(tmp
     ]
     assert len(
         release_candidate["candidate_metadata"]["completeness_validation"]["required_artifact_roles"]
-    ) == 9
+    ) == 10
 
     packaged_model = candidate_dir / "models" / "model.pkl"
     assert packaged_model.is_file()
@@ -1235,3 +1299,163 @@ def test_missing_model_artifact_source_blocks_assembly(tmp_path):
     assert result["rejection_phase"] == "candidate_artifact_missing"
     assert artifact_references["model_artifact"] in result["missing_paths"]
     assert not any((repo_root / "releases").rglob("release-candidate.json"))
+
+
+# ---------------------------------------------------------------------------
+# S0128: release-bound analytical visualizations artifact packaging. The
+# visualizations role is required (not optional) end-to-end: missing from
+# handoff readiness, missing/fixture-only as a build input, and copied to a
+# deterministic candidate path with its own declared role.
+# ---------------------------------------------------------------------------
+
+
+def test_visualizations_role_required_by_handoff_readiness(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    del artifact_references["visualizations"]
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        artifact_references, repo_root=repo_root,
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    assert "visualizations" in readiness["not_ready_roles"]
+    assert any(
+        reason.startswith("visualizations: missing_reference")
+        for reason in readiness["blocking_reasons"]
+    )
+
+
+def test_visualizations_role_rejects_fixture_only_path(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    artifact_references["visualizations"] = "pipeline/examples/analytical-visualizations.json"
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        artifact_references, repo_root=repo_root,
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    assert "visualizations: fixture_only_path_rejected" in readiness["blocking_reasons"]
+
+
+def test_assembled_release_candidate_copies_visualizations_to_canonical_path(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    release_id = assemble_candidate.derive_deterministic_release_id(S0099_TRAINING_RUN_ID)
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0099_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0099_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0128-test-input",
+    )
+
+    assert result["status"] == "accepted", result
+    candidate_dir = Path(result["candidate_dir"])
+    release_candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    artifact_roles = release_candidate["artifact_roles"]
+
+    assert artifact_roles["visualizations"] == {
+        "role": "visualizations",
+        "path": "visualizations/visualizations.json",
+        "required": True,
+        "media_type": "application/json",
+    }
+    assert "visualizations" in release_candidate["candidate_metadata"]["completeness_validation"][
+        "required_artifact_roles"
+    ]
+
+    packaged_visualizations = candidate_dir / "visualizations" / "visualizations.json"
+    assert packaged_visualizations.is_file()
+    source_visualizations = repo_root / artifact_references["visualizations"]
+    assert packaged_visualizations.read_text() == source_visualizations.read_text()
+
+
+def test_missing_visualizations_source_blocks_assembly(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    release_id = assemble_candidate.derive_deterministic_release_id(S0099_TRAINING_RUN_ID)
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0099_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0099_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+    (repo_root / artifact_references["visualizations"]).unlink()
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0128-test-input",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "candidate_artifact_missing"
+    assert artifact_references["visualizations"] in result["missing_paths"]
+
+
+def test_invalid_visualizations_artifact_is_rejected_by_publisher_validation(tmp_path):
+    repo_root = tmp_path / "repo"
+    artifact_references = _write_s0099_governed_artifacts(repo_root)
+    # Overwrite with a structurally invalid artifact (missing required
+    # feature_importance chart) after handoff-readiness path checks would
+    # otherwise pass -- this must be caught by publisher validation.
+    (repo_root / artifact_references["visualizations"]).write_text(
+        json.dumps({
+            "schema_version": "analytical-visualizations.v1",
+            "artifact_kind": "analytical_visualizations",
+            "created_at": "2026-07-14T00:00:00Z",
+            "training_run_identity": {
+                "dataset_slug": S0099_DATASET_SLUG,
+                "run_id": S0099_TRAINING_RUN_ID,
+                "output_directory": f"pipeline/training-runs/{S0099_DATASET_SLUG}/{S0099_TRAINING_RUN_ID}/",
+            },
+            "charts": [
+                {
+                    "id": "target_distribution",
+                    "title": "Target Distribution",
+                    "type": "bar",
+                    "x_label": "Churn",
+                    "y_label": "Rows",
+                    "data": [{"name": "No", "value": 3}],
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+    release_id = assemble_candidate.derive_deterministic_release_id(S0099_TRAINING_RUN_ID)
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=S0099_DATASET_SLUG,
+        release_id=release_id,
+        source_run_id=S0099_TRAINING_RUN_ID,
+        artifact_references=artifact_references,
+        repo_root=repo_root,
+    )
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input,
+        repo_root / "releases" / "candidates",
+        repo_root=repo_root,
+        source_input_label="s0128-test-input",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "publisher_validation"
+    schema_compat = result["publisher_validation"]["schema_compatibility"]["visualizations"]
+    assert schema_compat["checked"] is True
+    assert schema_compat["compatible"] is False
+    rejection_reasons = result["publisher_validation"].get("rejection_reasons") or []
+    assert any(
+        reason.get("code") == "visualizations_schema_incompatible" for reason in rejection_reasons
+    )

@@ -1051,7 +1051,12 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     ],
   };
 
-  function installTelcoFetchMock(overrides: { visualizationsStatus?: number } = {}) {
+  function installTelcoFetchMock(
+    overrides: {
+      visualizationsStatus?: number;
+      visualizationsPayload?: typeof telcoVisualizationsPayload;
+    } = {},
+  ) {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
 
@@ -1065,7 +1070,10 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
         if (overrides.visualizationsStatus) {
           return jsonResponse({}, overrides.visualizationsStatus);
         }
-        return jsonResponse({ dataset_slug: telcoSlug, visualizations: telcoVisualizationsPayload });
+        return jsonResponse({
+          dataset_slug: telcoSlug,
+          visualizations: overrides.visualizationsPayload ?? telcoVisualizationsPayload,
+        });
       }
       if (url.endsWith(`/datasets/${telcoSlug}/contract`)) {
         return jsonResponse({
@@ -1116,20 +1124,77 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(await screen.findByText("Tenure (months)")).toBeInTheDocument();
     expect(screen.getByText("Total Charges (USD)")).toBeInTheDocument();
 
-    // recharts' ResponsiveContainer never resolves a non-zero width in jsdom
-    // (no real layout engine), so it renders an empty measuring div here --
-    // there is no tick/bar text to assert on. This still proves the "ready"
-    // branch (real chart present) was chosen over the empty-state branch;
-    // the No=5174/Yes=1869 values live in the mocked payload above, per the
-    // acceptance criteria's "mocked Telco payloads include realistic reduced
-    // values" requirement, not in an unrenderable chart DOM assertion.
+    // recharts' PieChart itself never resolves a non-zero width in jsdom (no
+    // real layout engine), so its internal SVG has no assertable text, but
+    // both components render their real values/labels as plain DOM outside
+    // the chart (TargetDistribution's legend list, FeatureImportance's row
+    // list) -- Project Spec S0128 asserts on those directly rather than
+    // treating the endpoint payload's presence as the only provable fact.
     const targetDistributionChart = await screen.findByLabelText("target distribution");
     expect(targetDistributionChart).toBeInTheDocument();
+    // Target Distribution values render from the endpoint payload (the
+    // spec's own governed Telco counts), not a hardcoded production value.
+    expect(screen.getByText("No")).toBeInTheDocument();
+    expect(screen.getByText("Yes")).toBeInTheDocument();
+    expect(screen.getByText("(5,174)")).toBeInTheDocument();
+    expect(screen.getByText("(1,869)")).toBeInTheDocument();
+
     const featureImportanceChart = screen.getByLabelText("feature importance");
     expect(featureImportanceChart).toBeInTheDocument();
+    // Feature Importance rows use the endpoint payload's own source feature
+    // names -- never a transformed/one-hot internal name.
+    expect(screen.getByLabelText("tenure: 0.31")).toBeInTheDocument();
+    expect(screen.getByLabelText("TotalCharges: 0.22")).toBeInTheDocument();
+    expect(screen.getByLabelText("Contract: 0.18")).toBeInTheDocument();
 
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith("/model-card"))).toBe(false);
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${telcoSlug}/views`))).toBe(false);
+  });
+
+  it("does not render a misleading chart for a malformed visualizations projection (negative count, non-finite importance)", async () => {
+    // A structurally-present but malformed payload (the shape a bug or a
+    // partially-written artifact could produce) must still degrade to the
+    // same bounded empty state as a missing artifact -- never a fabricated
+    // or misleading chart. TargetDistribution.getValidDistribution and
+    // FeatureImportance.getRankedFeatureRows already enforce this in
+    // production; this proves it end to end through the real page.
+    installTelcoFetchMock({
+      visualizationsPayload: {
+        charts: [
+          {
+            id: "target_distribution",
+            title: "target distribution",
+            type: "bar" as const,
+            x_label: "Churn",
+            y_label: "Customers",
+            data: [
+              { name: "No", value: -5174 },
+              { name: "Yes", value: 1869 },
+            ],
+          },
+          {
+            id: "feature_importance",
+            title: "feature importance",
+            type: "bar" as const,
+            x_label: "Feature",
+            y_label: "Importance",
+            data: [{ name: "tenure", value: Number.POSITIVE_INFINITY }],
+          },
+        ],
+      },
+    });
+
+    renderTelcoDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByText("1,408")).toBeInTheDocument();
+
+    expect((await screen.findAllByText("Visualization not generated")).length).toBe(2);
+    expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(2);
+    expect(screen.queryByLabelText("target distribution")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("feature importance")).not.toBeInTheDocument();
+    expect(screen.queryByText("No")).not.toBeInTheDocument();
+    expect(screen.queryByText("tenure")).not.toBeInTheDocument();
   });
 
   it("shows an explicit unavailable state for target distribution and feature importance when the visualizations endpoint fails, without blocking the rest of the page", async () => {

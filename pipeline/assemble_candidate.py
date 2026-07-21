@@ -29,6 +29,9 @@ _CANDIDATE_ARTIFACT_MAPPINGS = [
     ("inference_bundle", "predictions/bundle.json"),
     ("model_card", "model-card.json"),
     ("public_context", "public-context.json"),
+    # Project Spec S0128: the release-bound, deterministic analytical
+    # visualizations artifact (Target Distribution and Feature Importance).
+    ("visualizations", "visualizations/visualizations.json"),
     # Project Spec S0107: the release-bound governed model artifact. Unlike
     # every other entry above, this is a private binary, not a public JSON
     # artifact -- the mapping only decides where candidate assembly copies
@@ -49,6 +52,7 @@ _REQUIRED_REAL_INPUTS = [
     "training_metrics",
     "model_card",
     "public_context",
+    "visualizations",
     "inference_bundle",
 ]
 
@@ -71,6 +75,7 @@ _HANDOFF_REQUIRED_ROLES = [
     "training_metrics",
     "model_card",
     "public_context",
+    "visualizations",
     "inference_bundle",
 ]
 
@@ -179,6 +184,8 @@ _TRAINING_HANDOFF_ROLE_TO_RESULT_FIELD = {
     "model_artifact": "serialized_model_path",
     "training_metrics": "metrics_path",
     "model_card": "model_card_path",
+    # Project Spec S0128.
+    "visualizations": "analytical_visualizations_path",
 }
 
 
@@ -309,6 +316,12 @@ _ARTIFACT_INPUT_ROLE_GOVERNANCE: dict[str, dict[str, str | None]] = {
         "public_projection": "public_artifact",
         "evidence_classification": "public_artifact",
     },
+    "visualizations": {
+        "source_stage": "M24",
+        "contract_version": "analytical-visualizations.v1",
+        "public_projection": "public_artifact",
+        "evidence_classification": "public_artifact",
+    },
     "inference_bundle": {
         "source_stage": "M25",
         "contract_version": "inference_bundle.v1",
@@ -362,10 +375,10 @@ _CANDIDATE_INPUT_CANDIDATE_MAPPING = {
             "mapping_requirement": "must_map_to_candidate_artifact_role",
         },
         {
-            "input_role": "visualization_references",
+            "input_role": "visualizations",
             "candidate_role": "visualizations",
             "publisher_role": "visualizations",
-            "mapping_requirement": "optional_when_available",
+            "mapping_requirement": "must_map_to_candidate_artifact_role",
         },
         {
             "input_role": "internal_evidence_references",
@@ -532,6 +545,9 @@ def build_release_candidate_input(
         "public_context": _build_artifact_input(
             "public_context", artifact_references["public_context"], resolved_repo_root
         ),
+        "visualizations": _build_artifact_input(
+            "visualizations", artifact_references["visualizations"], resolved_repo_root
+        ),
         "inference_bundle": _build_artifact_input(
             "inference_bundle", artifact_references["inference_bundle"], resolved_repo_root
         ),
@@ -682,6 +698,15 @@ def _build_release_candidate(
                 "required": True,
                 "media_type": "application/json",
             },
+            # Project Spec S0128: the release-bound, deterministic analytical
+            # visualizations artifact (Target Distribution and Feature
+            # Importance), produced during governed training.
+            "visualizations": {
+                "role": "visualizations",
+                "path": "visualizations/visualizations.json",
+                "required": True,
+                "media_type": "application/json",
+            },
             "manifest_input": {
                 "role": "manifest_input",
                 "path": "manifest-input.json",
@@ -718,6 +743,7 @@ def _build_release_candidate(
                     "metrics",
                     "model_card",
                     "public_context",
+                    "visualizations",
                     "manifest_input",
                     "candidate_metadata",
                     "model_artifact",

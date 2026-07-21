@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/analytical-visualizations.schema.json",
+  "title": "Atlas DataFlow Analytical Visualizations Artifact",
+  "description": "Reduced, deterministic analytical visualizations artifact emitted by a governed training run at pipeline/training-runs/{dataset_slug}/{run_id}/analytical-visualizations.json, and later copied into a release candidate at visualizations/visualizations.json. Contains exactly one target_distribution chart (from the full prepared-dataset population) and exactly one feature_importance chart (from the selected fitted model, aggregated back to governed source features). Never embeds raw rows, model bytes, serialized estimator state, raw transformed matrices, secrets, or notebook state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "created_at",
+    "training_run_identity",
+    "charts",
+    "target_distribution_method",
+    "feature_importance_method",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "analytical-visualizations.v1"
+    },
+    "artifact_kind": {
+      "type": "string",
+      "const": "analytical_visualizations"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "training_run_identity": {
+      "$ref": "#/$defs/training_run_identity"
+    },
+    "charts": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/chart"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "id": {
+                "const": "target_distribution"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "id": {
+                "const": "feature_importance"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "target_distribution_method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "population_kind",
+        "row_count",
+        "target_column"
+      ],
+      "properties": {
+        "population_kind": {
+          "type": "string",
+          "const": "prepared_dataset"
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "target_column": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "feature_importance_method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_family",
+        "source",
+        "total_source_feature_count",
+        "omitted_source_feature_count",
+        "public_row_limit"
+      ],
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "gradient_boosting",
+            "random_forest",
+            "logistic_regression"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "total_source_feature_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "omitted_source_feature_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "public_row_limit": {
+          "type": "integer",
+          "const": 10
+        }
+      }
+    },
+    "evidence_policy": {
+      "$ref": "#/$defs/evidence_policy"
+    }
+  },
+  "$defs": {
+    "training_run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "run_id",
+        "output_directory"
+      ],
+      "properties": {
+        "dataset_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
+        },
+        "output_directory": {
+          "type": "string",
+          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
+        }
+      }
+    },
+    "chart_data_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "type",
+        "x_label",
+        "y_label",
+        "data"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "target_distribution",
+            "feature_importance"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "bar"
+        },
+        "x_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "y_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/chart_data_point"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "feature_importance"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "then": {
+            "properties": {
+              "data": {
+                "maxItems": 10
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_logs_prohibited",
+        "raw_runtime_prohibited",
+        "raw_api_payloads_prohibited",
+        "secrets_prohibited",
+        "raw_dataset_embedded",
+        "model_bytes_embedded",
+        "serialized_estimator_state_embedded",
+        "raw_transformed_matrices_embedded",
+        "notebook_state_embedded",
+        "reduced_and_sanitized"
+      ],
+      "properties": {
+        "raw_logs_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_runtime_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_api_payloads_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "secrets_prohibited": {
+          "type": "boolean",
+          "const": true
+        },
+        "raw_dataset_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "model_bytes_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "serialized_estimator_state_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "raw_transformed_matrices_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "notebook_state_embedded": {
+          "type": "boolean",
+          "const": false
+        },
+        "reduced_and_sanitized": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  }
+}

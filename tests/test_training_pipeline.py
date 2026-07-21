@@ -10,14 +10,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pipeline.assemble_candidate as assemble_candidate
 import pipeline.training as training
 from pipeline.training import (
+    ANALYTICAL_VISUALIZATIONS_FILENAME,
+    ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
     MODEL_ARTIFACT_FILENAME,
     MODEL_CARD_FILENAME,
     MODEL_CARD_INPUT_FILENAME,
     METRICS_ARTIFACT_FILENAME,
     TRAINING_PARAMETER_RECORD_FILENAME,
     TrainingInputError,
+    _aggregate_feature_importance,
+    _feature_importance_output_source_map,
     _load_json_file,
     _require_valid_controlled_entrypoint_provenance,
+    _target_distribution_chart_data,
     convert_model_card_input_to_model_card,
     materialize_training_run_from_prepared_metadata,
     prepare_training_invocation_readiness,
@@ -1017,6 +1022,7 @@ def test_normalize_training_handoff_references_uses_real_training_result_paths(
         "model_artifact": training_result["serialized_model_path"],
         "training_metrics": training_result["metrics_path"],
         "model_card": training_result["model_card_path"],
+        "visualizations": training_result["analytical_visualizations_path"],
     }
 
 
@@ -1083,6 +1089,7 @@ def test_normalize_training_handoff_references_rejects_unsafe_paths_in_training_
         "model_artifact": "parent_traversal_rejected",
         "training_metrics": "fixture_only_path_rejected",
         "model_card": "missing_reference",
+        "visualizations": "missing_reference",
     }
 
 
@@ -1231,3 +1238,213 @@ def test_model_selection_evidence_records_classification_evidence_per_candidate(
         classification_evidence = candidate["classification_evidence"]
         assert classification_evidence["positive_class_id"] == "active"
         assert classification_evidence["ordered_class_labels"] == ["active", "churned"]
+
+
+# ---------------------------------------------------------------------------
+# Analytical visualizations generation (Project Spec S0128)
+# ---------------------------------------------------------------------------
+
+_ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH = (
+    Path(__file__).parent.parent / "pipeline" / "analytical-visualizations.schema.json"
+)
+
+
+def _analytical_visualizations_schema() -> dict:
+    return json.loads(_ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def test_analytical_visualizations_artifact_generated_with_canonical_identity_and_hash(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    import jsonschema
+
+    contract_path, dataset_path = _write_valid_inputs(tmp_path)
+    result = train_from_paths(
+        contract_path,
+        dataset_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+    output_directory = fixed_training_environment / result.output_directory
+    artifact_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
+    assert artifact_path.exists()
+    assert result.analytical_visualizations_path == f"{result.output_directory}{ANALYTICAL_VISUALIZATIONS_FILENAME}"
+    assert result.hashes["analytical_visualizations_sha256"] == _sha256_file(artifact_path)
+
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(_analytical_visualizations_schema()).validate(artifact)
+    assert artifact["schema_version"] == ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION
+    assert artifact["artifact_kind"] == "analytical_visualizations"
+
+    charts_by_id = {chart["id"]: chart for chart in artifact["charts"]}
+    assert set(charts_by_id) == {"target_distribution", "feature_importance"}
+
+    # _valid_prepared_dataset(): 4 rows converted=0, 4 rows converted=1.
+    target_data = charts_by_id["target_distribution"]["data"]
+    assert target_data == [{"name": "0", "value": 4}, {"name": "1", "value": 4}]
+    assert sum(point["value"] for point in target_data) == artifact["target_distribution_method"]["row_count"]
+    assert artifact["target_distribution_method"]["population_kind"] == "prepared_dataset"
+    assert artifact["target_distribution_method"]["target_column"] == "converted"
+
+    # One-hot categorical levels must aggregate back into "segment", never
+    # leak a transformed feature name such as "segment_retail".
+    feature_names = {point["name"] for point in charts_by_id["feature_importance"]["data"]}
+    assert feature_names <= {"age", "segment", "balance"}
+    for point in charts_by_id["feature_importance"]["data"]:
+        assert point["value"] >= 0.0
+
+    # No raw rows, model bytes, or absolute local paths embedded.
+    raw_text = artifact_path.read_text(encoding="utf-8")
+    assert str(fixed_training_environment) not in raw_text
+    assert "balance\": 1000" not in raw_text
+    assert artifact["evidence_policy"]["model_bytes_embedded"] is False
+    assert artifact["evidence_policy"]["raw_dataset_embedded"] is False
+    assert artifact["evidence_policy"]["serialized_estimator_state_embedded"] is False
+    assert artifact["evidence_policy"]["raw_transformed_matrices_embedded"] is False
+
+
+def test_analytical_visualizations_deterministic_across_repeated_training(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path, dataset_path = _write_valid_inputs(tmp_path)
+    first = train_from_paths(
+        contract_path, dataset_path, dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+    )
+    second = train_from_paths(
+        contract_path, dataset_path, dataset_slug="training-pipeline-test", run_id="train-20260626T010701Z",
+    )
+    first_artifact = json.loads(
+        (fixed_training_environment / first.analytical_visualizations_path).read_text(encoding="utf-8")
+    )
+    second_artifact = json.loads(
+        (fixed_training_environment / second.analytical_visualizations_path).read_text(encoding="utf-8")
+    )
+    assert first_artifact["charts"] == second_artifact["charts"]
+    assert (
+        first_artifact["feature_importance_method"]["model_family"]
+        == second_artifact["feature_importance_method"]["model_family"]
+    )
+
+
+def test_random_forest_feature_importance_uses_native_estimator_importance(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _valid_execution_contract()
+    contract["modeling_constraints"]["allowed_model_families"] = ["random_forest"]
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _valid_prepared_dataset())
+
+    result = train_from_paths(
+        contract_path, dataset_path, dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+    )
+    artifact = json.loads(
+        (fixed_training_environment / result.analytical_visualizations_path).read_text(encoding="utf-8")
+    )
+    assert artifact["feature_importance_method"]["model_family"] == "random_forest"
+    assert artifact["feature_importance_method"]["source"] == "estimator.feature_importances_"
+
+
+def test_logistic_regression_binary_feature_importance_uses_absolute_coefficients(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract_path, dataset_path = _write_valid_inputs(tmp_path)  # logistic_regression by default
+
+    result = train_from_paths(
+        contract_path, dataset_path, dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+    )
+    artifact = json.loads(
+        (fixed_training_environment / result.analytical_visualizations_path).read_text(encoding="utf-8")
+    )
+    assert artifact["feature_importance_method"]["model_family"] == "logistic_regression"
+    assert artifact["feature_importance_method"]["source"] == "abs(estimator.coef_)"
+
+
+def test_multiclass_logistic_regression_feature_importance_is_rejected(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    contract = _valid_execution_contract()
+    contract["target_column"] = "segment"
+    contract["feature_columns"] = ["age", "balance"]
+    contract["missing_value_policy"] = {"age": "median", "balance": "median"}
+    contract["modeling_constraints"]["allowed_model_families"] = ["logistic_regression"]
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+
+    dataset = _valid_prepared_dataset()
+    # "segment" already carries three classes (retail/smb/enterprise) in the
+    # base fixture, giving a genuine multiclass logistic_regression fit.
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", dataset)
+
+    with pytest.raises(TrainingInputError) as exc_info:
+        train_from_paths(
+            contract_path, dataset_path, dataset_slug="training-pipeline-test", run_id="train-20260626T010700Z",
+        )
+    assert exc_info.value.code == "unsupported_estimator_for_feature_importance"
+
+
+def test_target_distribution_rejects_missing_target_value() -> None:
+    rows = [{"converted": "0"}, {"converted": None}]
+    with pytest.raises(TrainingInputError) as exc_info:
+        _target_distribution_chart_data(rows, "converted")
+    assert exc_info.value.code == "missing_target_value_for_visualization"
+
+
+def test_target_distribution_label_order_is_deterministic_and_sums_to_population() -> None:
+    rows = [{"churn": "Yes"}, {"churn": "No"}, {"churn": "Yes"}, {"churn": "No"}, {"churn": "No"}]
+    data, row_count = _target_distribution_chart_data(rows, "churn")
+    assert data == [{"name": "No", "value": 3}, {"name": "Yes", "value": 2}]
+    assert row_count == len(rows) == sum(point["value"] for point in data)
+
+
+def test_feature_importance_output_source_map_rejects_unmappable_transformer_block() -> None:
+    class _StubColumnTransformer:
+        transformers_ = [("remainder", None, ["mystery_column"])]
+
+    with pytest.raises(TrainingInputError) as exc_info:
+        _feature_importance_output_source_map(_StubColumnTransformer())
+    assert exc_info.value.code == "unmappable_transformed_feature"
+
+
+def test_aggregate_feature_importance_rejects_zero_total() -> None:
+    with pytest.raises(TrainingInputError) as exc_info:
+        _aggregate_feature_importance(["a", "b"], [0.0, 0.0], ["a", "b"])
+    assert exc_info.value.code == "zero_total_feature_importance"
+
+
+def test_aggregate_feature_importance_rejects_non_finite_value() -> None:
+    with pytest.raises(TrainingInputError) as exc_info:
+        _aggregate_feature_importance(["a", "b"], [float("inf"), 1.0], ["a", "b"])
+    assert exc_info.value.code == "non_finite_feature_importance"
+
+
+def test_aggregate_feature_importance_truncates_to_top_ten_with_deterministic_ties() -> None:
+    source_names = [f"feature-{index:02d}" for index in range(12)]
+    raw_values = [1.0] * 12  # a full tie: descending value, then ascending name breaks it.
+    data, total_source_feature_count, omitted_count = _aggregate_feature_importance(
+        source_names, raw_values, source_names,
+    )
+    assert total_source_feature_count == 12
+    assert omitted_count == 2
+    assert len(data) == 10
+    assert [point["name"] for point in data] == sorted(source_names)[:10]
+    assert data == sorted(data, key=lambda point: (-point["value"], point["name"]))
+
+
+def test_aggregate_feature_importance_aggregates_one_hot_levels_into_source_feature() -> None:
+    # Three transformed one-hot columns for "segment" plus one numeric "age"
+    # column must aggregate into exactly two source-feature entries.
+    source_names = ["segment", "segment", "segment", "age"]
+    raw_values = [0.1, 0.2, 0.05, 0.3]
+    data, total_source_feature_count, omitted_count = _aggregate_feature_importance(
+        source_names, raw_values, ["age", "segment"],
+    )
+    assert total_source_feature_count == 2
+    assert omitted_count == 0
+    values_by_name = {point["name"]: point["value"] for point in data}
+    assert set(values_by_name) == {"age", "segment"}
+    assert values_by_name["segment"] == pytest.approx(0.35 / 0.65)
+    assert values_by_name["age"] == pytest.approx(0.3 / 0.65)

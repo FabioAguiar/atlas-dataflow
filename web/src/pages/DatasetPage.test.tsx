@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -473,8 +473,12 @@ describe("DatasetPage synthetic-slug rendering", () => {
     expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
     // Project Spec S0117: context/metrics/contract only fetch once the
     // primary route is ready -- await the first auxiliary-derived assertion.
-    expect(await screen.findByText("binary_classification")).toBeInTheDocument();
-    expect(screen.getByText("Whether the synthetic target event occurs.")).toBeInTheDocument();
+    // Project Spec S0127: the analysis badge is humanized, and Target
+    // reflects release-bound class identity (positive_class/negative_class
+    // from the /contract result_contract) rather than the raw problem_type
+    // or the context's own prediction_target_description.
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
+    expect(screen.getByText("Churn (Yes/No)")).toBeInTheDocument();
     expect(await screen.findByText("1,234")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument();
 
@@ -758,6 +762,197 @@ describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () =
   });
 });
 
+// Project Spec S0127: metrics/metadata projection alignment -- the stable
+// evaluation shape drives the Performance Summary fallback tiles, and
+// release-bound result semantics (not the raw problem_type) drive the
+// analysis badge and Target metadata, with documented fallbacks when result
+// semantics are unavailable.
+describe("DatasetPage metrics/analysis/target projection (Project Spec S0127)", () => {
+  // Mirrors the real active release's training-metrics.v1 projection
+  // (releases/release-20260721t124721z/metrics/metrics.json) as returned by
+  // GET /datasets/{slug}/metrics after api/public_metrics_loader.py's S0127
+  // normalization.
+  const s0127MetricsPayload = {
+    evaluation: {
+      split_name: "evaluation",
+      sample_size: 2114,
+      primary_metric_id: "roc_auc",
+      metrics: {
+        roc_auc: 0.8435590708800057,
+        f1_score: 0.7939456048600292,
+        pr_auc: 0.6656143652383235,
+      },
+      metric_order: ["roc_auc", "f1_score", "pr_auc"],
+    },
+  };
+
+  function installS0127FetchMock(
+    options: { resultContractUnavailable?: boolean; withPredictionTargetDescription?: boolean } = {},
+  ) {
+    const context = {
+      ...contextPayload,
+      prediction_target_description: options.withPredictionTargetDescription
+        ? "Whether the synthetic target event occurs."
+        : undefined,
+    };
+    const resultContract = options.resultContractUnavailable
+      ? { status: "unavailable" as const, reason: "binary_result_semantics_unavailable" }
+      : resultContractAvailable;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: s0127MetricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContract });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("renders AUC ROC/F1-score/PR AUC canonical fallback tiles with AUC ROC highlighted, and never fabricates Precision or Recall", async () => {
+    installS0127FetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("AUC ROC")).toBeInTheDocument();
+    expect(screen.getByText("F1-score")).toBeInTheDocument();
+    expect(screen.getByText("PR AUC")).toBeInTheDocument();
+    expect(screen.queryByText("Precision")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recall")).not.toBeInTheDocument();
+
+    const aucRow = screen.getByText("AUC ROC").closest(".performance-summary__score");
+    expect(aucRow).not.toBeNull();
+    expect(within(aucRow as HTMLElement).getByText("Highlighted")).toBeInTheDocument();
+
+    const scoreLabels = Array.from(
+      container.querySelectorAll(".performance-summary__score dt"),
+    ).map((dt) => dt.textContent);
+    expect(scoreLabels).toEqual(["AUC ROCHighlighted", "F1-score", "PR AUC"]);
+  });
+
+  it("resolves the analysis badge and Target from release-bound result semantics when available", async () => {
+    installS0127FetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
+    expect(screen.getByText("Churn (Yes/No)")).toBeInTheDocument();
+  });
+
+  it("falls back to the published context problem_type/target description when result semantics are unavailable", async () => {
+    installS0127FetchMock({ resultContractUnavailable: true, withPredictionTargetDescription: true });
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
+    expect(screen.getByText("Whether the synthetic target event occurs.")).toBeInTheDocument();
+    expect(screen.queryByText("Churn (Yes/No)")).not.toBeInTheDocument();
+  });
+
+  it("shows no analysis badge and a Pending Target when neither result semantics nor a context problem_type/target description are available", async () => {
+    installS0127FetchMock({ resultContractUnavailable: true, withPredictionTargetDescription: false });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: { ...contextPayload, problem_type: undefined, prediction_target_description: undefined },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: s0127MetricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    // Metrics only fetch once the primary route is ready (Project Spec
+    // S0117); await an auxiliary-derived assertion before checking the
+    // metadata rendered from the same render pass.
+    await screen.findByText("AUC ROC");
+
+    expect(screen.queryByText("Binary Classification")).not.toBeInTheDocument();
+    expect(screen.queryByText(/classification/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Churn (Yes/No)")).not.toBeInTheDocument();
+
+    const targetRow = screen.getByText("Target").closest(".dataset-detail-header__metadata-item");
+    expect(targetRow).not.toBeNull();
+    expect(within(targetRow as HTMLElement).getByText("Pending")).toBeInTheDocument();
+  });
+
+  it("renders the Instances metadata with an evaluation-split hint, distinguishing a valid zero sample size from missing data", async () => {
+    const zeroSampleMetrics = {
+      evaluation: {
+        split_name: "evaluation",
+        sample_size: 0,
+        primary_metric_id: "roc_auc",
+        metrics: { roc_auc: 0.5 },
+        metric_order: ["roc_auc"],
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: zeroSampleMetrics });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("0")).toBeInTheDocument();
+    expect(screen.getByText("Evaluation split")).toBeInTheDocument();
+  });
+});
+
 // S0017: real-shaped telco-customer-churn payloads (grounded in the actual
 // published releases/release-20260619-001 public-context.json/metrics.json
 // content, plus mocked target-distribution/feature-importance chart data
@@ -908,8 +1103,10 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 })).toBeInTheDocument();
     // Project Spec S0117: context/metrics/contract only fetch once the
     // primary route is ready -- await the first auxiliary-derived assertion.
-    expect(await screen.findByText("binary_classification")).toBeInTheDocument();
-    expect(screen.getByText("Whether a customer will cancel their service (churn).")).toBeInTheDocument();
+    // Project Spec S0127: humanized analysis badge and release-bound Target
+    // (see the synthetic-slug test above for the same rule).
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
+    expect(screen.getByText("Churn (Yes/No)")).toBeInTheDocument();
     // Instances metadata reads metrics.evaluation.sample_size (the real
     // release's held-out test split size), not the full 7,043-row dataset.
     expect(await screen.findByText("1,408")).toBeInTheDocument();

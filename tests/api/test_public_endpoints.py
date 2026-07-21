@@ -783,6 +783,13 @@ def test_real_release_dataset_home_context_payload_shape():
 
 
 def test_real_release_dataset_home_metrics_payload_shape():
+    """
+    Project Spec S0127: both fixed historical (legacy evaluation-wrapped)
+    releases must be returned through the exact same stable public
+    projection -- no top-level dataset_slug/release_id, split_name (not the
+    legacy split key), and alias-normalized metric ids (roc_auc, not
+    auc_roc).
+    """
     for resolved in _real_release_dataset_pairs():
         metrics = api_main.load_public_metrics(
             resolved.active_release,
@@ -795,19 +802,296 @@ def test_real_release_dataset_home_metrics_payload_shape():
 
         assert response["dataset_slug"] == resolved.dataset_slug
         assert isinstance(response["metrics"], dict)
-        assert response["metrics"].get("dataset_slug") == resolved.dataset_slug
-        assert isinstance(response["metrics"].get("release_id"), str)
-        assert response["metrics"]["release_id"]
-        evaluation = response["metrics"].get("evaluation")
+        assert set(response["metrics"].keys()) == {"evaluation"}
+        evaluation = response["metrics"]["evaluation"]
         assert isinstance(evaluation, dict)
-        assert isinstance(evaluation.get("split"), str)
+        assert isinstance(evaluation.get("split_name"), str)
         assert isinstance(evaluation.get("sample_size"), int)
         assert evaluation["sample_size"] > 0
         values = evaluation.get("metrics")
         assert isinstance(values, dict)
-        for metric_name in ("accuracy", "precision", "recall", "f1_score", "auc_roc"):
+        for metric_name in ("accuracy", "precision", "recall", "f1_score", "roc_auc"):
             assert isinstance(values.get(metric_name), (int, float))
+        assert evaluation.get("metric_order") == ["accuracy", "precision", "recall", "f1_score", "roc_auc"]
         _assert_no_internal_public_exposure(response)
+
+
+def test_public_metrics_endpoint_projects_current_active_release_training_metrics_v1_shape():
+    """
+    Project Spec S0127's own "Current active release regression" acceptance
+    criterion: the real active release's training-metrics.v1 artifact
+    (releases/release-20260721t124721z/metrics/metrics.json) must project
+    to the exact documented stable shape, with no Precision/Recall
+    fabricated and internal training fields absent.
+    """
+    resolved = SimpleNamespace(
+        dataset_slug="telco-customer-churn", active_release="release-20260721t124721z"
+    )
+    metrics = api_main.load_public_metrics(
+        resolved.active_release,
+        releases_root=_REAL_RELEASES_ROOT,
+    )
+    response = {"dataset_slug": resolved.dataset_slug, "metrics": metrics}
+
+    evaluation = metrics["evaluation"]
+    assert evaluation["split_name"] == "evaluation"
+    assert evaluation["sample_size"] == 2114
+    assert evaluation["primary_metric_id"] == "roc_auc"
+    assert evaluation["metrics"] == {
+        "roc_auc": 0.8435590708800057,
+        "f1_score": 0.7939456048600292,
+        "pr_auc": 0.6656143652383235,
+    }
+    assert evaluation["metric_order"] == ["roc_auc", "f1_score", "pr_auc"]
+    assert "precision" not in evaluation["metrics"]
+    assert "recall" not in evaluation["metrics"]
+    _assert_no_internal_public_exposure(response)
+
+
+def _s0127_write_metrics_release(releases_root: Path, release_id: str, metrics_payload: dict) -> None:
+    release_dir = releases_root / release_id
+    _s0101_write_release(
+        release_dir,
+        artifacts=[{"role": "metrics", "reference": "metrics/metrics.json"}],
+    )
+    _s0101_write_artifact_file(release_dir, "metrics/metrics.json", metrics_payload)
+
+
+def test_public_metrics_loader_omits_internal_training_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0127-001",
+            {
+                "artifact_kind": "training_metrics",
+                "created_at": "2026-07-21T12:47:21.660429Z",
+                "evidence_policy": {"secrets_prohibited": True},
+                "hashes": {"algorithm": "sha256", "execution_contract_sha256": "deadbeef"},
+                "metric_source": {
+                    "split_name": "evaluation",
+                    "split_size": 500,
+                    "random_seed": 0,
+                },
+                "metrics": {
+                    "primary_metric": {"name": "roc_auc", "value": 0.9},
+                    "secondary_metrics": [],
+                },
+                "path_references": {"dataset_path": "pipeline/prepared/x/prepared-data.csv"},
+                "schema_version": "training-metrics.v1",
+                "training_run_identity": {"run_id": "train-20260101T000000Z"},
+            },
+        )
+        metrics = api_main.load_public_metrics("release-s0127-001", releases_root=releases_root)
+        serialized = json.dumps(metrics)
+        for internal_marker in (
+            "artifact_kind",
+            "created_at",
+            "hashes",
+            "evidence_policy",
+            "path_references",
+            "training_run_identity",
+            "random_seed",
+            "prepared-data.csv",
+            "train-20260101T000000Z",
+        ):
+            assert internal_marker not in serialized
+        assert metrics == {
+            "evaluation": {
+                "split_name": "evaluation",
+                "sample_size": 500,
+                "primary_metric_id": "roc_auc",
+                "metrics": {"roc_auc": 0.9},
+                "metric_order": ["roc_auc"],
+            }
+        }
+
+
+def test_public_metrics_loader_f1_alias_resolves_to_f1_score():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0127-002",
+            {"evaluation": {"split_name": "evaluation", "sample_size": 10, "metrics": {"f1": 0.5}}},
+        )
+        metrics = api_main.load_public_metrics("release-s0127-002", releases_root=releases_root)
+        assert metrics["evaluation"]["metrics"] == {"f1_score": 0.5}
+
+
+def test_public_metrics_loader_auc_roc_alias_distinguishes_from_pr_auc():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0127-003",
+            {
+                "evaluation": {
+                    "split_name": "evaluation",
+                    "sample_size": 10,
+                    "metrics": {"auc_roc": 0.81, "pr_auc": 0.62},
+                }
+            },
+        )
+        metrics = api_main.load_public_metrics("release-s0127-003", releases_root=releases_root)
+        assert metrics["evaluation"]["metrics"] == {"roc_auc": 0.81, "pr_auc": 0.62}
+
+
+def test_public_metrics_loader_preserves_valid_zero_metric_value():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0127-004",
+            {"evaluation": {"split_name": "evaluation", "sample_size": 10, "metrics": {"precision": 0.0}}},
+        )
+        metrics = api_main.load_public_metrics("release-s0127-004", releases_root=releases_root)
+        assert metrics["evaluation"]["metrics"]["precision"] == 0.0
+        assert "precision" in metrics["evaluation"]["metric_order"]
+
+
+def test_public_metrics_loader_rejects_non_finite_and_malformed_metric_values():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0127-005"
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "metrics", "reference": "metrics/metrics.json"}],
+        )
+        metrics_path = release_dir / "metrics" / "metrics.json"
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        # Written directly (not via json.dumps) since NaN/Infinity are not
+        # standard JSON but Python's json module both emits and parses them
+        # by default -- this exercises the exact malformed-value boundary a
+        # hand-authored or buggy upstream artifact could still produce.
+        metrics_path.write_text(
+            json.dumps(
+                {
+                    "evaluation": {
+                        "split_name": "evaluation",
+                        "sample_size": 10,
+                        "metrics": {
+                            "roc_auc": float("nan"),
+                            "f1_score": float("inf"),
+                            "pr_auc": float("-inf"),
+                            "precision": True,
+                            "recall": "0.9",
+                            "accuracy": {"nested": 1},
+                            "log_loss": [0.1],
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        metrics = api_main.load_public_metrics("release-s0127-005", releases_root=releases_root)
+        assert metrics["evaluation"]["metrics"] == {}
+        assert metrics["evaluation"]["metric_order"] == []
+
+
+def test_public_metrics_loader_duplicate_alias_primary_wins_over_secondary():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0127-006",
+            {
+                "metric_source": {"split_name": "evaluation", "split_size": 10},
+                "metrics": {
+                    "primary_metric": {"name": "auc_roc", "value": 0.75},
+                    "secondary_metrics": [{"name": "roc_auc", "value": 0.11}],
+                },
+            },
+        )
+        metrics = api_main.load_public_metrics("release-s0127-006", releases_root=releases_root)
+        assert metrics["evaluation"]["metrics"]["roc_auc"] == 0.75
+        assert metrics["evaluation"]["primary_metric_id"] == "roc_auc"
+
+
+def test_public_metrics_loader_duplicate_alias_first_valid_wins_without_primary():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0127-007",
+            {
+                "evaluation": {
+                    "split_name": "evaluation",
+                    "sample_size": 10,
+                    "metrics": {"auc_roc": 0.2, "roc_auc": 0.3},
+                }
+            },
+        )
+        metrics = api_main.load_public_metrics("release-s0127-007", releases_root=releases_root)
+        # "auc_roc" and "roc_auc" are distinct JSON keys (no dict-overwrite
+        # collision happens during parsing) -- with no primary_metric in
+        # play, the loader's own first-valid-declared-value-wins policy
+        # must pick the first declared entry (auc_roc = 0.2), not the
+        # second (roc_auc = 0.3).
+        assert metrics["evaluation"]["metrics"]["roc_auc"] == 0.2
+
+
+def test_public_metrics_loader_rejects_reference_escaping_release_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0127-008"
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "metrics", "reference": "../../etc/passwd"}],
+        )
+        raised = False
+        try:
+            api_main.load_public_metrics("release-s0127-008", releases_root=releases_root)
+        except api_main.PublicMetricsUnavailableError:
+            raised = True
+        assert raised, "Expected PublicMetricsUnavailableError for an escaping reference"
+
+
+def test_public_metrics_loader_missing_metrics_role_returns_unavailable():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0127-009"
+        _s0101_write_release(release_dir, artifacts=[])
+        raised = False
+        try:
+            api_main.load_public_metrics("release-s0127-009", releases_root=releases_root)
+        except api_main.PublicMetricsUnavailableError:
+            raised = True
+        assert raised, "Expected PublicMetricsUnavailableError when no metrics role is declared"
+
+
+def test_public_metrics_loader_invalid_non_dict_artifact_returns_unavailable():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0127-010"
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "metrics", "reference": "metrics/metrics.json"}],
+        )
+        metrics_path = release_dir / "metrics" / "metrics.json"
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        metrics_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+        raised = False
+        try:
+            api_main.load_public_metrics("release-s0127-010", releases_root=releases_root)
+        except api_main.PublicMetricsUnavailableError:
+            raised = True
+        assert raised, "Expected PublicMetricsUnavailableError for a non-object metrics artifact"
+
+
+def test_public_metrics_loader_flat_top_level_shape_never_raises():
+    """
+    A bare release fixture that declares scores directly at the metrics
+    artifact's top level, with no evaluation/metric_source wrapper at all
+    (the shape tests/api/test_public_browser_flow.py's fixture release
+    already uses), must still project successfully rather than being
+    treated as a malformed artifact.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0127-011", {"accuracy": 0.9})
+        metrics = api_main.load_public_metrics("release-s0127-011", releases_root=releases_root)
+        assert metrics["evaluation"]["metrics"] == {"accuracy": 0.9}
 
 
 def test_real_release_dataset_home_model_card_payload_shape():

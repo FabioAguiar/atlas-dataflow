@@ -99,6 +99,54 @@ function extractInstanceCount(metrics: MetricsData): string | null {
   return null;
 }
 
+/** "binary_classification" -> "Binary Classification"; never exposes the raw technical identifier. */
+function humanizeProblemType(problemType: string | null | undefined): string | null {
+  const trimmed = problemType?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/**
+ * Project Spec S0127: release-bound result semantics stay authoritative for
+ * inference-capable datasets; public context's own problem_type is only a
+ * fallback for historical releases without result semantics.
+ */
+function resolveAnalysisType(
+  resultContract: BinaryResultContract | null,
+  context: PublicContextPayload | null,
+): string | null {
+  const releaseBoundProblemType =
+    resultContract?.status === "available" ? resultContract.semantics.problem_type : null;
+  return humanizeProblemType(releaseBoundProblemType) ?? humanizeProblemType(context?.problem_type) ?? null;
+}
+
+/**
+ * Project Spec S0127: Target communicates release-bound class identity
+ * (e.g. "Churn (Yes/No)") when available, never the raw problem_type. Falls
+ * back to the published technical target description, then unavailable.
+ */
+function resolveTargetDescription(
+  resultContract: BinaryResultContract | null,
+  context: PublicContextPayload | null,
+): string | null {
+  if (resultContract?.status === "available") {
+    const semantics = resultContract.semantics;
+    const eventLabel = nonBlank(semantics.positive_class?.event_label);
+    const positiveClassId = nonBlank(semantics.positive_class?.class_id);
+    const negativeClassId = nonBlank(semantics.negative_class?.class_id);
+    if (eventLabel && positiveClassId && negativeClassId) {
+      return `${eventLabel} (${positiveClassId}/${negativeClassId})`;
+    }
+  }
+  return nonBlank(context?.prediction_target_description);
+}
+
 export default function DatasetPage() {
   const { slug } = useParams<{ slug: string }>();
   const [state, setState] = useState<PageState>({ status: "loading" });
@@ -376,16 +424,19 @@ export default function DatasetPage() {
     || nonBlank(context?.description)
     || nonBlank(state.data.summary)
     || undefined;
-  const analysisType = context?.problem_type;
+  const resultContract = contractState.status === "ready" ? contractState.data.result_contract : null;
+  const analysisType = resolveAnalysisType(resultContract, context) ?? undefined;
   const sourceName = nonBlank(context?.source_name);
   const sourceHref = sourceName ? safePublicSourceUrl(context?.source_url) : null;
   const release = presentDatasetDateOnly(context?.release_date_label, context?.date_format);
+  const instanceCount = metricsState.status === "ready" ? extractInstanceCount(metricsState.data) : null;
 
   const metadataItems: DatasetDetailMetadataItem[] = [
     { label: "Source", value: sourceName, href: sourceHref ?? undefined },
     {
       label: "Instances",
-      value: metricsState.status === "ready" ? extractInstanceCount(metricsState.data) : null,
+      value: instanceCount,
+      hint: instanceCount ? "Evaluation split" : undefined,
     },
     {
       label: "Features",
@@ -393,7 +444,7 @@ export default function DatasetPage() {
     },
     {
       label: "Target",
-      value: context?.prediction_target_description || context?.problem_type || null,
+      value: resolveTargetDescription(resultContract, context),
     },
     {
       label: "Release",

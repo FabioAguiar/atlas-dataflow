@@ -1,5 +1,5 @@
 import { Badge, Card } from "../ui";
-import { normalizeMetrics, type NormalizedMetricKey } from "../../lib/metricsNormalization";
+import { normalizeEvaluation, type NormalizedMetricKey } from "../../lib/metricsNormalization";
 
 type MetricsData = Record<string, unknown>;
 
@@ -21,16 +21,15 @@ type PerformanceSummaryProps = {
   performanceFocus?: PerformanceFocus | null;
 };
 
-const SCORE_ORDER: NormalizedMetricKey[] = ["auc_roc", "precision", "recall", "f1_score"];
-
 const SCORE_LABELS: Record<NormalizedMetricKey, string> = {
-  auc_roc: "AUC ROC",
+  roc_auc: "AUC ROC",
+  f1_score: "F1-score",
+  pr_auc: "PR AUC",
   precision: "Precision",
   recall: "Recall",
-  f1_score: "F1-score",
+  accuracy: "Accuracy",
+  log_loss: "Log Loss",
 };
-
-const EMPHASIZED_SCORE: NormalizedMetricKey = "auc_roc";
 
 const FOCUS_LABELS: Record<PerformanceFocus["focus_id"], string> = {
   overall_discrimination: "Overall discrimination",
@@ -47,30 +46,35 @@ function formatScore(value: number): string {
 /**
  * primary_metric_key is free-text admin input, unlike the closed
  * NormalizedMetricKey set this component actually computes -- an
- * unrecognized value must fall back to the default emphasis rather than
- * being applied, per the "unsupported values are rejected" requirement.
+ * unrecognized value falls back to the backend-resolved canonical primary
+ * metric (Project Spec S0127), and only falls back further to the first
+ * available score when no canonical primary metric was resolved either.
  */
-function resolveEmphasizedScore(emphasizedMetricKey: string | null | undefined): NormalizedMetricKey {
+function resolveEmphasizedScore(
+  emphasizedMetricKey: string | null | undefined,
+  order: NormalizedMetricKey[],
+  primaryMetricId: NormalizedMetricKey | null,
+): NormalizedMetricKey | null {
   const candidate = emphasizedMetricKey?.trim();
-  if (candidate && (SCORE_ORDER as string[]).includes(candidate)) {
+  if (candidate && (order as string[]).includes(candidate)) {
     return candidate as NormalizedMetricKey;
   }
-  return EMPHASIZED_SCORE;
+  return primaryMetricId ?? order[0] ?? null;
 }
 
 export default function PerformanceSummary({ metrics, emphasizedMetricKey, performanceFocus }: PerformanceSummaryProps) {
-  const normalized = normalizeMetrics(metrics);
+  const evaluation = normalizeEvaluation(metrics);
   const publishedScores = performanceFocus?.visible_scores
     .slice()
     .sort((left, right) => left.order - right.order || left.score_id.localeCompare(right.score_id));
   const hasPublishedFocus = Boolean(performanceFocus && publishedScores?.length);
-  const hasAnyScore = SCORE_ORDER.some((key) => normalized[key] !== null);
+  const hasAnyScore = evaluation.order.length > 0;
 
   if (!hasPublishedFocus && !hasAnyScore) {
     return null;
   }
 
-  const resolvedEmphasis = resolveEmphasizedScore(emphasizedMetricKey);
+  const resolvedEmphasis = resolveEmphasizedScore(emphasizedMetricKey, evaluation.order, evaluation.primaryMetricId);
 
   return (
     <Card className="performance-summary">
@@ -91,8 +95,11 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );
-        }) : SCORE_ORDER.map((key) => {
-          const value = normalized[key];
+        }) : evaluation.order.map((key) => {
+          const value = evaluation.scores[key];
+          if (value === undefined) {
+            return null;
+          }
           const emphasized = key === resolvedEmphasis;
           const itemClasses = [
             "performance-summary__score",
@@ -107,13 +114,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
                 {SCORE_LABELS[key]}
                 {emphasized && <Badge>Highlighted</Badge>}
               </dt>
-              <dd>
-                {value === null ? (
-                  <span className="performance-summary__score-pending">Not available</span>
-                ) : (
-                  formatScore(value)
-                )}
-              </dd>
+              <dd>{formatScore(value)}</dd>
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );

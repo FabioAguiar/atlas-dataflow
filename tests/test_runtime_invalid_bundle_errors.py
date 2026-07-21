@@ -381,19 +381,37 @@ def test_s0109_malformed_predict_proba_output_rejected(tmp_path: Path) -> None:
         _s0109_execute(tmp_path, _s0109_binary_declaration(), model)
 
 
-def test_s0109_positive_class_not_found_in_model_classes_rejected(tmp_path: Path) -> None:
-    # Model classes and bundle class_labels agree with each other as a set
-    # (["No", "Yes"]), but the approved positive_class.class_id names neither.
+def test_s0109_positive_class_not_in_bundle_class_labels_rejected(tmp_path: Path) -> None:
+    """
+    Project Spec S0114/S0122: bundle-level class identity validation
+    (_resolve_binary_class_identities) runs before any model is loaded, so an
+    approved positive_class.class_id that names neither declared
+    output_schema.class_labels value is rejected here -- regardless of what
+    the model's own classes_ turn out to be. This is distinct from
+    model_class_bundle_class_mismatch below, which requires the positive
+    class to already be valid within the bundle labels.
+    """
     model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[0.6, 0.4]])
     with pytest.raises(BundleValidationError) as exc_info:
         _s0109_execute(tmp_path, _s0109_binary_declaration(positive_class_id="Maybe"), model)
-    assert exc_info.value.code == "positive_class_not_found"
+    assert exc_info.value.code == "positive_class_not_in_bundle_class_labels"
 
 
 def test_s0109_model_class_bundle_class_mismatch_rejected(tmp_path: Path) -> None:
+    """
+    Project Spec S0114/S0122: the positive class ("No") is valid within the
+    declared bundle class_labels (["No", "Maybe"]), so bundle-level identity
+    resolution succeeds and execution reaches the model-level check, where
+    the bundle class-label set differs from the model's actual classes_
+    (["No", "Yes"]) as sets.
+    """
     model = _FakeBinaryModel(["No", "Yes"], predict_return=["No"], predict_proba_return=[[0.6, 0.4]])
     with pytest.raises(BundleValidationError) as exc_info:
-        _s0109_execute(tmp_path, _s0109_binary_declaration(class_labels=["Alpha", "Beta"]), model)
+        _s0109_execute(
+            tmp_path,
+            _s0109_binary_declaration(positive_class_id="No", class_labels=["No", "Maybe"]),
+            model,
+        )
     assert exc_info.value.code == "model_class_bundle_class_mismatch"
 
 

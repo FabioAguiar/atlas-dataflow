@@ -92,11 +92,24 @@ def _response_json(response):
     return json.loads(response.body.decode("utf-8"))
 
 
+def _make_publicly_eligible(monkeypatch) -> None:
+    """
+    Establish the S0117 public-eligibility preconditions checked by
+    _resolve_public_dataset_detail_access() (visibility and needs_review)
+    for tests intended to exercise behavior after dataset-access resolution,
+    without bypassing the guard itself. Restored automatically by
+    monkeypatch after each test.
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+
+
 # ---------------------------------------------------------------------------
 # Golden path: valid dataset/view pair
 # ---------------------------------------------------------------------------
 
-def test_valid_view_returns_public_response():
+def test_valid_view_returns_public_response(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -114,7 +127,8 @@ def test_valid_view_returns_public_response():
         api_main.load_public_predict_view = original_load
 
 
-def test_valid_view_response_contains_display_fields():
+def test_valid_view_response_contains_display_fields(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -128,7 +142,8 @@ def test_valid_view_response_contains_display_fields():
         api_main.load_public_predict_view = original_load
 
 
-def test_valid_view_response_contains_intent_fields():
+def test_valid_view_response_contains_intent_fields(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -142,7 +157,8 @@ def test_valid_view_response_contains_intent_fields():
         api_main.load_public_predict_view = original_load
 
 
-def test_valid_view_response_release_mode_is_active():
+def test_valid_view_response_release_mode_is_active(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -159,7 +175,8 @@ def test_valid_view_response_release_mode_is_active():
 # Public/private boundary: internal fields must not appear in response
 # ---------------------------------------------------------------------------
 
-def test_response_does_not_contain_active_release():
+def test_response_does_not_contain_active_release(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -172,7 +189,8 @@ def test_response_does_not_contain_active_release():
         api_main.load_public_predict_view = original_load
 
 
-def test_response_does_not_contain_contract_precedence():
+def test_response_does_not_contain_contract_precedence(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -185,7 +203,8 @@ def test_response_does_not_contain_contract_precedence():
         api_main.load_public_predict_view = original_load
 
 
-def test_response_does_not_contain_schema_version():
+def test_response_does_not_contain_schema_version(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -198,7 +217,8 @@ def test_response_does_not_contain_schema_version():
         api_main.load_public_predict_view = original_load
 
 
-def test_response_does_not_contain_binding_internals():
+def test_response_does_not_contain_binding_internals(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -252,7 +272,8 @@ def test_registry_unavailable_returns_registry_unavailable():
 # Error cases: view lookup failures
 # ---------------------------------------------------------------------------
 
-def test_unknown_view_id_returns_view_not_found():
+def test_unknown_view_id_returns_view_not_found(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -268,7 +289,8 @@ def test_unknown_view_id_returns_view_not_found():
         api_main.load_public_predict_view = original_load
 
 
-def test_view_binding_invalid_returns_view_binding_invalid():
+def test_view_binding_invalid_returns_view_binding_invalid(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_load = api_main.load_public_predict_view
     try:
@@ -477,38 +499,6 @@ def test_loader_resolves_synthetic_non_telco_bank_dataset():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    tests = [
-        test_valid_view_returns_public_response,
-        test_valid_view_response_contains_display_fields,
-        test_valid_view_response_contains_intent_fields,
-        test_valid_view_response_release_mode_is_active,
-        test_response_does_not_contain_active_release,
-        test_response_does_not_contain_contract_precedence,
-        test_response_does_not_contain_schema_version,
-        test_response_does_not_contain_binding_internals,
-        test_unknown_dataset_returns_dataset_not_found,
-        test_release_unavailable_returns_release_unavailable,
-        test_registry_unavailable_returns_registry_unavailable,
-        test_unknown_view_id_returns_view_not_found,
-        test_view_binding_invalid_returns_view_binding_invalid,
-        test_loader_resolves_valid_view_from_registry,
-        test_loader_raises_view_not_found_for_unknown_view,
-        test_loader_raises_view_not_found_for_wrong_dataset,
-        test_loader_result_excludes_binding_internals,
-        test_loader_result_keys_are_public_only,
-        test_loader_resolves_bank_marketing_view,
-        test_loader_resolves_synthetic_non_telco_bank_dataset,
-    ]
-    passed = 0
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"PASS  {t.__name__}")
-            passed += 1
-        except Exception as exc:
-            print(f"FAIL  {t.__name__}: {exc}")
-            failed += 1
-    print(f"\n{passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)
+    import pytest
+
+    raise SystemExit(pytest.main([__file__, "-v"]))

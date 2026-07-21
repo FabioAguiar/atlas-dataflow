@@ -61,11 +61,24 @@ def _response_json(response):
     return json.loads(response.body.decode("utf-8"))
 
 
+def _make_publicly_eligible(monkeypatch) -> None:
+    """
+    Establish the S0117 public-eligibility preconditions checked by
+    _resolve_public_dataset_detail_access() (visibility and needs_review)
+    for tests intended to exercise behavior after dataset-access resolution,
+    without bypassing the guard itself. Restored automatically by
+    monkeypatch after each test.
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+
+
 # ---------------------------------------------------------------------------
 # Golden path: valid dataset with views
 # ---------------------------------------------------------------------------
 
-def test_valid_dataset_returns_views_list():
+def test_valid_dataset_returns_views_list(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -81,7 +94,8 @@ def test_valid_dataset_returns_views_list():
         api_main.load_public_predict_view_list = original_list
 
 
-def test_views_list_item_contains_required_fields():
+def test_views_list_item_contains_required_fields(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -99,7 +113,8 @@ def test_views_list_item_contains_required_fields():
         api_main.load_public_predict_view_list = original_list
 
 
-def test_views_list_item_display_contains_title_and_summary():
+def test_views_list_item_display_contains_title_and_summary(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -114,7 +129,8 @@ def test_views_list_item_display_contains_title_and_summary():
         api_main.load_public_predict_view_list = original_list
 
 
-def test_views_list_item_intent_contains_required_fields():
+def test_views_list_item_intent_contains_required_fields(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -129,7 +145,8 @@ def test_views_list_item_intent_contains_required_fields():
         api_main.load_public_predict_view_list = original_list
 
 
-def test_views_list_item_release_mode_is_active():
+def test_views_list_item_release_mode_is_active(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -165,7 +182,8 @@ def test_dataset_with_no_views_returns_empty_list():
 # Public/private boundary: internal fields must not appear in response items
 # ---------------------------------------------------------------------------
 
-def test_response_items_do_not_contain_binding():
+def test_response_items_do_not_contain_binding(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -179,7 +197,8 @@ def test_response_items_do_not_contain_binding():
         api_main.load_public_predict_view_list = original_list
 
 
-def test_response_items_do_not_contain_contract_precedence():
+def test_response_items_do_not_contain_contract_precedence(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -193,7 +212,8 @@ def test_response_items_do_not_contain_contract_precedence():
         api_main.load_public_predict_view_list = original_list
 
 
-def test_response_items_do_not_contain_schema_version():
+def test_response_items_do_not_contain_schema_version(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -244,7 +264,8 @@ def test_registry_unavailable_returns_registry_unavailable():
         api_main.resolve_dataset = original_resolve
 
 
-def test_loader_raises_view_not_found_returns_registry_unavailable():
+def test_loader_raises_view_not_found_returns_registry_unavailable(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:
@@ -407,59 +428,6 @@ def test_loader_display_contains_only_title_and_summary(tmp_path):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import tempfile as _tempfile, pathlib as _pathlib
+    import pytest
 
-    tests_no_args = [
-        test_valid_dataset_returns_views_list,
-        test_views_list_item_contains_required_fields,
-        test_views_list_item_display_contains_title_and_summary,
-        test_views_list_item_intent_contains_required_fields,
-        test_views_list_item_release_mode_is_active,
-        test_dataset_with_no_views_returns_empty_list,
-        test_response_items_do_not_contain_binding,
-        test_response_items_do_not_contain_contract_precedence,
-        test_response_items_do_not_contain_schema_version,
-        test_unknown_dataset_returns_dataset_not_found,
-        test_release_unavailable_returns_release_unavailable,
-        test_registry_unavailable_returns_registry_unavailable,
-        test_loader_raises_view_not_found_returns_registry_unavailable,
-        test_loader_returns_views_for_telco_dataset,
-        test_loader_returns_empty_list_for_unknown_dataset,
-        test_loader_result_items_exclude_binding_internals,
-        test_loader_result_items_have_only_public_keys,
-        test_loader_display_contains_only_title_and_summary,
-    ]
-
-    passed = 0
-    failed = 0
-
-    for t in tests_no_args:
-        try:
-            t()
-            print(f"PASS  {t.__name__}")
-            passed += 1
-        except Exception as exc:
-            print(f"FAIL  {t.__name__}: {exc}")
-            failed += 1
-
-    with _tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            test_loader_excludes_binding_inconsistent_views(_pathlib.Path(tmpdir))
-            print("PASS  test_loader_excludes_binding_inconsistent_views")
-            passed += 1
-        except Exception as exc:
-            print(f"FAIL  test_loader_excludes_binding_inconsistent_views: {exc}")
-            failed += 1
-
-    with _tempfile.TemporaryDirectory() as tmpdir:
-        try:
-            test_loader_returns_views_for_bank_dataset(_pathlib.Path(tmpdir))
-            print("PASS  test_loader_returns_views_for_bank_dataset")
-            passed += 1
-        except Exception as exc:
-            print(f"FAIL  test_loader_returns_views_for_bank_dataset: {exc}")
-            failed += 1
-
-    print(f"\n{passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)
+    raise SystemExit(pytest.main([__file__, "-v"]))

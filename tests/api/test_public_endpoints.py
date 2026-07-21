@@ -1691,6 +1691,11 @@ def test_authoring_context_returns_generic_not_found_when_admin_runtime_disabled
 
 
 def test_authoring_context_real_needs_review_telco_dataset_reproduces_spec_scenario():
+    """
+    Project Spec S0122: the expected active_release is derived from the
+    current real registry state via resolve_dataset(), never a frozen
+    historical literal, since every legitimate new promotion changes it.
+    """
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     try:
         response = api_main.get_admin_dataset_authoring_context(
@@ -1699,8 +1704,9 @@ def test_authoring_context_real_needs_review_telco_dataset_reproduces_spec_scena
     finally:
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
 
+    current_active_release = resolve_dataset("telco-customer-churn").active_release
     assert response["dataset_slug"] == "telco-customer-churn"
-    assert response["active_release"] == "release-20260719t111131z"
+    assert response["active_release"] == current_active_release
     assert response["dataset"]["status"] == "ready"
     assert response["dataset"]["data"]["publication_status"] == "needs_review"
     assert response["context"]["status"] == "ready"

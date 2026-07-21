@@ -1,6 +1,8 @@
 import hashlib
 import json
 import sys
+import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -880,6 +882,30 @@ def test_materialize_governed_inference_bundle_from_trained_run(
 # execute any notebook, and never reads from pipeline/training-runs/**.
 # ---------------------------------------------------------------------------
 
+# Project Spec S0122: the installed NumPy 2.5.0 / joblib 1.5.3 combination
+# emits a known third-party DeprecationWarning from joblib.numpy_pickle while
+# deserializing a real joblib-serialized model (`array.shape = self.shape`
+# during array reconstruction). This is scoped to the exact real-loader call
+# boundary below rather than filtered repository-wide, so any other warning
+# -- including any other DeprecationWarning -- remains visible and fails
+# warning-strict validation.
+_JOBLIB_NUMPY_ARRAY_SHAPE_DEPRECATION_MESSAGE = (
+    r"Setting the shape on a NumPy array has been deprecated in NumPy 2\.5\."
+)
+
+
+@contextmanager
+def _expect_known_joblib_numpy_pickle_deprecation():
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=_JOBLIB_NUMPY_ARRAY_SHAPE_DEPRECATION_MESSAGE,
+            category=DeprecationWarning,
+            module=r"joblib\.numpy_pickle",
+        )
+        yield
+
+
 _S0109_FEATURE_ORDER = ["tenure", "monthly_charges"]
 
 
@@ -997,14 +1023,15 @@ def test_s0109_real_joblib_loader_end_to_end_binary_prediction(tmp_path: Path) -
     assert projected_contract["semantics"]["negative_class"] == {"class_id": "No"}
 
     # High-tenure, low-charges row: trained pattern predicts "No" (not churned).
-    negative_result = execute_prediction(
-        {"path": str(release_root), "artifacts": manifest["artifacts"]},
-        {"tenure": 63, "monthly_charges": 19.0},
-        manifest=manifest,
-        bundle_loader=_s0109_bundle_loader,
-        loader_strategies=_S0109_LOADER_STRATEGIES,
-        supported_serialization_formats=["joblib"],
-    )["result"]
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        negative_result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )["result"]
     assert negative_result["schema_version"] == "binary-classification-result.v1"
     assert negative_result["predicted_class"]["class_id"] == "No"
     assert negative_result["predicted_class"] == projected_contract["semantics"]["negative_class"]
@@ -1019,14 +1046,15 @@ def test_s0109_real_joblib_loader_end_to_end_binary_prediction(tmp_path: Path) -
     }
 
     # Low-tenure, high-charges row: trained pattern predicts "Yes" (churned).
-    positive_result = execute_prediction(
-        {"path": str(release_root), "artifacts": manifest["artifacts"]},
-        {"tenure": 2, "monthly_charges": 96.0},
-        manifest=manifest,
-        bundle_loader=_s0109_bundle_loader,
-        loader_strategies=_S0109_LOADER_STRATEGIES,
-        supported_serialization_formats=["joblib"],
-    )["result"]
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        positive_result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 2, "monthly_charges": 96.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )["result"]
     assert positive_result["predicted_class"]["class_id"] == "Yes"
     assert positive_result["decision"]["predicted_positive"] is True
     assert positive_result["interpretation"]["band_id"] == "high"
@@ -1056,14 +1084,15 @@ def test_s0109_reversed_positive_class_resolved_by_identity_not_position(tmp_pat
     bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
     manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
 
-    result = execute_prediction(
-        {"path": str(release_root), "artifacts": manifest["artifacts"]},
-        {"tenure": 63, "monthly_charges": 19.0},
-        manifest=manifest,
-        bundle_loader=_s0109_bundle_loader,
-        loader_strategies=_S0109_LOADER_STRATEGIES,
-        supported_serialization_formats=["joblib"],
-    )["result"]
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )["result"]
 
     assert result["positive_class"]["class_id"] == "No"
     # positive_class_probability must be the probability of "No", not classes_[1].
@@ -1142,14 +1171,15 @@ def test_s0109_historical_bundle_without_result_semantics_fails_safely_no_fallba
     manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
 
     with pytest.raises(BundleValidationError) as exc_info:
-        execute_prediction(
-            {"path": str(release_root), "artifacts": manifest["artifacts"]},
-            {"tenure": 63, "monthly_charges": 19.0},
-            manifest=manifest,
-            bundle_loader=_s0109_bundle_loader,
-            loader_strategies=_S0109_LOADER_STRATEGIES,
-            supported_serialization_formats=["joblib"],
-        )
+        with _expect_known_joblib_numpy_pickle_deprecation():
+            execute_prediction(
+                {"path": str(release_root), "artifacts": manifest["artifacts"]},
+                {"tenure": 63, "monthly_charges": 19.0},
+                manifest=manifest,
+                bundle_loader=_s0109_bundle_loader,
+                loader_strategies=_S0109_LOADER_STRATEGIES,
+                supported_serialization_formats=["joblib"],
+            )
     assert exc_info.value.code == "missing_result_semantics"
 
 
@@ -1164,14 +1194,15 @@ def test_s0109_threshold_equality_boundary_predicts_positive(tmp_path: Path) -> 
     )
     manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
 
-    result = execute_prediction(
-        {"path": str(release_root), "artifacts": manifest["artifacts"]},
-        {"tenure": 63, "monthly_charges": 19.0},
-        manifest=manifest,
-        bundle_loader=_s0109_bundle_loader,
-        loader_strategies=_S0109_LOADER_STRATEGIES,
-        supported_serialization_formats=["joblib"],
-    )["result"]
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )["result"]
     # threshold 0.0: any probability >= 0.0 is positive.
     assert result["decision"]["predicted_positive"] is True
     assert result["predicted_class"]["class_id"] == "Yes"
@@ -1184,14 +1215,15 @@ def test_s0109_result_matches_binary_classification_result_schema(tmp_path: Path
     )
     manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
 
-    result = execute_prediction(
-        {"path": str(release_root), "artifacts": manifest["artifacts"]},
-        {"tenure": 63, "monthly_charges": 19.0},
-        manifest=manifest,
-        bundle_loader=_s0109_bundle_loader,
-        loader_strategies=_S0109_LOADER_STRATEGIES,
-        supported_serialization_formats=["joblib"],
-    )["result"]
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )["result"]
 
     # Re-validating an already-returned result must succeed (defense-in-depth,
     # matches the API layer's own second validation pass).

@@ -255,12 +255,16 @@ def test_public_profile_publication_lifecycle_keeps_private_drafts_out_of_public
     assert hidden_response["visible"] is False
     hidden_list = api_main.list_datasets_endpoint()
     assert _TARGET_SLUG not in {entry["dataset_slug"] for entry in hidden_list["datasets"]}
+    # Project Spec S0117: a hidden registered dataset maps to the generic
+    # DATASET_MAINTENANCE response, distinct from DATASET_NOT_FOUND, which
+    # remains reserved for a dataset_slug that is not registered at all.
     hidden_detail = api_main.get_dataset(_TARGET_SLUG)
+    assert hidden_detail.status_code == 503
+    assert json.loads(hidden_detail.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
     nonexistent_detail = api_main.get_dataset("dataset-that-does-not-exist")
-    assert hidden_detail.status_code == nonexistent_detail.status_code
-    assert json.loads(hidden_detail.body.decode("utf-8")) == json.loads(
-        nonexistent_detail.body.decode("utf-8")
-    )
+    assert nonexistent_detail.status_code == 404
+    assert json.loads(nonexistent_detail.body.decode("utf-8"))["error_code"] == "DATASET_NOT_FOUND"
 
     visible_response = api_main.put_admin_profile_visibility(
         _TARGET_SLUG,

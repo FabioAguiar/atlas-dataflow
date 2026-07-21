@@ -3527,9 +3527,8 @@ function OperationalConsole({ lines }: { lines: ConsoleLine[] }) {
   );
 }
 
-// Shared authority for the header badge and the "Open public Dataset Detail
-// page" action (Section 4, "Replace the header badge authority" / "Align the
-// Open public page action") -- both must read the same value.
+// Authority for the header badge (Section 4, "Replace the header badge
+// authority") -- reachability-based, unchanged by Project Spec S0123.
 function publicationBadgeLabel(
   projectionState: PublicationProjectionState,
 ): "No dataset selected" | "Checking..." | "Public" | "Private" {
@@ -3545,11 +3544,17 @@ function publicationBadgeLabel(
   return projectionState.projection.public_access.reachable ? "Public" : "Private";
 }
 
-function publicationReachable(projectionState: PublicationProjectionState): boolean {
-  return (
-    (projectionState.status === "ready" || projectionState.status === "saving") &&
-    projectionState.projection.public_access.reachable
-  );
+// Project Spec S0123: the "Open public Dataset Detail page" action's sole
+// authority. Deliberately follows configured visibility, not effective
+// reachability -- a dataset can be configured visible but still blocked from
+// public reachability (e.g. review_pending), and the action must stay
+// enabled in that case since it only opens the route, it does not bypass
+// S0117's own access-state rendering. Only the "ready" status counts: a
+// "saving" projection's own retained prior projection must never keep the
+// action interactive while a visibility write is unresolved, and no other
+// status carries a confirmed value at all.
+function publicPageActionAvailable(projectionState: PublicationProjectionState): boolean {
+  return projectionState.status === "ready" && projectionState.projection.visibility.configured_visible;
 }
 
 // Project Spec S0116: the tab is reduced to exactly two surfaces -- the
@@ -4391,12 +4396,16 @@ export default function DatasetAdminPage() {
     () => adminDatasets.find((dataset) => dataset.dataset_slug === selectedSlug),
     [adminDatasets, selectedSlug],
   );
-  // Project Spec S0116: the header badge and the "Open public Dataset Detail
-  // page" action both read the same S0115-projected authority --
-  // public_access.reachable -- never the public dataset listing.
+  // Project Spec S0116: the header badge reads the S0115-projected
+  // reachability authority -- public_access.reachable -- never the public
+  // dataset listing. Project Spec S0123: the "Open public Dataset Detail
+  // page" action reads the same projection's configured-visibility
+  // authority instead (publicPageActionAvailable), so the two can disagree
+  // by design (e.g. a review-blocked-but-configured-visible dataset shows
+  // "Private" while the action stays enabled).
   const registryVisibilityLabel = publicationBadgeLabel(publicationProjection);
   const selectedDatasetIsPublic = registryVisibilityLabel === "Public";
-  const publicPageActionEnabled = publicationReachable(publicationProjection);
+  const publicPageActionEnabled = publicPageActionAvailable(publicationProjection);
   const lastBackendDraft = backendDraftProfile(draftState);
   const hasBackendDraftProfile = Boolean(lastBackendDraft);
   // Dataset Detail display title shown in Admin/Dashboard (registry/list.py's

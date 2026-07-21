@@ -1,0 +1,38 @@
+{
+  "schema_version": "build-evidence.v1",
+  "source_input": {
+    "path": "telco-customer-churn-release-20260721t231025z-release-candidate-input",
+    "contract_version": "release-candidate-input.v1",
+    "dataset_slug": "telco-customer-churn",
+    "release_id": "release-20260721t231025z"
+  },
+  "assembled_artifacts": [
+    "contracts/runtime-contract.json",
+    "contracts/public-contract.json",
+    "metrics/metrics.json",
+    "predictions/bundle.json",
+    "model-card.json",
+    "public-context.json",
+    "visualizations/visualizations.json",
+    "models/model.pkl",
+    "manifest-input.json",
+    "release-candidate.json"
+  ],
+  "publisher_validation": {
+    "valid": true,
+    "validation_outcome": "accepted",
+    "validated_at": "2026-07-21T23:10:25Z"
+  },
+  "build_boundary_confirmations": {
+    "promotion_occurred": false,
+    "registry_mutation_occurred": false
+  },
+  "evidence_policy": {
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "secrets_prohibited": true,
+    "private_source_paths_prohibited": true,
+    "reduced_and_sanitized": true
+  }
+}

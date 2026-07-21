@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).parent.parent
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "datasets" / "telco-customer-churn" / "01_dataset_authoring.ipynb"
 
@@ -161,4 +160,196 @@ def test_old_root_level_notebook_path_is_not_the_active_path():
     assert not old_path.exists(), (
         "The old root-level notebook path must not be required as the "
         "active notebook path for this spec."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0129: the notebook's release-candidate handoff readiness
+# section must propagate a fifth `visualizations` training-related role
+# through `normalize_training_handoff_references` (Project Spec S0031,
+# extended by S0128) exactly the way it already propagates the other four
+# roles -- not merely mention the word "visualizations" somewhere in source.
+# ---------------------------------------------------------------------------
+
+def _readiness_cell_source(nb: dict) -> str:
+    for cell in nb["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        source = "".join(cell["source"])
+        if "TELCO_TRAIN_PENDING_TRAINING_ROLE_PATHS = {" in source:
+            return source
+    raise AssertionError(
+        "Could not find the code cell declaring "
+        "TELCO_TRAIN_PENDING_TRAINING_ROLE_PATHS."
+    )
+
+
+def _exec_readiness_cell(*, repo_root: Path, training_run_materialization: dict) -> dict:
+    """Execute the notebook's actual readiness-cell source (not a
+    reimplementation) against a controlled temporary repository root and a
+    synthetic governed-training-run-materialization result, and return the
+    resulting cell namespace for assertion."""
+    nb = _load_notebook()
+    source = _readiness_cell_source(nb)
+    namespace = {
+        "dataset_slug": "telco-customer-churn",
+        "_repo_root_path": repo_root,
+        "telco_training_run_materialization": training_run_materialization,
+        "json": json,
+    }
+    exec(compile(source, "<readiness-cell>", "exec"), namespace)  # noqa: S102
+    return namespace
+
+
+def test_train_pending_training_role_paths_has_exactly_five_roles():
+    namespace = _exec_readiness_cell(
+        repo_root=REPO_ROOT,
+        training_run_materialization={"status": "pending"},
+    )
+    role_paths = namespace["TELCO_TRAIN_PENDING_TRAINING_ROLE_PATHS"]
+    assert list(role_paths.keys()) == [
+        "training_parameter_record",
+        "model_artifact",
+        "training_metrics",
+        "model_card",
+        "visualizations",
+    ], "TELCO_TRAIN_PENDING_TRAINING_ROLE_PATHS must declare exactly these five roles, in order."
+
+
+def test_visualizations_blocked_placeholder_is_repository_relative_train_pending():
+    namespace = _exec_readiness_cell(
+        repo_root=REPO_ROOT,
+        training_run_materialization={"status": "pending"},
+    )
+    placeholder = namespace["TELCO_TRAIN_PENDING_TRAINING_ROLE_PATHS"]["visualizations"]
+    assert placeholder.endswith("train-pending/analytical-visualizations.json")
+    assert not placeholder.startswith("/")
+    assert placeholder == (
+        "pipeline/training-runs/telco-customer-churn/"
+        "train-pending/analytical-visualizations.json"
+    )
+
+
+def test_documentation_and_comments_describe_five_training_related_roles():
+    nb = _load_notebook()
+    source = _all_source(nb)
+    assert "five training-related roles" in source, (
+        "Notebook documentation/comments must describe five training-related roles."
+    )
+    assert "four training-related roles" not in source, (
+        "Notebook must no longer describe four training-related roles."
+    )
+
+
+def test_readiness_cell_never_infers_a_training_run_by_globbing_or_newest_directory():
+    nb = _load_notebook()
+    source = _readiness_cell_source(nb)
+    assert "glob(" not in source, (
+        "Notebook must not infer a training run via glob()."
+    )
+    assert ".iterdir(" not in source, (
+        "Notebook must not infer a training run by listing a directory."
+    )
+    assert "normalize_training_handoff_references(" in source, (
+        "Notebook must source trained paths only through "
+        "normalize_training_handoff_references()."
+    )
+
+
+def test_visualizations_role_blocked_when_training_is_not_trained():
+    """A blocked/absent training result must keep the non-existing
+    train-pending placeholder for visualizations, and readiness must remain
+    blocked because of it -- proving the negative/blocked-state contract,
+    not just the string 'visualizations' appearing somewhere."""
+    namespace = _exec_readiness_cell(
+        repo_root=REPO_ROOT,
+        training_run_materialization={"status": "pending"},
+    )
+    role_paths = namespace["telco_training_handoff_role_paths"]
+    placeholder = namespace["TELCO_TRAIN_PENDING_TRAINING_ROLE_PATHS"]["visualizations"]
+    assert role_paths["visualizations"] == placeholder
+    assert not (REPO_ROOT / placeholder).exists(), (
+        "The train-pending placeholder path must never exist on disk; the "
+        "notebook must never create it merely to satisfy readiness."
+    )
+    readiness = namespace["release_candidate_handoff_readiness"]
+    visualizations_result = next(
+        r for r in readiness["role_results"] if r["role"] == "visualizations"
+    )
+    assert visualizations_result["ready"] is False
+    assert visualizations_result["reason"] == "missing_reference"
+    assert "visualizations" in readiness["not_ready_roles"]
+
+
+def test_visualizations_role_propagates_a_real_normalized_path_when_trained(tmp_path):
+    """A synthetic *trained* result whose training_result carries a real,
+    existing analytical_visualizations_path must flow, through the actual
+    notebook cell code and the real normalize_training_handoff_references()
+    boundary, all the way into TELCO_RELEASE_CANDIDATE_ARTIFACT_REFERENCES
+    and into a `ready` release_candidate_handoff_readiness role result --
+    proving propagation, not merely that the string 'visualizations' is
+    present somewhere in the notebook source."""
+    run_dir = "pipeline/training-runs/telco-customer-churn/train-s0129fixture/"
+    visualizations_relative_path = f"{run_dir}analytical-visualizations.json"
+    visualizations_abs_path = tmp_path / visualizations_relative_path
+    visualizations_abs_path.parent.mkdir(parents=True)
+    visualizations_abs_path.write_text(
+        json.dumps({"artifact_kind": "analytical_visualizations", "charts": []}),
+        encoding="utf-8",
+    )
+
+    training_run_materialization = {
+        "status": "trained",
+        "training_result": {
+            "output_directory": run_dir,
+            "analytical_visualizations_path": visualizations_relative_path,
+        },
+    }
+
+    namespace = _exec_readiness_cell(
+        repo_root=tmp_path,
+        training_run_materialization=training_run_materialization,
+    )
+
+    assert (
+        namespace["telco_training_handoff_normalization"]["role_paths"]["visualizations"]
+        == visualizations_relative_path
+    ), "normalize_training_handoff_references() must resolve the real trained path."
+    assert (
+        namespace["telco_training_handoff_role_paths"]["visualizations"]
+        == visualizations_relative_path
+    ), "The notebook's role-path merge must not discard the real normalized path."
+    assert (
+        namespace["TELCO_RELEASE_CANDIDATE_ARTIFACT_REFERENCES"]["visualizations"]
+        == visualizations_relative_path
+    ), "TELCO_RELEASE_CANDIDATE_ARTIFACT_REFERENCES must receive the projected visualizations role."
+
+    readiness = namespace["release_candidate_handoff_readiness"]
+    visualizations_result = next(
+        r for r in readiness["role_results"] if r["role"] == "visualizations"
+    )
+    assert visualizations_result["ready"] is True
+    assert visualizations_result["reason"] is None
+    assert visualizations_result["path"] == visualizations_relative_path
+    assert "visualizations" not in readiness["not_ready_roles"]
+    assert not any(
+        reason.startswith("visualizations:") for reason in readiness["blocking_reasons"]
+    )
+
+
+def test_downstream_candidate_and_publisher_materialization_remain_gated_by_readiness():
+    nb = _load_notebook()
+    source = _all_code_source(nb)
+    assert (
+        'if not release_candidate_handoff_readiness["is_release_candidate_input_ready"]:'
+        in source
+    ), (
+        "Release-candidate assembly must remain gated by "
+        "is_release_candidate_input_ready."
+    )
+    assert (
+        'telco_release_candidate_assembly_result.get("status") != "accepted"' in source
+    ), (
+        "Publisher-validation run materialization must remain gated on an "
+        "accepted release-candidate assembly."
     )

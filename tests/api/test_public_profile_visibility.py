@@ -49,6 +49,11 @@ from public_context_loader import PublicContextUnavailableError  # noqa: E402
 from public_errors import DATASET_MAINTENANCE  # noqa: E402
 from public_predict_view_loader import ViewNotFoundError  # noqa: E402
 from public_profile_visibility import (  # noqa: E402
+    SNAPSHOT_STATUS_CURRENT_RELEASE,
+    SNAPSHOT_STATUS_INVALID,
+    SNAPSHOT_STATUS_MISSING,
+    SNAPSHOT_STATUS_STALE_RELEASE,
+    resolve_dataset_snapshot_readiness,
     resolve_dataset_visibility,
     resolve_public_dataset_access,
     resolve_public_presentation_overlay,
@@ -60,6 +65,10 @@ from registry.dataset_public_profile_publication_store import (  # noqa: E402
 )
 from registry.list import ListedDataset, _snapshot_overlay_fields, is_dataset_needs_review  # noqa: E402
 from registry.resolve import DatasetUnavailableError, RegistryInvalidError, ReleaseUnavailableError  # noqa: E402
+from registry.update import (  # noqa: E402
+    ACTIVE_RELEASE_MISMATCH_ERROR,
+    approve_dataset_detail_review,
+)
 
 _SEEDED_DATASET_SLUGS = ["telco-customer-churn", "bank-marketing"]
 _TARGET_SLUG = "telco-customer-churn"
@@ -96,10 +105,28 @@ def _fixture_resolve_dataset(dataset_slug):
     return SimpleNamespace(dataset_slug=dataset_slug, active_release="release-fixture-001")
 
 
+_CURRENT_RELEASE_SNAPSHOT = {"status": "current_release", "matches_active_release": True}
+
+
+def _stub_snapshot_current(monkeypatch) -> None:
+    """
+    Project Spec S0125: isolate the shared access guard's new snapshot-
+    alignment dimension from real registry/profile-snapshots content, so
+    tests exercising only the visibility/review dimensions are unaffected by
+    whether a real published snapshot happens to exist.
+    """
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda _dataset_slug, _active_release: dict(_CURRENT_RELEASE_SNAPSHOT),
+    )
+
+
 def _make_fixture_publicly_eligible(monkeypatch) -> None:
     """Isolate success paths from every real public eligibility gate."""
     monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    _stub_snapshot_current(monkeypatch)
 
 
 def _make_request(
@@ -346,11 +373,14 @@ def test_resolve_public_dataset_access_maintenance_when_both_hidden_and_needs_re
 # ---------------------------------------------------------------------------
 
 
-def test_list_datasets_endpoint_excludes_hidden_dataset():
+def test_list_datasets_endpoint_excludes_hidden_dataset(monkeypatch):
     original_visibility = api_main.resolve_dataset_visibility
     original_list_datasets = api_main.list_datasets
     api_main.resolve_dataset_visibility = lambda dataset_slug: dataset_slug != _TARGET_SLUG
     api_main.list_datasets = _fixture_two_dataset_listing
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    _stub_snapshot_current(monkeypatch)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -368,6 +398,8 @@ def test_list_datasets_endpoint_includes_all_when_all_visible(monkeypatch):
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.list_datasets = _fixture_two_dataset_listing
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    _stub_snapshot_current(monkeypatch)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -588,7 +620,10 @@ def test_publication_state_hidden_no_snapshot_is_unreachable(monkeypatch):
     preference, so this state is now unreachable -- the prior
     "configured_hidden_but_effectively_visible_without_snapshot"
     discrepancy can no longer occur and is absent from observations.
-    snapshot_missing remains a non-blocking observation on its own.
+
+    Project Spec S0125: a missing published snapshot always blocks public
+    reachability now, so snapshot_missing moved from a non-blocking
+    observation into blockers alongside visibility_disabled.
     """
     _publication_state_dependencies(
         monkeypatch,
@@ -605,8 +640,8 @@ def test_publication_state_hidden_no_snapshot_is_unreachable(monkeypatch):
     state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
     assert state["visibility"]["effective_visible"] is False
     assert state["public_access"]["reachable"] is False
-    assert state["public_access"]["blockers"] == ["visibility_disabled"]
-    assert state["public_access"]["observations"] == ["snapshot_missing"]
+    assert state["public_access"]["blockers"] == ["visibility_disabled", "snapshot_missing"]
+    assert state["public_access"]["observations"] == []
     assert "configured_hidden_but_effectively_visible_without_snapshot" not in state["public_access"]["observations"]
 
 
@@ -632,11 +667,17 @@ def test_publication_state_integration_hidden_no_snapshot_real_functions(monkeyp
     assert state["visibility"]["effective_visible"] is False
     assert state["public_access"]["reachable"] is False
     assert "visibility_disabled" in state["public_access"]["blockers"]
-    assert "snapshot_missing" in state["public_access"]["observations"]
+    assert "snapshot_missing" in state["public_access"]["blockers"]
     assert "configured_hidden_but_effectively_visible_without_snapshot" not in state["public_access"]["observations"]
 
 
-def test_publication_state_integration_visible_no_snapshot_is_reachable(monkeypatch, tmp_path):
+def test_publication_state_integration_visible_no_snapshot_is_unreachable(monkeypatch, tmp_path):
+    """
+    Project Spec S0125: a visible, reviewed dataset with no published
+    snapshot yet is no longer publicly reachable -- reachability now also
+    requires a current-release snapshot. This replaces the pre-S0125
+    "visible + no snapshot is reachable" expectation.
+    """
     set_visibility(_TARGET_SLUG, True, repo_root=tmp_path)
 
     monkeypatch.setattr(
@@ -650,8 +691,8 @@ def test_publication_state_integration_visible_no_snapshot_is_reachable(monkeypa
 
     state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG, repo_root=tmp_path)
 
-    assert state["public_access"]["reachable"] is True
-    assert state["public_access"]["blockers"] == []
+    assert state["public_access"]["reachable"] is False
+    assert state["public_access"]["blockers"] == ["snapshot_missing"]
 
 
 def test_publication_state_has_deterministic_blockers_and_observations(monkeypatch):
@@ -675,11 +716,10 @@ def test_publication_state_has_deterministic_blockers_and_observations(monkeypat
     assert state["snapshot"]["status"] == "stale_release"
     assert state["public_access"] == {
         "reachable": False,
-        "blockers": ["visibility_disabled", "review_pending"],
+        "blockers": ["visibility_disabled", "review_pending", "snapshot_stale"],
         "observations": [
             "visibility_default_applied",
             "visibility_record_invalid",
-            "snapshot_stale",
         ],
     }
 
@@ -862,6 +902,7 @@ def test_get_public_context_returns_context_when_visible(monkeypatch):
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
+    _stub_snapshot_current(monkeypatch)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
@@ -884,6 +925,7 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published(monke
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
+    _stub_snapshot_current(monkeypatch)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     try:
@@ -921,6 +963,7 @@ def test_get_public_context_includes_curated_overlay_fields_when_published(monke
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
+    _stub_snapshot_current(monkeypatch)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
     api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_CURATED_PUBLIC_PROFILE_OVERLAY)
     try:
@@ -1138,6 +1181,7 @@ def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset(
     api_main.list_datasets = _fixture_two_dataset_listing
     api_main.resolve_dataset = _fixture_resolve_dataset
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    _stub_snapshot_current(monkeypatch)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -1173,6 +1217,7 @@ def test_list_datasets_endpoint_problem_type_fails_open_per_dataset_without_excl
     api_main.load_public_context = fake_load_public_context
     api_main.list_datasets = _fixture_two_dataset_listing
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    _stub_snapshot_current(monkeypatch)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -1195,6 +1240,7 @@ def test_get_dataset_includes_problem_type_when_available(monkeypatch):
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
+    _stub_snapshot_current(monkeypatch)
     api_main.load_public_context = lambda active_release: {"problem_type": "regression"}
     try:
         response = api_main.get_dataset(_TARGET_SLUG)
@@ -1297,6 +1343,8 @@ def test_list_datasets_endpoint_includes_dataset_when_not_needs_review(monkeypat
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.is_dataset_needs_review = lambda dataset_slug: False
     monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    _stub_snapshot_current(monkeypatch)
     try:
         response = api_main.list_datasets_endpoint()
     finally:
@@ -1332,6 +1380,7 @@ def test_get_dataset_returns_data_when_visible_and_not_needs_review(monkeypatch)
     api_main.is_dataset_needs_review = lambda dataset_slug: False
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
+    _stub_snapshot_current(monkeypatch)
     try:
         response = api_main.get_dataset(_TARGET_SLUG)
     finally:
@@ -1429,6 +1478,7 @@ def test_access_guard_returns_resolved_dataset_when_ready(monkeypatch):
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    _stub_snapshot_current(monkeypatch)
 
     resolved = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
 
@@ -1507,6 +1557,7 @@ def test_inference_route_ready_dataset_malformed_payload_retains_validation_erro
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    _stub_snapshot_current(monkeypatch)
 
     response = api_main.validate_dataset_inference_payload(_TARGET_SLUG, payload="not-a-dict")
 
@@ -1539,6 +1590,7 @@ def test_predict_view_route_ready_dataset_unknown_view_retains_view_not_found(mo
     monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
     monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    _stub_snapshot_current(monkeypatch)
     monkeypatch.setattr(
         api_main,
         "load_public_predict_view",
@@ -1563,6 +1615,671 @@ def test_predict_view_customization_route_returns_maintenance_for_unknown_view_w
 
     assert response.status_code == 503
     assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0125: Dataset Detail review-approval and public publication
+# readiness contract. Covers registry.update.approve_dataset_detail_review
+# (the controlled registry transition), api.public_profile_visibility.
+# resolve_dataset_snapshot_readiness (the shared snapshot-alignment
+# classifier), admin_profile_visibility.get_dataset_publication_state's new
+# review.approval_allowed/approval_blockers projection and blocker/observation
+# restructuring, admin_profile_visibility.approve_dataset_review (the private
+# service boundary), and the new PUT /admin/datasets/{slug}/review-status
+# route -- all isolated from the real repository via tmp_path fixtures.
+# ---------------------------------------------------------------------------
+
+_S0125_RELEASE_ID = "release-20260701-001"
+
+
+def _s0125_write_registry(
+    fake_repo: Path,
+    dataset_slug: str = _TARGET_SLUG,
+    active_release: str = _S0125_RELEASE_ID,
+    review_status: str | None = "needs_review",
+) -> None:
+    registry_dir = fake_repo / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "dataset_slug": dataset_slug,
+        "active_release": active_release,
+        "public_metadata": {
+            "title": "Fixture Dataset",
+            "summary": "Fixture.",
+            "domain": "general",
+            "visibility": "public",
+            "tags": [],
+        },
+        "dataset_detail_updated_at": "2026-07-01T00:00:00Z",
+    }
+    if review_status is not None:
+        entry["review_status"] = review_status
+    (registry_dir / "datasets.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "atlas.dataflow.registry.v1",
+                "datasets": [entry],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _mock_needs_review_from_tmp_registry(monkeypatch, tmp_path: Path) -> None:
+    """
+    approve_dataset_review's own get_dataset_publication_state() calls
+    registry.list.is_dataset_needs_review with an explicit registry_path
+    keyword (independent from repo_root, defaulting to None/real-repo when
+    the caller doesn't override it) -- force it to the tmp_path fixture
+    registry regardless of what registry_path the caller passes through, so
+    review-state re-checks after a registry mutation observe that mutation
+    instead of the real repository.
+    """
+    fixed_registry_path = tmp_path / "registry" / "datasets.json"
+    monkeypatch.setattr(
+        admin_profile_visibility,
+        "is_dataset_needs_review",
+        lambda dataset_slug, registry_path=None: is_dataset_needs_review(
+            dataset_slug, registry_path=fixed_registry_path
+        ),
+    )
+
+
+def _s0125_write_snapshot(fake_repo: Path, dataset_slug: str, active_release: str) -> None:
+    snapshots_dir = fake_repo / "registry" / "profile-snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    (snapshots_dir / f"{dataset_slug}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0.0",
+                "dataset_slug": dataset_slug,
+                "published_at": "2026-07-01T00:00:00Z",
+                "active_release_at_publish_time": active_release,
+                "profile": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
+# registry.update.approve_dataset_detail_review: the controlled registry
+# transition itself.
+# ---------------------------------------------------------------------------
+
+
+def test_approve_dataset_detail_review_transitions_needs_review_to_ready(tmp_path):
+    _s0125_write_registry(tmp_path, review_status="needs_review")
+    result = approve_dataset_detail_review(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": _TARGET_SLUG,
+        "review_status": "ready",
+        "changed": True,
+        "errors": [],
+    }
+    registry = json.loads((tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    entry = registry["datasets"][0]
+    assert entry["review_status"] == "ready"
+    # Only review_status changed -- identity, active_release, metadata, and
+    # the S0089/S0092 display-date authority are all preserved untouched.
+    assert entry["dataset_slug"] == _TARGET_SLUG
+    assert entry["active_release"] == _S0125_RELEASE_ID
+    assert entry["dataset_detail_updated_at"] == "2026-07-01T00:00:00Z"
+    assert entry["public_metadata"]["title"] == "Fixture Dataset"
+
+
+def test_approve_dataset_detail_review_writes_previous_registry_backup(tmp_path):
+    _s0125_write_registry(tmp_path, review_status="needs_review")
+    original_bytes = (tmp_path / "registry" / "datasets.json").read_bytes()
+
+    approve_dataset_detail_review(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+
+    assert (tmp_path / "registry" / "datasets.json.previous").read_bytes() == original_bytes
+
+
+def test_approve_dataset_detail_review_idempotent_when_already_ready(tmp_path):
+    _s0125_write_registry(tmp_path, review_status="ready")
+    before = (tmp_path / "registry" / "datasets.json").read_bytes()
+
+    result = approve_dataset_detail_review(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+
+    assert result == {
+        "dataset_slug": _TARGET_SLUG,
+        "review_status": "ready",
+        "changed": False,
+        "errors": [],
+    }
+    # No rewrite occurred -- byte-for-byte identical, no backup created.
+    assert (tmp_path / "registry" / "datasets.json").read_bytes() == before
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+def test_approve_dataset_detail_review_rejects_active_release_mismatch(tmp_path):
+    _s0125_write_registry(tmp_path, active_release=_S0125_RELEASE_ID, review_status="needs_review")
+    before = (tmp_path / "registry" / "datasets.json").read_bytes()
+
+    result = approve_dataset_detail_review(_TARGET_SLUG, "release-20260601-001", repo_root=tmp_path)
+
+    assert result["changed"] is False
+    assert result["errors"] == [ACTIVE_RELEASE_MISMATCH_ERROR]
+    assert result["review_status"] == "needs_review"
+    assert (tmp_path / "registry" / "datasets.json").read_bytes() == before
+    assert not (tmp_path / "registry" / "datasets.json.previous").exists()
+
+
+def test_approve_dataset_detail_review_rejects_unknown_dataset(tmp_path):
+    _s0125_write_registry(tmp_path, dataset_slug="other-dataset")
+
+    result = approve_dataset_detail_review(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+
+    assert result["changed"] is False
+    assert result["errors"][0]["code"] == "DATASET_DETAIL_NOT_FOUND"
+
+
+def test_approve_dataset_detail_review_rejects_invalid_dataset_slug(tmp_path):
+    result = approve_dataset_detail_review("Invalid Slug", _S0125_RELEASE_ID, repo_root=tmp_path)
+
+    assert result["changed"] is False
+    assert result["errors"][0]["code"] == "DATASET_SLUG_INVALID"
+
+
+def test_approve_dataset_detail_review_has_no_reverse_transition():
+    """The controlled transition function itself has exactly one write site
+    for review_status, and it is always the literal "ready" -- there is no
+    parameter or code path that can set review_status back to
+    needs_review; it is a one-directional approval boundary by
+    construction."""
+    import inspect
+
+    source = inspect.getsource(approve_dataset_detail_review)
+    assert source.count('entry["review_status"] =') == 1
+    assert 'entry["review_status"] = _REVIEW_STATUS_READY' in source
+
+
+# ---------------------------------------------------------------------------
+# api.public_profile_visibility.resolve_dataset_snapshot_readiness
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_readiness_missing_when_no_snapshot_published(tmp_path):
+    result = resolve_dataset_snapshot_readiness(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+    assert result == {"status": SNAPSHOT_STATUS_MISSING, "matches_active_release": None}
+
+
+def test_snapshot_readiness_current_release_when_bound_release_matches(tmp_path):
+    _s0125_write_snapshot(tmp_path, _TARGET_SLUG, _S0125_RELEASE_ID)
+    result = resolve_dataset_snapshot_readiness(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+    assert result == {"status": SNAPSHOT_STATUS_CURRENT_RELEASE, "matches_active_release": True}
+
+
+def test_snapshot_readiness_stale_release_when_bound_release_differs(tmp_path):
+    _s0125_write_snapshot(tmp_path, _TARGET_SLUG, "release-20260601-001")
+    result = resolve_dataset_snapshot_readiness(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+    assert result == {"status": SNAPSHOT_STATUS_STALE_RELEASE, "matches_active_release": False}
+
+
+def test_snapshot_readiness_invalid_when_bound_release_malformed(tmp_path):
+    snapshots_dir = tmp_path / "registry" / "profile-snapshots"
+    snapshots_dir.mkdir(parents=True)
+    (snapshots_dir / f"{_TARGET_SLUG}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0.0",
+                "dataset_slug": _TARGET_SLUG,
+                "published_at": "2026-07-01T00:00:00Z",
+                "active_release_at_publish_time": "not-a-release-id",
+                "profile": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = resolve_dataset_snapshot_readiness(_TARGET_SLUG, _S0125_RELEASE_ID, repo_root=tmp_path)
+    assert result == {"status": SNAPSHOT_STATUS_INVALID, "matches_active_release": None}
+
+
+# ---------------------------------------------------------------------------
+# admin_profile_visibility.get_dataset_publication_state: review.approval_
+# allowed / review.approval_blockers projection (Project Spec S0125).
+# ---------------------------------------------------------------------------
+
+
+def test_publication_state_review_approval_allowed_true_when_needs_review_and_current_snapshot(monkeypatch):
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": True,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=True,
+        review=True,
+        snapshot={
+            "dataset_slug": _TARGET_SLUG,
+            "published_at": "2026-07-16T20:30:00Z",
+            "active_release_at_publish_time": "release-20260716-001",
+        },
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["review"] == {
+        "status": "needs_review",
+        "approval_allowed": True,
+        "approval_blockers": [],
+    }
+
+
+def test_publication_state_review_approval_blocked_when_snapshot_missing(monkeypatch):
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": True,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=True,
+        review=True,
+        snapshot=None,
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["review"] == {
+        "status": "needs_review",
+        "approval_allowed": False,
+        "approval_blockers": ["snapshot_missing"],
+    }
+
+
+def test_publication_state_review_approval_blocked_when_snapshot_stale(monkeypatch):
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": True,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=True,
+        review=True,
+        snapshot={
+            "dataset_slug": _TARGET_SLUG,
+            "published_at": "2026-07-16T20:30:00Z",
+            "active_release_at_publish_time": "release-20260601-001",
+        },
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["review"]["approval_allowed"] is False
+    assert state["review"]["approval_blockers"] == ["snapshot_stale"]
+
+
+def test_publication_state_review_approval_not_allowed_again_when_already_ready(monkeypatch):
+    """A dataset already "ready" is never represented as approval-eligible
+    again, regardless of snapshot state -- no reverse-action invitation."""
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": True,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=True,
+        review=False,
+        snapshot={
+            "dataset_slug": _TARGET_SLUG,
+            "published_at": "2026-07-16T20:30:00Z",
+            "active_release_at_publish_time": "release-20260716-001",
+        },
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["review"] == {"status": "ready", "approval_allowed": False, "approval_blockers": []}
+
+
+def test_publication_state_review_approval_independent_of_visibility(monkeypatch):
+    """Visibility state must not be an approval blocker: a hidden dataset
+    with a current snapshot and needs_review is still approval-eligible."""
+    _publication_state_dependencies(
+        monkeypatch,
+        configured={
+            "visible": False,
+            "source": "explicit_record",
+            "record_status": "valid",
+            "updated_at": "2026-07-16T21:00:00Z",
+        },
+        effective=False,
+        review=True,
+        snapshot={
+            "dataset_slug": _TARGET_SLUG,
+            "published_at": "2026-07-16T20:30:00Z",
+            "active_release_at_publish_time": "release-20260716-001",
+        },
+    )
+    state = admin_profile_visibility.get_dataset_publication_state(_TARGET_SLUG)
+    assert state["review"]["approval_allowed"] is True
+    assert state["public_access"]["reachable"] is False
+    assert "visibility_disabled" in state["public_access"]["blockers"]
+
+
+# ---------------------------------------------------------------------------
+# admin_profile_visibility.approve_dataset_review: the private service
+# boundary. Isolated end-to-end against a tmp_path fixture repository (real
+# resolve_dataset/is_dataset_needs_review/registry mutation), never touching
+# the real repository's registry/profile/publication artifacts.
+# ---------------------------------------------------------------------------
+
+
+def test_approve_dataset_review_succeeds_when_needs_review_and_current_snapshot(tmp_path, monkeypatch):
+    _s0125_write_registry(tmp_path, review_status="needs_review")
+    _s0125_write_snapshot(tmp_path, _TARGET_SLUG, _S0125_RELEASE_ID)
+    monkeypatch.setattr(
+        admin_profile_visibility, "resolve_dataset", lambda slug, registry_path=None: SimpleNamespace(
+            dataset_slug=slug, active_release=_S0125_RELEASE_ID
+        )
+    )
+    _mock_needs_review_from_tmp_registry(monkeypatch, tmp_path)
+
+    result = admin_profile_visibility.approve_dataset_review(_TARGET_SLUG, repo_root=tmp_path)
+
+    assert result["approved"] is True
+    assert result["changed"] is True
+    assert result["review_status"] == "ready"
+    assert result["publication_state"]["review"]["status"] == "ready"
+    assert result["errors"] == []
+    registry = json.loads((tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    assert registry["datasets"][0]["review_status"] == "ready"
+
+
+def test_approve_dataset_review_idempotent_when_already_ready_and_snapshot_current(tmp_path, monkeypatch):
+    _s0125_write_registry(tmp_path, review_status="ready")
+    _s0125_write_snapshot(tmp_path, _TARGET_SLUG, _S0125_RELEASE_ID)
+    monkeypatch.setattr(
+        admin_profile_visibility, "resolve_dataset", lambda slug, registry_path=None: SimpleNamespace(
+            dataset_slug=slug, active_release=_S0125_RELEASE_ID
+        )
+    )
+    _mock_needs_review_from_tmp_registry(monkeypatch, tmp_path)
+
+    result = admin_profile_visibility.approve_dataset_review(_TARGET_SLUG, repo_root=tmp_path)
+
+    assert result["approved"] is True
+    assert result["changed"] is False
+    assert result["review_status"] == "ready"
+
+
+def test_approve_dataset_review_blocked_when_snapshot_missing(tmp_path, monkeypatch):
+    _s0125_write_registry(tmp_path, review_status="needs_review")
+    monkeypatch.setattr(
+        admin_profile_visibility, "resolve_dataset", lambda slug, registry_path=None: SimpleNamespace(
+            dataset_slug=slug, active_release=_S0125_RELEASE_ID
+        )
+    )
+    _mock_needs_review_from_tmp_registry(monkeypatch, tmp_path)
+
+    result = admin_profile_visibility.approve_dataset_review(_TARGET_SLUG, repo_root=tmp_path)
+
+    assert result["approved"] is False
+    assert result["errors"] == [admin_profile_visibility.REVIEW_APPROVAL_BLOCKED_ERROR]
+    assert result["publication_state"] is None
+    registry = json.loads((tmp_path / "registry" / "datasets.json").read_text(encoding="utf-8"))
+    assert registry["datasets"][0]["review_status"] == "needs_review"
+
+
+def test_approve_dataset_review_blocked_when_snapshot_stale(tmp_path, monkeypatch):
+    _s0125_write_registry(tmp_path, review_status="needs_review")
+    _s0125_write_snapshot(tmp_path, _TARGET_SLUG, "release-20260601-001")
+    monkeypatch.setattr(
+        admin_profile_visibility, "resolve_dataset", lambda slug, registry_path=None: SimpleNamespace(
+            dataset_slug=slug, active_release=_S0125_RELEASE_ID
+        )
+    )
+    _mock_needs_review_from_tmp_registry(monkeypatch, tmp_path)
+
+    result = admin_profile_visibility.approve_dataset_review(_TARGET_SLUG, repo_root=tmp_path)
+
+    assert result["approved"] is False
+    assert result["errors"] == [admin_profile_visibility.REVIEW_APPROVAL_BLOCKED_ERROR]
+
+
+def test_approve_dataset_review_does_not_require_visibility(tmp_path, monkeypatch):
+    _s0125_write_registry(tmp_path, review_status="needs_review")
+    _s0125_write_snapshot(tmp_path, _TARGET_SLUG, _S0125_RELEASE_ID)
+    set_visibility(_TARGET_SLUG, False, repo_root=tmp_path)
+    monkeypatch.setattr(
+        admin_profile_visibility, "resolve_dataset", lambda slug, registry_path=None: SimpleNamespace(
+            dataset_slug=slug, active_release=_S0125_RELEASE_ID
+        )
+    )
+    _mock_needs_review_from_tmp_registry(monkeypatch, tmp_path)
+
+    result = admin_profile_visibility.approve_dataset_review(_TARGET_SLUG, repo_root=tmp_path)
+
+    assert result["approved"] is True
+    assert result["publication_state"]["visibility"]["effective_visible"] is False
+    assert result["publication_state"]["public_access"]["reachable"] is False
+
+
+def test_approve_dataset_review_never_writes_visibility_or_snapshot(tmp_path, monkeypatch):
+    """Approval must not publish a snapshot, write a visibility record, or
+    create a draft -- only registry/datasets.json (+ its backup) changes."""
+    _s0125_write_registry(tmp_path, review_status="needs_review")
+    _s0125_write_snapshot(tmp_path, _TARGET_SLUG, _S0125_RELEASE_ID)
+    monkeypatch.setattr(
+        admin_profile_visibility, "resolve_dataset", lambda slug, registry_path=None: SimpleNamespace(
+            dataset_slug=slug, active_release=_S0125_RELEASE_ID
+        )
+    )
+    _mock_needs_review_from_tmp_registry(monkeypatch, tmp_path)
+    snapshot_before = (tmp_path / "registry" / "profile-snapshots" / f"{_TARGET_SLUG}.json").read_bytes()
+    assert not (tmp_path / "registry" / "profile-publications").exists()
+    assert not (tmp_path / "registry" / "profile-drafts").exists()
+
+    admin_profile_visibility.approve_dataset_review(_TARGET_SLUG, repo_root=tmp_path)
+
+    assert (tmp_path / "registry" / "profile-snapshots" / f"{_TARGET_SLUG}.json").read_bytes() == snapshot_before
+    assert not (tmp_path / "registry" / "profile-publications").exists()
+    assert not (tmp_path / "registry" / "profile-drafts").exists()
+
+
+# ---------------------------------------------------------------------------
+# PUT /admin/datasets/{dataset_slug}/review-status route
+# ---------------------------------------------------------------------------
+
+
+def test_review_status_route_returns_generic_not_found_when_admin_runtime_unset():
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    request = _make_request({}, path=f"/admin/datasets/{_TARGET_SLUG}/review-status")
+    response = api_main.put_admin_dataset_review_status(_TARGET_SLUG, request, {"status": "ready"})
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_review_status_route_rejects_missing_status():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    try:
+        request = _make_request({}, path=f"/admin/datasets/{_TARGET_SLUG}/review-status")
+        response = api_main.put_admin_dataset_review_status(_TARGET_SLUG, request, {})
+        assert response.status_code == 422
+        assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_REVIEW_STATUS_INVALID"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_review_status_route_rejects_reverse_transition_payload():
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    try:
+        request = _make_request({}, path=f"/admin/datasets/{_TARGET_SLUG}/review-status")
+        response = api_main.put_admin_dataset_review_status(_TARGET_SLUG, request, {"status": "needs_review"})
+        assert response.status_code == 422
+        assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_REVIEW_STATUS_INVALID"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_review_status_route_returns_409_when_approval_blocked(monkeypatch):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    monkeypatch.setattr(
+        api_main,
+        "approve_dataset_review",
+        lambda _slug: {
+            "approved": False,
+            "dataset_slug": _slug,
+            "changed": False,
+            "review_status": "needs_review",
+            "publication_state": None,
+            "errors": [admin_profile_visibility.REVIEW_APPROVAL_BLOCKED_ERROR],
+        },
+    )
+    try:
+        request = _make_request({}, path=f"/admin/datasets/{_TARGET_SLUG}/review-status")
+        response = api_main.put_admin_dataset_review_status(_TARGET_SLUG, request, {"status": "ready"})
+        assert response.status_code == 409
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["error_code"] == "DATASET_REVIEW_APPROVAL_BLOCKED"
+        assert payload["errors"] == [admin_profile_visibility.REVIEW_APPROVAL_BLOCKED_ERROR]
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_review_status_route_returns_dataset_not_found(monkeypatch):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+
+    def raise_unavailable(_slug):
+        raise DatasetUnavailableError("missing")
+
+    monkeypatch.setattr(api_main, "approve_dataset_review", raise_unavailable)
+    try:
+        request = _make_request({}, path=f"/admin/datasets/unknown-slug/review-status")
+        response = api_main.put_admin_dataset_review_status("unknown-slug", request, {"status": "ready"})
+        assert response.status_code == 404
+        assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_NOT_FOUND"
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_review_status_route_succeeds_and_returns_bounded_success_body(monkeypatch):
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    fake_publication_state = {
+        "dataset_slug": _TARGET_SLUG,
+        "review": {"status": "ready", "approval_allowed": False, "approval_blockers": []},
+        "public_access": {"reachable": True, "blockers": [], "observations": []},
+    }
+    monkeypatch.setattr(
+        api_main,
+        "approve_dataset_review",
+        lambda _slug: {
+            "approved": True,
+            "dataset_slug": _slug,
+            "changed": True,
+            "review_status": "ready",
+            "publication_state": fake_publication_state,
+            "errors": [],
+        },
+    )
+    try:
+        request = _make_request({}, path=f"/admin/datasets/{_TARGET_SLUG}/review-status")
+        response = api_main.put_admin_dataset_review_status(_TARGET_SLUG, request, {"status": "ready"})
+        assert response == {
+            "dataset_slug": _TARGET_SLUG,
+            "review_status": "ready",
+            "changed": True,
+            "publication_state": fake_publication_state,
+        }
+    finally:
+        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+
+
+def test_review_status_route_registered_only_under_admin():
+    paths = {route.path for route in api_main.app.routes}
+    assert "/admin/datasets/{dataset_slug}/review-status" in paths
+    public_paths = {path for path in paths if not path.startswith("/admin")}
+    assert not any("review-status" in path for path in public_paths)
+
+
+# ---------------------------------------------------------------------------
+# Public readiness truth table: snapshot alignment as a public-access blocker
+# (Project Spec S0125), exercised directly through the shared access guard.
+# ---------------------------------------------------------------------------
+
+
+def test_access_guard_returns_maintenance_when_snapshot_missing(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda _slug, _release: {"status": SNAPSHOT_STATUS_MISSING, "matches_active_release": None},
+    )
+
+    response = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_access_guard_returns_maintenance_when_snapshot_stale(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda _slug, _release: {"status": SNAPSHOT_STATUS_STALE_RELEASE, "matches_active_release": False},
+    )
+
+    response = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_access_guard_returns_maintenance_when_snapshot_invalid(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda _slug, _release: {"status": SNAPSHOT_STATUS_INVALID, "matches_active_release": None},
+    )
+
+    response = api_main._resolve_public_dataset_detail_access(_TARGET_SLUG)
+
+    assert response.status_code == 503
+    assert json.loads(response.body.decode("utf-8"))["error_code"] == "DATASET_MAINTENANCE"
+
+
+def test_list_datasets_endpoint_excludes_dataset_with_snapshot_missing(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda slug, _release: {
+            "status": SNAPSHOT_STATUS_CURRENT_RELEASE if slug != _TARGET_SLUG else SNAPSHOT_STATUS_MISSING,
+            "matches_active_release": slug != _TARGET_SLUG,
+        },
+    )
+
+    response = api_main.list_datasets_endpoint()
+
+    slugs = {entry["dataset_slug"] for entry in response["datasets"]}
+    assert _TARGET_SLUG not in slugs
+    assert "bank-marketing" in slugs
+
+
+def test_dataset_publicly_ready_false_when_active_release_cannot_be_resolved(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: False)
+
+    def raise_unavailable(_slug):
+        raise DatasetUnavailableError("missing")
+
+    monkeypatch.setattr(api_main, "resolve_dataset", raise_unavailable)
+
+    assert api_main._dataset_publicly_ready(_TARGET_SLUG) is False
 
 
 if __name__ == "__main__":

@@ -5,13 +5,20 @@ Wraps registry/dataset_public_profile_publication_store.py's set_visibility
 for the private/admin HTTP surface in api/main.py. This module has no
 public caller; the route that uses it is gated by api/main.py's existing
 ADMIN_API_TOKEN convention, mirroring api/admin_profile_publish.py.
+
+Project Spec S0125 adds approve_dataset_review(): the private service
+boundary for the explicit, deterministic review-approval lifecycle
+(needs_review -> ready). It never publishes a snapshot, writes a visibility
+record, or creates a draft -- it only requires an already-current published
+snapshot and delegates the actual review_status mutation to
+registry.update.approve_dataset_detail_review().
 """
 
 import re
 from datetime import datetime
 from pathlib import Path
 
-from public_profile_visibility import resolve_dataset_visibility
+from public_profile_visibility import SNAPSHOT_STATUS_CURRENT_RELEASE, resolve_dataset_visibility
 from registry.dataset_public_profile_publication_store import (
     get_visibility_record,
     set_visibility,
@@ -19,8 +26,21 @@ from registry.dataset_public_profile_publication_store import (
 from registry.dataset_public_profile_snapshot_store import SnapshotNotFoundError, get_snapshot
 from registry.list import is_dataset_needs_review
 from registry.resolve import resolve_dataset
+from registry.update import approve_dataset_detail_review
 
 _RELEASE_PATTERN = re.compile(r"^release-(?:[0-9]{8}-[0-9]{3}|[0-9]{8}t[0-9]{6}z)$")
+
+REVIEW_STATUS_NEEDS_REVIEW = "needs_review"
+REVIEW_STATUS_READY = "ready"
+
+# Project Spec S0125: reduced, sanitized error for the private approval
+# service boundary -- never exposes storage paths, raw registry errors, or
+# which specific snapshot/registry precondition failed.
+REVIEW_APPROVAL_BLOCKED_ERROR = {
+    "code": "DATASET_REVIEW_APPROVAL_BLOCKED",
+    "field": None,
+    "message": "The Dataset Detail is not currently eligible for review approval.",
+}
 
 
 def set_dataset_visibility(dataset_slug: str, visible: bool) -> dict:
@@ -107,33 +127,60 @@ def get_dataset_publication_state(
     visibility_record = get_visibility_record(dataset_slug, repo_root=repo_root)
     effective_visible = resolve_dataset_visibility(dataset_slug, repo_root=repo_root)
     needs_review = is_dataset_needs_review(dataset_slug, registry_path=registry_path)
-    review_status = "needs_review" if needs_review else "ready"
+    review_status = REVIEW_STATUS_NEEDS_REVIEW if needs_review else REVIEW_STATUS_READY
     snapshot = _snapshot_projection(dataset_slug, resolved.active_release, repo_root)
+    snapshot_current = snapshot["status"] == SNAPSHOT_STATUS_CURRENT_RELEASE
 
+    # Project Spec S0125: a missing/stale/invalid published snapshot now
+    # always blocks public reachability (previously these were only
+    # non-blocking observations, back when reachability never considered the
+    # snapshot at all) -- so they move from `observations` into `blockers`
+    # whenever they apply. `observations` keeps only the non-blocking
+    # visibility-source/invalid-record notes that remain applicable.
     blockers = []
     if not effective_visible:
         blockers.append("visibility_disabled")
     if needs_review:
         blockers.append("review_pending")
+    if snapshot["status"] == "missing":
+        blockers.append("snapshot_missing")
+    elif snapshot["status"] == "stale_release":
+        blockers.append("snapshot_stale")
+    elif snapshot["status"] == "invalid":
+        blockers.append("snapshot_invalid")
 
     observations = []
     if visibility_record["source"] == "default_visible":
         observations.append("visibility_default_applied")
     if visibility_record["record_status"] not in {"valid", "missing"}:
         observations.append("visibility_record_invalid")
-    if snapshot["status"] == "missing":
-        observations.append("snapshot_missing")
-    elif snapshot["status"] == "stale_release":
-        observations.append("snapshot_stale")
-    elif snapshot["status"] == "invalid":
-        observations.append("snapshot_invalid")
     # Project Spec S0117: resolve_dataset_visibility() no longer treats a
     # missing snapshot as an override of an explicit configured-hidden
     # preference, so effective_visible now always agrees with
     # visibility_record["visible"] for a valid record -- the prior
     # "configured_hidden_but_effectively_visible_without_snapshot"
-    # discrepancy can no longer occur and has been removed. snapshot_missing
-    # above remains a non-blocking observation on its own.
+    # discrepancy can no longer occur and has been removed.
+
+    # Project Spec S0125: bounded review-approval projection so the frontend
+    # never has to recreate this backend policy. Visibility is deliberately
+    # never a factor here -- approval eligibility is independent of the
+    # configured "Visible publicly" preference. A dataset already "ready" is
+    # never represented as approval-eligible again (no reverse-action
+    # invitation); its approval_blockers stay empty since there is nothing
+    # actionable to report.
+    if needs_review:
+        approval_allowed = snapshot_current
+        approval_blockers = [] if snapshot_current else [
+            code for code in (
+                "snapshot_missing" if snapshot["status"] == "missing" else None,
+                "snapshot_stale" if snapshot["status"] == "stale_release" else None,
+                "snapshot_invalid" if snapshot["status"] == "invalid" else None,
+            )
+            if code is not None
+        ]
+    else:
+        approval_allowed = False
+        approval_blockers = []
 
     return {
         "dataset_slug": resolved.dataset_slug,
@@ -145,11 +192,89 @@ def get_dataset_publication_state(
             "updated_at": visibility_record["updated_at"],
             "effective_visible": effective_visible,
         },
-        "review": {"status": review_status},
+        "review": {
+            "status": review_status,
+            "approval_allowed": approval_allowed,
+            "approval_blockers": approval_blockers,
+        },
         "snapshot": snapshot,
         "public_access": {
-            "reachable": effective_visible and not needs_review,
+            "reachable": effective_visible and not needs_review and snapshot_current,
             "blockers": blockers,
             "observations": observations,
         },
+    }
+
+
+def approve_dataset_review(
+    dataset_slug: str,
+    repo_root: Path | None = None,
+    registry_path: Path | None = None,
+) -> dict:
+    """
+    Private service boundary for the explicit review-approval lifecycle
+    (Project Spec S0125): transitions dataset_slug's review_status from
+    needs_review to ready through registry.update.approve_dataset_detail_review(),
+    using the resolved active_release as the expected release so a release
+    that changes between readiness inspection and mutation is rejected
+    rather than silently approved.
+
+    Requires review.status == "needs_review" and a current-release snapshot
+    (snapshot.status == "current_release" and matches_active_release is
+    True); treats review.status == "ready" with a still-current snapshot as
+    idempotent success. Rejects (without any registry mutation) a missing,
+    stale, or invalid snapshot, or a release that cannot be resolved --
+    approval is always independent of the configured "Visible publicly"
+    preference, and never publishes a snapshot, writes a visibility record,
+    or creates a draft.
+
+    Returns {"approved": bool, "dataset_slug": str, "changed": bool,
+    "review_status": str, "publication_state": dict | None, "errors": [...]}.
+    Propagates registry.resolve's DatasetUnavailableError/
+    ReleaseUnavailableError/RegistryInvalidError so callers can preserve the
+    existing bounded not-found/release-unavailable/registry-unavailable
+    semantics; never raises for an approval-readiness conflict, which is
+    reported as a non-approved result with a reduced, sanitized error
+    instead.
+    """
+    state = get_dataset_publication_state(dataset_slug, repo_root=repo_root, registry_path=registry_path)
+
+    review_status = state["review"]["status"]
+    snapshot_status = state["snapshot"]["status"]
+    matches_release = state["snapshot"].get("matches_active_release")
+    eligible = snapshot_status == SNAPSHOT_STATUS_CURRENT_RELEASE and matches_release is True
+
+    if not eligible:
+        return {
+            "approved": False,
+            "dataset_slug": dataset_slug,
+            "changed": False,
+            "review_status": review_status,
+            "publication_state": None,
+            "errors": [REVIEW_APPROVAL_BLOCKED_ERROR],
+        }
+
+    registry_result = approve_dataset_detail_review(
+        dataset_slug,
+        expected_active_release=state["active_release"],
+        repo_root=repo_root,
+    )
+    if registry_result["errors"]:
+        return {
+            "approved": False,
+            "dataset_slug": dataset_slug,
+            "changed": False,
+            "review_status": review_status,
+            "publication_state": None,
+            "errors": [REVIEW_APPROVAL_BLOCKED_ERROR],
+        }
+
+    refreshed_state = get_dataset_publication_state(dataset_slug, repo_root=repo_root, registry_path=registry_path)
+    return {
+        "approved": True,
+        "dataset_slug": dataset_slug,
+        "changed": registry_result["changed"],
+        "review_status": refreshed_state["review"]["status"],
+        "publication_state": refreshed_state,
+        "errors": [],
     }

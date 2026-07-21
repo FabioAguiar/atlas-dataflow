@@ -319,6 +319,8 @@ type AdminPublicationStateProjection = {
   };
   review: {
     status: "ready" | "needs_review";
+    approval_allowed: boolean;
+    approval_blockers: string[];
   };
   snapshot: {
     status: "missing" | "current_release" | "stale_release" | "invalid";
@@ -342,6 +344,10 @@ type PublicationProjectionState =
   | { status: "loading"; datasetSlug: string }
   | { status: "ready"; datasetSlug: string; projection: AdminPublicationStateProjection }
   | { status: "saving"; datasetSlug: string; projection: AdminPublicationStateProjection; pendingVisible: boolean }
+  // Project Spec S0125: mirrors "saving" for the review-approval write --
+  // a distinct status (rather than reusing "saving") so the Publishing tab
+  // and console can tell which of the two independent writes is in flight.
+  | { status: "approving"; datasetSlug: string; projection: AdminPublicationStateProjection }
   | { status: "unavailable"; datasetSlug: string; message: string };
 
 type DraftState =
@@ -1969,7 +1975,15 @@ function parseAdminPublicationStateProjection(body: unknown): AdminPublicationSt
   }
 
   const review = root.review as Record<string, unknown> | undefined;
-  if (typeof review !== "object" || review === null || typeof review.status !== "string" || !REVIEW_STATUS_VALUES.has(review.status)) {
+  if (
+    typeof review !== "object" ||
+    review === null ||
+    typeof review.status !== "string" ||
+    !REVIEW_STATUS_VALUES.has(review.status) ||
+    typeof review.approval_allowed !== "boolean" ||
+    !Array.isArray(review.approval_blockers) ||
+    !review.approval_blockers.every((code) => typeof code === "string")
+  ) {
     return null;
   }
 
@@ -2010,7 +2024,11 @@ function parseAdminPublicationStateProjection(body: unknown): AdminPublicationSt
       updated_at: (visibility.updated_at as string | null) ?? null,
       effective_visible: visibility.effective_visible,
     },
-    review: { status: review.status as AdminPublicationStateProjection["review"]["status"] },
+    review: {
+      status: review.status as AdminPublicationStateProjection["review"]["status"],
+      approval_allowed: review.approval_allowed,
+      approval_blockers: review.approval_blockers as string[],
+    },
     snapshot: {
       status: snapshot.status as AdminPublicationStateProjection["snapshot"]["status"],
       exists: snapshot.exists,
@@ -3352,9 +3370,16 @@ type ConsoleLine = { id: string; severity: ConsoleSeverity; text: string };
 // Canonical S0115 blocker codes -> operational console text. An unrecognized
 // code renders a bounded generic line instead of the raw code (Section 4,
 // "Render backend blockers").
+// Project Spec S0125: snapshot_missing/stale/invalid moved here from
+// KNOWN_OBSERVATION_LINES below -- the backend now reports them as blockers
+// whenever they prevent public reachability, never as non-blocking
+// observations.
 const KNOWN_BLOCKER_LINES: Record<string, string> = {
   visibility_disabled: "Public access is disabled by the effective visibility policy.",
   review_pending: "Dataset review state prevents public access.",
+  snapshot_missing: "No published snapshot is available.",
+  snapshot_stale: "Published snapshot belongs to a different active release.",
+  snapshot_invalid: "Published snapshot metadata is invalid.",
 };
 
 // Canonical S0115 observation codes -> operational console severity/text. An
@@ -3363,9 +3388,6 @@ const KNOWN_BLOCKER_LINES: Record<string, string> = {
 const KNOWN_OBSERVATION_LINES: Record<string, { severity: "INFO" | "WARN"; text: string }> = {
   visibility_default_applied: { severity: "INFO", text: "Default visibility fallback is active." },
   visibility_record_invalid: { severity: "WARN", text: "Visibility record is invalid; the backend fallback is active." },
-  snapshot_missing: { severity: "WARN", text: "No published snapshot is available; generated fallback behavior may apply." },
-  snapshot_stale: { severity: "WARN", text: "Published snapshot belongs to a different active release." },
-  snapshot_invalid: { severity: "WARN", text: "Published snapshot metadata is invalid." },
   configured_hidden_but_effectively_visible_without_snapshot: {
     severity: "WARN",
     text: "Configured visibility is hidden, but current no-snapshot policy still leaves the public route effectively visible.",
@@ -3394,6 +3416,56 @@ function snapshotAlignmentLabel(snapshot: AdminPublicationStateProjection["snaps
     return "stale";
   }
   return "not available";
+}
+
+// Project Spec S0125: review-approval blocker codes -> the operator-facing
+// "required next action" text. An unrecognized/absent blocker falls back to
+// a bounded generic line rather than a raw code.
+const REVIEW_APPROVAL_BLOCKER_ACTIONS: Record<string, string> = {
+  snapshot_missing: "Publish a current release snapshot before approving review.",
+  snapshot_stale: "Publish a snapshot for the current active release before approving review.",
+  snapshot_invalid: "Publish a valid snapshot before approving review.",
+};
+
+// The Publishing tab's review-approval action is enabled only when a
+// confirmed "ready" projection reports needs_review + approval_allowed, and
+// no unpublished profile/customization workspace changes are pending --
+// mirrors reviewApprovalRequiredNextAction below so the button's enabled
+// state and its own explanatory text never disagree.
+function reviewApprovalEnabled(projectionState: PublicationProjectionState, hasUnpublishedChanges: boolean): boolean {
+  return (
+    projectionState.status === "ready" &&
+    projectionState.projection.review.status === "needs_review" &&
+    projectionState.projection.review.approval_allowed &&
+    !hasUnpublishedChanges
+  );
+}
+
+function reviewApprovalRequiredNextAction(
+  projectionState: PublicationProjectionState,
+  hasUnpublishedChanges: boolean,
+): string {
+  if (projectionState.status === "idle" || projectionState.status === "loading") {
+    return "Select a dataset to check review approval eligibility.";
+  }
+  if (projectionState.status === "unavailable") {
+    return "Review approval is unavailable until publication state can be checked.";
+  }
+  const { review } = projectionState.projection;
+  if (review.status === "ready") {
+    return "This Dataset Detail's review is already approved.";
+  }
+  if (hasUnpublishedChanges) {
+    return "Use Publish changes to publish the current workspace before approving review.";
+  }
+  if (!review.approval_allowed) {
+    const [firstBlocker] = review.approval_blockers;
+    return (
+      (firstBlocker && REVIEW_APPROVAL_BLOCKER_ACTIONS[firstBlocker]) ??
+      "Review approval is not currently available for this Dataset Detail."
+    );
+  }
+  return "Ready to approve this Dataset Detail's review.";
 }
 
 // The deterministic, ordered set of console lines derived from one loaded
@@ -3472,6 +3544,7 @@ function projectionConsoleLines(projection: AdminPublicationStateProjection): Co
 function buildOperationalConsoleLines(
   projectionState: PublicationProjectionState,
   visibilityWriteFailed: boolean,
+  reviewApprovalWriteFailed: boolean,
 ): ConsoleLine[] {
   if (projectionState.status === "idle") {
     return [{ id: "no-dataset", severity: "INFO", text: "Select a dataset to inspect publication state." }];
@@ -3494,6 +3567,16 @@ function buildOperationalConsoleLines(
       id: "visibility-write-error",
       severity: "ERROR",
       text: "Configured visibility could not be saved. The previous confirmed value remains active.",
+    });
+  }
+
+  if (projectionState.status === "approving") {
+    lines.push({ id: "approving", severity: "INFO", text: "Approving Dataset Detail review..." });
+  } else if (reviewApprovalWriteFailed) {
+    lines.push({
+      id: "review-approval-write-error",
+      severity: "ERROR",
+      text: "Review approval could not be saved. The previous confirmed state remains active.",
     });
   }
 
@@ -3557,26 +3640,38 @@ function publicPageActionAvailable(projectionState: PublicationProjectionState):
   return projectionState.status === "ready" && projectionState.projection.visibility.configured_visible;
 }
 
-// Project Spec S0116: the tab is reduced to exactly two surfaces -- the
-// Visible publicly switch and the read-only operational console. The switch
-// is controlled by visibility.configured_visible (never effective_visible)
-// and is disabled only for no-dataset/loading/saving/unavailable, never
-// merely because a snapshot is missing or stale.
+// Project Spec S0116: the tab's core surfaces are the Visible publicly
+// switch and the read-only operational console. The switch is controlled by
+// visibility.configured_visible (never effective_visible) and is disabled
+// only for no-dataset/loading/saving/approving/unavailable, never merely
+// because a snapshot is missing or stale.
+//
+// Project Spec S0125 minimally supersedes the prior "exactly two surfaces"
+// restriction only to add the missing review-approval control -- the
+// removed duplicated publication cards and tab-local content-publish
+// actions stay removed; the global toolbar remains the sole Publish changes
+// action.
 function PublishingTab({
+  hasUnpublishedChanges,
+  onApproveReview,
   onToggleVisibility,
   projectionState,
+  reviewApprovalWriteFailed,
   selectedSlug,
   visibilityWriteFailed,
 }: {
+  hasUnpublishedChanges: boolean;
+  onApproveReview: () => void;
   onToggleVisibility: (visible: boolean) => void;
   projectionState: PublicationProjectionState;
+  reviewApprovalWriteFailed: boolean;
   selectedSlug: string;
   visibilityWriteFailed: boolean;
 }) {
   const switchChecked =
     projectionState.status === "saving"
       ? projectionState.pendingVisible
-      : projectionState.status === "ready"
+      : projectionState.status === "ready" || projectionState.status === "approving"
       ? projectionState.projection.visibility.configured_visible
       : false;
   const switchDisabled =
@@ -3584,6 +3679,7 @@ function PublishingTab({
     projectionState.status === "idle" ||
     projectionState.status === "loading" ||
     projectionState.status === "saving" ||
+    projectionState.status === "approving" ||
     projectionState.status === "unavailable";
   const switchStatusText =
     projectionState.status === "saving"
@@ -3593,7 +3689,26 @@ function PublishingTab({
       : visibilityWriteFailed
       ? "Save failed. Previous value restored."
       : null;
-  const consoleLines = buildOperationalConsoleLines(projectionState, visibilityWriteFailed);
+  const consoleLines = buildOperationalConsoleLines(projectionState, visibilityWriteFailed, reviewApprovalWriteFailed);
+
+  const reviewStatusText =
+    projectionState.status === "ready" || projectionState.status === "approving"
+      ? projectionState.projection.review.status === "ready"
+        ? "ready"
+        : "needs review"
+      : "unknown";
+  const snapshotReadinessText =
+    projectionState.status === "ready" || projectionState.status === "approving"
+      ? snapshotStatusLabel(projectionState.projection.snapshot.status)
+      : "unknown";
+  const approveEnabled = reviewApprovalEnabled(projectionState, hasUnpublishedChanges);
+  const requiredNextAction = reviewApprovalRequiredNextAction(projectionState, hasUnpublishedChanges);
+  const approveStatusText =
+    projectionState.status === "approving"
+      ? "Approving..."
+      : reviewApprovalWriteFailed
+      ? "Approval failed. Previous state retained."
+      : null;
 
   return (
     <div className="dataset-admin-publishing-panel">
@@ -3614,6 +3729,21 @@ function PublishingTab({
             <span aria-hidden="true" />
           </label>
         </div>
+      </Card>
+      <Card className="dataset-admin-config-card dataset-admin-publishing-panel__card">
+        <span className="dataset-admin-tab-workspace__eyebrow">Review approval</span>
+        <p style={mutedTextStyle}>Review status: {reviewStatusText}</p>
+        <p style={mutedTextStyle}>Snapshot readiness: {snapshotReadinessText}</p>
+        <p style={mutedTextStyle}>{requiredNextAction}</p>
+        {approveStatusText && <p role="status">{approveStatusText}</p>}
+        <button
+          disabled={!approveEnabled}
+          onClick={onApproveReview}
+          style={approveEnabled ? actionButtonStyle : disabledButtonStyle}
+          type="button"
+        >
+          Approve Dataset Detail
+        </button>
       </Card>
       <OperationalConsole lines={consoleLines} />
     </div>
@@ -3917,6 +4047,8 @@ function renderSelectedTab(
   projectionState: PublicationProjectionState,
   visibilityWriteFailed: boolean,
   onRetryAuthoringContext: () => void,
+  onApproveReview: () => void,
+  reviewApprovalWriteFailed: boolean,
 ) {
   // Shared by the Live Preview case below so it can classify its own
   // draft-vs-published state (S0009) using the same comparison Publishing
@@ -3951,8 +4083,11 @@ function renderSelectedTab(
     case "publishing":
       return (
         <PublishingTab
+          hasUnpublishedChanges={hasUnpublishedChanges}
+          onApproveReview={onApproveReview}
           onToggleVisibility={onToggleVisibility}
           projectionState={projectionState}
+          reviewApprovalWriteFailed={reviewApprovalWriteFailed}
           selectedSlug={selectedSlug}
           visibilityWriteFailed={visibilityWriteFailed}
         />
@@ -4029,6 +4164,10 @@ export default function DatasetAdminPage() {
   // "[ERROR] Configured visibility could not be saved..." line without
   // needing a raw error message from the backend.
   const [visibilityWriteFailed, setVisibilityWriteFailed] = useState(false);
+  // Project Spec S0125: mirrors visibilityWriteFailed for the review-
+  // approval write -- set only by a failed approval PUT and cleared by the
+  // next dataset switch or the next approval attempt.
+  const [reviewApprovalWriteFailed, setReviewApprovalWriteFailed] = useState(false);
   // Guards a superseded publication-state response from ever applying itself
   // (mirrors customizationRequestRef below): AbortController alone is not
   // sufficient because this repo's test fetch mocks do not honor
@@ -4149,6 +4288,7 @@ export default function DatasetAdminPage() {
       publicationProjectionRequestRef.current += 1;
       setPublicationProjection(emptyPublicationProjectionState);
       setVisibilityWriteFailed(false);
+      setReviewApprovalWriteFailed(false);
       return;
     }
 
@@ -4166,6 +4306,7 @@ export default function DatasetAdminPage() {
       // than waiting on the async fetch below to overwrite it.
       setPublicationProjection({ status: "loading", datasetSlug: selectedSlug });
       setVisibilityWriteFailed(false);
+      setReviewApprovalWriteFailed(false);
       // Project Spec S0098: the deterministic predict-view rebind default
       // below applies at most once per dataset selection; switching to a
       // different (or reselecting the same) Dataset Detail must be able to
@@ -4800,6 +4941,62 @@ export default function DatasetAdminPage() {
       });
   }
 
+  // Project Spec S0125: the review-approval action's sole write path.
+  // Mirrors setConfiguredVisibility's guard/race-protection shape exactly
+  // (only usable from "ready", selectedSlugRef-guarded against a dataset
+  // switch racing an in-flight write) but PUTs review-status instead of
+  // visibility, and never sends a profile body, visibility mutation, or
+  // public-route override.
+  function approveDatasetReview() {
+    if (publicationProjection.status !== "ready") {
+      return;
+    }
+    const slug = publicationProjection.datasetSlug;
+    const priorProjection = publicationProjection.projection;
+
+    setReviewApprovalWriteFailed(false);
+    setPublicationProjection({ status: "approving", datasetSlug: slug, projection: priorProjection });
+
+    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/review-status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "ready" }),
+    })
+      .then((response): Promise<{ ok: boolean; body: { review_status?: string; error_code?: string } | null }> => {
+        if (response.status === 404) {
+          return Promise.resolve({ ok: false, body: null });
+        }
+        return response.json().then((body: { review_status?: string; error_code?: string }) => ({
+          ok: response.ok,
+          body,
+        }));
+      })
+      .then((result) => {
+        if (selectedSlugRef.current !== slug) {
+          return;
+        }
+        if (!result.ok || typeof result.body?.review_status !== "string") {
+          setReviewApprovalWriteFailed(true);
+          setPublicationProjection({ status: "ready", datasetSlug: slug, projection: priorProjection });
+          return;
+        }
+        // Authoritative reconciliation: re-fetch the publication-state
+        // projection (badge/console/switch/approval authority) and bump
+        // refreshRevision so the Admin dataset listing's publication_status
+        // is reconciled too, rather than trusting only the PUT's own echoed
+        // fields.
+        loadPublicationProjection(slug);
+        setRefreshRevision((current) => current + 1);
+      })
+      .catch(() => {
+        if (selectedSlugRef.current !== slug) {
+          return;
+        }
+        setReviewApprovalWriteFailed(true);
+        setPublicationProjection({ status: "ready", datasetSlug: slug, projection: priorProjection });
+      });
+  }
+
   // Project Spec S0099: contract-driven automatic bootstrap, replacing the
   // former manual "Load customization" gate. Keyed on the request identity
   // (selected dataset slug + resolved bound predict view id) and the
@@ -5172,6 +5369,8 @@ export default function DatasetAdminPage() {
             publicationProjection,
             visibilityWriteFailed,
             retryAuthoringContext,
+            approveDatasetReview,
+            reviewApprovalWriteFailed,
           )}
         </div>
       </section>

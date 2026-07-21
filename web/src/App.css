@@ -56,6 +56,12 @@
   background: rgb(17 24 39 / 45%);
 }
 
+/*
+ * Project Spec S0126: one narrow rail width (~7rem) at every viewport,
+ * matching the reference's shared nav language across mobile, tablet and
+ * desktop prototype stylesheets, which all agree on this proportion --
+ * mobile differs only in behavior (off-canvas plus overlay), not rail width.
+ */
 .public-shell__nav {
   position: fixed;
   inset: 0 auto 0 0;
@@ -63,9 +69,9 @@
   display: grid;
   align-content: start;
   gap: var(--atlas-space-6);
-  width: min(80vw, 18rem);
+  width: 7rem;
   height: 100vh;
-  padding: var(--atlas-space-6) var(--atlas-space-5);
+  padding: var(--atlas-space-6) var(--atlas-space-3);
   background: var(--public-shell-color-surface);
   border-right: 1px solid var(--public-shell-color-border);
   transform: translateX(-100%);
@@ -81,43 +87,39 @@
   display: block;
 }
 
-.public-shell__brand {
-  color: var(--atlas-color-text);
-  font-size: var(--atlas-text-lg);
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.public-shell__brand:hover {
-  color: var(--public-shell-color-accent-strong);
-}
-
-.public-shell__brand:focus-visible {
-  outline: none;
-  color: var(--public-shell-color-accent-strong);
-  box-shadow: var(--atlas-focus-ring);
-}
-
 .public-shell__nav-list {
   display: grid;
-  gap: var(--atlas-space-1);
+  gap: var(--atlas-space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/*
+ * Project Spec S0126: nav items render icon above label, matching the
+ * reference rail's vertical, centered "nav-item" composition instead of the
+ * previous horizontal icon+label row.
+ */
 .public-shell__nav-link {
-  display: flex;
-  align-items: center;
-  gap: var(--atlas-space-3);
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--atlas-space-2);
+  min-height: 4.5rem;
   border: 1px solid transparent;
-  border-radius: var(--atlas-radius-md);
-  padding: var(--atlas-space-3);
+  border-radius: var(--atlas-radius-lg);
+  padding: var(--atlas-space-3) var(--atlas-space-2);
   color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-xs);
   font-weight: 700;
+  text-align: center;
   text-decoration: none;
   transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease,
     color 0.15s ease;
+}
+
+.public-shell__nav-label {
+  line-height: 1.15;
 }
 
 .public-shell__nav-link.is-active {
@@ -146,8 +148,8 @@
 
 .public-shell__nav-icon {
   display: inline-flex;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
   flex: none;
 }
 
@@ -1267,8 +1269,8 @@ h1 {
   }
 
   .public-shell__nav-icon {
-    width: 1.5rem;
-    height: 1.5rem;
+    width: 1.9rem;
+    height: 1.9rem;
   }
 
   .public-shell:not(.public-shell--nav-open) .public-shell__nav {
@@ -1280,9 +1282,9 @@ h1 {
     overflow: hidden;
   }
 
-  .app-shell {
+  .public-shell__main {
     gap: var(--atlas-space-10);
-    width: min(100% - 4rem, 1040px);
+    width: min(100% - 4rem, 1180px);
     padding: var(--atlas-space-12) 0 var(--atlas-space-16);
   }
 
@@ -1347,17 +1349,17 @@ h1 {
 }
 
 @media (min-width: 1200px) {
-  .app-shell {
-    width: min(100% - 8rem, 1180px);
-  }
-
   /*
-   * Project Spec S0119: Dataset Detail may use a wider desktop content
-   * width than Home, scoped to the shell that actually contains the shared
-   * surface -- Home and other public pages keep the rule above untouched.
+   * Project Spec S0126: one authoritative desktop content width for every
+   * public route (Home and Dataset Detail alike), matching the reference
+   * page-shell's 1500px max width -- replaces the earlier S0119 route-scoped
+   * `.app-shell:has(.dataset-detail-surface)` override and the narrower
+   * generic S0117-era `.app-shell` value, consolidating both into the
+   * explicit `.public-shell__main` styling hook instead of a `:has()`
+   * dependency.
    */
-  .app-shell:has(.dataset-detail-surface) {
-    width: min(100% - 8rem, 1360px);
+  .public-shell__main {
+    width: min(100% - 8rem, 1500px);
   }
 
   .featured-datasets__grid {
@@ -1380,10 +1382,15 @@ h1 {
     grid-template-columns: minmax(0, 1.4fr) minmax(18rem, 0.72fr);
   }
 
+  /*
+   * Project Spec S0126: clear the floating rail menu toggle and give the
+   * sticky Result a comfortable offset from the viewport top, matching the
+   * reference's ~5.8rem sticky offset.
+   */
   .public-inference-surface .result-panel {
     align-self: start;
     position: sticky;
-    top: var(--atlas-space-6);
+    top: 5.8rem;
   }
 }
 

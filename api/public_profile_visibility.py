@@ -24,8 +24,18 @@ tests/api/test_public_profile_fallback.py). This module never imports or
 calls registry/dataset_public_profile_store.py.
 
 This module never persists anything; it only reads.
+
+Project Spec S0125: adds resolve_dataset_snapshot_readiness, the shared,
+read-only classification of a published profile snapshot's alignment with a
+resolved active_release (missing / invalid / stale_release / current_release).
+Both this module's resolve_public_dataset_access (the public-route bounded
+readiness resolver) and api/admin_profile_visibility.py's private publication-
+state projection call this single implementation, so the two never diverge on
+what counts as a "current" snapshot.
 """
 
+import re
+from datetime import datetime
 from pathlib import Path
 
 from registry.dataset_public_profile_publication_store import get_visibility
@@ -35,9 +45,64 @@ from registry.dataset_public_profile_snapshot_store import (
 )
 from registry.dataset_public_profile_validate import normalize_binary_result_presentation
 from registry.list import is_dataset_needs_review
+from registry.validate import RELEASE_ID_PATTERN
 
 PUBLIC_DATASET_ACCESS_READY = "ready"
 PUBLIC_DATASET_ACCESS_MAINTENANCE = "maintenance"
+
+SNAPSHOT_STATUS_MISSING = "missing"
+SNAPSHOT_STATUS_INVALID = "invalid"
+SNAPSHOT_STATUS_STALE_RELEASE = "stale_release"
+SNAPSHOT_STATUS_CURRENT_RELEASE = "current_release"
+
+
+def _valid_snapshot_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def resolve_dataset_snapshot_readiness(
+    dataset_slug: str, active_release: str, repo_root: Path | None = None
+) -> dict:
+    """
+    Classify the published profile snapshot's readiness against the already-
+    resolved active_release for dataset_slug.
+
+    Returns {"status": one of SNAPSHOT_STATUS_MISSING/INVALID/STALE_RELEASE/
+    CURRENT_RELEASE, "matches_active_release": bool | None}. Read-only; never
+    raises for a missing or malformed snapshot, since both are normal states
+    for a Dataset Detail that has not (yet) published a current snapshot.
+    """
+    missing = {"status": SNAPSHOT_STATUS_MISSING, "matches_active_release": None}
+    try:
+        snapshot = get_snapshot(dataset_slug, repo_root=repo_root)
+    except SnapshotNotFoundError:
+        return missing
+
+    published_at = snapshot.get("published_at") if isinstance(snapshot, dict) else None
+    bound_release = (
+        snapshot.get("active_release_at_publish_time") if isinstance(snapshot, dict) else None
+    )
+    valid = (
+        isinstance(snapshot, dict)
+        and snapshot.get("dataset_slug") == dataset_slug
+        and _valid_snapshot_timestamp(published_at)
+        and isinstance(bound_release, str)
+        and RELEASE_ID_PATTERN.fullmatch(bound_release) is not None
+    )
+    if not valid:
+        return {"status": SNAPSHOT_STATUS_INVALID, "matches_active_release": None}
+
+    matches = bound_release == active_release
+    return {
+        "status": SNAPSHOT_STATUS_CURRENT_RELEASE if matches else SNAPSHOT_STATUS_STALE_RELEASE,
+        "matches_active_release": matches,
+    }
 
 
 def resolve_dataset_visibility(dataset_slug: str, repo_root: Path | None = None) -> bool:
@@ -59,6 +124,7 @@ def resolve_dataset_visibility(dataset_slug: str, repo_root: Path | None = None)
 
 def resolve_public_dataset_access(
     dataset_slug: str,
+    active_release: str | None = None,
     repo_root: Path | None = None,
     registry_path: Path | None = None,
 ) -> str:
@@ -77,11 +143,24 @@ def resolve_public_dataset_access(
     must not surface the reason. Internal callers/tests may still call
     resolve_dataset_visibility/is_dataset_needs_review directly to
     distinguish the two for non-public purposes.
+
+    Project Spec S0125: complete public readiness also requires review
+    approval and a published snapshot bound to the resolved active
+    release. Callers that already resolved the dataset's active_release
+    should pass it here (the resolver never re-resolves or infers it) so
+    resolve_dataset_snapshot_readiness can classify snapshot alignment;
+    when active_release is omitted, snapshot readiness is not evaluated
+    (preserving this function's pre-S0125 visibility+review-only contract
+    for callers that only care about those two conditions).
     """
     if not resolve_dataset_visibility(dataset_slug, repo_root=repo_root):
         return PUBLIC_DATASET_ACCESS_MAINTENANCE
     if is_dataset_needs_review(dataset_slug, registry_path=registry_path):
         return PUBLIC_DATASET_ACCESS_MAINTENANCE
+    if active_release is not None:
+        snapshot = resolve_dataset_snapshot_readiness(dataset_slug, active_release, repo_root=repo_root)
+        if snapshot["status"] != SNAPSHOT_STATUS_CURRENT_RELEASE:
+            return PUBLIC_DATASET_ACCESS_MAINTENANCE
     return PUBLIC_DATASET_ACCESS_READY
 
 

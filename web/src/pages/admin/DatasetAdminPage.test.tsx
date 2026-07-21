@@ -396,7 +396,7 @@ function installFetchMock(
         updated_at: "2026-07-03T17:35:00Z",
         effective_visible: visible,
       },
-      review: { status: "ready" },
+      review: { status: "ready", approval_allowed: false, approval_blockers: [] },
       snapshot: {
         status: "current_release",
         exists: true,
@@ -943,7 +943,7 @@ describe("DatasetAdminPage", () => {
             updated_at: "2026-07-03T17:35:00Z",
             effective_visible: configuredVisible,
           },
-          review: { status: "ready" },
+          review: { status: "ready", approval_allowed: false, approval_blockers: [] },
           snapshot: {
             status: "current_release",
             exists: true,
@@ -1074,7 +1074,7 @@ describe("DatasetAdminPage", () => {
             updated_at: "2026-07-03T17:35:00Z",
             effective_visible: true,
           },
-          review: { status: "ready" },
+          review: { status: "ready", approval_allowed: false, approval_blockers: [] },
           snapshot: {
             status: "current_release",
             exists: true,
@@ -1145,7 +1145,7 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-03T17:35:00Z",
           effective_visible: true,
         },
-        review: { status: "ready" },
+        review: { status: "ready", approval_allowed: false, approval_blockers: [] },
         snapshot: {
           status: "missing",
           exists: false,
@@ -1240,7 +1240,7 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-03T17:35:00Z",
           effective_visible: true,
         },
-        review: { status: "needs_review" },
+        review: { status: "needs_review", approval_allowed: true, approval_blockers: [] },
         snapshot: {
           status: "current_release",
           exists: true,
@@ -1292,7 +1292,7 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-03T17:35:00Z",
           effective_visible: false,
         },
-        review: { status: "needs_review" },
+        review: { status: "needs_review", approval_allowed: true, approval_blockers: [] },
         snapshot: {
           status: "current_release",
           exists: true,
@@ -1339,7 +1339,7 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-03T17:35:00Z",
           effective_visible: true,
         },
-        review: { status: "ready" },
+        review: { status: "ready", approval_allowed: false, approval_blockers: [] },
         snapshot: {
           status: "current_release",
           exists: true,
@@ -1384,7 +1384,7 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-03T17:35:00Z",
           effective_visible: true,
         },
-        review: { status: "ready" },
+        review: { status: "ready", approval_allowed: false, approval_blockers: [] },
         snapshot: {
           status: "missing",
           exists: false,
@@ -1395,7 +1395,13 @@ describe("DatasetAdminPage", () => {
         public_access: {
           reachable: true,
           blockers: [],
-          observations: ["snapshot_missing", "configured_hidden_but_effectively_visible_without_snapshot"],
+          // Project Spec S0125: snapshot_missing is no longer ever emitted as
+          // a non-blocking observation (it always blocks reachability when
+          // it applies) -- only the legacy, backend-dead-since-S0117
+          // configured_hidden_but_effectively_visible_without_snapshot
+          // observation code remains exercised here, purely as a rendering
+          // resilience check for an unrecognized/legacy code.
+          observations: ["configured_hidden_but_effectively_visible_without_snapshot"],
         },
       }),
     });
@@ -1421,9 +1427,6 @@ describe("DatasetAdminPage", () => {
         { exact: false },
       ),
     ).toBeInTheDocument();
-    expect(
-      within(panel).getByText("No published snapshot is available; generated fallback behavior may apply.", { exact: false }),
-    ).toBeInTheDocument();
   });
 
   it("reports a stale snapshot and a visibility-record observation without disabling the switch (Project Spec S0116)", async () => {
@@ -1438,7 +1441,7 @@ describe("DatasetAdminPage", () => {
           updated_at: null,
           effective_visible: true,
         },
-        review: { status: "ready" },
+        review: { status: "ready", approval_allowed: false, approval_blockers: [] },
         snapshot: {
           status: "stale_release",
           exists: true,
@@ -1447,9 +1450,12 @@ describe("DatasetAdminPage", () => {
           matches_active_release: false,
         },
         public_access: {
-          reachable: true,
-          blockers: [],
-          observations: ["visibility_record_invalid", "snapshot_stale"],
+          // Project Spec S0125: a stale snapshot always blocks reachability
+          // now, so snapshot_stale moved from a non-blocking observation
+          // into blockers -- reachable is no longer true here.
+          reachable: false,
+          blockers: ["snapshot_stale"],
+          observations: ["visibility_record_invalid"],
         },
       }),
     });
@@ -1526,7 +1532,7 @@ describe("DatasetAdminPage", () => {
                   updated_at: "2026-07-03T17:35:00Z",
                   effective_visible: true,
                 },
-                review: { status: "ready" },
+                review: { status: "ready", approval_allowed: false, approval_blockers: [] },
                 snapshot: {
                   status: "current_release",
                   exists: true,
@@ -1550,7 +1556,7 @@ describe("DatasetAdminPage", () => {
             updated_at: "2026-07-01T00:00:00Z",
             effective_visible: false,
           },
-          review: { status: "ready" },
+          review: { status: "ready", approval_allowed: false, approval_blockers: [] },
           snapshot: {
             status: "missing",
             exists: false,
@@ -1611,7 +1617,11 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-03T17:35:00Z",
           effective_visible: true,
         },
-        review: { status: reviewStatus },
+        review: {
+          status: reviewStatus,
+          approval_allowed: false,
+          approval_blockers: reviewStatus === "needs_review" ? ["snapshot_missing"] : [],
+        },
         snapshot: {
           status: reviewStatus === "ready" ? "current_release" : "missing",
           exists: reviewStatus === "ready",
@@ -1621,8 +1631,8 @@ describe("DatasetAdminPage", () => {
         },
         public_access: {
           reachable: reviewStatus === "ready",
-          blockers: reviewStatus === "ready" ? [] : ["review_pending"],
-          observations: reviewStatus === "ready" ? [] : ["snapshot_missing"],
+          blockers: reviewStatus === "ready" ? [] : ["review_pending", "snapshot_missing"],
+          observations: [],
         },
       }),
     });
@@ -1834,7 +1844,7 @@ describe("DatasetAdminPage", () => {
             updated_at: "2026-07-01T00:00:00Z",
             effective_visible: true,
           },
-          review: { status: "ready" },
+          review: { status: "ready", approval_allowed: false, approval_blockers: [] },
           snapshot: {
             status: "current_release",
             exists: true,
@@ -3672,7 +3682,11 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-01T00:00:00Z",
           effective_visible: true,
         },
-        review: { status: reachable ? "ready" : "needs_review" },
+        review: {
+          status: reachable ? "ready" : "needs_review",
+          approval_allowed: !reachable,
+          approval_blockers: [],
+        },
         snapshot: {
           status: "current_release",
           exists: true,
@@ -3792,7 +3806,11 @@ describe("DatasetAdminPage", () => {
           updated_at: "2026-07-01T00:00:00Z",
           effective_visible: reachable,
         },
-        review: { status: reachable ? "ready" : "needs_review" },
+        review: {
+          status: reachable ? "ready" : "needs_review",
+          approval_allowed: !reachable,
+          approval_blockers: [],
+        },
         snapshot: {
           status: "current_release",
           exists: true,

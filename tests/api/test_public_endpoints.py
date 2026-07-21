@@ -362,10 +362,31 @@ def _response_json(response):
     return json.loads(response.body.decode("utf-8"))
 
 
+def _install_snapshot_ready_stub():
+    """
+    Project Spec S0125: isolate the shared access guard's new snapshot-
+    alignment dimension from real registry/profile-snapshots content for
+    tests that mock resolve_dataset (or don't isolate visibility/review at
+    all) and only care about a route's own resource-loading behavior.
+    Returns the original resolve_dataset_snapshot_readiness for restoration.
+    """
+    original = api_main.resolve_dataset_snapshot_readiness
+    api_main.resolve_dataset_snapshot_readiness = lambda *_a, **_k: {
+        "status": "current_release",
+        "matches_active_release": True,
+    }
+    return original
+
+
+def _restore_snapshot_ready_stub(original) -> None:
+    api_main.resolve_dataset_snapshot_readiness = original
+
+
 def test_context_endpoint_returns_public_context_response():
     original_resolve_dataset = api_main.resolve_dataset
     original_load_public_context = api_main.load_public_context
     original_overlay = api_main.resolve_public_presentation_overlay
+    original_snapshot_readiness = _install_snapshot_ready_stub()
     context = {
         "schema_version": "public-context.v1",
         "dataset_slug": "example-dataset",
@@ -398,6 +419,7 @@ def test_context_endpoint_returns_public_context_response():
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_public_context = original_load_public_context
         api_main.resolve_public_presentation_overlay = original_overlay
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 def test_context_endpoint_unknown_dataset_returns_dataset_not_found():
@@ -431,6 +453,7 @@ def test_context_endpoint_release_unavailable_returns_release_unavailable():
 def test_context_endpoint_context_unavailable_returns_context_unavailable():
     original_resolve_dataset = api_main.resolve_dataset
     original_load_public_context = api_main.load_public_context
+    original_snapshot_readiness = _install_snapshot_ready_stub()
     try:
         api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
             dataset_slug=dataset_slug,
@@ -449,6 +472,7 @@ def test_context_endpoint_context_unavailable_returns_context_unavailable():
     finally:
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_public_context = original_load_public_context
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +525,11 @@ def test_customization_endpoint_returns_200_with_payload(monkeypatch):
         # isolate the loader behavior under test from that access gate.
         monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
         monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset_snapshot_readiness",
+            lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+        )
         api_main.load_public_predict_view_customization = (
             lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
         )
@@ -530,6 +559,11 @@ def test_customization_endpoint_returns_customization_not_found_when_absent(monk
         )
         monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
         monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset_snapshot_readiness",
+            lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+        )
 
         def raise_not_found(dataset_slug, view_id):
             raise api_main.CustomizationNotFoundError("No customization for this view.")
@@ -569,6 +603,11 @@ def test_customization_response_structure_matches_expected_fields(monkeypatch):
         )
         monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
         monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset_snapshot_readiness",
+            lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+        )
         api_main.load_public_predict_view_customization = (
             lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
         )
@@ -799,6 +838,11 @@ def test_real_release_dataset_home_visualizations_degrade_safely(monkeypatch):
         # before this test's loader-degradation behavior is ever exercised.
         monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
         monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset_snapshot_readiness",
+            lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+        )
 
         for resolved in _real_release_dataset_pairs():
             api_main.resolve_dataset = lambda dataset_slug, resolved=resolved: SimpleNamespace(
@@ -871,6 +915,7 @@ def test_real_release_historical_bundle_without_binary_semantics_fails_safely():
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_releases_root = api_main._inference_releases_root
+    original_snapshot_readiness = _install_snapshot_ready_stub()
     try:
         # Project Spec S0054: bank-marketing's release is read directly by
         # release_id, decoupled from the live registry (see
@@ -913,6 +958,7 @@ def test_real_release_historical_bundle_without_binary_semantics_fails_safely():
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main._inference_releases_root = original_releases_root
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 # ---------------------------------------------------------------------------
@@ -1040,6 +1086,7 @@ def test_real_route_non_object_prediction_payload_fails_before_contract_and_pred
     original_execute_prediction = api_main.execute_prediction
     original_visibility = api_main.resolve_dataset_visibility
     original_needs_review = api_main.is_dataset_needs_review
+    original_snapshot_readiness = _install_snapshot_ready_stub()
     try:
         api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
             dataset_slug=dataset_slug,
@@ -1075,6 +1122,7 @@ def test_real_route_non_object_prediction_payload_fails_before_contract_and_pred
         api_main.execute_prediction = original_execute_prediction
         api_main.resolve_dataset_visibility = original_visibility
         api_main.is_dataset_needs_review = original_needs_review
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 def test_real_route_non_object_prediction_payload_returns_not_found_for_unknown_dataset():
@@ -1113,6 +1161,7 @@ def test_real_route_contract_invalid_prediction_payloads_fail_before_prediction_
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_snapshot_readiness = _install_snapshot_ready_stub()
     try:
         api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
             dataset_slug=dataset_slug,
@@ -1141,6 +1190,7 @@ def test_real_route_contract_invalid_prediction_payloads_fail_before_prediction_
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 # ---------------------------------------------------------------------------
@@ -1203,6 +1253,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
     original_releases_root = api_main._inference_releases_root
+    original_snapshot_readiness = _install_snapshot_ready_stub()
     try:
         api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
             dataset_slug=dataset_slug,
@@ -1252,6 +1303,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
         api_main._inference_releases_root = original_releases_root
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 # ---------------------------------------------------------------------------
@@ -1308,6 +1360,7 @@ def test_public_contract_endpoint_loads_promoted_contract_distinct_from_runtime_
 
         original_resolve_dataset = api_main.resolve_dataset
         original_load_public_contract = api_main.load_public_contract
+        original_snapshot_readiness = _install_snapshot_ready_stub()
         try:
             api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
                 dataset_slug=dataset_slug, active_release="release-s0101-001"
@@ -1335,6 +1388,7 @@ def test_public_contract_endpoint_loads_promoted_contract_distinct_from_runtime_
         finally:
             api_main.resolve_dataset = original_resolve_dataset
             api_main.load_public_contract = original_load_public_contract
+            _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 def test_public_contract_endpoint_returns_public_contract_unavailable_when_role_absent_from_manifest():
@@ -1349,6 +1403,7 @@ def test_public_contract_endpoint_returns_public_contract_unavailable_when_role_
 
         original_resolve_dataset = api_main.resolve_dataset
         original_load_public_contract = api_main.load_public_contract
+        original_snapshot_readiness = _install_snapshot_ready_stub()
         try:
             api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
                 dataset_slug=dataset_slug, active_release="release-s0101-002"
@@ -1366,6 +1421,7 @@ def test_public_contract_endpoint_returns_public_contract_unavailable_when_role_
         finally:
             api_main.resolve_dataset = original_resolve_dataset
             api_main.load_public_contract = original_load_public_contract
+            _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 def test_public_contract_endpoint_rejects_reference_identical_to_runtime_contract():
@@ -1383,6 +1439,7 @@ def test_public_contract_endpoint_rejects_reference_identical_to_runtime_contrac
 
         original_resolve_dataset = api_main.resolve_dataset
         original_load_public_contract = api_main.load_public_contract
+        original_snapshot_readiness = _install_snapshot_ready_stub()
         try:
             api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
                 dataset_slug=dataset_slug, active_release="release-s0101-003"
@@ -1398,6 +1455,7 @@ def test_public_contract_endpoint_rejects_reference_identical_to_runtime_contrac
         finally:
             api_main.resolve_dataset = original_resolve_dataset
             api_main.load_public_contract = original_load_public_contract
+            _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 def _s0109_write_release_with_bundle(release_dir: Path, bundle: dict) -> None:
@@ -1448,6 +1506,7 @@ def test_result_contract_available_when_binary_result_semantics_present():
         original_resolve_dataset = api_main.resolve_dataset
         original_load_public_contract = api_main.load_public_contract
         original_releases_root = api_main._inference_releases_root
+        original_snapshot_readiness = _install_snapshot_ready_stub()
         try:
             api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
                 dataset_slug=dataset_slug, active_release="release-s0109-available"
@@ -1466,6 +1525,7 @@ def test_result_contract_available_when_binary_result_semantics_present():
         finally:
             api_main.resolve_dataset = original_resolve_dataset
             api_main.load_public_contract = original_load_public_contract
+            _restore_snapshot_ready_stub(original_snapshot_readiness)
             api_main._inference_releases_root = original_releases_root
 
 
@@ -1478,6 +1538,7 @@ def test_result_contract_unavailable_for_historical_bundle_without_result_semant
         original_resolve_dataset = api_main.resolve_dataset
         original_load_public_contract = api_main.load_public_contract
         original_releases_root = api_main._inference_releases_root
+        original_snapshot_readiness = _install_snapshot_ready_stub()
         try:
             api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
                 dataset_slug=dataset_slug, active_release="release-s0109-historical"
@@ -1497,6 +1558,7 @@ def test_result_contract_unavailable_for_historical_bundle_without_result_semant
         finally:
             api_main.resolve_dataset = original_resolve_dataset
             api_main.load_public_contract = original_load_public_contract
+            _restore_snapshot_ready_stub(original_snapshot_readiness)
             api_main._inference_releases_root = original_releases_root
 
 
@@ -1562,6 +1624,7 @@ def test_result_contract_projection_never_invokes_model_loader():
         original_load_public_contract = api_main.load_public_contract
         original_releases_root = api_main._inference_releases_root
         original_loader = api_main._INFERENCE_LOADER_STRATEGIES["joblib_sklearn_predict"]
+        original_snapshot_readiness = _install_snapshot_ready_stub()
         try:
             api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
                 dataset_slug=dataset_slug, active_release="release-s0109-no-model-load"
@@ -1580,6 +1643,7 @@ def test_result_contract_projection_never_invokes_model_loader():
         finally:
             api_main.resolve_dataset = original_resolve_dataset
             api_main.load_public_contract = original_load_public_contract
+            _restore_snapshot_ready_stub(original_snapshot_readiness)
             api_main._inference_releases_root = original_releases_root
             api_main._INFERENCE_LOADER_STRATEGIES["joblib_sklearn_predict"] = original_loader
 

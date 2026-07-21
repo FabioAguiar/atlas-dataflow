@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 
 type PublicShellProps = {
   children: ReactNode;
@@ -126,9 +126,6 @@ export default function PublicShell({ children }: PublicShellProps) {
       )}
 
       <aside id="public-shell-nav" className="public-shell__nav" aria-label="Navegação principal">
-        <Link className="public-shell__brand" to="/">
-          Atlas DataFlow
-        </Link>
         <nav>
           <ul className="public-shell__nav-list">
             {NAV_ITEMS.map((item) => (
@@ -144,7 +141,7 @@ export default function PublicShell({ children }: PublicShellProps) {
                     <span className="public-shell__nav-icon" aria-hidden="true">
                       {item.icon}
                     </span>
-                    {item.label}
+                    <span className="public-shell__nav-label">{item.label}</span>
                   </a>
                 ) : (
                   <NavLink
@@ -156,7 +153,7 @@ export default function PublicShell({ children }: PublicShellProps) {
                     <span className="public-shell__nav-icon" aria-hidden="true">
                       {item.icon}
                     </span>
-                    {item.label}
+                    <span className="public-shell__nav-label">{item.label}</span>
                   </NavLink>
                 )}
               </li>
@@ -165,7 +162,7 @@ export default function PublicShell({ children }: PublicShellProps) {
         </nav>
       </aside>
 
-      <main className="app-shell">{children}</main>
+      <main className="app-shell public-shell__main">{children}</main>
     </div>
   );
 }

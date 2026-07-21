@@ -74,6 +74,8 @@ from public_predict_view_customization_loader import (  # noqa: E402
     load_public_predict_view_customization,
 )
 from public_profile_visibility import (  # noqa: E402
+    SNAPSHOT_STATUS_CURRENT_RELEASE,
+    resolve_dataset_snapshot_readiness,
     resolve_dataset_visibility,
     resolve_public_presentation_overlay,
 )
@@ -88,7 +90,11 @@ from admin_profile_publish import (  # noqa: E402
     resolve_home_card_media_path,
     store_home_card_image,
 )
-from admin_profile_visibility import get_dataset_publication_state, set_dataset_visibility  # noqa: E402
+from admin_profile_visibility import (  # noqa: E402
+    approve_dataset_review,
+    get_dataset_publication_state,
+    set_dataset_visibility,
+)
 from admin_settings import read_admin_settings, write_admin_settings  # noqa: E402
 from admin_predict_view_customizations import (  # noqa: E402
     read_predict_view_customization,
@@ -253,6 +259,21 @@ PREDICT_VIEW_CUSTOMIZATION_INVALID = PublicError(
     error_code="PREDICT_VIEW_CUSTOMIZATION_INVALID",
     message="The predict view customization failed validation.",
 )
+
+# Project Spec S0125: review-approval route errors.
+DATASET_REVIEW_STATUS_INVALID = PublicError(
+    status_code=422,
+    error_type="dataset_review_status_invalid",
+    error_code="DATASET_REVIEW_STATUS_INVALID",
+    message="The review-status payload must be a JSON object with status set to 'ready'.",
+)
+
+DATASET_REVIEW_APPROVAL_BLOCKED = PublicError(
+    status_code=409,
+    error_type="dataset_review_approval_blocked",
+    error_code="DATASET_REVIEW_APPROVAL_BLOCKED",
+    message="The Dataset Detail is not currently eligible for review approval.",
+)
 from registry.list import list_datasets, list_admin_datasets, is_dataset_needs_review  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
@@ -272,15 +293,18 @@ def _resolve_public_dataset_detail_access(dataset_slug: str):
     Resolve dataset_slug and classify public Dataset Detail access in one
     place, so every guarded route enforces the same order: resolve the
     registered dataset and its active release, classify public access,
-    only then let endpoint-specific loading proceed. Project Spec S0117.
+    only then let endpoint-specific loading proceed. Project Spec S0117;
+    extended by Project Spec S0125 to also require a published profile
+    snapshot currently bound to the resolved active release -- complete
+    public readiness is visibility + review + snapshot alignment together.
 
     Returns the resolved dataset (registry.resolve.ResolvedDataset) when
     access is ready. Returns a bounded JSONResponse
     (DATASET_NOT_FOUND / DATASET_MAINTENANCE / RELEASE_UNAVAILABLE /
     REGISTRY_UNAVAILABLE) otherwise -- callers must check the return type
-    before using it. A hidden or needs_review dataset always maps to the
-    same generic DATASET_MAINTENANCE response; the private reason is never
-    exposed here.
+    before using it. A hidden, needs_review, or snapshot-misaligned dataset
+    always maps to the same generic DATASET_MAINTENANCE response; the
+    private reason is never exposed here.
     """
     try:
         resolved = resolve_dataset(dataset_slug)
@@ -294,7 +318,31 @@ def _resolve_public_dataset_detail_access(dataset_slug: str):
     if not resolve_dataset_visibility(dataset_slug) or is_dataset_needs_review(dataset_slug):
         return public_error_response(DATASET_MAINTENANCE)
 
+    snapshot = resolve_dataset_snapshot_readiness(dataset_slug, resolved.active_release)
+    if snapshot["status"] != SNAPSHOT_STATUS_CURRENT_RELEASE:
+        return public_error_response(DATASET_MAINTENANCE)
+
     return resolved
+
+
+def _dataset_publicly_ready(dataset_slug: str) -> bool:
+    """
+    Complete public-list readiness classification for one dataset_slug,
+    reused by GET /datasets so the list applies the exact same visibility +
+    review + snapshot-alignment decision as every guarded Dataset Detail
+    route (Project Spec S0125). A dataset whose active release cannot be
+    resolved at all is excluded rather than raising, mirroring
+    _resolve_problem_type's fail-open-per-dataset behavior for this same
+    per-listing-item loop.
+    """
+    if not resolve_dataset_visibility(dataset_slug) or is_dataset_needs_review(dataset_slug):
+        return False
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except (DatasetUnavailableError, ReleaseUnavailableError, RegistryInvalidError):
+        return False
+    snapshot = resolve_dataset_snapshot_readiness(dataset_slug, resolved.active_release)
+    return snapshot["status"] == SNAPSHOT_STATUS_CURRENT_RELEASE
 
 
 def _resolve_problem_type(dataset_slug: str) -> str | None:
@@ -468,11 +516,7 @@ def list_datasets_endpoint():
         datasets = list_datasets()
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
-    visible_datasets = [
-        d
-        for d in datasets
-        if resolve_dataset_visibility(d.dataset_slug) and not is_dataset_needs_review(d.dataset_slug)
-    ]
+    visible_datasets = [d for d in datasets if _dataset_publicly_ready(d.dataset_slug)]
     return {
         "datasets": [
             {**d._asdict(), "problem_type": _resolve_problem_type(d.dataset_slug)}
@@ -1078,6 +1122,46 @@ def get_admin_profile_publication_state(dataset_slug: str, request: Request):
         return public_error_response(RELEASE_UNAVAILABLE)
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
+
+
+@app.put("/admin/datasets/{dataset_slug}/review-status")
+def put_admin_dataset_review_status(
+    dataset_slug: str, request: Request, payload: dict = Body(...)
+):
+    """
+    Project Spec S0125: the sole controlled Admin route that approves review
+    for one registered Dataset Detail. Accepts only the transition to
+    "ready" -- there is no reverse transition through this route. Approval
+    readiness (a needs_review dataset with a current-release snapshot, or an
+    already-ready dataset whose snapshot is still current) is delegated
+    entirely to admin_profile_visibility.approve_dataset_review(), which
+    also enforces that approval never depends on configured visibility.
+    """
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if status != "ready":
+        return public_error_response(DATASET_REVIEW_STATUS_INVALID)
+
+    try:
+        result = approve_dataset_review(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    if not result["approved"]:
+        return DATASET_REVIEW_APPROVAL_BLOCKED.response(errors=result["errors"])
+
+    return {
+        "dataset_slug": result["dataset_slug"],
+        "review_status": result["review_status"],
+        "changed": result["changed"],
+        "publication_state": result["publication_state"],
+    }
 
 
 @app.get("/admin/datasets/{dataset_slug}/views/{view_id}/customization")

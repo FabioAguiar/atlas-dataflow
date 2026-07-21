@@ -24,6 +24,9 @@ import admin_profile_publish  # noqa: E402
 import main as api_main  # noqa: E402
 from fastapi import Request  # noqa: E402
 from public_profile_visibility import resolve_dataset_visibility as _real_resolve_visibility  # noqa: E402
+from public_profile_visibility import (  # noqa: E402
+    resolve_dataset_snapshot_readiness as _real_resolve_dataset_snapshot_readiness,
+)
 from registry.dataset_public_profile_publication_store import set_visibility as _real_set_visibility  # noqa: E402
 from registry.dataset_public_profile_snapshot_store import publish_snapshot as _real_publish_snapshot  # noqa: E402
 from registry.dataset_public_profile_store import (  # noqa: E402
@@ -163,6 +166,11 @@ def _install_isolated_lifecycle(monkeypatch, fake_repo: Path) -> None:
         api_main,
         "resolve_dataset_visibility",
         functools.partial(_real_resolve_visibility, repo_root=fake_repo),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        functools.partial(_real_resolve_dataset_snapshot_readiness, repo_root=fake_repo),
     )
     registry_path = fake_repo / "registry" / "datasets.json"
     monkeypatch.setattr(

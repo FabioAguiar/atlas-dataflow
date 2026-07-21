@@ -157,6 +157,13 @@ ARTIFACT_REBIND_FAILED_ERROR = {
     "message": "Stored Dataset Detail state could not be rebound safely.",
 }
 
+# Project Spec S0125: reduced, sanitized errors for approve_dataset_detail_review().
+ACTIVE_RELEASE_MISMATCH_ERROR = {
+    "code": "DATASET_ACTIVE_RELEASE_MISMATCH",
+    "field": "expected_active_release",
+    "message": "The expected active release no longer matches the dataset's current active release.",
+}
+
 _SLUG_KEYED_ARTIFACTS = (
     ("profile-drafts", ".json"),
     ("profile-drafts", ".json.previous"),
@@ -1137,6 +1144,136 @@ def rename_dataset_slug(
         "dataset_slug": dataset_slug,
         "new_dataset_slug": new_dataset_slug,
         "renamed": True,
+        "errors": [],
+    }
+
+
+_REVIEW_STATUS_READY = "ready"
+_REVIEW_STATUS_NEEDS_REVIEW = "needs_review"
+_VALID_REVIEW_STATUSES = {_REVIEW_STATUS_READY, _REVIEW_STATUS_NEEDS_REVIEW}
+
+
+def _current_review_status(entry: dict) -> str:
+    value = entry.get("review_status")
+    return value if value in _VALID_REVIEW_STATUSES else _REVIEW_STATUS_READY
+
+
+def approve_dataset_detail_review(
+    dataset_slug: str,
+    expected_active_release: str,
+    repo_root: Path | None = None,
+) -> dict:
+    """Transition exactly one registered Dataset Detail's review_status to "ready".
+
+    Project Spec S0125. This is the sole controlled path that may ever set
+    review_status = "ready": no reverse transition (ready -> needs_review) is
+    supported here or anywhere else. Only the matching entry's top-level
+    review_status is changed -- dataset_slug, active_release,
+    public_metadata, and dataset_detail_updated_at (the S0089/S0092 display-
+    date authority) are left untouched. Never touches public_metadata,
+    active_release, predict-views.json, predict-view-customizations.json,
+    profile-drafts/**, profile-snapshots/**, profile-publications/**,
+    releases/**, or publisher/runs/**.
+
+    expected_active_release must equal the matching entry's current
+    active_release at mutation time (re-read fresh from disk here, not
+    trusted from an earlier caller-side read) -- this rejects an approval
+    whose readiness was inspected against a release that has since changed,
+    without ever mutating the registry. A registry entry already in
+    review_status "ready" whose active_release still matches is treated as
+    an idempotent success and the file is not rewritten.
+
+    Returns {"dataset_slug": str, "review_status": str, "changed": bool,
+    "errors": [...]}, where errors is a list of {"code", "field", "message"}
+    entries. Never raises: an invalid dataset_slug, an absent entry, an
+    active-release mismatch, an unreadable registry, a post-mutation
+    validation failure, or a filesystem write failure are all reported as a
+    non-changed result with a reduced, sanitized error instead. The registry
+    is left byte-for-byte untouched on every non-changed outcome.
+    """
+    if not isinstance(dataset_slug, str) or not DATASET_SLUG_PATTERN.match(dataset_slug):
+        return {
+            "dataset_slug": dataset_slug,
+            "review_status": None,
+            "changed": False,
+            "errors": [DATASET_SLUG_INVALID_ERROR],
+        }
+
+    if repo_root is None:
+        repo_root = Path(__file__).parent.parent
+    else:
+        repo_root = Path(repo_root)
+
+    registry_path = repo_root / "registry" / "datasets.json"
+    backup_path = repo_root / "registry" / "datasets.json.previous"
+
+    try:
+        registry = _load_json_file(registry_path, "registry")
+    except RuntimeError:
+        return {
+            "dataset_slug": dataset_slug,
+            "review_status": None,
+            "changed": False,
+            "errors": [REGISTRY_UNAVAILABLE_ERROR],
+        }
+
+    entry = _find_dataset_entry(registry, dataset_slug)
+    if entry is None:
+        return {
+            "dataset_slug": dataset_slug,
+            "review_status": None,
+            "changed": False,
+            "errors": [DATASET_DETAIL_NOT_FOUND_ERROR],
+        }
+
+    if entry.get("active_release") != expected_active_release:
+        return {
+            "dataset_slug": dataset_slug,
+            "review_status": _current_review_status(entry),
+            "changed": False,
+            "errors": [ACTIVE_RELEASE_MISMATCH_ERROR],
+        }
+
+    current_status = _current_review_status(entry)
+    if current_status == _REVIEW_STATUS_READY:
+        return {
+            "dataset_slug": dataset_slug,
+            "review_status": _REVIEW_STATUS_READY,
+            "changed": False,
+            "errors": [],
+        }
+
+    entry["review_status"] = _REVIEW_STATUS_READY
+
+    validation = validate_registry(registry)
+    if validation.get("valid") is not True:
+        return {
+            "dataset_slug": dataset_slug,
+            "review_status": current_status,
+            "changed": False,
+            "errors": [REGISTRY_VALIDATION_FAILED_ERROR],
+        }
+
+    try:
+        original = registry_path.read_bytes()
+        backup_path.write_bytes(original)
+        registry_path.write_bytes(_json_bytes(registry))
+    except OSError:
+        try:
+            registry_path.write_bytes(original)
+        except (OSError, UnboundLocalError):
+            pass
+        return {
+            "dataset_slug": dataset_slug,
+            "review_status": current_status,
+            "changed": False,
+            "errors": [REGISTRY_WRITE_FAILED_ERROR],
+        }
+
+    return {
+        "dataset_slug": dataset_slug,
+        "review_status": _REVIEW_STATUS_READY,
+        "changed": True,
         "errors": [],
     }
 

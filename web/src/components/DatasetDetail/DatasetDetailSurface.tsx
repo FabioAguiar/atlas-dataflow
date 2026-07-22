@@ -15,6 +15,7 @@ export type DatasetDetailSurfaceProps = {
   problemSummaryTitle?: string;
   problemSummaryBody?: string | null;
   performanceContent: ReactNode;
+  targetDistributionContent: ReactNode;
   featureImportanceContent: ReactNode;
   inferenceContent: ReactNode;
   documentationContent?: ReactNode;
@@ -33,6 +34,7 @@ export default function DatasetDetailSurface({
   problemSummaryTitle,
   problemSummaryBody,
   performanceContent,
+  targetDistributionContent,
   featureImportanceContent,
   inferenceContent,
   documentationContent,
@@ -50,6 +52,7 @@ export default function DatasetDetailSurface({
 
       <div className="dataset-detail-overview__analytics">
         {performanceContent}
+        {targetDistributionContent}
         {featureImportanceContent}
       </div>
     </div>

@@ -598,12 +598,11 @@ describe("DatasetPage synthetic-slug rendering", () => {
     expect(container.querySelector(".dataset-detail-surface")).toBeInTheDocument();
 
     expect(container.querySelectorAll(".performance-summary")).toHaveLength(1);
-    // Project Spec S0136: Overview owns exactly the ranked Feature
-    // Importance visualization -- Target Distribution's presentation was
-    // removed from the shared surface (the artifact/API remain untouched).
-    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(1);
+    // Project Spec S0138: Overview restores the donut Target Distribution
+    // card alongside the ranked Feature Importance visualization.
+    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
     expect(container.querySelector(".dataset-detail-visualization--ranked")).toBeInTheDocument();
-    expect(container.querySelector(".dataset-detail-visualization--donut")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-detail-visualization--donut")).toBeInTheDocument();
 
     expect(screen.queryByText(/model card/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /model card/i })).not.toBeInTheDocument();
@@ -1513,7 +1512,7 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     );
   }
 
-  it("renders public context, metrics, contract, and feature importance from real-shaped API payloads, without rendering Target Distribution or requesting model-card/views", async () => {
+  it("renders public context, metrics, contract, and target distribution/feature importance from real-shaped API payloads, without requesting model-card or views", async () => {
     const fetchMock = installTelcoFetchMock();
 
     renderTelcoDatasetPage();
@@ -1530,31 +1529,36 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(await screen.findByText("1,408")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
 
-    // Project Spec S0136: the ready Overview tabpanel owns exactly its
-    // three authorized cards -- Problem Summary, Performance Summary, and
-    // ranked Feature Importance -- and never a Target Distribution card,
-    // even though the /visualizations endpoint still carries that chart
-    // for other consumers of the same governed artifact.
+    // Project Spec S0138: the ready Overview tabpanel owns exactly its four
+    // authorized cards -- Problem Summary, Performance Summary, the donut
+    // Target Distribution and the ranked Feature Importance -- restored from
+    // the same governed /visualizations projection.
     const overviewPanel = screen.getByRole("tabpanel");
-    expect(overviewPanel.querySelectorAll(".atlas-card")).toHaveLength(3);
+    expect(overviewPanel.querySelectorAll(".atlas-card")).toHaveLength(4);
     expect(overviewPanel.querySelector(".dataset-detail-overview__problem-summary")).toBeInTheDocument();
     expect(overviewPanel.querySelector(".performance-summary")).toBeInTheDocument();
+    expect(overviewPanel.querySelector(".dataset-detail-visualization--donut")).toBeInTheDocument();
     expect(overviewPanel.querySelector(".dataset-detail-visualization--ranked")).toBeInTheDocument();
-    expect(overviewPanel.querySelector(".dataset-detail-visualization--donut")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("target distribution")).not.toBeInTheDocument();
-    expect(screen.queryByText("(5,174)")).not.toBeInTheDocument();
-    expect(screen.queryByText("(1,869)")).not.toBeInTheDocument();
+
+    // recharts' PieChart itself never resolves a non-zero width in jsdom (no
+    // real layout engine), so its internal SVG has no assertable text, but
+    // both components render their real values/labels as plain DOM outside
+    // the chart (TargetDistribution's legend list, FeatureImportance's row
+    // list) -- Project Spec S0128 asserts on those directly rather than
+    // treating the endpoint payload's presence as the only provable fact.
+    const targetDistributionChart = await screen.findByLabelText("target distribution");
+    expect(targetDistributionChart).toBeInTheDocument();
+    // Target Distribution values render from the endpoint payload (the
+    // spec's own governed Telco counts), not a hardcoded production value.
+    expect(screen.getByText("No")).toBeInTheDocument();
+    expect(screen.getByText("Yes")).toBeInTheDocument();
+    expect(screen.getByText("(5,174)")).toBeInTheDocument();
+    expect(screen.getByText("(1,869)")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
     expect(await screen.findByText("Tenure (months)")).toBeInTheDocument();
     expect(screen.getByText("Total Charges (USD)")).toBeInTheDocument();
 
-    // recharts' PieChart itself never resolves a non-zero width in jsdom (no
-    // real layout engine), so its internal SVG has no assertable text, but
-    // FeatureImportance renders its real values/labels as plain DOM outside
-    // the chart (its row list) -- Project Spec S0128 asserts on those
-    // directly rather than treating the endpoint payload's presence as the
-    // only provable fact.
     const featureImportanceChart = screen.getByLabelText("feature importance");
     expect(featureImportanceChart).toBeInTheDocument();
     // Feature Importance rows use the endpoint payload's own source feature
@@ -1567,15 +1571,13 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${telcoSlug}/views`))).toBe(false);
   });
 
-  it("does not render a misleading chart for a malformed Feature Importance projection (non-finite importance)", async () => {
+  it("does not render a misleading chart for a malformed visualizations projection (negative count, non-finite importance)", async () => {
     // A structurally-present but malformed payload (the shape a bug or a
     // partially-written artifact could produce) must still degrade to the
     // same bounded empty state as a missing artifact -- never a fabricated
-    // or misleading chart. FeatureImportance.getRankedFeatureRows already
-    // enforces this in production; this proves it end to end through the
-    // real page. The malformed target_distribution entry is included in the
-    // mocked payload to prove the artifact/API shape is untouched by S0136,
-    // even though its presentation is no longer rendered here at all.
+    // or misleading chart. TargetDistribution.getValidDistribution and
+    // FeatureImportance.getRankedFeatureRows already enforce this in
+    // production; this proves it end to end through the real page.
     installTelcoFetchMock({
       visualizationsPayload: {
         charts: [
@@ -1607,15 +1609,15 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 })).toBeInTheDocument();
     expect(await screen.findByText("1,408")).toBeInTheDocument();
 
-    expect((await screen.findAllByText("Visualization not generated")).length).toBe(1);
-    expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(1);
+    expect((await screen.findAllByText("Visualization not generated")).length).toBe(2);
+    expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(2);
     expect(screen.queryByLabelText("target distribution")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("feature importance")).not.toBeInTheDocument();
     expect(screen.queryByText("No")).not.toBeInTheDocument();
     expect(screen.queryByText("tenure")).not.toBeInTheDocument();
   });
 
-  it("shows an explicit unavailable state for Feature Importance when the visualizations endpoint fails, without blocking the rest of the page", async () => {
+  it("shows an explicit unavailable state for target distribution and feature importance when the visualizations endpoint fails, without blocking the rest of the page", async () => {
     // Grounded in the real repository state: the currently active Telco
     // release (releases/release-20260619-001) has no visualizations
     // artifact declared in its manifest at all, so
@@ -1633,8 +1635,8 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     // primary route is ready (Project Spec S0117).
     expect(await screen.findByText("1,408")).toBeInTheDocument();
 
-    expect((await screen.findAllByText("Visualization not generated")).length).toBe(1);
-    expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(1);
+    expect((await screen.findAllByText("Visualization not generated")).length).toBe(2);
+    expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(2);
     expect(screen.queryByLabelText("target distribution")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("feature importance")).not.toBeInTheDocument();
   });

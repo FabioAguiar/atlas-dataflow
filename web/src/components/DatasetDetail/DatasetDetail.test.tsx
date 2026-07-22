@@ -205,6 +205,7 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
           performanceContent={<div data-testid="performance-slot">Performance content</div>}
           problemSummaryBody="Synthetic problem summary body."
           problemSummaryTitle="Problem summary"
+          targetDistributionContent={<div data-testid="target-distribution-slot">Target distribution content</div>}
           themePresetId="ocean-blue"
           {...overrides}
         />
@@ -246,6 +247,7 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
     renderSurface();
 
     expect(screen.getAllByTestId("performance-slot")).toHaveLength(1);
+    expect(screen.getAllByTestId("target-distribution-slot")).toHaveLength(1);
     expect(screen.getAllByTestId("feature-importance-slot")).toHaveLength(1);
 
     const problemSummary = screen.getByText("Synthetic problem summary body.");
@@ -279,15 +281,15 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
   });
 });
 
-// Project Spec S0136: the shared surface's public presentation contract no
-// longer carries a Target Distribution slot, and each tab's visible
-// tabpanel owns exactly its authorized cards -- never a fourth Overview
-// card, an Inference-owned surface leaking into Overview, or the reverse.
-// Every assertion below is scoped to screen.getByRole("tabpanel"), which
-// testing-library resolves to the one panel currently lacking `hidden` --
-// never a raw whole-container query that would also see the other two
-// tabs' mounted-but-hidden content.
-describe("DatasetDetailSurface exact tab card ownership (S0136)", () => {
+// Project Spec S0138: the shared surface's public presentation contract
+// restores the Target Distribution slot removed by S0136, and each tab's
+// visible tabpanel owns exactly its authorized cards -- Overview now owns
+// four cards (including the donut), never a fifth card, an Inference-owned
+// surface leaking into Overview, or the reverse. Every assertion below is
+// scoped to screen.getByRole("tabpanel"), which testing-library resolves to
+// the one panel currently lacking `hidden` -- never a raw whole-container
+// query that would also see the other two tabs' mounted-but-hidden content.
+describe("DatasetDetailSurface exact tab card ownership (S0138)", () => {
   const metadata: DatasetDetailMetadataItem[] = [
     { label: "Source", value: "Example Org", href: "https://example.org/data" },
     { label: "Instances", value: "500" },
@@ -297,7 +299,10 @@ describe("DatasetDetailSurface exact tab card ownership (S0136)", () => {
   ];
 
   const readyVisualizations = {
-    charts: [{ id: "feature_importance", type: "bar" as const, data: [{ name: "tenure", value: 0.7 }] }],
+    charts: [
+      { id: "target_distribution", type: "bar" as const, data: [{ name: "No", value: 30 }, { name: "Yes", value: 10 }] },
+      { id: "feature_importance", type: "bar" as const, data: [{ name: "tenure", value: 0.7 }] },
+    ],
   };
 
   function renderReadySurface(overrides: Partial<ComponentProps<typeof DatasetDetailSurface>> = {}) {
@@ -318,6 +323,7 @@ describe("DatasetDetailSurface exact tab card ownership (S0136)", () => {
           performanceContent={<PerformanceSummary metrics={{ auc_roc: 0.87 }} />}
           problemSummaryBody="Synthetic problem summary body."
           problemSummaryTitle="Problem summary"
+          targetDistributionContent={<TargetDistribution visualizations={readyVisualizations} />}
           themePresetId="ocean-blue"
           {...overrides}
         />
@@ -325,21 +331,31 @@ describe("DatasetDetailSurface exact tab card ownership (S0136)", () => {
     );
   }
 
-  it("Overview exposes exactly the three authorized cards and no Inference surface", () => {
+  it("Overview exposes exactly the four authorized cards, one donut and one ranked visualization, and no Inference surface", () => {
     renderReadySurface();
 
     const panel = screen.getByRole("tabpanel");
     const cards = panel.querySelectorAll(".atlas-card");
-    expect(cards).toHaveLength(3);
+    expect(cards).toHaveLength(4);
     expect(panel.querySelector(".atlas-card.dataset-detail-overview__problem-summary")).toBeInTheDocument();
     expect(panel.querySelector(".atlas-card.performance-summary")).toBeInTheDocument();
     expect(
+      panel.querySelector(".atlas-card.dataset-detail-visualization.dataset-detail-visualization--donut"),
+    ).toBeInTheDocument();
+    expect(
       panel.querySelector(".atlas-card.dataset-detail-visualization.dataset-detail-visualization--ranked"),
     ).toBeInTheDocument();
+    expect(panel.querySelectorAll(".dataset-detail-visualization--donut")).toHaveLength(1);
+    expect(panel.querySelectorAll(".dataset-detail-visualization--ranked")).toHaveLength(1);
 
-    expect(
-      panel.querySelector(".dataset-detail-visualization:not(.dataset-detail-visualization--ranked)"),
-    ).not.toBeInTheDocument();
+    // Target Distribution renders the fixture's own authoritative labels and
+    // counts -- never a fabricated demonstration value.
+    const donutChart = within(panel).getByLabelText("Target Distribution");
+    expect(within(donutChart).getByText("No")).toBeInTheDocument();
+    expect(within(donutChart).getByText("Yes")).toBeInTheDocument();
+    expect(within(donutChart).getByText("(30)")).toBeInTheDocument();
+    expect(within(donutChart).getByText("(10)")).toBeInTheDocument();
+
     expect(panel.querySelector(".public-inference-form")).not.toBeInTheDocument();
     expect(panel.querySelector(".inference-result")).not.toBeInTheDocument();
   });

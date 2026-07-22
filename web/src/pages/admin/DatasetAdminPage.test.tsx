@@ -2659,18 +2659,18 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("heading", { name: "Churn context" })).toBeInTheDocument();
     expect(screen.getByText("Explains customer churn for a public audience.")).toBeInTheDocument();
 
-    // Project Spec S0136: the Live Preview Overview owns exactly the same
-    // three authorized cards as the public route -- Problem Summary,
-    // Performance Summary, and ranked Feature Importance -- never a Target
-    // Distribution card, and no route-specific CSS/duplicate composition is
-    // used to achieve that parity (both routes share DatasetDetailSurface).
+    // Project Spec S0138: the Live Preview Overview owns exactly the same
+    // four authorized cards as the public route -- Problem Summary,
+    // Performance Summary, the donut Target Distribution and the ranked
+    // Feature Importance -- and no route-specific CSS/duplicate composition
+    // is used to achieve that parity (both routes share DatasetDetailSurface).
     const overviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
-    expect(overviewPanel.querySelectorAll(".atlas-card")).toHaveLength(3);
+    expect(overviewPanel.querySelectorAll(".atlas-card")).toHaveLength(4);
     expect(overviewPanel.querySelector(".dataset-detail-overview__problem-summary")).toBeInTheDocument();
     expect(overviewPanel.querySelector(".performance-summary")).toBeInTheDocument();
+    expect(overviewPanel.querySelector(".dataset-detail-visualization--donut")).toBeInTheDocument();
     expect(overviewPanel.querySelector(".dataset-detail-visualization--ranked")).toBeInTheDocument();
-    expect(overviewPanel.querySelector(".dataset-detail-visualization--donut")).not.toBeInTheDocument();
-    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(1);
+    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
 
     fireEvent.click(detailTabs.getByRole("tab", { name: "Inference" }));
     expect(screen.getByText(/Preview only — no inference request is executed./)).toBeInTheDocument();

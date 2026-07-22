@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter, useNavigate, type NavigateFunction } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type MockResponse = {
@@ -42,7 +42,22 @@ const datasets = [
     tags: ["telecom"],
     problem_type: "binary_classification",
   },
+  // Project Spec S0139: a second synthetic dataset lets route-entry tests
+  // exercise a Dataset Detail A -> Dataset Detail B slug transition without
+  // depending on mutable real registry state.
+  {
+    dataset_slug: "atlas-sample-dataset-two",
+    title: "Atlas Sample Dataset Two",
+    summary: "Synthetic secondary dataset for route-entry tests",
+    domain: "synthetic",
+    tags: ["synthetic"],
+    problem_type: "binary_classification",
+  },
 ];
+
+function findDatasetBySlug(slug: string) {
+  return datasets.find((dataset) => dataset.dataset_slug === slug) ?? null;
+}
 
 function installFetchMock() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -51,63 +66,68 @@ function installFetchMock() {
     if (url.endsWith("/datasets")) {
       return jsonResponse({ datasets });
     }
-    if (url.endsWith(`/datasets/${datasets[0].dataset_slug}`)) {
-      return jsonResponse(datasets[0]);
-    }
     if (url.endsWith("/admin/runs")) {
       return jsonResponse({ runs_root_status: "available", runs: [] });
     }
-    if (url.includes("/context")) {
-      return jsonResponse({
-        dataset_slug: datasets[0].dataset_slug,
-        context: { problem_summary_body: "Public-safe context" },
-      });
-    }
-    if (url.endsWith("/customization")) {
-      return jsonResponse({}, 404);
-    }
-    if (/\/views\/[^/]+$/.test(url)) {
-      return jsonResponse({
-        view_id: "churn-risk-overview",
-        dataset_slug: datasets[0].dataset_slug,
-        display: { title: "Churn risk overview" },
-        intent: {},
-        release_mode: null,
-      });
-    }
-    if (url.includes("/contract")) {
-      return jsonResponse({
-        contract: {
-          schema_version: "1.0.0",
-          features: [
-            { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
-          ],
-        },
-        result_contract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
-      });
-    }
-    if (url.includes("/metrics")) {
-      return jsonResponse({
-        dataset_slug: datasets[0].dataset_slug,
-        metrics: { auc_roc: 0.91 },
-      });
-    }
-    if (url.includes("/model-card")) {
-      return jsonResponse({ model_name: "Validation model" });
-    }
-    if (url.includes("/visualizations")) {
-      return jsonResponse({
-        dataset_slug: datasets[0].dataset_slug,
-        visualizations: {},
-      });
-    }
-    if (url.includes("/views")) {
-      return jsonResponse([
-        {
+
+    const datasetMatch = url.match(/\/datasets\/([^/]+)(\/.*)?$/);
+    if (datasetMatch) {
+      const slug = decodeURIComponent(datasetMatch[1]);
+      const suffix = datasetMatch[2] ?? "";
+      const dataset = findDatasetBySlug(slug);
+
+      if (!dataset) {
+        return jsonResponse({}, 404);
+      }
+      if (suffix === "") {
+        return jsonResponse(dataset);
+      }
+      if (suffix === "/context") {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: { problem_summary_body: "Public-safe context" },
+        });
+      }
+      if (suffix.endsWith("/customization")) {
+        return jsonResponse({}, 404);
+      }
+      if (/^\/views\/[^/]+$/.test(suffix)) {
+        return jsonResponse({
           view_id: "churn-risk-overview",
-          title: "Churn risk overview",
-        },
-      ]);
+          dataset_slug: slug,
+          display: { title: "Churn risk overview" },
+          intent: {},
+          release_mode: null,
+        });
+      }
+      if (suffix === "/contract") {
+        return jsonResponse({
+          contract: {
+            schema_version: "1.0.0",
+            features: [
+              { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
+            ],
+          },
+          result_contract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
+        });
+      }
+      if (suffix === "/metrics") {
+        return jsonResponse({ dataset_slug: slug, metrics: { auc_roc: 0.91 } });
+      }
+      if (suffix === "/model-card") {
+        return jsonResponse({ model_name: "Validation model" });
+      }
+      if (suffix === "/visualizations") {
+        return jsonResponse({ dataset_slug: slug, visualizations: {} });
+      }
+      if (suffix === "/views") {
+        return jsonResponse([
+          {
+            view_id: "churn-risk-overview",
+            title: "Churn risk overview",
+          },
+        ]);
+      }
     }
 
     return jsonResponse({}, 404);
@@ -128,6 +148,45 @@ async function renderApp(route: string, enableAdmin: boolean) {
       <App />
     </MemoryRouter>,
   );
+}
+
+// Project Spec S0139: route-entry reset must be proven by navigating within
+// one mounted App/Router, not by rendering each route through a separate
+// MemoryRouter. NavigationCapture exposes an imperative `navigate` (push or
+// history back/forward via a delta) from inside the same mounted Router
+// that renders <App />.
+async function renderAppWithNavigation(initialRoute: string) {
+  vi.resetModules();
+  vi.stubEnv("VITE_ENABLE_ADMIN", "false");
+
+  const { default: App } = await import("./App");
+
+  let navigateImpl: NavigateFunction | null = null;
+
+  function NavigationCapture() {
+    navigateImpl = useNavigate();
+    return null;
+  }
+
+  const utils = render(
+    <MemoryRouter initialEntries={[initialRoute]}>
+      <NavigationCapture />
+      <App />
+    </MemoryRouter>,
+  );
+
+  return {
+    ...utils,
+    navigate(to: string | number) {
+      act(() => {
+        if (typeof to === "number") {
+          navigateImpl!(to);
+        } else {
+          navigateImpl!(to);
+        }
+      });
+    },
+  };
 }
 
 describe("App admin routing", () => {
@@ -313,5 +372,131 @@ describe("PublicShell initial navigation route isolation (Project Spec S0137)", 
 
     expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+});
+
+// Project Spec S0139: route-entry navigation reset must hold across in-app
+// navigation within one mounted App/Router, not only across isolated direct
+// mounts. Every scenario below shares one MemoryRouter and one <App />
+// instance across the assertions it makes -- no scenario re-imports or
+// remounts App between the source and destination route.
+describe("Dataset Detail route-entry navigation reset (Project Spec S0139)", () => {
+  beforeEach(() => {
+    installFetchMock();
+    mockMatchMedia(true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("collapses navigation entering Dataset Detail from Home without a page reload", async () => {
+    const { container, navigate } = await renderAppWithNavigation("/");
+    expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+
+    navigate("/dataset/telco-customer-churn");
+
+    expect(
+      await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+    expect(container.querySelector("main")).toHaveAttribute("data-main-mode", "full_bleed");
+  });
+
+  it("collapses navigation entering Dataset Detail from Predict View within the same mounted app", async () => {
+    const { container, navigate } = await renderAppWithNavigation(
+      "/dataset/telco-customer-churn/view/churn-risk-overview",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Churn risk overview", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+
+    navigate("/dataset/telco-customer-churn");
+
+    expect(
+      await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("re-collapses on a Dataset Detail A -> Dataset Detail B slug transition even after the user opened navigation", async () => {
+    const { container, navigate } = await renderAppWithNavigation("/dataset/telco-customer-churn");
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+
+    navigate("/dataset/atlas-sample-dataset-two");
+
+    expect(
+      await screen.findByRole("heading", { name: "Atlas Sample Dataset Two", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("restores the collapsed Dataset Detail default on browser back/forward re-entry", async () => {
+    const { navigate } = await renderAppWithNavigation("/");
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    navigate("/dataset/telco-customer-churn");
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+
+    navigate(-1);
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    navigate(1);
+
+    expect(
+      await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps navigation open through Dataset Page data resolution once the user opens it", async () => {
+    const { container, navigate } = await renderAppWithNavigation("/");
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    navigate("/dataset/telco-customer-churn");
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+
+    // Dataset Page keeps resolving auxiliary sections (context, metrics,
+    // contract, visualizations) well after the primary heading appears --
+    // none of those re-renders may undo the user's manual open.
+    await screen.findByText("Public-safe context");
+
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+  });
+
+  it("keeps / and the Predict View route open by default even after visiting collapsed Dataset Detail", async () => {
+    const { navigate } = await renderAppWithNavigation("/dataset/telco-customer-churn");
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+
+    navigate("/");
+    expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+
+    navigate("/dataset/telco-customer-churn/view/churn-risk-overview");
+    expect(
+      await screen.findByRole("heading", { name: "Churn risk overview", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
   });
 });

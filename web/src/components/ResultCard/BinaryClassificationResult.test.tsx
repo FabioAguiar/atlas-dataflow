@@ -3,8 +3,12 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import BinaryClassificationResult from "./BinaryClassificationResult";
-import { GENERIC_RESULT_PRESENTATION } from "./types";
-import type { BinaryClassificationResult as BinaryClassificationResultData, BinaryResultPresentation } from "./types";
+import { GENERIC_RESULT_PRESENTATION, projectBinaryClassificationResult } from "./types";
+import type {
+  BinaryClassificationResult as BinaryClassificationResultData,
+  BinaryResultPresentation,
+  BinaryResultSemantics,
+} from "./types";
 
 const bands = [
   { band_id: "low", lower_bound: 0, upper_bound: 0.35 },
@@ -138,5 +142,107 @@ describe("BinaryClassificationResult semantic rendering", () => {
     render(<BinaryClassificationResult result={buildResult()} presentation={presentation} />);
 
     expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument();
+  });
+
+  // Project Spec S0141: at both meter boundaries the marker's *position*
+  // input carried by the shared CSS custom property must still equal the
+  // exact governed probability -- CSS clamp() alone contains the rendered
+  // footprint -- so the displayed value, threshold comparison and
+  // accessible label are never altered to achieve containment.
+  it.each([
+    [0, "0%"],
+    [1, "100%"],
+  ])("carries the exact %s probability into the value marker's position custom property for CSS containment clamping", (probability, expectedPosition) => {
+    const result = buildResult({ positive_class_probability: probability });
+    const { container } = render(<BinaryClassificationResult result={result} presentation={presentation} />);
+
+    const marker = container.querySelector<HTMLElement>(".probability-meter__value")!;
+    expect(marker.style.getPropertyValue("--probability-meter-value-position")).toBe(expectedPosition);
+  });
+
+  it("reports the true zero and full accessible probability at both meter boundaries", () => {
+    const zero = buildResult({ positive_class_probability: 0, decision: { threshold: 0.5, predicted_positive: false }, interpretation: { preset: "risk", band_id: "low", bands } });
+    render(<BinaryClassificationResult result={zero} presentation={presentation} />);
+    expect(screen.getByRole("img", { name: /Positive class probability 0%/ })).toBeInTheDocument();
+    expect(screen.getByText("0%", { selector: ".binary-classification-result__probability-value" })).toBeInTheDocument();
+  });
+});
+
+// Project Spec S0141: the single shared, side-effect-free binary result
+// projection boundary used by both the Dataset Admin scenario preview and
+// the public Dataset Detail zero-probability initial card.
+describe("projectBinaryClassificationResult", () => {
+  const semantics: BinaryResultSemantics = {
+    schema_version: "binary-result-semantics.v1",
+    problem_type: "binary_classification",
+    result_schema_version: "binary-classification-result.v1",
+    primary_output: "positive_class_probability",
+    positive_class: { class_id: "Yes", event_label: "Churn" },
+    negative_class: { class_id: "No" },
+    decision: { threshold: 0.5 },
+    interpretation: {
+      preset: "risk",
+      bands: [
+        { band_id: "low", lower_bound: 0, upper_bound: 0.35 },
+        { band_id: "medium", lower_bound: 0.35, upper_bound: 0.65 },
+        { band_id: "high", lower_bound: 0.65, upper_bound: 1.0 },
+      ],
+    },
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+  };
+
+  it("derives a complete zero-probability result: negative decision, low band, complementary probabilities", () => {
+    const result = projectBinaryClassificationResult(semantics, 0);
+
+    expect(result?.positive_class_probability).toBe(0);
+    expect(result?.class_probabilities).toEqual([
+      { class_id: "No", probability: 1 },
+      { class_id: "Yes", probability: 0 },
+    ]);
+    expect(result?.decision).toEqual({ threshold: 0.5, predicted_positive: false });
+    expect(result?.predicted_class).toEqual({ class_id: "No" });
+    expect(result?.interpretation.band_id).toBe("low");
+    expect(result?.model_descriptor).toEqual(semantics.model_descriptor);
+  });
+
+  it("derives predicted_positive from probability >= threshold at the exact threshold boundary", () => {
+    const atThreshold = projectBinaryClassificationResult(semantics, 0.5);
+    expect(atThreshold?.decision.predicted_positive).toBe(true);
+    expect(atThreshold?.predicted_class).toEqual({ class_id: "Yes" });
+
+    const belowThreshold = projectBinaryClassificationResult(semantics, 0.499);
+    expect(belowThreshold?.decision.predicted_positive).toBe(false);
+  });
+
+  it("selects the final band for probability one", () => {
+    expect(projectBinaryClassificationResult(semantics, 1)?.interpretation.band_id).toBe("high");
+  });
+
+  it("never copies presentation copy into the result payload and accepts no presentation input", () => {
+    const result = projectBinaryClassificationResult(semantics, 0);
+    expect(Object.keys(result ?? {})).not.toContain("positive_outcome_copy");
+    expect(Object.keys(result ?? {})).not.toContain("predicted_outcome_label");
+  });
+
+  it("returns null instead of fabricating a result for an out-of-range or non-finite probability", () => {
+    expect(projectBinaryClassificationResult(semantics, -0.01)).toBeNull();
+    expect(projectBinaryClassificationResult(semantics, 1.01)).toBeNull();
+    expect(projectBinaryClassificationResult(semantics, Number.NaN)).toBeNull();
+  });
+
+  it("returns null when the governed bands cannot select exactly one band for the probability", () => {
+    const invalid: BinaryResultSemantics = {
+      ...semantics,
+      interpretation: { ...semantics.interpretation, bands: semantics.interpretation.bands.slice(0, 2) },
+    };
+    expect(projectBinaryClassificationResult(invalid, 0.5)).toBeNull();
+  });
+
+  it("returns null for an ambiguous or equal class identity", () => {
+    const equalClasses: BinaryResultSemantics = {
+      ...semantics,
+      negative_class: { class_id: "Yes" },
+    };
+    expect(projectBinaryClassificationResult(equalClasses, 0)).toBeNull();
   });
 });

@@ -477,6 +477,11 @@ export default function DatasetPage() {
           submitButtonLabel={resolvedSubmitButtonLabel}
           resultContract={contractState.data.result_contract}
           resultPresentation={context?.result_card ?? undefined}
+          // Project Spec S0141: only the public Dataset Detail route opts
+          // into the zero-probability initial Result Card projection -- the
+          // bound Predict View route (DatasetViewPage.tsx) intentionally
+          // omits this prop and keeps its existing idle-placeholder behavior.
+          initialResultProbability={0}
         />
       )}
       {contractState.status === "unavailable" && (

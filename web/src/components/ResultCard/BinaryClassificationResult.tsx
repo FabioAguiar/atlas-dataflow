@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { StatusPill } from "../ui";
 import type { BinaryClassificationResult as BinaryClassificationResultData, BinaryResultPresentation, BinaryRiskBand } from "./types";
 
@@ -91,7 +92,7 @@ export default function BinaryClassificationResult({ result, presentation }: Pro
           <div className="probability-meter__threshold" style={{ left: `${result.decision.threshold * 100}%` }} />
           <div
             className="probability-meter__value"
-            style={{ left: `${result.positive_class_probability * 100}%` }}
+            style={{ "--probability-meter-value-position": `${result.positive_class_probability * 100}%` } as CSSProperties}
           />
         </div>
       </div>

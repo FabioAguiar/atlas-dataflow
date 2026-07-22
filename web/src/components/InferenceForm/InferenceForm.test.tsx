@@ -253,6 +253,128 @@ describe("InferenceForm public execution (Project Spec S0112)", () => {
   });
 });
 
+// Project Spec S0141: DatasetPage.tsx opts into a local, presentation-only
+// zero-probability initial Result Card projection via initialResultProbability.
+// Every other caller (Predict View, Admin Live Preview) omits this prop and
+// keeps the pre-existing idle-placeholder behavior asserted above.
+describe("InferenceForm initial Result Card projection (Project Spec S0141)", () => {
+  it("renders exactly one complete Result Card at 0% -- not the idle placeholder -- and issues no POST request", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+      />,
+    );
+
+    expect(screen.queryByText("Submit the form to see the prediction.")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".inference-result")).toHaveLength(1);
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Model")).toBeInTheDocument();
+    expect(screen.getByText("Gradient Boosting")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("derives the outcome/band from the governed threshold at probability zero (below a positive threshold)", () => {
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+      />,
+    );
+
+    // availableContract's threshold is 0.5, so 0 >= 0.5 is false: negative
+    // outcome copy and the governed "low" band, never hardcoded English text.
+    expect(screen.getByText("Unlikely to churn")).toBeInTheDocument();
+    expect(screen.getByText("Low risk")).toBeInTheDocument();
+  });
+
+  it("marks the initial projection with a distinct shell state from a real successful result", () => {
+    const { container } = render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+      />,
+    );
+
+    expect(container.querySelector(".result-panel--initial")).toBeInTheDocument();
+    expect(container.querySelector(".result-panel--success")).not.toBeInTheDocument();
+  });
+
+  it("replaces the initial projection with the real result after a valid submission, keeping exactly one card", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ dataset_slug: slug, result: validResult })));
+
+    const { container } = render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+      />,
+    );
+
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("68%")).toBeInTheDocument();
+    expect(container.querySelectorAll(".inference-result")).toHaveLength(1);
+    expect(container.querySelector(".result-panel--success")).toBeInTheDocument();
+    expect(container.querySelector(".result-panel--initial")).not.toBeInTheDocument();
+  });
+
+  it("does not render the initial projection while the result contract is unavailable, and keeps submission disabled", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={unavailableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+      />,
+    );
+
+    expect(screen.queryByText("0%", { selector: ".binary-classification-result__probability-value" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("This active release does not currently expose a compatible result."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the idle placeholder when initialResultProbability is omitted, preserving Predict View's current behavior", () => {
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+      />,
+    );
+
+    expect(screen.getByText("Submit the form to see the prediction.")).toBeInTheDocument();
+  });
+});
+
 describe("InferenceForm preview mode (Admin Live Preview compatibility)", () => {
   it("performs no POST and renders no public ResultCardShell state, regardless of resultContract", () => {
     const fetchMock = vi.fn();

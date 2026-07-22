@@ -1144,6 +1144,212 @@ describe("DatasetPage inference result execution (Project Spec S0134)", () => {
   });
 });
 
+// Project Spec S0141: before any submission, the public Dataset Detail
+// Inference tab must render exactly one complete Result Card at the local
+// zero-probability initial projection -- never the idle placeholder -- and
+// must never fire the inference POST request until the form is explicitly
+// submitted.
+describe("DatasetPage public Result Card zero-probability initial projection (Project Spec S0141)", () => {
+  it("renders exactly one complete Result Card at 0% before submission and issues no inference POST request", async () => {
+    const fetchMock = installDatasetPageFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+
+    expect(screen.queryByText("Submit the form to see the prediction.")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".inference-result")).toHaveLength(1);
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Gradient Boosting")).toBeInTheDocument();
+    expect(container.querySelector(".result-panel--initial")).toBeInTheDocument();
+
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/inference`))).toBe(false);
+  });
+
+  it("does not fabricate a zero-probability card and keeps submission disabled when the result contract is unavailable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      if (url.endsWith(`/datasets/${slug}/metrics`)) return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slug}/visualizations`))
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slug}/contract`))
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
+        });
+      if (url.endsWith(`/datasets/${slug}`)) return jsonResponse(datasetMetadata);
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+
+    expect(screen.queryByText("0%", { selector: ".binary-classification-result__probability-value" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("This active release does not currently expose a compatible result."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/inference`))).toBe(false);
+  });
+
+  it("keeps a real successful result visible (never reverts to the zero projection) across a same-slug tab-switch re-render", async () => {
+    const validResult = {
+      schema_version: "binary-classification-result.v1",
+      problem_type: "binary_classification",
+      predicted_class: { class_id: "Yes" },
+      positive_class: { class_id: "Yes", event_label: "Churn" },
+      positive_class_probability: 0.68,
+      class_probabilities: [
+        { class_id: "No", probability: 0.32 },
+        { class_id: "Yes", probability: 0.68 },
+      ],
+      decision: { threshold: 0.5, predicted_positive: true },
+      interpretation: {
+        preset: "risk" as const,
+        band_id: "high",
+        bands: resultContractAvailable.semantics.interpretation.bands,
+      },
+      model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+        return jsonResponse({ dataset_slug: slug, result: validResult });
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      if (url.endsWith(`/datasets/${slug}/metrics`)) return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slug}/visualizations`))
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slug}/contract`))
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
+      if (url.endsWith(`/datasets/${slug}`)) return jsonResponse(datasetMetadata);
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
+
+    // A same-slug re-render driven by leaving and returning to the tab must
+    // never overwrite the real result with a fresh zero projection.
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+
+    expect(screen.getByText("Likely to churn")).toBeInTheDocument();
+    expect(screen.getByText("68%")).toBeInTheDocument();
+    expect(screen.queryByText("0%", { selector: ".binary-classification-result__probability-value" })).not.toBeInTheDocument();
+  });
+
+  it("shows the new dataset's own zero-probability projection (not the prior dataset's real result) after navigating to a different Dataset Detail identity", async () => {
+    const slugA = slug;
+    const slugB = "another-synthetic-dataset";
+    const datasetBMetadata = { ...datasetMetadata, dataset_slug: slugB, title: "Another Synthetic Dataset" };
+    const resultContractB = {
+      status: "available" as const,
+      semantics: {
+        ...resultContractAvailable.semantics,
+        model_descriptor: { model_family: "logistic_regression", display_name: "Dataset B Model" },
+      },
+    };
+
+    const validResultA = {
+      schema_version: "binary-classification-result.v1",
+      problem_type: "binary_classification",
+      predicted_class: { class_id: "Yes" },
+      positive_class: { class_id: "Yes", event_label: "Churn" },
+      positive_class_probability: 0.68,
+      class_probabilities: [
+        { class_id: "No", probability: 0.32 },
+        { class_id: "Yes", probability: 0.68 },
+      ],
+      decision: { threshold: 0.5, predicted_positive: true },
+      interpretation: {
+        preset: "risk" as const,
+        band_id: "high",
+        bands: resultContractAvailable.semantics.interpretation.bands,
+      },
+      model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.endsWith(`/datasets/${slugA}/inference`)) {
+        return jsonResponse({ dataset_slug: slugA, result: validResultA });
+      }
+      if (url.endsWith(`/datasets/${slugA}/context`)) return jsonResponse({ dataset_slug: slugA, context: contextPayload });
+      if (url.endsWith(`/datasets/${slugA}/metrics`)) return jsonResponse({ dataset_slug: slugA, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slugA}/visualizations`))
+        return jsonResponse({ dataset_slug: slugA, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slugA}/contract`))
+        return jsonResponse({ dataset_slug: slugA, contract: contractPayload, result_contract: resultContractAvailable });
+      if (url.endsWith(`/datasets/${slugA}`)) return jsonResponse(datasetMetadata);
+
+      if (url.endsWith(`/datasets/${slugB}/context`))
+        return jsonResponse({ dataset_slug: slugB, context: { ...contextPayload, title: datasetBMetadata.title } });
+      if (url.endsWith(`/datasets/${slugB}/metrics`)) return jsonResponse({ dataset_slug: slugB, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slugB}/visualizations`))
+        return jsonResponse({ dataset_slug: slugB, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slugB}/contract`))
+        return jsonResponse({ dataset_slug: slugB, contract: contractPayload, result_contract: resultContractB });
+      if (url.endsWith(`/datasets/${slugB}`)) return jsonResponse(datasetBMetadata);
+
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={[`/dataset/${slugA}`]}>
+        <Routes>
+          <Route
+            path="/dataset/:slug"
+            element={
+              <>
+                <Link to={`/dataset/${slugB}`}>Go to B</Link>
+                <DatasetPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Go to B" }));
+    await screen.findByRole("heading", { name: "Another Synthetic Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+
+    expect(screen.queryByText("Likely to churn")).not.toBeInTheDocument();
+    expect(screen.queryByText("68%")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Dataset B Model")).toBeInTheDocument();
+  });
+});
+
 // Project Spec S0140: repeated switching must never leave two panels
 // simultaneously active at the full DatasetPage level (not just the isolated
 // DatasetDetailTabs unit), and must never duplicate an authorized card.

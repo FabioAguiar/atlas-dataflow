@@ -190,6 +190,61 @@ function isModelDescriptor(value: unknown): value is BinaryModelDescriptor {
   return isRecord(value) && isNonEmptyString(value.display_name) && isNonEmptyString(value.model_family);
 }
 
+function selectRiskBand(bands: BinaryRiskBand[], probability: number): BinaryRiskBand | null {
+  const matches = bands.filter((band, index) =>
+    probability >= band.lower_bound &&
+    (probability < band.upper_bound || (index === bands.length - 1 && probability === 1 && band.upper_bound === 1)),
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * Project Spec S0141: the single shared, side-effect-free binary result
+ * projection boundary. Accepts validated governed semantics and a
+ * probability in [0, 1] and derives the full technical
+ * BinaryClassificationResult -- decision, complementary class
+ * probabilities, the selected interpretation band, and model descriptor --
+ * with no network, storage, registry, route or DOM access. Both the Dataset
+ * Admin scenario preview (via livePreviewProjection.ts's
+ * projectBinaryResultPreview) and the public Dataset Detail
+ * zero-probability initial card construct their technical result through
+ * this one function, so no second result-construction implementation
+ * exists. Presentation copy is deliberately not an input: it is not part of
+ * the technical result and must never be copied into the result payload.
+ */
+export function projectBinaryClassificationResult(
+  semantics: BinaryResultSemantics,
+  probability: number,
+): BinaryClassificationResult | null {
+  if (!isUnitInterval(probability)) return null;
+  if (semantics.interpretation.preset !== SUPPORTED_INTERPRETATION_PRESET) return null;
+  if (semantics.interpretation.bands.length !== 3) return null;
+  if (semantics.positive_class.class_id === semantics.negative_class.class_id) return null;
+
+  const band = selectRiskBand(semantics.interpretation.bands, probability);
+  if (!band) return null;
+  const predictedPositive = probability >= semantics.decision.threshold;
+
+  return {
+    schema_version: "binary-classification-result.v1",
+    problem_type: "binary_classification",
+    predicted_class: predictedPositive ? { class_id: semantics.positive_class.class_id } : semantics.negative_class,
+    positive_class: semantics.positive_class,
+    positive_class_probability: probability,
+    class_probabilities: [
+      { class_id: semantics.negative_class.class_id, probability: 1 - probability },
+      { class_id: semantics.positive_class.class_id, probability },
+    ],
+    decision: { threshold: semantics.decision.threshold, predicted_positive: predictedPositive },
+    interpretation: {
+      preset: semantics.interpretation.preset,
+      band_id: band.band_id,
+      bands: semantics.interpretation.bands,
+    },
+    model_descriptor: semantics.model_descriptor,
+  };
+}
+
 /**
  * Bounded runtime transport guard for a successful /inference response's
  * `result` field. Confirms enough structure to render safely -- schema/

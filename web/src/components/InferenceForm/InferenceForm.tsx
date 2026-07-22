@@ -5,6 +5,7 @@ import {
   GENERIC_RESULT_PRESENTATION,
   isAvailableBinaryResultContract,
   isBinaryClassificationResult,
+  projectBinaryClassificationResult,
   type BinaryClassificationResult as BinaryClassificationResultData,
   type BinaryResultContract,
   type BinaryResultPresentation,
@@ -120,6 +121,18 @@ type Props = {
    * than removing the form.
    */
   resultPresentation?: BinaryResultPresentation;
+  /**
+   * Project Spec S0141: probability in the inclusive interval [0, 1] for a
+   * local, presentation-only initial Result Card projection rendered before
+   * any submission -- currently only DatasetPage.tsx (public Dataset
+   * Detail) passes 0 to request the zero-probability card. The projection
+   * is built through the shared projectBinaryClassificationResult boundary
+   * from the current resultContract's governed semantics, never sent to the
+   * inference endpoint, and only shown while submission remains idle.
+   * Omitted by every other caller (Predict View, Dataset Admin Live
+   * Preview) so their existing idle-placeholder behavior is unchanged.
+   */
+  initialResultProbability?: number;
 };
 
 function buildHintMap(customization: PredictViewCustomization | undefined): Map<string, FieldHint> {
@@ -205,12 +218,23 @@ export default function InferenceForm({
   submitButtonLabel,
   resultContract,
   resultPresentation,
+  initialResultProbability,
 }: Props) {
   const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
 
   const hintMap = buildHintMap(customization);
   const contractAvailable = !previewMode && isAvailableBinaryResultContract(resultContract);
   const effectivePresentation = resultPresentation ?? GENERIC_RESULT_PRESENTATION;
+
+  // Project Spec S0141: the local zero-probability initial projection is
+  // built through the same shared technical-result boundary the real
+  // inference response is validated against -- never a second result
+  // vocabulary -- and only ever computed while contractAvailable (so it can
+  // never be requested for an unavailable/malformed contract).
+  const initialResult =
+    contractAvailable && typeof initialResultProbability === "number" && resultContract?.status === "available"
+      ? projectBinaryClassificationResult(resultContract.semantics, initialResultProbability)
+      : null;
 
   const sortedForPresentation = [...contract.features].sort((a, b) => {
     const hintA = hintMap.get(a.name);
@@ -359,7 +383,14 @@ export default function InferenceForm({
       </div>
 
       {!previewMode && !contractAvailable && <ResultCardShell state="unavailable" />}
-      {!previewMode && contractAvailable && submission.status === "idle" && <ResultCardShell state="idle" />}
+      {!previewMode && contractAvailable && submission.status === "idle" && initialResult && (
+        <ResultCardShell state="initial">
+          <BinaryClassificationResult result={initialResult} presentation={effectivePresentation} />
+        </ResultCardShell>
+      )}
+      {!previewMode && contractAvailable && submission.status === "idle" && !initialResult && (
+        <ResultCardShell state="idle" />
+      )}
       {!previewMode && contractAvailable && submission.status === "submitting" && (
         <ResultCardShell state="submitting" />
       )}

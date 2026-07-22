@@ -12,6 +12,7 @@ export type ResultCardShellProps =
   | { state: "unavailable" }
   | { state: "submitting" }
   | { state: "error"; message: string }
+  | { state: "initial"; children: ReactNode }
   | { state: "success"; children: ReactNode };
 
 export default function ResultCardShell(props: ResultCardShellProps) {
@@ -41,6 +42,12 @@ export default function ResultCardShell(props: ResultCardShellProps) {
         <p className="result-panel__error" role="alert">
           {props.message}
         </p>
+      )}
+
+      {props.state === "initial" && (
+        <div className="result-panel__content" data-result-projection="initial">
+          {props.children}
+        </div>
       )}
 
       {props.state === "success" && <div className="result-panel__content">{props.children}</div>}

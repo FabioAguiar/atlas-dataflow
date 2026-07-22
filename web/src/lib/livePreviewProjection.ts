@@ -1,10 +1,10 @@
 import type { DatasetDetailMetadataItem } from "../components/DatasetDetail/DatasetDetailHeader";
 import type { VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
-import type {
-  BinaryClassificationResult,
-  BinaryResultPresentation,
-  BinaryResultSemantics,
-  BinaryRiskBand,
+import {
+  projectBinaryClassificationResult,
+  type BinaryClassificationResult,
+  type BinaryResultPresentation,
+  type BinaryResultSemantics,
 } from "../components/ResultCard/types";
 import type { DatasetIconName } from "./datasetPresentation";
 import type { PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
@@ -226,51 +226,22 @@ export function toVisualizationsPayload(value: unknown): VisualizationsPayload |
   return null;
 }
 
-function selectedBand(bands: BinaryRiskBand[], probability: number): BinaryRiskBand | null {
-  const matches = bands.filter((band, index) =>
-    probability >= band.lower_bound &&
-    (probability < band.upper_bound || (index === bands.length - 1 && probability === 1 && band.upper_bound === 1)),
-  );
-  return matches.length === 1 ? matches[0] : null;
-}
-
 /**
- * Creates an Admin-only synthetic result from governed release semantics.
- * This helper is deliberately separate from real inference consumption: it
- * accepts no API result and performs no I/O.
+ * Creates an Admin-only synthetic result from governed release semantics
+ * for the interactive scenario preview. The technical result itself is
+ * constructed entirely through the shared projectBinaryClassificationResult
+ * boundary (Project Spec S0141) -- this wrapper only adds the Admin
+ * preview's own presentation-preset compatibility guard on top. This helper
+ * is deliberately separate from real inference consumption: it accepts no
+ * API result and performs no I/O.
  */
 export function projectBinaryResultPreview(
   semantics: BinaryResultSemantics,
   presentation: BinaryResultPresentation,
   probability: number,
 ): BinaryClassificationResult | null {
-  if (!Number.isFinite(probability) || probability < 0 || probability > 1) return null;
-  if (semantics.interpretation.preset !== "risk" || presentation.interpretation.preset !== "risk") return null;
-  if (semantics.interpretation.bands.length !== 3) return null;
-  if (semantics.positive_class.class_id === semantics.negative_class.class_id) return null;
-
-  const band = selectedBand(semantics.interpretation.bands, probability);
-  if (!band) return null;
-  const predictedPositive = probability >= semantics.decision.threshold;
-
-  return {
-    schema_version: "binary-classification-result.v1",
-    problem_type: "binary_classification",
-    predicted_class: predictedPositive ? { class_id: semantics.positive_class.class_id } : semantics.negative_class,
-    positive_class: semantics.positive_class,
-    positive_class_probability: probability,
-    class_probabilities: [
-      { class_id: semantics.negative_class.class_id, probability: 1 - probability },
-      { class_id: semantics.positive_class.class_id, probability },
-    ],
-    decision: { threshold: semantics.decision.threshold, predicted_positive: predictedPositive },
-    interpretation: {
-      preset: semantics.interpretation.preset,
-      band_id: band.band_id,
-      bands: semantics.interpretation.bands,
-    },
-    model_descriptor: semantics.model_descriptor,
-  };
+  if (presentation.interpretation.preset !== "risk") return null;
+  return projectBinaryClassificationResult(semantics, probability);
 }
 
 export function positiveScenarioProbability(threshold: number): number {

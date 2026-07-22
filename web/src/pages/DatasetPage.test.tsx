@@ -1117,6 +1117,74 @@ describe("DatasetPage inference result execution (Project Spec S0134)", () => {
     // Still mounted exactly once (hidden, not unmounted, inside Inference).
     expect(screen.getAllByLabelText("Prediction result")).toHaveLength(1);
   });
+
+  // Project Spec S0140: state-retention validation -- fill a real form
+  // field, leave the Inference tab, return, and prove both the field's live
+  // value and the underlying DOM node survived. A remount (rather than a
+  // CSS-only hide) would reset the uncontrolled input and hand back a new
+  // node, so identity plus value together prove the panel was hidden in
+  // place, not recreated.
+  it("keeps entered Inference field values mounted when switching away and back to the tab", async () => {
+    installResultExecutionFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    const featureInput = (await screen.findByLabelText("Synthetic Feature")) as HTMLInputElement;
+
+    fireEvent.change(featureInput, { target: { value: "42" } });
+    expect(featureInput.value).toBe("42");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+
+    const sameFeatureInput = screen.getByLabelText("Synthetic Feature") as HTMLInputElement;
+    expect(sameFeatureInput).toBe(featureInput);
+    expect(sameFeatureInput.value).toBe("42");
+  });
+});
+
+// Project Spec S0140: repeated switching must never leave two panels
+// simultaneously active at the full DatasetPage level (not just the isolated
+// DatasetDetailTabs unit), and must never duplicate an authorized card.
+describe("DatasetPage repeated tab switching (Project Spec S0140)", () => {
+  function getUnhiddenPanels(container: HTMLElement) {
+    return Array.from(container.querySelectorAll<HTMLElement>(".dataset-detail-tabs__panel")).filter(
+      (panel) => panel.getAttribute("hidden") === null,
+    );
+  }
+
+  it("keeps exactly one panel active and unhidden through Overview -> Inference -> Documentation -> Overview -> Inference", async () => {
+    installDatasetPageFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    // Let the auxiliary context/metrics/visualizations fetches settle before
+    // the sequence starts, so an in-flight request can't be mistaken for a
+    // missing card on the first Overview step.
+    await screen.findByText("Synthetic public-safe context summary.");
+    expect(container.querySelectorAll(".performance-summary")).toHaveLength(1);
+
+    const sequence = ["Overview", "Inference", "Documentation", "Overview", "Inference"];
+
+    for (const tabName of sequence) {
+      fireEvent.click(screen.getByRole("tab", { name: tabName }));
+      if (tabName === "Inference") {
+        await screen.findByText("Synthetic Feature");
+      }
+
+      const tabs = screen.getAllByRole("tab");
+      const selectedTabs = tabs.filter((tab) => tab.getAttribute("aria-selected") === "true");
+      expect(selectedTabs).toHaveLength(1);
+      expect(selectedTabs[0]).toHaveAccessibleName(tabName);
+
+      const unhiddenPanels = getUnhiddenPanels(container);
+      expect(unhiddenPanels).toHaveLength(1);
+      // Mounted-but-hidden, never duplicated: the once-only card stays at
+      // exactly one no matter which panel is currently visible.
+      expect(container.querySelectorAll(".performance-summary")).toHaveLength(1);
+    }
+  });
 });
 
 describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () => {

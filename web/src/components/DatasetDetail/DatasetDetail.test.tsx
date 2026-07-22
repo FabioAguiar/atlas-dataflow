@@ -4,6 +4,13 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
+// This project has no @types/node dependency; both resolve fine at test
+// runtime via Node/Vite, so the missing ambient types are suppressed here
+// rather than pulling in a new devDependency for one CSS-contract test.
+// @ts-expect-error -- no @types/node in this project
+import { readFileSync } from "node:fs";
+declare const process: { cwd(): string };
+
 import {
   DatasetDetailHeader,
   DatasetDetailSurface,
@@ -151,6 +158,98 @@ describe("DatasetDetailTabs tab switching (M42-04)", () => {
     expect(inferenceTab).toHaveAttribute("aria-selected", "true");
     expect(overviewPanel).toHaveAttribute("hidden");
     expect(inferencePanel).not.toHaveAttribute("hidden");
+  });
+
+  // Project Spec S0140: proves the inactive panel is hidden in place rather
+  // than recreated -- an uncontrolled input's live DOM value only survives a
+  // tab switch if the panel stays mounted, and a remount (or an unmount) would
+  // reset it.
+  it("keeps inactive panel content mounted -- not recreated -- across a tab switch", () => {
+    render(
+      <DatasetDetailTabs
+        inferenceContent={<input aria-label="Inference note" defaultValue="" />}
+        overviewContent={<div>Overview panel content</div>}
+      />,
+    );
+
+    const overviewTab = screen.getByRole("tab", { name: "Overview" });
+    const inferenceTab = screen.getByRole("tab", { name: "Inference" });
+
+    fireEvent.click(inferenceTab);
+    const input = screen.getByLabelText("Inference note") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "kept across tabs" } });
+    expect(input.value).toBe("kept across tabs");
+
+    fireEvent.click(overviewTab);
+    fireEvent.click(inferenceTab);
+
+    const sameInput = screen.getByLabelText("Inference note") as HTMLInputElement;
+    expect(sameInput).toBe(input);
+    expect(sameInput.value).toBe("kept across tabs");
+  });
+
+  // Project Spec S0140: repeated switching must never leave two panels
+  // simultaneously active, and must never lose the invariant that exactly
+  // one tab is selected and exactly one panel lacks `hidden`.
+  it("keeps exactly one panel active and unhidden through a repeated switching sequence", () => {
+    render(
+      <DatasetDetailTabs
+        documentationContent={<div>Documentation panel content</div>}
+        inferenceContent={<div>Inference panel content</div>}
+        overviewContent={<div>Overview panel content</div>}
+      />,
+    );
+
+    const sequence = ["Overview", "Inference", "Documentation", "Overview", "Inference"];
+
+    for (const tabName of sequence) {
+      fireEvent.click(screen.getByRole("tab", { name: tabName }));
+
+      const tabs = screen.getAllByRole("tab");
+      const selectedTabs = tabs.filter((tab) => tab.getAttribute("aria-selected") === "true");
+      expect(selectedTabs).toHaveLength(1);
+      expect(selectedTabs[0]).toHaveAccessibleName(tabName);
+
+      const panels = document.querySelectorAll(".dataset-detail-tabs__panel");
+      const unhiddenPanels = Array.from(panels).filter((panel) => panel.getAttribute("hidden") === null);
+      expect(unhiddenPanels).toHaveLength(1);
+      expect(unhiddenPanels[0].textContent).toBe(`${tabName} panel content`);
+    }
+  });
+});
+
+// Project Spec S0140: jsdom cannot calculate the cascade of an external
+// stylesheet imported via `import "./App.css"`, so the hidden-panel
+// display-none contract and the visible-panel grid scoping are asserted
+// directly against the stylesheet source here, alongside the component-level
+// hidden-attribute assertions above and the browser validation recorded in
+// the implementation evidence.
+describe("Dataset Detail tab panel hidden-state CSS contract (S0140)", () => {
+  const appCss = readFileSync(`${process.cwd()}/src/App.css`, "utf8");
+
+  function ruleBody(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = appCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+    expect(match, `expected a CSS rule for selector "${selector}"`).not.toBeNull();
+    return match![1];
+  }
+
+  it("declares an explicit hidden-panel display-none rule", () => {
+    expect(ruleBody(".dataset-detail-tabs__panel[hidden]")).toMatch(/display:\s*none/);
+  });
+
+  it("scopes the grid layout to the visible panel only", () => {
+    expect(ruleBody(".dataset-detail-tabs__panel:not([hidden])")).toMatch(/display:\s*grid/);
+
+    // The bare, unqualified selector must not itself assign a visible
+    // display mode -- that was the S0140 regression (every panel, hidden or
+    // not, received `display: grid`).
+    expect(ruleBody(".dataset-detail-tabs__panel")).not.toMatch(/display:/);
+  });
+
+  it("does not rely on !important to resolve the panel visibility cascade", () => {
+    expect(ruleBody(".dataset-detail-tabs__panel[hidden]")).not.toMatch(/!important/);
+    expect(ruleBody(".dataset-detail-tabs__panel:not([hidden])")).not.toMatch(/!important/);
   });
 });
 

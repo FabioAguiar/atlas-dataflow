@@ -856,8 +856,15 @@ h1 {
 }
 
 .dataset-detail-tabs__panel {
-  display: grid;
   gap: var(--atlas-space-4);
+}
+
+.dataset-detail-tabs__panel:not([hidden]) {
+  display: grid;
+}
+
+.dataset-detail-tabs__panel[hidden] {
+  display: none;
 }
 
 .dataset-detail-overview {

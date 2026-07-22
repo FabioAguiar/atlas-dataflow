@@ -28,6 +28,7 @@ REQUIRED_ROLES = (
     "metrics",
     "model_card",
     "public_context",
+    "visualizations",
     "manifest_input",
     "candidate_metadata",
 )
@@ -46,6 +47,7 @@ def _copy_publisher_contracts(tmp_repo: Path) -> None:
         "publisher/release-manifest.schema.json",
         "publisher/evidence/publication-validation-evidence.schema.json",
         "contracts/public-contract.schema.json",
+        "pipeline/analytical-visualizations.schema.json",
     ):
         src = REPO_ROOT / relative
         dst = tmp_repo / relative
@@ -96,7 +98,73 @@ def _candidate_dir(tmp_repo: Path, release_id: str = RELEASE_ID) -> Path:
 def _role_path(role: str) -> str:
     if role == "model_artifact":
         return MODEL_ARTIFACT_PATH
+    if role == "visualizations":
+        return "visualizations/visualizations.json"
     return f"artifacts/{role}.json"
+
+
+# A minimal analytical-visualizations.v1 fixture (Project Spec S0128/S0133)
+# that conforms to pipeline/analytical-visualizations.schema.json.
+# training_run_identity.dataset_slug must match the release candidate's own
+# dataset_identity.dataset_slug: publisher/validate.py's cross-artifact
+# identity check falls back to training_run_identity for a JSON artifact's
+# dataset_slug when no other identity shape is present.
+def _visualizations_payload(dataset_slug: str, created_at: str, run_id: str) -> dict:
+    return {
+        "schema_version": "analytical-visualizations.v1",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": created_at,
+        "training_run_identity": {
+            "dataset_slug": dataset_slug,
+            "run_id": run_id,
+            "output_directory": f"pipeline/training-runs/{dataset_slug}/{run_id}/",
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": "Target",
+                "y_label": "Rows",
+                "data": [
+                    {"name": "No", "value": 6},
+                    {"name": "Yes", "value": 4},
+                ],
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": [{"name": "example_feature", "value": 1.0}],
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset",
+            "row_count": 10,
+            "target_column": "target",
+        },
+        "feature_importance_method": {
+            "model_family": "gradient_boosting",
+            "source": "feature_importances_aggregated_to_source_features",
+            "total_source_feature_count": 1,
+            "omitted_source_feature_count": 0,
+            "public_row_limit": 10,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
 
 
 def _artifact_payload(role: str) -> dict:
@@ -117,6 +185,12 @@ def _artifact_payload(role: str) -> dict:
                 }
             ],
         }
+    if role == "visualizations":
+        # A real pipeline/analytical-visualizations.schema.json instance
+        # (additionalProperties: false) -- cannot carry the generic
+        # dataset_identity/role/etc keys the other roles use below
+        # (Project Spec S0128).
+        return _visualizations_payload(DATASET_SLUG, "2026-06-19T00:00:00Z", "train-20260619T000000Z")
     payload = {
         "role": role,
         "dataset_identity": {"dataset_slug": DATASET_SLUG},
@@ -592,10 +666,10 @@ def test_synchronized_promotion_result_validates_against_schema_for_both_release
                 artifact_path.write_bytes(MODEL_ARTIFACT_BYTES)
                 continue
             payload = _artifact_payload(role)
-            if role != "public_contract":
-                # The real public-contract schema is additionalProperties:
-                # false (schema_version + features only) and cannot carry
-                # this override key (Project Spec S0101).
+            if role not in {"public_contract", "visualizations"}:
+                # The real public-contract and analytical-visualizations
+                # schemas are additionalProperties: false and cannot carry
+                # this override key (Project Specs S0101, S0128).
                 payload["release_identity"] = {"release_id": release_id}
             artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         candidate = {
@@ -952,6 +1026,86 @@ def test_model_artifact_bytes_are_never_parsed_as_json(tmp_path):
     assert "model_artifact" not in validation_result["schema_compatibility"]
 
 
+# --- S0128/S0133: visualizations as a required publisher artifact role ---
+
+
+def test_visualizations_is_manifest_hashed_and_promoted(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    candidate_dir = _candidate_dir(tmp_repo)
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+    assert validation_result["validation_outcome"] == "accepted"
+    assert validation_result["required_artifact_role_results"]["visualizations"]["status"] == "present"
+    assert validation_result["schema_compatibility"]["visualizations"]["compatible"] is True
+
+    run_dir = _latest_run_dir(tmp_repo)
+    manifest_result = manifest.run(str(run_dir), repo_root=tmp_repo)
+    manifest_roles = {a["role"]: a for a in manifest_result["artifacts"]}
+    assert manifest_roles["visualizations"]["reference"] == "visualizations/visualizations.json"
+    assert len(manifest_roles["visualizations"]["hash_value"]) == 64
+    assert "visualizations" in manifest_result["required_hash_coverage"]["required_artifact_roles"]
+
+    promotion_result = promote.run(str(run_dir), repo_root=tmp_repo)
+    assert promotion_result["promotion_outcome"] == "promoted"
+
+    release_dir = tmp_repo / "releases" / RELEASE_ID
+    source_visualizations = candidate_dir / _role_path("visualizations")
+    promoted_visualizations = release_dir / manifest_roles["visualizations"]["reference"]
+    assert promoted_visualizations.is_file()
+    assert promoted_visualizations.read_bytes() == source_visualizations.read_bytes()
+
+    valid, errors = manifest.verify(release_dir / "manifest.json", release_dir)
+    assert valid is True
+    assert errors == []
+
+
+def test_candidate_missing_visualizations_is_rejected(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo, missing_role="visualizations")
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert validation_result["promotion_gate"]["promotion_allowed"] is False
+    assert any(
+        r["code"] == "missing_visualizations"
+        for r in validation_result["rejection"]["reasons"]
+    )
+
+
+def test_candidate_unsafe_visualizations_path_is_rejected(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    candidate_json_path = _candidate_dir(tmp_repo) / "release-candidate.json"
+    candidate = json.loads(candidate_json_path.read_text())
+    candidate["artifact_roles"]["visualizations"]["path"] = "../../../etc/passwd"
+    candidate_json_path.write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert any(
+        r["code"] == "unsafe_visualizations_reference"
+        for r in validation_result["rejection"]["reasons"]
+    )
+    assert validation_result["required_artifact_role_results"]["visualizations"]["status"] == "unsafe"
+
+
+def test_candidate_visualizations_schema_incompatible_is_rejected(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    visualizations_path = _candidate_dir(tmp_repo) / _role_path("visualizations")
+    visualizations_path.write_text(json.dumps({"not": "schema-valid"}), encoding="utf-8")
+
+    validation_result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    assert any(
+        r["code"] == "visualizations_schema_incompatible"
+        for r in validation_result["rejection"]["reasons"]
+    )
+    assert validation_result["schema_compatibility"]["visualizations"]["compatible"] is False
+
+
 # --- S0034: Telco publisher-validation run materialization ---
 
 TELCO_DATASET_SLUG = "telco-customer-churn"
@@ -986,6 +1140,12 @@ def _write_telco_release_candidate(tmp_repo: Path, missing_role: str | None = No
             }
         elif role == "model_artifact":
             payload = None
+        elif role == "visualizations":
+            # A real pipeline/analytical-visualizations.schema.json instance
+            # (additionalProperties: false) -- Project Spec S0128.
+            payload = _visualizations_payload(
+                TELCO_DATASET_SLUG, "2026-07-01T00:00:00Z", "train-20260701T000000Z"
+            )
         else:
             payload = {
                 "role": role,

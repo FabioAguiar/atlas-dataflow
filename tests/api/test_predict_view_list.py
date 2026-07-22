@@ -63,14 +63,19 @@ def _response_json(response):
 
 def _make_publicly_eligible(monkeypatch) -> None:
     """
-    Establish the S0117 public-eligibility preconditions checked by
-    _resolve_public_dataset_detail_access() (visibility and needs_review)
-    for tests intended to exercise behavior after dataset-access resolution,
-    without bypassing the guard itself. Restored automatically by
-    monkeypatch after each test.
+    Establish the complete S0117/S0125 public-readiness preconditions checked
+    by _resolve_public_dataset_detail_access() (visibility, needs_review, and
+    current-release snapshot alignment) for tests intended to exercise
+    behavior after dataset-access resolution, without bypassing the guard
+    itself. Restored automatically by monkeypatch after each test.
     """
     monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda _dataset_slug, _active_release: {"status": "current_release", "matches_active_release": True},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +168,8 @@ def test_views_list_item_release_mode_is_active(monkeypatch):
 # Valid dataset with no matching views returns empty list
 # ---------------------------------------------------------------------------
 
-def test_dataset_with_no_views_returns_empty_list():
+def test_dataset_with_no_views_returns_empty_list(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve = api_main.resolve_dataset
     original_list = api_main.load_public_predict_view_list
     try:

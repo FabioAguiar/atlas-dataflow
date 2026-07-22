@@ -26,7 +26,7 @@ sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
 from fastapi import Request  # noqa: E402
-from registry.list import ListedDataset, list_admin_datasets, list_datasets  # noqa: E402
+from registry.list import AdminListedDataset, ListedDataset, list_admin_datasets, list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
     DatasetUnavailableError,
     RegistryInvalidError,
@@ -2263,10 +2263,12 @@ def test_public_contract_loader_does_not_fall_back_to_repository_level_contract(
 # ---------------------------------------------------------------------------
 # GET /admin/datasets/{dataset_slug}/authoring-context: Project Spec S0121
 # private authoring read model. Uses the real telco-customer-churn registry
-# entry/active release wherever possible (it is currently needs_review, per
-# the spec's own "Current reproduction" section) and monkeypatches only the
-# specific loader needed for each bounded-failure scenario, matching this
-# file's existing style.
+# entry/active release wherever possible and monkeypatches only the specific
+# loader needed for each bounded-failure scenario, matching this file's
+# existing style. Project Spec S0132: the needs_review scenario below is the
+# one exception -- it is fully isolated from the mutable real
+# telco-customer-churn registry entry (which can legitimately progress past
+# needs_review after approval) via a deterministic local fixture instead.
 # ---------------------------------------------------------------------------
 
 _AUTHORING_FIXTURE_VIEW = {
@@ -2302,23 +2304,64 @@ def test_authoring_context_returns_generic_not_found_when_admin_runtime_disabled
     assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
 
 
-def test_authoring_context_real_needs_review_telco_dataset_reproduces_spec_scenario():
+def test_authoring_context_needs_review_dataset_reproduces_spec_scenario(monkeypatch):
     """
-    Project Spec S0122: the expected active_release is derived from the
-    current real registry state via resolve_dataset(), never a frozen
-    historical literal, since every legitimate new promotion changes it.
+    Project Spec S0132: replaces the prior dependency on the real, mutable
+    telco-customer-churn registry entry's needs_review status (which can
+    legitimately progress to ready after approval) with a deterministic
+    local dataset_slug/active_release/publication_status fixture, so this
+    scenario stays reproducible regardless of real registry/publication
+    state. Controls the private authoring-context loaders and the Predict
+    View identity directly; never writes to the real registry, snapshot
+    files or publication records.
     """
+    dataset_slug = "fixture-needs-review-dataset"
+    active_release = "release-fixture-needs-review-001"
+    fixture_view = {
+        "view_id": "fixture-needs-review-view",
+        "dataset_slug": dataset_slug,
+        "display": {"title": "Fixture Needs Review View", "summary": "Fixture summary."},
+        "intent": {"prediction_goal": "test", "audience": "test", "usage_notes": "test"},
+        "release_mode": "active",
+    }
+    admin_dataset = AdminListedDataset(
+        dataset_slug=dataset_slug,
+        title="Fixture Needs Review Dataset",
+        display_title=None,
+        summary="Fixture summary.",
+        domain="fixture",
+        tags=["fixture"],
+        active_release=active_release,
+        publication_status="needs_review",
+        dataset_detail_updated_at=None,
+    )
+
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda _slug: SimpleNamespace(dataset_slug=dataset_slug, active_release=active_release),
+    )
+    monkeypatch.setattr(api_main, "list_admin_datasets", lambda: [admin_dataset])
+    monkeypatch.setattr(api_main, "load_public_context", lambda _release: {"problem_type": "binary_classification"})
+    monkeypatch.setattr(api_main, "load_public_contract", lambda _release: {"features": []})
+    monkeypatch.setattr(api_main, "load_public_metrics", lambda _release: {"accuracy": 0.9})
+    monkeypatch.setattr(api_main, "load_public_visualizations", lambda _release: {"charts": []})
+    monkeypatch.setattr(api_main, "load_public_predict_view_list", lambda _slug: [dict(fixture_view)])
+    # Private authoring context must remain reachable while the exact same
+    # dataset_slug is independently blocked from public access below.
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _slug: True)
+
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"
     try:
         response = api_main.get_admin_dataset_authoring_context(
-            "telco-customer-churn", _authoring_request()
+            dataset_slug, _authoring_request(dataset_slug)
         )
     finally:
         os.environ.pop("ATLAS_ADMIN_ENABLED", None)
 
-    current_active_release = resolve_dataset("telco-customer-churn").active_release
-    assert response["dataset_slug"] == "telco-customer-churn"
-    assert response["active_release"] == current_active_release
+    assert response["dataset_slug"] == dataset_slug
+    assert response["active_release"] == active_release
     assert response["dataset"]["status"] == "ready"
     assert response["dataset"]["data"]["publication_status"] == "needs_review"
     assert response["context"]["status"] == "ready"
@@ -2329,11 +2372,11 @@ def test_authoring_context_real_needs_review_telco_dataset_reproduces_spec_scena
         "data": response["views"]["data"],
     }
     view_ids = [item["view_id"] for item in response["views"]["data"]]
-    assert view_ids == ["churn-risk-overview"]
+    assert view_ids == [fixture_view["view_id"]]
 
     # The public S0117 boundary must be completely unaffected by the private
     # read model resolving the very same needs_review dataset above.
-    public_response = api_main.get_dataset("telco-customer-churn")
+    public_response = api_main.get_dataset(dataset_slug)
     assert public_response.status_code == 503
     assert _response_json(public_response)["error_code"] == "DATASET_MAINTENANCE"
 

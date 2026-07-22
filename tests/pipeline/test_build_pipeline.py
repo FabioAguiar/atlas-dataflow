@@ -26,6 +26,7 @@ PUBLIC_CANDIDATE_ARTIFACTS = (
     "predictions/bundle.json",
     "model-card.json",
     "public-context.json",
+    "visualizations/visualizations.json",
     "manifest-input.json",
     "models/model.pkl",
 )
@@ -50,6 +51,71 @@ _VALID_PUBLIC_CONTRACT = {
             "display_order": 1,
         }
     ],
+}
+
+
+# A minimal analytical-visualizations.v1 fixture (Project Spec S0128/S0133)
+# that conforms to pipeline/analytical-visualizations.schema.json --
+# additionalProperties: false, so no generic {"role": ..., "governed": True}
+# placeholder can satisfy it. training_run_identity.dataset_slug must match
+# DATASET_SLUG: publisher/validate.py's cross-artifact identity check reads
+# a JSON artifact's dataset_slug from training_run_identity when no other
+# identity shape is present, and rejects a mismatch against the candidate's
+# own dataset_identity.dataset_slug.
+_VALID_VISUALIZATIONS = {
+    "schema_version": "analytical-visualizations.v1",
+    "artifact_kind": "analytical_visualizations",
+    "created_at": "2026-06-20T00:00:00Z",
+    "training_run_identity": {
+        "dataset_slug": DATASET_SLUG,
+        "run_id": "train-20260620T000000Z",
+        "output_directory": f"pipeline/training-runs/{DATASET_SLUG}/train-20260620T000000Z/",
+    },
+    "charts": [
+        {
+            "id": "target_distribution",
+            "title": "Target Distribution",
+            "type": "bar",
+            "x_label": "Target",
+            "y_label": "Rows",
+            "data": [
+                {"name": "No", "value": 6},
+                {"name": "Yes", "value": 4},
+            ],
+        },
+        {
+            "id": "feature_importance",
+            "title": "Feature Importance",
+            "type": "bar",
+            "x_label": "Feature",
+            "y_label": "Importance",
+            "data": [{"name": "example_feature", "value": 1.0}],
+        },
+    ],
+    "target_distribution_method": {
+        "population_kind": "prepared_dataset",
+        "row_count": 10,
+        "target_column": "target",
+    },
+    "feature_importance_method": {
+        "model_family": "gradient_boosting",
+        "source": "feature_importances_aggregated_to_source_features",
+        "total_source_feature_count": 1,
+        "omitted_source_feature_count": 0,
+        "public_row_limit": 10,
+    },
+    "evidence_policy": {
+        "raw_logs_prohibited": True,
+        "raw_runtime_prohibited": True,
+        "raw_api_payloads_prohibited": True,
+        "secrets_prohibited": True,
+        "raw_dataset_embedded": False,
+        "model_bytes_embedded": False,
+        "serialized_estimator_state_embedded": False,
+        "raw_transformed_matrices_embedded": False,
+        "notebook_state_embedded": False,
+        "reduced_and_sanitized": True,
+    },
 }
 
 
@@ -92,6 +158,7 @@ def _write_governed_artifacts(repo_root: Path, *, missing_role: str | None = Non
         "training_metrics": source_dir / "m24" / "metrics.json",
         "model_card": source_dir / "m24" / "model-card.json",
         "public_context": source_dir / "m23" / "public-context.json",
+        "visualizations": source_dir / "m24" / "visualizations.json",
         "inference_bundle": source_dir / "m25" / "bundle.json",
     }
     for role, path in paths.items():
@@ -101,7 +168,12 @@ def _write_governed_artifacts(repo_root: Path, *, missing_role: str | None = Non
             (repo_root / path).parent.mkdir(parents=True, exist_ok=True)
             (repo_root / path).write_bytes(MODEL_ARTIFACT_BYTES)
             continue
-        payload = _VALID_PUBLIC_CONTRACT if role == "public_contract" else {"role": role, "governed": True}
+        if role == "public_contract":
+            payload = _VALID_PUBLIC_CONTRACT
+        elif role == "visualizations":
+            payload = _VALID_VISUALIZATIONS
+        else:
+            payload = {"role": role, "governed": True}
         if role == "inference_bundle":
             payload["model_artifact"] = {
                 "path": "models/model.pkl",
@@ -162,6 +234,10 @@ def _write_candidate_input(tmp_path: Path, **overrides) -> Path:
                 "evidence_classification": "public_artifact",
             },
             "public_context": _artifact(paths["public_context"], "public_context") | {
+                "public_projection": "public_artifact",
+                "evidence_classification": "public_artifact",
+            },
+            "visualizations": _artifact(paths["visualizations"], "visualizations") | {
                 "public_projection": "public_artifact",
                 "evidence_classification": "public_artifact",
             },
@@ -226,6 +302,13 @@ def _assemble_candidate(
     public_contract_schema_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO_ROOT / "contracts" / "public-contract.schema.json", public_contract_schema_dst)
 
+    visualizations_schema_dst = tmp_repo / "pipeline" / "analytical-visualizations.schema.json"
+    visualizations_schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json",
+        visualizations_schema_dst,
+    )
+
     monkeypatch.setattr(assemble_candidate, "_REPO_ROOT", tmp_repo)
     monkeypatch.setattr(assemble_candidate, "_CANDIDATE_STAGING_PREFIX", output_dir)
     monkeypatch.setattr(
@@ -261,6 +344,20 @@ def test_successful_build_creates_candidate_layout_and_required_artifacts(tmp_pa
     assert "build-evidence.json" not in {
         role["path"] for role in release_candidate["artifact_roles"].values()
     }
+    assert set(
+        release_candidate["candidate_metadata"]["completeness_validation"]["required_artifact_roles"]
+    ) == {
+        "contracts",
+        "public_contract",
+        "predictive_bundle",
+        "metrics",
+        "model_card",
+        "public_context",
+        "visualizations",
+        "manifest_input",
+        "candidate_metadata",
+        "model_artifact",
+    }
 
 
 # --- S0107: release-bound model artifact packaging ---
@@ -288,12 +385,45 @@ def test_successful_build_copies_model_artifact_and_declares_role(tmp_path, monk
     ].count("model_artifact") == 1
     assert len(
         release_candidate["candidate_metadata"]["completeness_validation"]["required_artifact_roles"]
-    ) == 9
+    ) == 10
 
     packaged_model = candidate_dir / "models" / "model.pkl"
     assert packaged_model.is_file()
     source_model = tmp_repo / artifact_paths["model_artifact"]
     assert packaged_model.read_bytes() == source_model.read_bytes()
+
+
+# --- S0128/S0133: release-bound visualizations artifact packaging ---
+
+
+def test_successful_build_copies_visualizations_artifact_and_declares_role(tmp_path, monkeypatch):
+    tmp_repo = tmp_path / "repo"
+    artifact_paths = _write_governed_artifacts(tmp_repo)
+    exit_code, release_candidate, candidate_dir = _assemble_candidate(
+        tmp_path,
+        monkeypatch,
+        candidate_input=_write_candidate_input(tmp_path, artifact_paths=artifact_paths),
+    )
+
+    assert exit_code == 0
+    visualizations_role = release_candidate["artifact_roles"]["visualizations"]
+    assert visualizations_role == {
+        "role": "visualizations",
+        "path": "visualizations/visualizations.json",
+        "required": True,
+        "media_type": "application/json",
+    }
+    assert release_candidate["candidate_metadata"]["completeness_validation"][
+        "required_artifact_roles"
+    ].count("visualizations") == 1
+    assert len(
+        release_candidate["candidate_metadata"]["completeness_validation"]["required_artifact_roles"]
+    ) == 10
+
+    packaged_visualizations = candidate_dir / "visualizations" / "visualizations.json"
+    assert packaged_visualizations.is_file()
+    source_visualizations = tmp_repo / artifact_paths["visualizations"]
+    assert packaged_visualizations.read_bytes() == source_visualizations.read_bytes()
 
 
 def test_successful_build_writes_reduced_evidence_and_boundary_confirmations(tmp_path, monkeypatch):
@@ -505,6 +635,7 @@ def _write_handoff_governed_artifacts(repo_root: Path) -> dict[str, str]:
         "training_metrics": "governed-artifacts/m24/metrics.json",
         "model_card": "governed-artifacts/m24/model-card.json",
         "public_context": "governed-artifacts/m23/public-context.json",
+        "visualizations": "governed-artifacts/m24/visualizations.json",
         "inference_bundle": "governed-artifacts/m25/bundle.json",
     }
     for role, relative in paths.items():
@@ -525,6 +656,23 @@ def test_handoff_readiness_missing_required_role_rejects(tmp_path):
     assert "training_metrics" in readiness["not_ready_roles"]
     metrics_result = next(r for r in readiness["role_results"] if r["role"] == "training_metrics")
     assert metrics_result["reason"] == "missing_reference"
+
+
+def test_handoff_readiness_missing_visualizations_role_rejects(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_handoff_governed_artifacts(tmp_repo)
+    del paths["visualizations"]
+
+    readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths, repo_root=tmp_repo
+    )
+
+    assert readiness["is_release_candidate_input_ready"] is False
+    assert "visualizations" in readiness["not_ready_roles"]
+    visualizations_result = next(
+        r for r in readiness["role_results"] if r["role"] == "visualizations"
+    )
+    assert visualizations_result["reason"] == "missing_reference"
 
 
 def test_handoff_readiness_rejects_absolute_path(tmp_path):
@@ -603,6 +751,7 @@ def test_handoff_readiness_explicit_real_references_are_ready(tmp_path):
     assert readiness["not_ready_roles"] == []
     assert readiness["blocking_reasons"] == []
     assert set(readiness["required_roles"]) == set(assemble_candidate._HANDOFF_REQUIRED_ROLES)
+    assert all(result["ready"] for result in readiness["role_results"])
 
 
 def test_handoff_readiness_uses_explicit_repo_root_for_public_context(tmp_path, monkeypatch):

@@ -76,6 +76,23 @@ def _response_json(response):
     return json.loads(response.body.decode("utf-8"))
 
 
+def _make_publicly_eligible(monkeypatch) -> None:
+    """
+    Establish the complete S0117/S0125 public-readiness preconditions checked
+    by _resolve_public_dataset_detail_access() (visibility, needs_review, and
+    current-release snapshot alignment) for tests intended to exercise
+    endpoint behavior after public access is granted, without bypassing the
+    guard itself. Restored automatically by monkeypatch after each test.
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda _dataset_slug, _active_release: {"status": "current_release", "matches_active_release": True},
+    )
+
+
 def _assert_no_public_exposure(payload):
     serialized = json.dumps(payload, sort_keys=True).lower()
     forbidden_fragments = [
@@ -158,8 +175,7 @@ def test_public_dataset_home_route_dependencies_are_frontend_compatible(tmp_path
         ),
     )
     monkeypatch.setattr(api_main, "list_datasets", lambda: [_FIXTURE_LISTED_DATASET])
-    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
-    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    _make_publicly_eligible(monkeypatch)
     monkeypatch.setattr(api_main, "load_public_predict_view_list", lambda _dataset_slug: [])
     monkeypatch.setenv("RELEASES_ROOT", str(releases_root))
 
@@ -218,6 +234,7 @@ def test_public_predict_view_route_dependencies_are_frontend_compatible(monkeypa
         "resolve_dataset",
         lambda slug: SimpleNamespace(dataset_slug=slug, active_release=_FIXTURE_RELEASE_ID),
     )
+    _make_publicly_eligible(monkeypatch)
     monkeypatch.setattr(api_main, "load_public_predict_view_list", lambda _slug: [fixture_view])
     monkeypatch.setattr(api_main, "load_public_predict_view", lambda _slug, _view_id: fixture_view)
     monkeypatch.setattr(
@@ -259,7 +276,8 @@ def test_public_predict_view_route_dependencies_are_frontend_compatible(monkeypa
     _assert_no_public_exposure(view_response)
 
 
-def test_public_inference_errors_remain_safe_for_browser_consumers():
+def test_public_inference_errors_remain_safe_for_browser_consumers(monkeypatch):
+    _make_publicly_eligible(monkeypatch)
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
@@ -310,12 +328,13 @@ def test_public_inference_errors_remain_safe_for_browser_consumers():
         api_main.execute_prediction = original_execute_prediction
 
 
-def test_public_inference_success_shape_matches_binary_result_contract_for_browser_consumers():
+def test_public_inference_success_shape_matches_binary_result_contract_for_browser_consumers(monkeypatch):
     """Project Spec S0109: a valid inference response must expose exactly
     dataset_slug + result (binary-classification-result.v1) -- never the
     legacy prediction.label/confidence shape a pre-S0109 frontend consumer
     would have expected."""
 
+    _make_publicly_eligible(monkeypatch)
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction

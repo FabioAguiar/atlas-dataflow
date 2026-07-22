@@ -171,6 +171,20 @@
   padding: calc(var(--atlas-space-16) - var(--atlas-space-6)) 0 var(--atlas-space-16);
 }
 
+/*
+ * Project Spec S0130: explicit full-bleed public-shell main mode. The
+ * compound selector's higher specificity always overrides the
+ * `.public-shell__main` width rules below at every breakpoint regardless of
+ * stylesheet order, so the outer route boundary reliably fills the grid
+ * column with no standard Atlas-colored gutter on either side.
+ */
+.public-shell__main.public-shell__main--full-bleed {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
 .intro {
   display: grid;
   gap: var(--atlas-space-3);
@@ -602,6 +616,33 @@ h1 {
  */
 .dataset-detail-surface.dataset-theme-scope {
   background: var(--atlas-color-canvas);
+}
+
+/*
+ * Project Spec S0130: route-level themed canvas rendered by DatasetPage.tsx
+ * outside the constrained `DatasetDetailSurface` content, so the theme fills
+ * the full-bleed public main region while the inner content wrapper below
+ * keeps the existing centered/constrained width contract. No `100vw`,
+ * negative margins, or absolute overlays -- `width: 100%` of the already
+ * full-bleed main region.
+ */
+.dataset-detail-page-canvas {
+  width: 100%;
+  min-height: 100vh;
+}
+
+.dataset-detail-page-canvas.dataset-theme-scope {
+  background: var(--atlas-color-canvas);
+}
+
+/*
+ * Reuses the exact `.app-shell`/`.public-shell__main` responsive width and
+ * padding contract already established for every constrained public route,
+ * so the inner Dataset Detail column keeps its approved centered max-width
+ * instead of duplicating those breakpoint values.
+ */
+.dataset-detail-page-content {
+  box-sizing: border-box;
 }
 
 /*

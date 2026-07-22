@@ -465,6 +465,98 @@ describe("DatasetPage synthetic-slug rendering", () => {
     });
   });
 
+  // Project Spec S0130: the ready route renders exactly one route-level
+  // themed canvas (outside the constrained inner content wrapper) resolving
+  // the same theme preset/fallback as the shared surface, and exactly one
+  // DatasetDetailSurface nested inside it.
+  it("renders a single route-level themed canvas wrapping exactly one DatasetDetailSurface, resolving the same theme preset", async () => {
+    installDatasetPageFetchMock({ ...contextPayload, theme_preset: "crimson-night" });
+    const { container } = renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    await waitFor(() => {
+      expect(container.querySelectorAll(".dataset-detail-page-canvas")).toHaveLength(1);
+    });
+    expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
+
+    const canvas = container.querySelector<HTMLElement>(".dataset-detail-page-canvas")!;
+    expect(canvas).toHaveAttribute("data-theme-preset", "crimson-night");
+    expect(canvas.style.getPropertyValue("--dataset-theme-canvas")).toBe("#160b17");
+
+    const surface = container.querySelector<HTMLElement>(".dataset-detail-surface")!;
+    expect(canvas.contains(surface)).toBe(true);
+    expect(surface).toHaveAttribute("data-theme-preset", "crimson-night");
+
+    const content = container.querySelector(".dataset-detail-page-content");
+    expect(content).toBeInTheDocument();
+    expect(content?.contains(surface)).toBe(true);
+  });
+
+  // Project Spec S0130: loading/maintenance/not_found/unavailable states
+  // never render the route-level themed canvas, so a previously-viewed
+  // ready dataset's theme can never leak into a non-ready state.
+  it("never renders the route-level themed canvas for loading or access states", async () => {
+    const errorFetch = installDatasetPageErrorFetchMock(
+      { error_type: "dataset_not_found", error_code: "DATASET_NOT_FOUND", message: "The requested dataset is not available." },
+      404,
+    );
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { level: 1, name: "Dataset not found" });
+    expect(container.querySelector(".dataset-detail-page-canvas")).not.toBeInTheDocument();
+    expect(errorFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not carry a previously-viewed dataset's theme into a stale-then-not-found navigation", async () => {
+    const slugA = slug;
+    const slugB = "not-found-slug";
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slugA}`)) return jsonResponse(datasetMetadata);
+      if (url.endsWith(`/datasets/${slugA}/context`))
+        return jsonResponse({ dataset_slug: slugA, context: { ...contextPayload, theme_preset: "crimson-night" } });
+      if (url.endsWith(`/datasets/${slugA}/metrics`)) return jsonResponse({ dataset_slug: slugA, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slugA}/visualizations`))
+        return jsonResponse({ dataset_slug: slugA, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slugA}/contract`))
+        return jsonResponse({ dataset_slug: slugA, contract: contractPayload, result_contract: resultContractAvailable });
+      if (url.endsWith(`/datasets/${slugB}`))
+        return jsonResponse(
+          { error_type: "dataset_not_found", error_code: "DATASET_NOT_FOUND", message: "The requested dataset is not available." },
+          404,
+        );
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <MemoryRouter initialEntries={[`/dataset/${slugA}`]}>
+        <Routes>
+          <Route
+            path="/dataset/:slug"
+            element={
+              <>
+                <Link to={`/dataset/${slugB}`}>Go to not-found</Link>
+                <DatasetPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await waitFor(() => {
+      expect(container.querySelector(".dataset-detail-page-canvas")).toHaveAttribute("data-theme-preset", "crimson-night");
+    });
+
+    fireEvent.click(screen.getByRole("link", { name: "Go to not-found" }));
+
+    await screen.findByRole("heading", { level: 1, name: "Dataset not found" });
+    expect(container.querySelector(".dataset-detail-page-canvas")).not.toBeInTheDocument();
+  });
+
   it("renders the correct title, metadata, and badge for a synthetic, non-Telco/Bank dataset_slug", async () => {
     installDatasetPageFetchMock();
 

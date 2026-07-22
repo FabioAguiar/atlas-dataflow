@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "telco-customer-churn",
+  "published_at": "2026-07-21T23:52:46Z",
+  "active_release_at_publish_time": "release-20260721t231025z",
+  "profile": {
+    "display": {
+      "title": "Telco Customer Churn",
+      "subtitle": "teste",
+      "problem_summary_title": "teste",
+      "problem_summary_body": "teste",
+      "source_name": "teste",
+      "source_url": "teste",
+      "release_date_label": "2026-07-20",
+      "canonical_name_fallback": true
+    },
+    "home_card": {
+      "background_image_ref": "/media/home-cards/4ae425262a934f56933e8bcec9856b1d.jpg",
+      "primary_metric_key": null
+    },
+    "performance_focus": {
+      "focus_id": "positive_class_detection",
+      "highlighted_score_id": "recall",
+      "visible_scores": [
+        {
+          "score_id": "recall",
+          "display_label": "Recall",
+          "value": "0",
+          "value_source": "manual",
+          "order": 0
+        },
+        {
+          "score_id": "precision",
+          "display_label": "Precision",
+          "value": "0",
+          "value_source": "manual",
+          "order": 1
+        },
+        {
+          "score_id": "f1_score",
+          "display_label": "F1-score",
+          "value": "0",
+          "value_source": "manual",
+          "order": 2
+        }
+      ]
+    },
+    "theme": {
+      "preset": "monochrome-dark"
+    },
+    "inference_presentation": {
+      "bound_predict_view_id": "churn-risk-overview"
+    },
+    "result_card": {
+      "schema_version": "binary-result-presentation.v1",
+      "positive_class_probability_label": "Positive class probability",
+      "predicted_outcome_label": "Predicted outcome",
+      "positive_outcome_copy": "Positive outcome",
+      "negative_outcome_copy": "Negative outcome",
+      "model_section_label": "Model",
+      "interpretation": {
+        "preset": "risk",
+        "labels": {
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low"
+        }
+      }
+    }
+  },
+  "source_draft_schema_version": "1.0.0"
+}

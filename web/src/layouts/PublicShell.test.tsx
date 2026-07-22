@@ -18,10 +18,10 @@ function mockMatchMedia(matches: boolean) {
   }));
 }
 
-function renderPublicShell() {
+function renderPublicShell(mainMode?: "constrained" | "full_bleed") {
   return render(
     <MemoryRouter>
-      <PublicShell>
+      <PublicShell mainMode={mainMode}>
         <div>content</div>
       </PublicShell>
     </MemoryRouter>,
@@ -30,6 +30,10 @@ function renderPublicShell() {
 
 function getOverlay() {
   return document.querySelector(".public-shell__nav-overlay");
+}
+
+function getMain(container: HTMLElement) {
+  return container.querySelector(".public-shell__main");
 }
 
 describe("PublicShell nav overlay responsive behavior", () => {
@@ -133,5 +137,60 @@ describe("PublicShell nav overlay responsive behavior", () => {
 
     expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
     expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+// Project Spec S0130: an explicit, testable public-shell main mode --
+// default remains "constrained" for every pre-existing public route, and
+// only an explicit "full_bleed" request drops the centered main-width
+// constraint class in favor of the full-bleed modifier.
+describe("PublicShell main mode (Project Spec S0130)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("defaults to the constrained app-shell main mode when no mainMode prop is given", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell();
+
+    const main = getMain(container);
+    expect(main).toHaveClass("app-shell");
+    expect(main).toHaveClass("public-shell__main");
+    expect(main).not.toHaveClass("public-shell__main--full-bleed");
+    expect(main).toHaveAttribute("data-main-mode", "constrained");
+  });
+
+  it("uses the constrained app-shell main mode when explicitly requested", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell("constrained");
+
+    const main = getMain(container);
+    expect(main).toHaveClass("app-shell");
+    expect(main).not.toHaveClass("public-shell__main--full-bleed");
+    expect(main).toHaveAttribute("data-main-mode", "constrained");
+  });
+
+  it("switches to the explicit full-bleed main mode without the constrained app-shell class", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell("full_bleed");
+
+    const main = getMain(container);
+    expect(main).not.toHaveClass("app-shell");
+    expect(main).toHaveClass("public-shell__main");
+    expect(main).toHaveClass("public-shell__main--full-bleed");
+    expect(main).toHaveAttribute("data-main-mode", "full_bleed");
+  });
+
+  it("keeps navigation and toggle behavior unchanged in full-bleed mode", () => {
+    mockMatchMedia(false);
+    renderPublicShell("full_bleed");
+
+    const toggle = screen.getByLabelText("Mostrar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
+
+    fireEvent.click(toggle);
+    expect(getOverlay()).toBeInTheDocument();
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
   });
 });

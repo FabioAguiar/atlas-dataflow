@@ -142,6 +142,28 @@ describe("App admin routing", () => {
     ).toBeInTheDocument();
   });
 
+  // Project Spec S0130: /dataset/:slug requests the explicit full-bleed
+  // public-shell main mode; / stays on the existing constrained mode. Route
+  // isolation -- neither route leaks the other's main mode.
+  it("uses the full-bleed public-shell main mode for /dataset/:slug and the constrained mode for /", async () => {
+    const { container: datasetContainer } = await renderApp("/dataset/telco-customer-churn", false);
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+
+    const datasetMain = datasetContainer.querySelector(".public-shell__main");
+    expect(datasetMain).toHaveClass("public-shell__main--full-bleed");
+    expect(datasetMain).not.toHaveClass("app-shell");
+    expect(datasetMain).toHaveAttribute("data-main-mode", "full_bleed");
+    expect(datasetContainer.querySelector(".dataset-detail-page-canvas")).toBeInTheDocument();
+
+    const { container: homeContainer } = await renderApp("/", false);
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    const homeMain = homeContainer.querySelector(".public-shell__main");
+    expect(homeMain).toHaveClass("app-shell");
+    expect(homeMain).not.toHaveClass("public-shell__main--full-bleed");
+    expect(homeMain).toHaveAttribute("data-main-mode", "constrained");
+  });
+
   it("does not render admin shell or admin navigation for direct admin URLs when admin is disabled", async () => {
     const { container } = await renderApp("/admin/dataset-admin", false);
 

@@ -12,7 +12,9 @@ import type { BinaryResultContract, BinaryResultPresentation } from "../componen
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 import {
+  datasetThemeStyle,
   presentDatasetDateOnly,
+  resolveDatasetThemePreset,
   safePublicSourceUrl,
 } from "../lib/datasetPresentation";
 
@@ -523,19 +525,33 @@ export default function DatasetPage() {
     </>
   );
 
+  // Project Spec S0130: the route-level canvas resolves the same theme
+  // authority/tokens DatasetDetailSurface itself applies -- never a second,
+  // divergent theme mapping -- so the full-bleed public main region is
+  // themed edge to edge while the inner content column stays constrained.
+  const routeTheme = resolveDatasetThemePreset(context?.theme_preset);
+
   return (
-    <DatasetDetailSurface
-      analysisType={analysisType}
-      datasetSubtitle={datasetSubtitle}
-      datasetTitle={datasetTitle}
-      featureImportanceContent={featureImportanceContent}
-      inferenceContent={inferenceContent}
-      metadata={metadataItems}
-      performanceContent={performanceContent}
-      problemSummaryBody={problemSummaryText}
-      problemSummaryTitle={problemSummaryTitle}
-      targetDistributionContent={targetDistributionContent}
-      themePresetId={context?.theme_preset}
-    />
+    <div
+      className="dataset-detail-page-canvas dataset-theme-scope"
+      data-theme-preset={routeTheme.id}
+      style={datasetThemeStyle(context?.theme_preset)}
+    >
+      <div className="dataset-detail-page-content app-shell public-shell__main">
+        <DatasetDetailSurface
+          analysisType={analysisType}
+          datasetSubtitle={datasetSubtitle}
+          datasetTitle={datasetTitle}
+          featureImportanceContent={featureImportanceContent}
+          inferenceContent={inferenceContent}
+          metadata={metadataItems}
+          performanceContent={performanceContent}
+          problemSummaryBody={problemSummaryText}
+          problemSummaryTitle={problemSummaryTitle}
+          targetDistributionContent={targetDistributionContent}
+          themePresetId={context?.theme_preset}
+        />
+      </div>
+    </div>
   );
 }

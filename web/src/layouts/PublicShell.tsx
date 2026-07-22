@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 
+export type PublicShellMainMode = "constrained" | "full_bleed";
+
 type PublicShellProps = {
   children: ReactNode;
+  mainMode?: PublicShellMainMode;
 };
 
 // Placeholders per design/screens/home/content.md integration notes; replace
@@ -62,7 +65,12 @@ function isDesktopViewport() {
   return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
 }
 
-export default function PublicShell({ children }: PublicShellProps) {
+// Project Spec S0130: an explicit, tested main-area mode -- never a
+// route-name selector, `:has()`, or child-driven layout escape. Default
+// stays "constrained" so every pre-existing public route is unaffected;
+// only a route that explicitly requests "full_bleed" drops the centered
+// main-width constraint for the outer route boundary.
+export default function PublicShell({ children, mainMode = "constrained" }: PublicShellProps) {
   const navToggleRef = useRef<HTMLButtonElement | null>(null);
   const [navOpen, setNavOpen] = useState<boolean>(isDesktopViewport);
   const [isDesktop, setIsDesktop] = useState<boolean>(isDesktopViewport);
@@ -162,7 +170,16 @@ export default function PublicShell({ children }: PublicShellProps) {
         </nav>
       </aside>
 
-      <main className="app-shell public-shell__main">{children}</main>
+      <main
+        className={
+          mainMode === "full_bleed"
+            ? "public-shell__main public-shell__main--full-bleed"
+            : "app-shell public-shell__main"
+        }
+        data-main-mode={mainMode}
+      >
+        {children}
+      </main>
     </div>
   );
 }

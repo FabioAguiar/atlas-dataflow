@@ -29,7 +29,8 @@
           "classification"
         ]
       },
-      "review_status": "needs_review"
+      "review_status": "ready",
+      "dataset_detail_updated_at": "2026-07-20T23:52:31Z"
     }
   ]
 }

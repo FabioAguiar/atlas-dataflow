@@ -600,20 +600,17 @@ def _project_result_contract_safely(active_release: str) -> dict:
         return unavailable
 
 
-@app.post("/datasets/{dataset_slug}/inference")
-def validate_dataset_inference_payload(
-    dataset_slug: str,
-    payload=Body(...),
-):
-    # Project Spec S0117: access classification must run before payload
-    # type/schema validation, contract loading, bundle loading, model
-    # loading, or prediction -- a malformed body must never leak whether a
-    # hidden/needs_review dataset exists, and no runtime work should happen
-    # for a dataset that is not ready.
-    resolved = _resolve_public_dataset_detail_access(dataset_slug)
-    if isinstance(resolved, JSONResponse):
-        return resolved
-
+def _execute_governed_inference(dataset_slug: str, active_release: str, payload):
+    """
+    Project Spec S0143: the shared post-resolution inference execution
+    boundary used by both the public inference route and the private Admin
+    Live Preview inference route. Callers are responsible for their own
+    route-specific access resolution first -- the public readiness guard for
+    the public route, Admin authorization plus direct registered-dataset
+    resolution for the private route -- this function performs no access
+    classification of its own and must not be reachable before that
+    resolution has already succeeded.
+    """
     if not isinstance(payload, dict):
         return validation_error_response(
             [
@@ -627,7 +624,7 @@ def validate_dataset_inference_payload(
         )
 
     try:
-        runtime_contract = load_contract(resolved.active_release)
+        runtime_contract = load_contract(active_release)
     except ContractUnavailableError:
         return public_error_response(CONTRACT_UNAVAILABLE)
 
@@ -635,7 +632,7 @@ def validate_dataset_inference_payload(
     if validation_failures:
         return validation_error_response(validation_failures)
 
-    resolved_manifest = _read_active_release_manifest(resolved.active_release)
+    resolved_manifest = _read_active_release_manifest(active_release)
     if resolved_manifest is None:
         return public_error_response(INFERENCE_FAILURE)
     release_dir, manifest = resolved_manifest
@@ -664,9 +661,60 @@ def validate_dataset_inference_payload(
         return public_error_response(INFERENCE_FAILURE)
 
     return {
-        "dataset_slug": resolved.dataset_slug,
+        "dataset_slug": dataset_slug,
         "result": result,
     }
+
+
+@app.post("/datasets/{dataset_slug}/inference")
+def validate_dataset_inference_payload(
+    dataset_slug: str,
+    payload=Body(...),
+):
+    # Project Spec S0117: access classification must run before payload
+    # type/schema validation, contract loading, bundle loading, model
+    # loading, or prediction -- a malformed body must never leak whether a
+    # hidden/needs_review dataset exists, and no runtime work should happen
+    # for a dataset that is not ready.
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+
+    return _execute_governed_inference(resolved.dataset_slug, resolved.active_release, payload)
+
+
+@app.post("/admin/datasets/{dataset_slug}/inference")
+def post_admin_dataset_inference(
+    dataset_slug: str,
+    request: Request,
+    payload=Body(...),
+):
+    """
+    Project Spec S0143: private, read-only-w.r.t.-registry Admin execution
+    route for the Dataset Detail Live Preview Inference tab. Deliberately
+    resolves the registered dataset and active release via resolve_dataset()
+    directly -- never via _resolve_public_dataset_detail_access(),
+    resolve_dataset_visibility(), or resolve_dataset_snapshot_readiness() --
+    so a hidden or needs_review dataset with a valid active release can
+    still execute inference here, exactly like the S0121 private authoring
+    read model. Shares the same post-resolution payload validation, runtime
+    execution and binary-result validation as the public route through
+    _execute_governed_inference; performs no registry, profile, publication,
+    release or artifact mutation.
+    """
+    if not _admin_request_authorized(request):
+        return _admin_route_not_found_response()
+
+    try:
+        resolved = resolve_dataset(dataset_slug)
+    except DatasetUnavailableError:
+        return public_error_response(DATASET_NOT_FOUND)
+    except ReleaseUnavailableError:
+        return public_error_response(RELEASE_UNAVAILABLE)
+    except RegistryInvalidError:
+        return public_error_response(REGISTRY_UNAVAILABLE)
+
+    return _execute_governed_inference(resolved.dataset_slug, resolved.active_release, payload)
 
 
 @app.get("/datasets/{dataset_slug}/metrics")

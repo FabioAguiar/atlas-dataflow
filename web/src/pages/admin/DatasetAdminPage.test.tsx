@@ -8,7 +8,11 @@ import {
   normalizeDatasetDateOnly,
   presentDatasetOperationalTimestamp,
 } from "../../lib/datasetPresentation";
-import DatasetAdminPage from "./DatasetAdminPage";
+import DatasetAdminPage, {
+  emptyLiveInferenceAuditState,
+  liveInferenceAuditConsoleLines,
+  reduceLiveInferenceAuditEvent,
+} from "./DatasetAdminPage";
 
 // DatasetAdminPage's Home card preview renders the shared DatasetCard
 // component, which uses react-router-dom's <Link> -- it needs a Router
@@ -126,6 +130,33 @@ const customization = {
   view_copy: undefined as
     | { heading?: string; description?: string; usage_guidance?: string; submit_button_label?: string }
     | undefined,
+};
+
+// Project Spec S0143: a valid binary-classification-result.v1 shape
+// conformant to the shared authoringContextEnvelope() result_contract
+// fixture below (threshold 0.6, churn/retained classes, low/medium/high
+// bands) -- the default POST /admin/datasets/{slug}/inference success body.
+const DEFAULT_ADMIN_INFERENCE_RESULT = {
+  schema_version: "binary-classification-result.v1",
+  problem_type: "binary_classification",
+  predicted_class: { class_id: "churn" },
+  positive_class: { class_id: "churn", event_label: "Customer churn" },
+  positive_class_probability: 0.82,
+  class_probabilities: [
+    { class_id: "retained", probability: 0.18 },
+    { class_id: "churn", probability: 0.82 },
+  ],
+  decision: { threshold: 0.6, predicted_positive: true },
+  interpretation: {
+    preset: "risk",
+    band_id: "high",
+    bands: [
+      { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+      { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+      { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+    ],
+  },
+  model_descriptor: { model_family: "linear", display_name: "Retention model" },
 };
 
 function installFetchMock(
@@ -250,6 +281,17 @@ function installFetchMock(
     publicationStateDeferredOnce?: boolean;
     initialConfiguredVisible?: boolean;
     publicationStateBuilder?: (configuredVisible: boolean) => Record<string, unknown>;
+    // Project Spec S0143: POST /admin/datasets/{slug}/inference. Defaults to
+    // a valid binary result so tests that submit the Live Preview Inference
+    // form without opting into a specific outcome still get a bounded
+    // success response. adminInferenceErrorCode overrides that with a
+    // bounded error response instead. adminInferenceDeferredOnce leaves the
+    // first request unresolved until the returned fetch mock's
+    // releaseDeferredAdminInference() is called, for exercising the
+    // stale-response identity-change guard deterministically.
+    adminInferenceResult?: Record<string, unknown>;
+    adminInferenceErrorCode?: string;
+    adminInferenceDeferredOnce?: boolean;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -265,6 +307,8 @@ function installFetchMock(
   let authoringContextTransportFailurePending = options.authoringContextTransportFailureOnce ?? false;
   let authoringContextDeferredPending = options.authoringContextDeferredOnce ?? false;
   let releaseDeferredAuthoringContext: (() => void) | null = null;
+  let adminInferenceDeferredPending = options.adminInferenceDeferredOnce ?? false;
+  let releaseDeferredAdminInference: (() => void) | null = null;
 
   // Project Spec S0121: the single GET /admin/datasets/{slug}/authoring-context
   // envelope Dataset Admin now loads its entire technical ReadOnlyData from,
@@ -760,6 +804,29 @@ function installFetchMock(
         errors: [],
       });
     }
+    if (url.endsWith(`/admin/datasets/${datasetSlug}/inference`) && init?.method === "POST") {
+      if (adminInferenceDeferredPending) {
+        adminInferenceDeferredPending = false;
+        return new Promise<MockResponse>((resolve) => {
+          releaseDeferredAdminInference = () =>
+            resolve(
+              options.adminInferenceErrorCode
+                ? jsonResponse({ error_code: options.adminInferenceErrorCode }, 422)
+                : jsonResponse({
+                    dataset_slug: datasetSlug,
+                    result: options.adminInferenceResult ?? DEFAULT_ADMIN_INFERENCE_RESULT,
+                  }),
+            );
+        });
+      }
+      if (options.adminInferenceErrorCode) {
+        return jsonResponse({ error_code: options.adminInferenceErrorCode }, 422);
+      }
+      return jsonResponse({
+        dataset_slug: datasetSlug,
+        result: options.adminInferenceResult ?? DEFAULT_ADMIN_INFERENCE_RESULT,
+      });
+    }
 
     return jsonResponse({}, 404);
   });
@@ -769,6 +836,7 @@ function installFetchMock(
     releaseDeferredCustomizationLoad: () => releaseDeferredCustomizationLoad?.(),
     releaseDeferredPublicationState: () => releaseDeferredPublicationState?.(),
     releaseDeferredAuthoringContext: () => releaseDeferredAuthoringContext?.(),
+    releaseDeferredAdminInference: () => releaseDeferredAdminInference?.(),
   });
 }
 
@@ -2619,6 +2687,11 @@ describe("DatasetAdminPage", () => {
   // instance, its own real three-tab system (Overview/Inference/
   // Documentation, Overview selected initially), no duplicated Admin
   // markup, and no Model Card (dropped entirely from this surface).
+  //
+  // Project Spec S0142: the pre-S0142 documentation frame's simulated
+  // side rail (fixed-width column plus decorative Home/Projetos/GitHub/
+  // Contato nav labels) is removed entirely -- the shared surface now
+  // occupies the full available preview width instead of a fake shell.
   it("renders Live Preview subviews from real public components and the loaded customization", async () => {
     const fetchMock = installFetchMock();
     const { container } = renderAdminPage();
@@ -2638,12 +2711,20 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("tab", { name: "Dataset Detail", selected: true })).toBeInTheDocument();
     expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
 
-    // The bounded documentation frame's non-interactive public rail
-    // miniature is present but excluded from navigation semantics.
-    expect(container.querySelector(".dataset-admin-detail-preview-frame")).toBeInTheDocument();
-    const rail = container.querySelector(".dataset-admin-detail-preview-rail");
-    expect(rail).toHaveAttribute("aria-hidden", "true");
-    expect(rail?.querySelector("a")).not.toBeInTheDocument();
+    // The bounded documentation frame spans the full available width and
+    // contains only the shared surface -- no simulated public navigation
+    // rail, menu toggle or nav labels are rendered or reserved for.
+    const previewFrame = container.querySelector(".dataset-admin-detail-preview-frame");
+    expect(previewFrame).toBeInTheDocument();
+    expect(previewFrame?.children).toHaveLength(1);
+    expect(container.querySelector(".dataset-admin-detail-preview-rail")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-admin-detail-preview-menu")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-admin-detail-preview-nav")).not.toBeInTheDocument();
+    expect(container.querySelector("aside")).not.toBeInTheDocument();
+    expect(screen.queryByText("Home")).not.toBeInTheDocument();
+    expect(screen.queryByText("Projetos")).not.toBeInTheDocument();
+    expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
+    expect(screen.queryByText("Contato")).not.toBeInTheDocument();
 
     // Exactly three internal public tabs, Overview selected by default, and
     // its Problem Summary/analytical slots render from the loaded draft.
@@ -2659,6 +2740,10 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByRole("heading", { name: "Churn context" })).toBeInTheDocument();
     expect(screen.getByText("Explains customer churn for a public audience.")).toBeInTheDocument();
 
+    // Exactly one Live Preview Dataset Detail panel is effectively visible
+    // at a time (Project Spec S0142 acceptance criteria 10/28).
+    expect(container.querySelectorAll(".dataset-detail-tabs__panel:not([hidden])")).toHaveLength(1);
+
     // Project Spec S0138: the Live Preview Overview owns exactly the same
     // four authorized cards as the public route -- Problem Summary,
     // Performance Summary, the donut Target Distribution and the ranked
@@ -2673,12 +2758,23 @@ describe("DatasetAdminPage", () => {
     expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
 
     fireEvent.click(detailTabs.getByRole("tab", { name: "Inference" }));
-    expect(screen.getByText(/Preview only — no inference request is executed./)).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-detail-tabs__panel:not([hidden])")).toHaveLength(1);
+    // Project Spec S0143: the functional Live Preview Inference panel is one
+    // real, executable InferenceForm lifecycle -- no "Preview only" notice,
+    // and the shared Result Card starts at its complete 0% projection
+    // instead of the old synthetic scenario-driven preview.
+    expect(screen.queryByText(/Preview only — no inference request is executed./)).not.toBeInTheDocument();
     const resultRegion = screen.getByRole("region", { name: "Prediction result" });
     expect(within(resultRegion).getByText("Churn probability")).toBeInTheDocument();
+    expect(
+      within(resultRegion).getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Account profile")).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Run prediction/ })).toBeDisabled();
+    // The active release's result contract is available, so submission is
+    // enabled as soon as Live Preview loads -- never the previous
+    // unconditionally-disabled preview-mode button.
+    expect(screen.getByRole("button", { name: /Run prediction/ })).toBeEnabled();
 
     const inferencePanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
     expect(inferencePanel.querySelector(".dataset-detail-overview__problem-summary")).not.toBeInTheDocument();
@@ -2686,9 +2782,18 @@ describe("DatasetAdminPage", () => {
     expect(inferencePanel.querySelector(".dataset-detail-visualization")).not.toBeInTheDocument();
 
     fireEvent.click(detailTabs.getByRole("tab", { name: "Documentation" }));
+    expect(container.querySelectorAll(".dataset-detail-tabs__panel:not([hidden])")).toHaveLength(1);
     const documentationPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])");
     expect(documentationPanel).toBeEmptyDOMElement();
     expect(documentationPanel!.querySelectorAll(".atlas-card")).toHaveLength(0);
+
+    fireEvent.click(detailTabs.getByRole("tab", { name: "Overview" }));
+    // Returning to Overview restores the same four-card composition without
+    // duplication and without mounting a second Dataset Detail surface.
+    expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
+    expect(container.querySelectorAll(".dataset-detail-tabs__panel:not([hidden])")).toHaveLength(1);
+    const restoredOverviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
+    expect(restoredOverviewPanel.querySelectorAll(".atlas-card")).toHaveLength(4);
 
     // No Model Card anywhere in the Dataset Detail preview, and the Admin
     // read-only load never requests the technical Model Card endpoint.
@@ -2781,7 +2886,7 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Atlas Green" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
-    fireEvent.change(screen.getByLabelText("High label"), { target: { value: "Elevated risk (edited)" } });
+    fireEvent.change(screen.getByLabelText("Low label"), { target: { value: "Minimal risk (edited)" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
     fireEvent.doubleClick(screen.getByText("tenure"));
@@ -2831,11 +2936,12 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByText("Highlighted").closest("dt")).toHaveTextContent("Precision");
     expect(screen.getByText("Highlighted").closest("div")?.querySelector("dd")).toHaveTextContent("0.81");
 
-    // The contract-derived positive scenario is 0.8 for a 0.6 threshold,
-    // which selects the governed high band and its edited presentation copy.
-    // Both live in the shared surface's Inference tab.
+    // Project Spec S0143: the functional Inference tab starts at the 0%
+    // initial projection, which selects the governed low band (threshold
+    // 0.6) and its edited presentation copy. Both live in the shared
+    // surface's Inference tab.
     fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
-    expect(screen.getByText("Elevated risk (edited)")).toBeInTheDocument();
+    expect(screen.getByText("Minimal risk (edited)")).toBeInTheDocument();
     expect(screen.getByLabelText("Tenure (edited)")).toBeInTheDocument();
   });
 
@@ -5023,7 +5129,7 @@ describe("DatasetAdminPage", () => {
     // ordering rather than becoming permanently blocked.
   });
 
-  it("Live Preview's Inference Form submit button reflects the customization draft's Submit button label immediately, and stays disabled (Project Spec S0110)", async () => {
+  it("Live Preview's Inference Form submit button reflects the customization draft's Submit button label immediately, and stays enabled while the result contract is available (Project Spec S0110, S0143)", async () => {
     installFetchMock({
       customizationOverride: { ...customization, view_copy: { submit_button_label: "Estimate churn risk" } },
     });
@@ -5031,20 +5137,23 @@ describe("DatasetAdminPage", () => {
     await loadDraftAndCustomization();
 
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
-    // Project Spec S0120: the Admin-only preview-mode Inference Form now
-    // lives inside the shared surface's own Inference tab (Overview is
-    // selected by default), rather than being flatly visible below the
-    // header.
+    // Project Spec S0120: the Admin-only Inference Form now lives inside the
+    // shared surface's own Inference tab (Overview is selected by default),
+    // rather than being flatly visible below the header.
     fireEvent.click(within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", { name: "Inference" }));
     const initialPreviewButton = screen.getByRole("button", { name: "Estimate churn risk" });
-    expect(initialPreviewButton).toBeDisabled();
+    // Project Spec S0143: this is now the real, executable InferenceForm --
+    // submission is enabled whenever the active release's result contract
+    // is available, never unconditionally disabled the way the old
+    // preview-mode composition always was.
+    expect(initialPreviewButton).toBeEnabled();
 
     fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
     fireEvent.change(screen.getByLabelText("Submit button label"), { target: { value: "Updated live label" } });
 
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
     fireEvent.click(within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", { name: "Inference" }));
-    expect(screen.getByRole("button", { name: "Updated live label" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Updated live label" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Estimate churn risk" })).not.toBeInTheDocument();
   });
 
@@ -5072,5 +5181,660 @@ describe("DatasetAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Bound predict view"), { target: { value: viewId } });
 
     await waitFor(() => expect(publishButton).toBeDisabled());
+  });
+
+  // Project Spec S0143: the Dataset Detail Live Preview Inference panel now
+  // owns one real, executable InferenceForm lifecycle backed by the private
+  // Admin inference route, replacing the previous non-executing preview
+  // form plus synthetic scenario-driven Result Card.
+  describe("Live Preview private inference execution (Project Spec S0143)", () => {
+    function openLivePreviewInference() {
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+          name: "Inference",
+        }),
+      );
+    }
+
+    it("submits to the private Admin inference route (never the public route) and renders exactly one shared success Result Card", async () => {
+      const fetchMock = installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInference();
+
+      // Starts at the complete 0% projection, with no duplicate synthetic
+      // Result Card anywhere alongside the functional form.
+      expect(container.querySelectorAll(".inference-result")).toHaveLength(1);
+      expect(
+        screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      const callsBeforeSubmit = fetchMock.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+      expect(container.querySelectorAll(".inference-result")).toHaveLength(1);
+
+      const inferenceCalls = fetchMock.mock.calls
+        .slice(callsBeforeSubmit)
+        .filter((call) => (call[1] as RequestInit | undefined)?.method === "POST" && String(call[0]).includes("/inference"));
+      expect(inferenceCalls).toHaveLength(1);
+      expect(String(inferenceCalls[0][0])).toContain(`/admin/datasets/${datasetSlug}/inference`);
+
+      // No call to the public inference route was ever made from Admin.
+      expect(
+        fetchMock.mock.calls.some(
+          (call) => String(call[0]).endsWith(`/datasets/${datasetSlug}/inference`) && !String(call[0]).includes("/admin/"),
+        ),
+      ).toBe(false);
+    });
+
+    it("renders the existing shared submitting state while the private request is in flight", async () => {
+      const fetchMock = installFetchMock({ adminInferenceDeferredOnce: true });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInference();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+
+      expect(await screen.findByText("Generating prediction…")).toBeInTheDocument();
+
+      fetchMock.releaseDeferredAdminInference();
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+    });
+
+    it("renders the shared safe error state for a bounded private-route failure and keeps the form usable for retry", async () => {
+      installFetchMock({ adminInferenceErrorCode: "INFERENCE_FAILURE" });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInference();
+
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "The prediction service is temporarily unavailable. Please try again later.",
+      );
+      expect(screen.getByRole("button", { name: /Run prediction/ })).toBeEnabled();
+    });
+
+    it("preserves the result while switching Overview ↔ Inference ↔ Documentation, without a second form or Result Card", async () => {
+      installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInference();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      const detailTabs = within(screen.getByRole("tablist", { name: "Dataset detail sections" }));
+      fireEvent.click(detailTabs.getByRole("tab", { name: "Overview" }));
+      fireEvent.click(detailTabs.getByRole("tab", { name: "Inference" }));
+
+      expect(
+        screen.getByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+      expect(container.querySelectorAll(".inference-result")).toHaveLength(1);
+      expect(container.querySelectorAll(".public-inference-form__form")).toHaveLength(1);
+    });
+  });
+
+  // Project Spec S0144: pure unit coverage for the audit correlation/
+  // retention/formatting model, exercised directly (no DOM, no network, no
+  // wall-clock time) so the attempt-correlation invariants -- including
+  // duplicate-terminal and unmatched-terminal suppression, which are not
+  // reachable through the real InferenceForm's own serialized-submission UI
+  // -- are proven deterministically.
+  describe("Publishing console Live Preview inference session audit model (Project Spec S0144)", () => {
+    const auditSlug = "audit-model-dataset";
+
+    function successSummary(
+      overrides: Partial<{ predictedPositive: boolean; positiveClassProbability: number; modelDisplayName?: string }> = {},
+    ) {
+      return {
+        predictedPositive: true,
+        positiveClassProbability: 0.82,
+        modelDisplayName: "Retention model",
+        ...overrides,
+      };
+    }
+
+    it("starts with no records and renders no console lines (no-event baseline)", () => {
+      const state = emptyLiveInferenceAuditState(auditSlug);
+      expect(state.records).toEqual([]);
+      expect(liveInferenceAuditConsoleLines(state.records)).toEqual([]);
+    });
+
+    it("renders a started -> succeeded lifecycle as one INFO line and one OK line sharing attempt #1", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(
+        state,
+        auditSlug,
+        "succeeded",
+        successSummary({ predictedPositive: false, positiveClassProbability: 0.18, modelDisplayName: "Gradient Boosting" }),
+      );
+
+      expect(state.records.map((record) => ({ attemptSequence: record.attemptSequence, kind: record.kind }))).toEqual([
+        { attemptSequence: 1, kind: "started" },
+        { attemptSequence: 1, kind: "succeeded" },
+      ]);
+      expect(state.activeAttemptSequence).toBeNull();
+
+      const lines = liveInferenceAuditConsoleLines(state.records);
+      expect(lines).toEqual([
+        { id: expect.any(String), severity: "INFO", text: "Live Preview inference attempt #1 started." },
+        {
+          id: expect.any(String),
+          severity: "OK",
+          text: "Live Preview inference attempt #1 completed successfully: negative outcome, positive-class probability 18%, model Gradient Boosting.",
+        },
+      ]);
+    });
+
+    it("renders a started -> validation_failed lifecycle as a bounded generic ERROR line with no raw detail", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed");
+
+      const lines = liveInferenceAuditConsoleLines(state.records);
+      expect(lines[1]).toEqual({
+        id: expect.any(String),
+        severity: "ERROR",
+        text: "Live Preview inference attempt #1 was rejected because the submitted fields were invalid.",
+      });
+    });
+
+    it("renders a started -> execution_failed lifecycle as a bounded generic ERROR line with no raw detail", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "execution_failed");
+
+      const lines = liveInferenceAuditConsoleLines(state.records);
+      expect(lines[1]).toEqual({
+        id: expect.any(String),
+        severity: "ERROR",
+        text: "Live Preview inference attempt #1 could not be completed.",
+      });
+    });
+
+    it("keeps two attempts with identical safe summaries as two distinct lines with different attempt numbers", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", successSummary());
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", successSummary());
+
+      const successLines = liveInferenceAuditConsoleLines(state.records).filter((line) => line.severity === "OK");
+      expect(successLines).toHaveLength(2);
+      expect(successLines[0].text).toBe(
+        "Live Preview inference attempt #1 completed successfully: positive outcome, positive-class probability 82%, model Retention model.",
+      );
+      expect(successLines[1].text).toBe(
+        "Live Preview inference attempt #2 completed successfully: positive outcome, positive-class probability 82%, model Retention model.",
+      );
+      expect(successLines[0].id).not.toBe(successLines[1].id);
+    });
+
+    it("ignores a duplicate terminal callback for an attempt already closed instead of creating a second record", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", successSummary());
+      const afterFirstTerminal = state;
+
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", successSummary());
+
+      expect(state).toEqual(afterFirstTerminal);
+      expect(state.records).toHaveLength(2);
+    });
+
+    it("ignores a terminal callback with no matching active attempt instead of fabricating one", () => {
+      const state = emptyLiveInferenceAuditState(auditSlug);
+      const afterUnmatchedTerminal = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", successSummary());
+
+      expect(afterUnmatchedTerminal).toEqual(state);
+      expect(afterUnmatchedTerminal.records).toHaveLength(0);
+    });
+
+    it("ignores an event captured for a previous dataset once the audit session belongs to a different dataset", () => {
+      const currentState = emptyLiveInferenceAuditState("current-dataset");
+      const afterStaleEvent = reduceLiveInferenceAuditEvent(currentState, "previous-dataset", "started");
+
+      expect(afterStaleEvent).toEqual(currentState);
+      expect(afterStaleEvent.records).toHaveLength(0);
+    });
+
+    it("retains at most 50 records, truncating only the oldest, preserving chronological order and monotonic sequencing", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      for (let attempt = 1; attempt <= 26; attempt += 1) {
+        state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+        state = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", successSummary());
+      }
+
+      // 26 attempts * 2 records (one start, one terminal) = 52 raw records;
+      // the FIFO limit keeps only the newest 50, so the oldest attempt's
+      // pair (attempt #1) is gone but every later attempt survives intact.
+      expect(state.records).toHaveLength(50);
+      expect(state.records[0]).toMatchObject({ attemptSequence: 2, kind: "started" });
+      expect(state.records[state.records.length - 1]).toMatchObject({ attemptSequence: 26, kind: "succeeded" });
+      const attemptSequences = state.records.map((record) => record.attemptSequence);
+      expect(attemptSequences).toEqual([...attemptSequences].sort((a, b) => a - b));
+
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      expect(state.activeAttemptSequence).toBe(27);
+    });
+
+    it("omits the probability clause for a non-finite value and the model clause when absent, without ever rendering undefined/NaN", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", {
+        predictedPositive: true,
+        positiveClassProbability: Number.NaN,
+        modelDisplayName: "Retention model",
+      });
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "succeeded", {
+        predictedPositive: true,
+        positiveClassProbability: 0.5,
+      });
+
+      const successLines = liveInferenceAuditConsoleLines(state.records).filter((line) => line.severity === "OK");
+      expect(successLines[0].text).toBe(
+        "Live Preview inference attempt #1 completed successfully: positive outcome, model Retention model.",
+      );
+      expect(successLines[1].text).toBe(
+        "Live Preview inference attempt #2 completed successfully: positive outcome, positive-class probability 50%.",
+      );
+      expect(successLines.map((line) => line.text).join(" ")).not.toMatch(/undefined|NaN|\[object/);
+    });
+  });
+
+  // Project Spec S0144: DOM-level wiring coverage using the real InferenceForm
+  // and the existing fetch-mock infrastructure -- confirms DatasetAdminPage
+  // actually owns and renders this audit history in the Publishing console,
+  // rather than only exercising the pure model above.
+  describe("Publishing console Live Preview inference session audit wiring (Project Spec S0144)", () => {
+    function openLivePreviewInferenceTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+          name: "Inference",
+        }),
+      );
+    }
+
+    function openPublishingTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    }
+
+    function consoleLineTexts(): string[] {
+      const panel = screen.getByRole("tabpanel");
+      const consoleEl = within(panel).getByRole("log", { name: "Dataset publication operational status" });
+      return Array.from(consoleEl.querySelectorAll(".dataset-admin-console-line")).map((el) => el.textContent ?? "");
+    }
+
+    it("shows no Live Preview inference lines in the Publishing console before any inference attempt (no-event baseline)", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts.some((text) => text.includes("Live Preview inference"))).toBe(false);
+      expect(lineTexts.some((text) => text.includes("Dataset selected"))).toBe(true);
+    });
+
+    it("appends started + succeeded lines after the existing publication lines, with the required bounded safe result summary", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      const datasetLineIndex = lineTexts.findIndex((text) => text.includes("Dataset selected"));
+      const startedIndex = lineTexts.findIndex((text) => text === "[INFO] Live Preview inference attempt #1 started.");
+      const succeededIndex = lineTexts.findIndex((text) =>
+        text.includes("Live Preview inference attempt #1 completed successfully"),
+      );
+
+      expect(datasetLineIndex).toBeGreaterThanOrEqual(0);
+      expect(startedIndex).toBeGreaterThan(datasetLineIndex);
+      expect(succeededIndex).toBeGreaterThan(startedIndex);
+      expect(lineTexts[succeededIndex]).toBe(
+        "[OK] Live Preview inference attempt #1 completed successfully: positive outcome, positive-class probability 82%, model Retention model.",
+      );
+    });
+
+    it("appends a bounded generic ERROR line for a validation-failed attempt, with no raw validation detail", async () => {
+      installFetchMock({ adminInferenceErrorCode: "INVALID_PAYLOAD" });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts).toContain("[INFO] Live Preview inference attempt #1 started.");
+      expect(lineTexts).toContain(
+        "[ERROR] Live Preview inference attempt #1 was rejected because the submitted fields were invalid.",
+      );
+      expect(lineTexts.some((text) => text.includes("INVALID_PAYLOAD"))).toBe(false);
+    });
+
+    it("appends a bounded generic ERROR line for an execution-failed attempt, with no raw backend error", async () => {
+      installFetchMock({ adminInferenceErrorCode: "INFERENCE_FAILURE" });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts).toContain("[INFO] Live Preview inference attempt #1 started.");
+      expect(lineTexts).toContain("[ERROR] Live Preview inference attempt #1 could not be completed.");
+      expect(lineTexts.some((text) => text.includes("INFERENCE_FAILURE"))).toBe(false);
+      expect(lineTexts.some((text) => text.includes("The prediction service is temporarily unavailable"))).toBe(false);
+    });
+
+    it("keeps the history intact across Live Preview <-> Publishing navigation", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      openPublishingTab();
+      expect(consoleLineTexts().some((text) => text.includes("attempt #1 completed successfully"))).toBe(true);
+
+      openLivePreviewInferenceTab();
+      openPublishingTab();
+
+      expect(consoleLineTexts().some((text) => text.includes("attempt #1 completed successfully"))).toBe(true);
+    });
+
+    it("keeps two repeated successful attempts as two distinct console lines rather than collapsing them", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" });
+
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await waitFor(() => {
+        expect(
+          screen.getAllByText("82%", { selector: ".binary-classification-result__probability-value" }),
+        ).toHaveLength(1);
+      });
+
+      openPublishingTab();
+      const successLines = consoleLineTexts().filter((text) => text.includes("completed successfully"));
+      expect(successLines).toEqual([
+        "[OK] Live Preview inference attempt #1 completed successfully: positive outcome, positive-class probability 82%, model Retention model.",
+        "[OK] Live Preview inference attempt #2 completed successfully: positive outcome, positive-class probability 82%, model Retention model.",
+      ]);
+    });
+
+    it("clears the history and restarts attempt numbering after switching to a different dataset, never leaking the previous dataset's lines", async () => {
+      const otherSlug = "energy-consumption-forecast";
+      const otherViewId = "load-forecast-overview";
+      const otherInferenceResult = {
+        schema_version: "binary-classification-result.v1",
+        problem_type: "binary_classification",
+        predicted_class: { class_id: "normal_demand" },
+        positive_class: { class_id: "high_demand", event_label: "High demand" },
+        positive_class_probability: 0.3,
+        class_probabilities: [
+          { class_id: "normal_demand", probability: 0.7 },
+          { class_id: "high_demand", probability: 0.3 },
+        ],
+        decision: { threshold: 0.5, predicted_positive: false },
+        interpretation: {
+          preset: "risk",
+          band_id: "low",
+          bands: [
+            { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+            { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+            { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+          ],
+        },
+        model_descriptor: { model_family: "gbm", display_name: "Load Forecast Model" },
+      };
+
+      function availableResultContract(
+        positiveClassId: string,
+        positiveLabel: string,
+        negativeClassId: string,
+        threshold: number,
+        modelDisplayName: string,
+      ) {
+        return {
+          status: "available",
+          semantics: {
+            schema_version: "binary-result-semantics.v1",
+            problem_type: "binary_classification",
+            result_schema_version: "binary-classification-result.v1",
+            primary_output: "positive_class_probability",
+            positive_class: { class_id: positiveClassId, event_label: positiveLabel },
+            negative_class: { class_id: negativeClassId },
+            decision: { threshold },
+            interpretation: {
+              preset: "risk",
+              bands: [
+                { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+                { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+                { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+              ],
+            },
+            model_descriptor: { model_family: "model", display_name: modelDisplayName },
+          },
+        };
+      }
+
+      function authoringContextFor(slug: string, title: string, resolvedViewId: string, resultContract: unknown) {
+        return jsonResponse({
+          dataset_slug: slug,
+          active_release: "release-20260619-001",
+          dataset: { status: "ready", data: { dataset_slug: slug, title, summary: "s", domain: "d", tags: [] } },
+          context: { status: "ready", data: {} },
+          contract: {
+            status: "ready",
+            data: { contract: { schema_version: "1.0.0", features: [] }, result_contract: resultContract },
+          },
+          metrics: { status: "ready", data: {} },
+          visualizations: { status: "ready", data: {} },
+          views: { status: "ready", data: [{ view_id: resolvedViewId, display: { title } }] },
+        });
+      }
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: datasetSlug,
+                title: "Telco Customer Churn",
+                display_title: null,
+                summary: "s",
+                domain: "telecom",
+                tags: [],
+                active_release: "release-20260619-001",
+                publication_status: "ready",
+                last_updated: "2026-06-19T12:00:00Z",
+              },
+              {
+                dataset_slug: otherSlug,
+                title: "Energy Consumption Forecast",
+                display_title: null,
+                summary: "s",
+                domain: "energy",
+                tags: [],
+                active_release: "release-20260701-001",
+                publication_status: "ready",
+                last_updated: "2026-07-01T12:00:00Z",
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+          return authoringContextFor(
+            datasetSlug,
+            "Telco Customer Churn",
+            viewId,
+            availableResultContract("churn", "Customer churn", "retained", 0.6, "Retention model"),
+          );
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+          return authoringContextFor(
+            otherSlug,
+            "Energy Consumption Forecast",
+            otherViewId,
+            availableResultContract("high_demand", "High demand", "normal_demand", 0.5, "Load Forecast Model"),
+          );
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) || url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)) {
+          return jsonResponse({ draft_exists: false, profile: null });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) || url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)) {
+          return jsonResponse({}, 404);
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/inference`) && init?.method === "POST") {
+          return jsonResponse({ dataset_slug: datasetSlug, result: DEFAULT_ADMIN_INFERENCE_RESULT });
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/inference`) && init?.method === "POST") {
+          return jsonResponse({ dataset_slug: otherSlug, result: otherInferenceResult });
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      openPublishingTab();
+      expect(consoleLineTexts().some((text) => text.includes("Live Preview inference attempt #1"))).toBe(true);
+
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+      await waitFor(() => expect(selector).toHaveTextContent("Energy Consumption Forecast"));
+
+      openPublishingTab();
+      expect(consoleLineTexts().some((text) => text.includes("Live Preview inference"))).toBe(false);
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+      expect(
+        await screen.findByText("30%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts).toContain("[INFO] Live Preview inference attempt #1 started.");
+      expect(
+        lineTexts.some((text) => text.includes("attempt #2") || text.includes("Telco") || text.includes("Retention model")),
+      ).toBe(false);
+    });
+
+    it("keeps existing publication-state loading/unavailable status lines while still rendering the current-dataset inference history after them", async () => {
+      const fetchMock = installFetchMock({ publicationStateDeferredOnce: true });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      openPublishingTab();
+      let lineTexts = consoleLineTexts();
+      const loadingIndex = lineTexts.findIndex((text) => text.includes("Checking publication state"));
+      const startedIndex = lineTexts.findIndex((text) => text.includes("Live Preview inference attempt #1 started"));
+      expect(loadingIndex).toBeGreaterThanOrEqual(0);
+      expect(startedIndex).toBeGreaterThan(loadingIndex);
+
+      fetchMock.releaseDeferredPublicationState();
+      await waitFor(() => {
+        lineTexts = consoleLineTexts();
+        expect(lineTexts.some((text) => text.includes("Dataset selected"))).toBe(true);
+      });
+      expect(lineTexts.some((text) => text.includes("Live Preview inference attempt #1 completed successfully"))).toBe(
+        true,
+      );
+    });
+
+    it("keeps rendering the current-dataset inference history when publication state is unavailable", async () => {
+      installFetchMock({ publicationStateUnavailable: true });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      const unavailableIndex = lineTexts.findIndex((text) =>
+        text.includes("Publication state could not be loaded"),
+      );
+      const succeededIndex = lineTexts.findIndex((text) => text.includes("completed successfully"));
+      expect(unavailableIndex).toBeGreaterThanOrEqual(0);
+      expect(succeededIndex).toBeGreaterThan(unavailableIndex);
+    });
+
+    it("never exposes a submitted field value or a raw error code in the console DOM", async () => {
+      installFetchMock({ adminInferenceErrorCode: "INVALID_PAYLOAD" });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.change(screen.getByLabelText("Tenure"), { target: { value: "424242" } });
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const consoleText = consoleLineTexts().join(" ");
+      expect(consoleText).not.toContain("424242");
+      expect(consoleText).not.toContain("INVALID_PAYLOAD");
+    });
   });
 });

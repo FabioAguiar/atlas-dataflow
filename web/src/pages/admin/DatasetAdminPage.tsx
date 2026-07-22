@@ -20,6 +20,7 @@ import ResultCardShell from "../../components/ResultCard/ResultCardShell";
 import {
   GENERIC_RESULT_PRESENTATION,
   isAvailableBinaryResultContract,
+  isBinaryClassificationResult,
   type BinaryResultContract,
   type BinaryResultPresentation,
   type BinaryResultSemantics,
@@ -27,6 +28,9 @@ import {
 import InferenceForm, {
   type FieldHint,
   type GroupDef,
+  type InferenceExecutionResult,
+  type InferenceExecutor,
+  type InferenceLifecycleEvent,
   type PredictViewCustomization,
 } from "../../components/InferenceForm/InferenceForm";
 import {
@@ -1895,6 +1899,48 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
   return { status: "available", semantics: value.semantics };
 }
 
+// Project Spec S0143: adapts the private authoring read model's richer
+// ResultContractState (idle/loading/available/unavailable/transport_failure/
+// incompatible) down to the shared public component's narrower
+// BinaryResultContract (available/unavailable) -- every non-"available"
+// authoring state renders as the same "unavailable" contract the public
+// InferenceForm already knows how to disable submission and render safely
+// for, exactly as the pre-existing synthetic Result Card preview did.
+function toInferenceResultContract(state: ResultContractState): BinaryResultContract {
+  if (state.status === "available") {
+    return { status: "available", semantics: state.semantics };
+  }
+  return {
+    status: "unavailable",
+    reason: "message" in state ? state.message : state.status,
+  };
+}
+
+// Project Spec S0143: the private Admin Live Preview's injected executor --
+// the sole difference from the public default is the target route. Reuses
+// the same bounded (slug, payload) -> InferenceExecutionResult contract as
+// every other InferenceForm caller; never accepts or forwards a raw
+// caller-supplied URL.
+async function executeAdminInference(
+  slug: string,
+  payload: Record<string, string | number | boolean>,
+): Promise<InferenceExecutionResult> {
+  try {
+    const res = await fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/inference`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = (await res.json()) as { result?: unknown; error_code?: string };
+    if (res.ok) {
+      return { ok: true, result: body?.result };
+    }
+    return { ok: false, errorCode: body?.error_code };
+  } catch {
+    return { ok: false };
+  }
+}
+
 function presentationFromForm(form: DraftForm): BinaryResultPresentation {
   return {
     schema_version: "binary-result-presentation.v1",
@@ -3537,24 +3583,204 @@ function projectionConsoleLines(projection: AdminPublicationStateProjection): Co
   return lines;
 }
 
+// Project Spec S0144: the private frontend-only audit model backing the
+// Publishing console's Live Preview inference session history. Each record
+// carries only what console projection needs -- a local event id, the
+// monotonic attempt sequence, which lifecycle kind occurred, and (for a
+// successful terminal event) a bounded safe result summary already derived
+// from the same validated binary-classification-result.v1 shape the shared
+// Result Card renders. No submitted field value, raw payload, raw response,
+// exception object, or wall-clock timestamp is ever carried.
+export type LiveInferenceAuditEventKind = "started" | "succeeded" | "validation_failed" | "execution_failed";
+
+export type LiveInferenceAuditSuccessSummary = {
+  predictedPositive: boolean;
+  positiveClassProbability: number;
+  modelDisplayName?: string;
+};
+
+export type LiveInferenceAuditRecord = {
+  id: string;
+  attemptSequence: number;
+  kind: LiveInferenceAuditEventKind;
+  successSummary?: LiveInferenceAuditSuccessSummary;
+};
+
+// Owned by DatasetAdminPage (Section "Keep the history above top-level tab
+// ownership"), scoped to exactly one selected dataset identity at a time.
+// activeAttemptSequence correlates the next terminal event to the attempt
+// currently outstanding -- null whenever no started event is awaiting a
+// terminal one, which is also how a duplicate or unmatched terminal
+// callback is safely ignored (see reduceLiveInferenceAuditEvent).
+export type LiveInferenceAuditState = {
+  datasetSlug: string;
+  records: LiveInferenceAuditRecord[];
+  nextAttemptSequence: number;
+  nextEventId: number;
+  activeAttemptSequence: number | null;
+};
+
+const LIVE_INFERENCE_AUDIT_RETENTION_LIMIT = 50;
+
+export function emptyLiveInferenceAuditState(datasetSlug: string): LiveInferenceAuditState {
+  return { datasetSlug, records: [], nextAttemptSequence: 1, nextEventId: 1, activeAttemptSequence: null };
+}
+
+function appendBoundedLiveInferenceAuditRecord(
+  state: LiveInferenceAuditState,
+  record: LiveInferenceAuditRecord,
+): LiveInferenceAuditState {
+  const records = [...state.records, record];
+  return {
+    ...state,
+    records:
+      records.length > LIVE_INFERENCE_AUDIT_RETENTION_LIMIT
+        ? records.slice(records.length - LIVE_INFERENCE_AUDIT_RETENTION_LIMIT)
+        : records,
+  };
+}
+
+// Project Spec S0144: the sole correlation authority for one Live Preview
+// inference lifecycle event. datasetSlugAtCapture is the selected-dataset
+// identity the calling callback closed over at the moment InferenceForm
+// invoked it -- if that no longer matches the current audit session's
+// dataset (the operator switched datasets while the callback was still in
+// flight), the event is ignored entirely rather than fabricating or
+// misattributing a record. A terminal event (anything but "started") is
+// likewise ignored whenever there is no currently active attempt to
+// correlate it to, which safely absorbs both a duplicate terminal callback
+// for an attempt already closed and a terminal callback with no matching
+// start.
+export function reduceLiveInferenceAuditEvent(
+  state: LiveInferenceAuditState,
+  datasetSlugAtCapture: string,
+  kind: LiveInferenceAuditEventKind,
+  successSummary?: LiveInferenceAuditSuccessSummary,
+): LiveInferenceAuditState {
+  if (datasetSlugAtCapture !== state.datasetSlug) {
+    return state;
+  }
+
+  if (kind === "started") {
+    const attemptSequence = state.nextAttemptSequence;
+    return appendBoundedLiveInferenceAuditRecord(
+      {
+        ...state,
+        nextAttemptSequence: attemptSequence + 1,
+        nextEventId: state.nextEventId + 1,
+        activeAttemptSequence: attemptSequence,
+      },
+      { id: `live-inference-audit-${state.nextEventId}`, attemptSequence, kind: "started" },
+    );
+  }
+
+  if (state.activeAttemptSequence === null) {
+    return state;
+  }
+
+  const attemptSequence = state.activeAttemptSequence;
+  return appendBoundedLiveInferenceAuditRecord(
+    { ...state, nextEventId: state.nextEventId + 1, activeAttemptSequence: null },
+    {
+      id: `live-inference-audit-${state.nextEventId}`,
+      attemptSequence,
+      kind,
+      successSummary: kind === "succeeded" ? successSummary : undefined,
+    },
+  );
+}
+
+// One deterministic formatting helper for the bounded [0, 1] positive-class
+// probability -- mirrors BinaryClassificationResult.tsx's own
+// formatProbability precision (percentage, at most one decimal place,
+// rounded) so the console's number reads consistent with the Result Card. A
+// non-finite or out-of-domain value is never interpolated -- the whole
+// probability clause is omitted instead.
+function formatLiveInferenceAuditProbability(value: number): string | null {
+  if (!Number.isFinite(value) || value < 0 || value > 1) return null;
+  const rounded = Math.round(value * 1000) / 10;
+  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return `${text}%`;
+}
+
+// Project Spec S0144: renders the required bounded, explicit console text
+// for each retained audit record. Only ever built from the record's own
+// bounded fields -- never a raw payload, response, or exception message. An
+// absent optional success-summary field is omitted cleanly rather than
+// rendered as undefined/null/an object.
+export function liveInferenceAuditConsoleLines(records: LiveInferenceAuditRecord[]): ConsoleLine[] {
+  return records.map((record): ConsoleLine => {
+    if (record.kind === "started") {
+      return {
+        id: record.id,
+        severity: "INFO",
+        text: `Live Preview inference attempt #${record.attemptSequence} started.`,
+      };
+    }
+    if (record.kind === "validation_failed") {
+      return {
+        id: record.id,
+        severity: "ERROR",
+        text: `Live Preview inference attempt #${record.attemptSequence} was rejected because the submitted fields were invalid.`,
+      };
+    }
+    if (record.kind === "execution_failed") {
+      return {
+        id: record.id,
+        severity: "ERROR",
+        text: `Live Preview inference attempt #${record.attemptSequence} could not be completed.`,
+      };
+    }
+
+    const clauses: string[] = [];
+    if (record.successSummary) {
+      clauses.push(record.successSummary.predictedPositive ? "positive outcome" : "negative outcome");
+      const probabilityText = formatLiveInferenceAuditProbability(record.successSummary.positiveClassProbability);
+      if (probabilityText) {
+        clauses.push(`positive-class probability ${probabilityText}`);
+      }
+      if (record.successSummary.modelDisplayName) {
+        clauses.push(`model ${record.successSummary.modelDisplayName}`);
+      }
+    }
+    const summarySuffix = clauses.length > 0 ? `: ${clauses.join(", ")}` : "";
+    return {
+      id: record.id,
+      severity: "OK",
+      text: `Live Preview inference attempt #${record.attemptSequence} completed successfully${summarySuffix}.`,
+    };
+  });
+}
+
 // Translates the bounded publication-state request machine, plus local
 // visibility-write failure, into the console's full deterministic line set
 // (Section 4, "Render local request states" and "Avoid duplicate or stale
 // lines"). Never renders raw response bodies, stack traces, or paths.
+// Project Spec S0144: liveInferenceAuditLines are appended after every
+// branch (including the idle/loading/unavailable early returns, so the
+// history is never silently discarded while publication projection isn't
+// ready) and are deliberately excluded from the publication-line by-text
+// dedup below -- two attempts with identical safe summaries must remain two
+// distinct lines.
 function buildOperationalConsoleLines(
   projectionState: PublicationProjectionState,
   visibilityWriteFailed: boolean,
   reviewApprovalWriteFailed: boolean,
+  liveInferenceAuditLines: ConsoleLine[] = [],
 ): ConsoleLine[] {
   if (projectionState.status === "idle") {
-    return [{ id: "no-dataset", severity: "INFO", text: "Select a dataset to inspect publication state." }];
+    return [
+      { id: "no-dataset", severity: "INFO", text: "Select a dataset to inspect publication state." },
+      ...liveInferenceAuditLines,
+    ];
   }
   if (projectionState.status === "loading") {
-    return [{ id: "loading", severity: "INFO", text: "Checking publication state..." }];
+    return [{ id: "loading", severity: "INFO", text: "Checking publication state..." }, ...liveInferenceAuditLines];
   }
   if (projectionState.status === "unavailable") {
     return [
       { id: "unavailable", severity: "ERROR", text: "Publication state could not be loaded from the private Admin API." },
+      ...liveInferenceAuditLines,
     ];
   }
 
@@ -3581,13 +3807,15 @@ function buildOperationalConsoleLines(
   }
 
   const seen = new Set<string>();
-  return lines.filter((line) => {
+  const dedupedLines = lines.filter((line) => {
     if (seen.has(line.text)) {
       return false;
     }
     seen.add(line.text);
     return true;
   });
+
+  return [...dedupedLines, ...liveInferenceAuditLines];
 }
 
 // Read-only operational status surface (Section 4, "Create the operational
@@ -3653,6 +3881,7 @@ function publicPageActionAvailable(projectionState: PublicationProjectionState):
 // action.
 function PublishingTab({
   hasUnpublishedChanges,
+  liveInferenceAuditRecords,
   onApproveReview,
   onToggleVisibility,
   projectionState,
@@ -3661,6 +3890,7 @@ function PublishingTab({
   visibilityWriteFailed,
 }: {
   hasUnpublishedChanges: boolean;
+  liveInferenceAuditRecords: LiveInferenceAuditRecord[];
   onApproveReview: () => void;
   onToggleVisibility: (visible: boolean) => void;
   projectionState: PublicationProjectionState;
@@ -3689,7 +3919,12 @@ function PublishingTab({
       : visibilityWriteFailed
       ? "Save failed. Previous value restored."
       : null;
-  const consoleLines = buildOperationalConsoleLines(projectionState, visibilityWriteFailed, reviewApprovalWriteFailed);
+  const consoleLines = buildOperationalConsoleLines(
+    projectionState,
+    visibilityWriteFailed,
+    reviewApprovalWriteFailed,
+    liveInferenceAuditConsoleLines(liveInferenceAuditRecords),
+  );
 
   const reviewStatusText =
     projectionState.status === "ready" || projectionState.status === "approving"
@@ -3763,12 +3998,16 @@ function DatasetDetailLivePreview({
   readOnlyData,
   selectedSlug,
   customizationEditorState,
+  liveInferenceExecutor,
+  onLiveInferenceLifecycleEvent,
 }: {
   dataset?: DatasetListing;
   form: DraftForm;
   readOnlyData: ReadOnlyData;
   selectedSlug: string;
   customizationEditorState: CustomizationEditorState;
+  liveInferenceExecutor: InferenceExecutor;
+  onLiveInferenceLifecycleEvent: (event: InferenceLifecycleEvent) => void;
 }) {
   const context = stateValue(readOnlyData.context);
   const contract = stateValue(readOnlyData.contract);
@@ -3791,19 +4030,42 @@ function DatasetDetailLivePreview({
   const targetDistributionContent = <TargetDistribution visualizations={visualizations} />;
   const featureImportanceContent = <FeatureImportance visualizations={visualizations} />;
 
-  // Reuses the public S0112 two-column form/result layout contract
-  // (public-inference-surface) so the Admin-only preview-mode Inference Form
-  // and synthetic Result Card render with the same structure as the real
-  // public Inference tab, instead of a second divergent Admin layout.
-  const inferenceContent = (
-    <div className="public-inference-surface">
-      <FormLayoutLivePreview
-        customizationEditorState={customizationEditorState}
-        readOnlyData={readOnlyData}
-        selectedSlug={selectedSlug}
-      />
-      <ResultCardLivePreview form={form} resetKey={selectedSlug} resultContract={readOnlyData.resultContract} />
-    </div>
+  // Project Spec S0143: the Dataset Detail Live Preview Inference tab now
+  // owns one real, executable InferenceForm lifecycle -- the same
+  // public-inference-surface layout DatasetPage.tsx renders -- instead of a
+  // non-submitting preview form plus a separate synthetic ResultCardLivePreview.
+  // The private Admin executeAdminInference executor replaces the public
+  // fetch target; the technical feature contract, result contract and
+  // presentation still come from the same private authoring context and
+  // draft this preview already loads.
+  const customizationDraft = customizationDraftOf(customizationEditorState);
+  const liveInferenceCustomization: PredictViewCustomization | undefined = customizationDraft
+    ? (() => {
+        const { field_hints, groups, view_copy } = customizationDraftToRecord(customizationDraft);
+        return { field_hints, groups, view_copy };
+      })()
+    : undefined;
+
+  const inferenceContent = contract ? (
+    <InferenceForm
+      contract={contract}
+      customization={liveInferenceCustomization}
+      executeInference={liveInferenceExecutor}
+      initialResultProbability={0}
+      // Project Spec S0144: the bounded lifecycle observer feeding the
+      // Publishing console's Live Preview inference session audit history.
+      onLifecycleEvent={onLiveInferenceLifecycleEvent}
+      // Project Spec S0143: resets (and stale-response-guards) the Live
+      // Preview result whenever the selected dataset or its bound Predict
+      // View/customization identity changes -- never on unrelated re-renders.
+      resetKey={`${selectedSlug}::${form.bound_predict_view_id}`}
+      resultContract={toInferenceResultContract(readOnlyData.resultContract)}
+      resultPresentation={presentationFromForm(form)}
+      slug={selectedSlug}
+      submitButtonLabel={customizationDraft?.viewCopy.submit_button_label.trim() || undefined}
+    />
+  ) : (
+    <p style={mutedTextStyle}>Contract fields are unavailable for this dataset.</p>
   );
 
   return (
@@ -3861,43 +4123,6 @@ function ResultCardLivePreview({ form, resetKey, resultContract }: { form: Draft
   );
 }
 
-function FormLayoutLivePreview({
-  readOnlyData,
-  selectedSlug,
-  customizationEditorState,
-}: {
-  readOnlyData: ReadOnlyData;
-  selectedSlug: string;
-  customizationEditorState: CustomizationEditorState;
-}) {
-  const contract = stateValue(readOnlyData.contract);
-  const draft = customizationDraftOf(customizationEditorState);
-
-  if (!contract) {
-    return <p style={mutedTextStyle}>Contract fields are unavailable for this dataset.</p>;
-  }
-  if (!draft) {
-    return (
-      <p style={mutedTextStyle}>
-        Load a predict view's customization in the Inference Form tab to preview its layout here.
-      </p>
-    );
-  }
-
-  const { field_hints, groups, view_copy } = customizationDraftToRecord(draft);
-  const customization: PredictViewCustomization = { field_hints, groups, view_copy };
-
-  return (
-    <InferenceForm
-      contract={contract}
-      customization={customization}
-      previewMode
-      slug={selectedSlug}
-      submitButtonLabel={draft.viewCopy.submit_button_label.trim() || undefined}
-    />
-  );
-}
-
 // Mirrors the comparison already used for Publishing's own status pill
 // (publishingStatusLabel) so Live Preview never invents a second, divergent
 // notion of "matches published" -- it just states which side of that same
@@ -3920,6 +4145,8 @@ function LivePreviewTab({
   readOnlyData,
   selectedSlug,
   customizationEditorState,
+  liveInferenceExecutor,
+  onLiveInferenceLifecycleEvent,
 }: {
   dataset?: DatasetListing;
   form: DraftForm;
@@ -3928,6 +4155,8 @@ function LivePreviewTab({
   readOnlyData: ReadOnlyData;
   selectedSlug: string;
   customizationEditorState: CustomizationEditorState;
+  liveInferenceExecutor: InferenceExecutor;
+  onLiveInferenceLifecycleEvent: (event: InferenceLifecycleEvent) => void;
 }) {
   const [previewMode, setPreviewMode] = useState<"detail" | "card">("detail");
 
@@ -3993,32 +4222,20 @@ function LivePreviewTab({
         {previewMode === "detail" && (
           <article className="dataset-admin-preview-panel dataset-admin-preview-panel--detail" aria-label="Dataset Detail preview">
             {/*
-              Neutral documentation frame around the shared DatasetDetailSurface
-              (Project Spec S0120): a non-interactive miniature of the public
-              side rail matches the Dataset Admin design reference without
-              mounting real navigation, PublicShell, or a second public data
-              load -- the rail is presentation-only and excluded from
-              navigation semantics via aria-hidden.
+              Project Spec S0142: full-width bounded wrapper around the
+              shared DatasetDetailSurface -- Admin workspace spacing/
+              clipping/theme containment only. No simulated public
+              navigation rail, PublicShell, iframe, or duplicated public
+              page implementation.
             */}
             <div className="dataset-admin-detail-preview-frame">
-              <aside aria-hidden="true" className="dataset-admin-detail-preview-rail">
-                <span className="dataset-admin-detail-preview-menu">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <nav className="dataset-admin-detail-preview-nav">
-                  <span>Home</span>
-                  <span>Projetos</span>
-                  <span>GitHub</span>
-                  <span>Contato</span>
-                </nav>
-              </aside>
               <div className="dataset-admin-detail-preview-page">
                 <DatasetDetailLivePreview
                   customizationEditorState={customizationEditorState}
                   dataset={dataset}
                   form={form}
+                  liveInferenceExecutor={liveInferenceExecutor}
+                  onLiveInferenceLifecycleEvent={onLiveInferenceLifecycleEvent}
                   readOnlyData={readOnlyData}
                   selectedSlug={selectedSlug}
                 />
@@ -4049,6 +4266,9 @@ function renderSelectedTab(
   onRetryAuthoringContext: () => void,
   onApproveReview: () => void,
   reviewApprovalWriteFailed: boolean,
+  liveInferenceAuditRecords: LiveInferenceAuditRecord[],
+  liveInferenceExecutor: InferenceExecutor,
+  onLiveInferenceLifecycleEvent: (event: InferenceLifecycleEvent) => void,
 ) {
   // Shared by the Live Preview case below so it can classify its own
   // draft-vs-published state (S0009) using the same comparison Publishing
@@ -4084,6 +4304,7 @@ function renderSelectedTab(
       return (
         <PublishingTab
           hasUnpublishedChanges={hasUnpublishedChanges}
+          liveInferenceAuditRecords={liveInferenceAuditRecords}
           onApproveReview={onApproveReview}
           onToggleVisibility={onToggleVisibility}
           projectionState={projectionState}
@@ -4100,6 +4321,8 @@ function renderSelectedTab(
           form={form}
           hasPublishedSnapshot={hasPublishedSnapshot}
           hasUnpublishedChanges={hasUnpublishedChanges}
+          liveInferenceExecutor={liveInferenceExecutor}
+          onLiveInferenceLifecycleEvent={onLiveInferenceLifecycleEvent}
           readOnlyData={readOnlyData}
           selectedSlug={selectedSlug}
         />
@@ -4168,6 +4391,23 @@ export default function DatasetAdminPage() {
   // approval write -- set only by a failed approval PUT and cleared by the
   // next dataset switch or the next approval attempt.
   const [reviewApprovalWriteFailed, setReviewApprovalWriteFailed] = useState(false);
+  // Project Spec S0144: the Publishing console's Live Preview inference
+  // session audit history, owned here alongside publicationProjection and
+  // the transient write-failure state above -- never by a child tab, a
+  // module-global store, or browser storage. Scoped to selectedSlug and
+  // reset at the exact same points visibilityWriteFailed/
+  // reviewApprovalWriteFailed already reset below, so a top-level Admin tab
+  // switch never clears it but a dataset switch always does.
+  const [liveInferenceAudit, setLiveInferenceAudit] = useState<LiveInferenceAuditState>(() =>
+    emptyLiveInferenceAuditState(""),
+  );
+  // Bridges executeAdminInference's validated success result to the
+  // subsequent onLifecycleEvent("succeeded") callback InferenceForm invokes
+  // immediately afterward -- InferenceForm's own lifecycle event carries no
+  // result data by design (Project Spec S0143), so this is the only bounded
+  // channel the safe result summary travels through. Never holds a raw
+  // payload, raw response, or exception.
+  const pendingLiveInferenceSuccessSummaryRef = useRef<LiveInferenceAuditSuccessSummary | null>(null);
   // Guards a superseded publication-state response from ever applying itself
   // (mirrors customizationRequestRef below): AbortController alone is not
   // sufficient because this repo's test fetch mocks do not honor
@@ -4289,6 +4529,10 @@ export default function DatasetAdminPage() {
       setPublicationProjection(emptyPublicationProjectionState);
       setVisibilityWriteFailed(false);
       setReviewApprovalWriteFailed(false);
+      // Project Spec S0144: transitioning to no selected dataset clears the
+      // inference audit history the same way it clears every other
+      // per-dataset console state above.
+      setLiveInferenceAudit(emptyLiveInferenceAuditState(""));
       return;
     }
 
@@ -4307,6 +4551,12 @@ export default function DatasetAdminPage() {
       setPublicationProjection({ status: "loading", datasetSlug: selectedSlug });
       setVisibilityWriteFailed(false);
       setReviewApprovalWriteFailed(false);
+      // Project Spec S0144: a real dataset switch clears all inference audit
+      // records, resets the attempt sequence, and clears active attempt
+      // correlation -- never retained across a changed selection, and never
+      // cleared merely by isBackgroundRefresh re-running this effect for the
+      // same dataset.
+      setLiveInferenceAudit(emptyLiveInferenceAuditState(selectedSlug));
       // Project Spec S0098: the deterministic predict-view rebind default
       // below applies at most once per dataset selection; switching to a
       // different (or reselecting the same) Dataset Detail must be able to
@@ -5159,6 +5409,47 @@ export default function DatasetAdminPage() {
     setAuthoringContextRetryNonce((current) => current + 1);
   }
 
+  // Project Spec S0144: wraps executeAdminInference (Project Spec S0143's
+  // private Admin executor) purely to capture the bounded safe result
+  // summary a successful response carries, for the Publishing console's
+  // audit line -- the request/response behavior itself, and everything
+  // InferenceForm does with the returned InferenceExecutionResult, is
+  // unchanged. Never stores a raw payload or raw response; only the same
+  // validated binary-classification-result.v1 fields the shared Result Card
+  // already renders.
+  async function liveInferenceExecutor(
+    slug: string,
+    payload: Record<string, string | number | boolean>,
+  ): Promise<InferenceExecutionResult> {
+    const outcome = await executeAdminInference(slug, payload);
+    pendingLiveInferenceSuccessSummaryRef.current =
+      outcome.ok && isBinaryClassificationResult(outcome.result)
+        ? {
+            predictedPositive: outcome.result.decision.predicted_positive,
+            positiveClassProbability: outcome.result.positive_class_probability,
+            modelDisplayName: outcome.result.model_descriptor.display_name,
+          }
+        : null;
+    return outcome;
+  }
+
+  // Project Spec S0144: the bounded lifecycle handler passed to the S0143
+  // Live Preview inference flow. datasetSlugAtCapture is selectedSlug as
+  // closed over by the specific render that created this callback instance
+  // -- if InferenceForm's own stale-response guard is ever bypassed (e.g. an
+  // in-flight request outliving a remount around a dataset switch), that
+  // captured identity, not the live selectedSlug variable, is what
+  // reduceLiveInferenceAuditEvent checks against the current audit session,
+  // so a callback captured for a previous dataset can never append a line
+  // after the selection changes.
+  function handleLiveInferenceLifecycleEvent(datasetSlugAtCapture: string, event: InferenceLifecycleEvent) {
+    const successSummary =
+      event.type === "succeeded" ? pendingLiveInferenceSuccessSummaryRef.current ?? undefined : undefined;
+    setLiveInferenceAudit((current) =>
+      reduceLiveInferenceAuditEvent(current, datasetSlugAtCapture, event.type, successSummary),
+    );
+  }
+
   // Client-side mirror of the backend's REQUIRED_FIELD_HIDDEN rejection
   // (registry/predict_view_customization_validate.py): lets the shared
   // Publish changes orchestrator below block the request entirely rather
@@ -5371,6 +5662,9 @@ export default function DatasetAdminPage() {
             retryAuthoringContext,
             approveDatasetReview,
             reviewApprovalWriteFailed,
+            liveInferenceAudit.records,
+            liveInferenceExecutor,
+            (event) => handleLiveInferenceLifecycleEvent(selectedSlug, event),
           )}
         </div>
       </section>

@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import ResultCardShell from "../ResultCard/ResultCardShell";
 import BinaryClassificationResult from "../ResultCard/BinaryClassificationResult";
 import {
@@ -81,6 +81,64 @@ function mapErrorCode(errorCode: string | undefined): string {
   return ERROR_MESSAGES[errorCode] ?? FALLBACK_ERROR;
 }
 
+/**
+ * Project Spec S0143: the bounded typed outcome every inference executor
+ * resolves to, whether it POSTs to the public route or a private Admin
+ * route. Callers never see a raw Response/exception -- only this shape --
+ * so no executor can smuggle a caller-supplied raw URL, header, or
+ * transport detail through this boundary.
+ */
+export type InferenceExecutionResult =
+  | { ok: true; result: unknown }
+  | { ok: false; errorCode?: string };
+
+/**
+ * Project Spec S0143: an injectable execution boundary so InferenceForm can
+ * own one visual/state lifecycle while the caller chooses the authorized
+ * route. DatasetPage/DatasetViewPage omit this prop and keep the default
+ * public POST /datasets/{slug}/inference behavior; Dataset Admin Live
+ * Preview supplies an executor that calls the private
+ * POST /admin/datasets/{slug}/inference route instead. Never a raw URL --
+ * only a bounded (slug, payload) -> typed-result contract.
+ */
+export type InferenceExecutor = (
+  slug: string,
+  payload: Record<string, string | number | boolean>,
+) => Promise<InferenceExecutionResult>;
+
+async function defaultExecuteInference(
+  slug: string,
+  payload: Record<string, string | number | boolean>,
+): Promise<InferenceExecutionResult> {
+  try {
+    const res = await fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/inference`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = (await res.json()) as { result?: unknown; error_code?: string };
+    if (res.ok) {
+      return { ok: true, result: body?.result };
+    }
+    return { ok: false, errorCode: body?.error_code };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Project Spec S0143: a bounded lifecycle seam consumers may observe without
+ * this component implementing Publishing-console audit itself (that
+ * consumption belongs to S0144). Never carries submitted field values, raw
+ * payloads, headers, raw responses, stack traces, secrets or internal
+ * paths -- only which phase of one submission just occurred.
+ */
+export type InferenceLifecycleEvent =
+  | { type: "started" }
+  | { type: "succeeded" }
+  | { type: "validation_failed" }
+  | { type: "execution_failed" };
+
 type Props = {
   contract: ContractPayload;
   slug: string;
@@ -133,6 +191,30 @@ type Props = {
    * Preview) so their existing idle-placeholder behavior is unchanged.
    */
   initialResultProbability?: number;
+  /**
+   * Project Spec S0143: overrides the default public
+   * POST /datasets/{slug}/inference submission with a bounded injected
+   * executor (e.g. the private Admin route). Omitted by every public
+   * caller (DatasetPage/DatasetViewPage), which keeps the default public
+   * fetch behavior unchanged.
+   */
+  executeInference?: InferenceExecutor;
+  /**
+   * Project Spec S0143: an explicit identity (e.g. dataset slug + bound
+   * view id) that, when it changes, resets the submission lifecycle back
+   * to idle/initial and marks any in-flight request for that previous
+   * identity as stale so its response can never overwrite the current
+   * identity's state. Omitted by callers that never reuse one mounted
+   * instance across a changing identity.
+   */
+  resetKey?: string;
+  /**
+   * Project Spec S0143: an optional bounded lifecycle observer -- started,
+   * succeeded, validation_failed, execution_failed -- carrying no raw
+   * payload/response data. Dataset Admin does not yet consume this to
+   * append Publishing-console audit history (S0144).
+   */
+  onLifecycleEvent?: (event: InferenceLifecycleEvent) => void;
 };
 
 function buildHintMap(customization: PredictViewCustomization | undefined): Map<string, FieldHint> {
@@ -219,8 +301,29 @@ export default function InferenceForm({
   resultContract,
   resultPresentation,
   initialResultProbability,
+  executeInference,
+  resetKey,
+  onLifecycleEvent,
 }: Props) {
   const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
+
+  // Project Spec S0143: identifies the current dataset/bound-view identity
+  // generation. Bumped whenever resetKey changes so a response that started
+  // for a previous identity can detect (via the closure-captured generation
+  // it read before awaiting) that it is now stale and must never overwrite
+  // the current identity's submission state.
+  const requestGenerationRef = useRef(0);
+  const isFirstResetKeyRender = useRef(true);
+
+  useEffect(() => {
+    if (isFirstResetKeyRender.current) {
+      isFirstResetKeyRender.current = false;
+      return;
+    }
+    requestGenerationRef.current += 1;
+    setSubmission({ status: "idle" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
 
   const hintMap = buildHintMap(customization);
   const contractAvailable = !previewMode && isAvailableBinaryResultContract(resultContract);
@@ -257,6 +360,8 @@ export default function InferenceForm({
       return;
     }
 
+    const generation = requestGenerationRef.current;
+    onLifecycleEvent?.({ type: "started" });
     setSubmission({ status: "submitting" });
 
     const form = event.currentTarget;
@@ -280,31 +385,36 @@ export default function InferenceForm({
       }
     }
 
+    const executor = executeInference ?? defaultExecuteInference;
+    let outcome: InferenceExecutionResult;
     try {
-      const res = await fetch(
-        `${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/inference`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
-
-      if (res.ok) {
-        const body = await res.json() as { result?: unknown };
-        if (isBinaryClassificationResult(body?.result)) {
-          setSubmission({ status: "success", data: body.result });
-        } else {
-          // Malformed success payload: never falls back to a legacy
-          // body.prediction field, always becomes the existing safe error state.
-          setSubmission({ status: "error", message: FALLBACK_ERROR });
-        }
-      } else {
-        const body = await res.json() as { error_code?: string };
-        setSubmission({ status: "error", message: mapErrorCode(body.error_code) });
-      }
+      outcome = await executor(slug, payload);
     } catch {
-      setSubmission({ status: "error", message: FALLBACK_ERROR });
+      outcome = { ok: false };
+    }
+
+    // Project Spec S0143: the selected dataset/bound-view identity changed
+    // while this request was in flight -- this response belongs to a
+    // previous identity and must never overwrite the current one.
+    if (requestGenerationRef.current !== generation) {
+      return;
+    }
+
+    if (outcome.ok) {
+      if (isBinaryClassificationResult(outcome.result)) {
+        setSubmission({ status: "success", data: outcome.result });
+        onLifecycleEvent?.({ type: "succeeded" });
+      } else {
+        // Malformed success payload: never falls back to a legacy
+        // body.prediction field, always becomes the existing safe error state.
+        setSubmission({ status: "error", message: FALLBACK_ERROR });
+        onLifecycleEvent?.({ type: "execution_failed" });
+      }
+    } else {
+      setSubmission({ status: "error", message: mapErrorCode(outcome.errorCode) });
+      onLifecycleEvent?.({
+        type: outcome.errorCode === "INVALID_PAYLOAD" ? "validation_failed" : "execution_failed",
+      });
     }
   }
 

@@ -2,7 +2,11 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import InferenceForm, { type ContractPayload } from "./InferenceForm";
+import InferenceForm, {
+  type ContractPayload,
+  type InferenceExecutionResult,
+  type InferenceLifecycleEvent,
+} from "./InferenceForm";
 import type { BinaryResultContract, BinaryResultPresentation } from "../ResultCard/types";
 
 type MockResponse = {
@@ -531,5 +535,223 @@ describe("InferenceForm scoped visual structure (Project Spec S0135)", () => {
     expect(container.querySelectorAll(".public-inference-form__field")).toHaveLength(3);
 
     expect(screen.getByRole("button", { name: "Run Prediction" })).toHaveClass("public-inference-form__submit");
+  });
+});
+
+// Project Spec S0143: the injectable execution boundary a private Admin
+// Live Preview executor plugs into, plus the resetKey stale-response guard
+// and lifecycle seam it relies on -- exercised here independently of any
+// specific caller (DatasetAdminPage.tsx wires the real private executor).
+describe("InferenceForm injectable execution boundary (Project Spec S0143)", () => {
+  it("uses the injected executor instead of the default public fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("68%")).toBeInTheDocument();
+    expect(executeInference).toHaveBeenCalledWith(slug, expect.any(Object));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the safe error state when the injected executor reports a bounded failure", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: false, errorCode: "INFERENCE_FAILURE" }),
+    );
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The prediction service is temporarily unavailable. Please try again later.",
+    );
+  });
+
+  it("emits started/succeeded lifecycle events with no raw payload or response data", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByText("68%");
+
+    expect(events).toEqual([{ type: "started" }, { type: "succeeded" }]);
+    for (const event of events) {
+      expect(Object.keys(event)).toEqual(["type"]);
+    }
+  });
+
+  it("emits a validation_failed lifecycle event for an INVALID_PAYLOAD executor outcome", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: false, errorCode: "INVALID_PAYLOAD" }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "validation_failed" }]);
+  });
+
+  it("emits an execution_failed lifecycle event for a malformed success payload", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: true,
+        result: { schema_version: "binary-classification-result.v1" },
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "execution_failed" }]);
+  });
+
+  it("resets the submission back to the initial 0% projection when resetKey changes", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    const { rerender } = render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+        executeInference={executeInference}
+        resetKey="dataset-a::view-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByText("68%");
+
+    rerender(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+        executeInference={executeInference}
+        resetKey="dataset-b::view-1"
+      />,
+    );
+
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("68%")).not.toBeInTheDocument();
+  });
+
+  it("never lets a response from a previous identity overwrite the current identity's state", async () => {
+    let resolveExecutor: ((value: InferenceExecutionResult) => void) | null = null;
+    const executeInference = vi.fn(
+      () =>
+        new Promise<InferenceExecutionResult>((resolve) => {
+          resolveExecutor = resolve;
+        }),
+    );
+
+    const { rerender } = render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+        executeInference={executeInference}
+        resetKey="dataset-a::view-1"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("button", { name: "Submitting…" });
+
+    // The selected dataset/view identity changes before the in-flight
+    // request for the previous identity resolves.
+    rerender(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        initialResultProbability={0}
+        executeInference={executeInference}
+        resetKey="dataset-b::view-1"
+      />,
+    );
+
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
+
+    resolveExecutor!({ ok: true, result: validResult });
+
+    // Give the resolved promise's continuation a turn to run, then confirm
+    // the stale response never replaced the reset 0% projection.
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("68%")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
+    ).toBeInTheDocument();
   });
 });

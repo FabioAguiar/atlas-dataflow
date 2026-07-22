@@ -3036,17 +3036,16 @@ h1 {
 }
 
 /*
- * Project Spec S0120: a neutral documentation frame around the shared
- * DatasetDetailSurface in Dataset Detail Live Preview -- a non-interactive
- * miniature of the public side rail (matching the Dataset Admin design
- * reference) plus the real shared surface, never a scaled/iframed/copied
- * substitute. Replaces the pre-S0120 dataset-admin-detail-preview-grid
- * parallel Result/Form composition, which the shared surface's own
- * Inference tab now owns.
+ * Project Spec S0142: a full-width bounded wrapper around the shared
+ * DatasetDetailSurface in Dataset Detail Live Preview -- Admin workspace
+ * spacing/clipping/theme containment only, never a simulated public
+ * navigation rail, PublicShell, iframe, or duplicated public page
+ * implementation. Replaces the pre-S0142 two-column rail composition
+ * (S0120), which reserved a fixed-width column for a decorative,
+ * non-interactive nav miniature.
  */
 .dataset-admin-detail-preview-frame {
   display: grid;
-  grid-template-columns: 4.5rem minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--atlas-color-border-strong);
   border-radius: var(--atlas-radius-lg);
@@ -3055,56 +3054,6 @@ h1 {
 
 .dataset-admin-detail-preview-frame > * {
   min-width: 0;
-}
-
-.dataset-admin-detail-preview-rail {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: var(--atlas-space-4);
-  padding: var(--atlas-space-4) var(--atlas-space-2);
-  border-right: 1px solid var(--atlas-color-border);
-  background: var(--atlas-color-surface);
-}
-
-.dataset-admin-detail-preview-menu {
-  width: 2.25rem;
-  height: 2.25rem;
-  display: grid;
-  place-items: center;
-  gap: 0.2rem;
-  margin: 0 auto;
-  border: 1px solid var(--atlas-color-border);
-  border-radius: var(--atlas-radius-md);
-  background: var(--atlas-color-surface);
-}
-
-.dataset-admin-detail-preview-menu i {
-  width: 0.9rem;
-  height: 2px;
-  display: block;
-  border-radius: 999px;
-  background: var(--atlas-color-text-muted);
-}
-
-.dataset-admin-detail-preview-nav {
-  display: grid;
-  align-content: start;
-  gap: var(--atlas-space-3);
-}
-
-.dataset-admin-detail-preview-nav span {
-  display: block;
-  padding: var(--atlas-space-1);
-  border-radius: var(--atlas-radius-sm);
-  color: var(--atlas-color-text-subtle);
-  font-size: var(--atlas-text-xs);
-  font-weight: 800;
-  text-align: center;
-}
-
-.dataset-admin-detail-preview-nav span:first-child {
-  color: var(--atlas-color-accent-strong);
-  background: var(--atlas-color-accent-muted);
 }
 
 .dataset-admin-detail-preview-page {

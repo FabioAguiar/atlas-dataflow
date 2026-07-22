@@ -45,7 +45,7 @@ export default function App() {
         <Route
           path="/dataset/:slug"
           element={
-            <PublicShell mainMode="full_bleed">
+            <PublicShell mainMode="full_bleed" initialNavOpen={false}>
               <DatasetPage />
             </PublicShell>
           }

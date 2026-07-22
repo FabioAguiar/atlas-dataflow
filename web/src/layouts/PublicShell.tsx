@@ -6,6 +6,7 @@ export type PublicShellMainMode = "constrained" | "full_bleed";
 type PublicShellProps = {
   children: ReactNode;
   mainMode?: PublicShellMainMode;
+  initialNavOpen?: boolean;
 };
 
 // Placeholders per design/screens/home/content.md integration notes; replace
@@ -70,9 +71,15 @@ function isDesktopViewport() {
 // stays "constrained" so every pre-existing public route is unaffected;
 // only a route that explicitly requests "full_bleed" drops the centered
 // main-width constraint for the outer route boundary.
-export default function PublicShell({ children, mainMode = "constrained" }: PublicShellProps) {
+export default function PublicShell({ children, mainMode = "constrained", initialNavOpen }: PublicShellProps) {
   const navToggleRef = useRef<HTMLButtonElement | null>(null);
-  const [navOpen, setNavOpen] = useState<boolean>(isDesktopViewport);
+  // Project Spec S0137: `initialNavOpen` governs only the first-render nav
+  // state. Omitted, it preserves the existing viewport-derived default; an
+  // explicit boolean initializes the rail regardless of viewport, and does
+  // not turn the rail into a continuously controlled component.
+  const [navOpen, setNavOpen] = useState<boolean>(() =>
+    typeof initialNavOpen === "boolean" ? initialNavOpen : isDesktopViewport(),
+  );
   const [isDesktop, setIsDesktop] = useState<boolean>(isDesktopViewport);
 
   useEffect(() => {

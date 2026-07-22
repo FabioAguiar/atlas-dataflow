@@ -205,7 +205,6 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
           performanceContent={<div data-testid="performance-slot">Performance content</div>}
           problemSummaryBody="Synthetic problem summary body."
           problemSummaryTitle="Problem summary"
-          targetDistributionContent={<div data-testid="target-distribution-slot">Target distribution content</div>}
           themePresetId="ocean-blue"
           {...overrides}
         />
@@ -247,7 +246,6 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
     renderSurface();
 
     expect(screen.getAllByTestId("performance-slot")).toHaveLength(1);
-    expect(screen.getAllByTestId("target-distribution-slot")).toHaveLength(1);
     expect(screen.getAllByTestId("feature-importance-slot")).toHaveLength(1);
 
     const problemSummary = screen.getByText("Synthetic problem summary body.");
@@ -278,5 +276,95 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
       "https://example.org/data",
     );
     expect(screen.getByText("Format: dd/mm/yyyy")).toBeInTheDocument();
+  });
+});
+
+// Project Spec S0136: the shared surface's public presentation contract no
+// longer carries a Target Distribution slot, and each tab's visible
+// tabpanel owns exactly its authorized cards -- never a fourth Overview
+// card, an Inference-owned surface leaking into Overview, or the reverse.
+// Every assertion below is scoped to screen.getByRole("tabpanel"), which
+// testing-library resolves to the one panel currently lacking `hidden` --
+// never a raw whole-container query that would also see the other two
+// tabs' mounted-but-hidden content.
+describe("DatasetDetailSurface exact tab card ownership (S0136)", () => {
+  const metadata: DatasetDetailMetadataItem[] = [
+    { label: "Source", value: "Example Org", href: "https://example.org/data" },
+    { label: "Instances", value: "500" },
+    { label: "Features", value: "4" },
+    { label: "Target", value: "Synthetic target" },
+    { label: "Release", value: "01/07/2026", hint: "Format: dd/mm/yyyy" },
+  ];
+
+  const readyVisualizations = {
+    charts: [{ id: "feature_importance", type: "bar" as const, data: [{ name: "tenure", value: 0.7 }] }],
+  };
+
+  function renderReadySurface(overrides: Partial<ComponentProps<typeof DatasetDetailSurface>> = {}) {
+    return render(
+      <MemoryRouter>
+        <DatasetDetailSurface
+          analysisType="Binary Classification"
+          datasetSubtitle="Synthetic surface subtitle"
+          datasetTitle="Synthetic Surface Dataset"
+          featureImportanceContent={<FeatureImportance visualizations={readyVisualizations} />}
+          inferenceContent={
+            <>
+              <div className="public-inference-surface__form-panel public-inference-form">Form</div>
+              <div className="inference-result">Result</div>
+            </>
+          }
+          metadata={metadata}
+          performanceContent={<PerformanceSummary metrics={{ auc_roc: 0.87 }} />}
+          problemSummaryBody="Synthetic problem summary body."
+          problemSummaryTitle="Problem summary"
+          themePresetId="ocean-blue"
+          {...overrides}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("Overview exposes exactly the three authorized cards and no Inference surface", () => {
+    renderReadySurface();
+
+    const panel = screen.getByRole("tabpanel");
+    const cards = panel.querySelectorAll(".atlas-card");
+    expect(cards).toHaveLength(3);
+    expect(panel.querySelector(".atlas-card.dataset-detail-overview__problem-summary")).toBeInTheDocument();
+    expect(panel.querySelector(".atlas-card.performance-summary")).toBeInTheDocument();
+    expect(
+      panel.querySelector(".atlas-card.dataset-detail-visualization.dataset-detail-visualization--ranked"),
+    ).toBeInTheDocument();
+
+    expect(
+      panel.querySelector(".dataset-detail-visualization:not(.dataset-detail-visualization--ranked)"),
+    ).not.toBeInTheDocument();
+    expect(panel.querySelector(".public-inference-form")).not.toBeInTheDocument();
+    expect(panel.querySelector(".inference-result")).not.toBeInTheDocument();
+  });
+
+  it("Inference exposes exactly one form panel and one result surface, and no Overview cards", () => {
+    renderReadySurface();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.querySelectorAll(".public-inference-surface__form-panel.public-inference-form")).toHaveLength(1);
+    expect(panel.querySelectorAll(".inference-result")).toHaveLength(1);
+
+    expect(panel.querySelector(".dataset-detail-overview__problem-summary")).not.toBeInTheDocument();
+    expect(panel.querySelector(".performance-summary")).not.toBeInTheDocument();
+    expect(panel.querySelector(".dataset-detail-visualization")).not.toBeInTheDocument();
+  });
+
+  it("Documentation stays empty and does not duplicate the hidden Inference surface", () => {
+    renderReadySurface();
+    fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toBeEmptyDOMElement();
+    expect(panel.querySelectorAll(".atlas-card")).toHaveLength(0);
+    expect(panel.querySelector(".public-inference-form")).not.toBeInTheDocument();
+    expect(panel.querySelector(".inference-result")).not.toBeInTheDocument();
   });
 });

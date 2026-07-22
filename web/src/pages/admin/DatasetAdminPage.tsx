@@ -13,7 +13,6 @@ import DatasetCard from "../../components/DatasetCard";
 import { DatasetIcon } from "../../components/DatasetCard/DatasetCard";
 import DatasetDetailSurface from "../../components/DatasetDetail/DatasetDetailSurface";
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
-import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
 import ResultCardShell from "../../components/ResultCard/ResultCardShell";
@@ -3788,7 +3787,6 @@ function DatasetDetailLivePreview({
       performanceFocus={projectPerformanceFocusPreview(form.performance_focus)}
     />
   );
-  const targetDistributionContent = <TargetDistribution visualizations={visualizations} />;
   const featureImportanceContent = <FeatureImportance visualizations={visualizations} />;
 
   // Reuses the public S0112 two-column form/result layout contract
@@ -3817,7 +3815,6 @@ function DatasetDetailLivePreview({
       performanceContent={performanceContent}
       problemSummaryBody={preview.problemSummaryBody}
       problemSummaryTitle={preview.problemSummaryTitle}
-      targetDistributionContent={targetDistributionContent}
       themePresetId={form.theme_preset}
     />
   );

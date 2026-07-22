@@ -2658,8 +2658,19 @@ describe("DatasetAdminPage", () => {
     expect(detailTabs.getByRole("tab", { name: "Overview", selected: true })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Churn context" })).toBeInTheDocument();
     expect(screen.getByText("Explains customer churn for a public audience.")).toBeInTheDocument();
-    expect(container.querySelectorAll(".performance-summary")).toHaveLength(1);
-    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
+
+    // Project Spec S0136: the Live Preview Overview owns exactly the same
+    // three authorized cards as the public route -- Problem Summary,
+    // Performance Summary, and ranked Feature Importance -- never a Target
+    // Distribution card, and no route-specific CSS/duplicate composition is
+    // used to achieve that parity (both routes share DatasetDetailSurface).
+    const overviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
+    expect(overviewPanel.querySelectorAll(".atlas-card")).toHaveLength(3);
+    expect(overviewPanel.querySelector(".dataset-detail-overview__problem-summary")).toBeInTheDocument();
+    expect(overviewPanel.querySelector(".performance-summary")).toBeInTheDocument();
+    expect(overviewPanel.querySelector(".dataset-detail-visualization--ranked")).toBeInTheDocument();
+    expect(overviewPanel.querySelector(".dataset-detail-visualization--donut")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(1);
 
     fireEvent.click(detailTabs.getByRole("tab", { name: "Inference" }));
     expect(screen.getByText(/Preview only — no inference request is executed./)).toBeInTheDocument();
@@ -2669,9 +2680,15 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Tenure")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Run prediction/ })).toBeDisabled();
 
+    const inferencePanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
+    expect(inferencePanel.querySelector(".dataset-detail-overview__problem-summary")).not.toBeInTheDocument();
+    expect(inferencePanel.querySelector(".performance-summary")).not.toBeInTheDocument();
+    expect(inferencePanel.querySelector(".dataset-detail-visualization")).not.toBeInTheDocument();
+
     fireEvent.click(detailTabs.getByRole("tab", { name: "Documentation" }));
     const documentationPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])");
     expect(documentationPanel).toBeEmptyDOMElement();
+    expect(documentationPanel!.querySelectorAll(".atlas-card")).toHaveLength(0);
 
     // No Model Card anywhere in the Dataset Detail preview, and the Admin
     // read-only load never requests the technical Model Card endpoint.

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +15,22 @@ function jsonResponse(body: unknown, status = 200): MockResponse {
     status,
     json: async () => body,
   };
+}
+
+// Project Spec S0137: route-isolation tests must explicitly configure
+// desktop/mobile matchMedia -- the shell's initial nav state depends on it
+// whenever a route omits an explicit initialNavOpen override.
+function mockMatchMedia(matches: boolean) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
 }
 
 const datasets = [
@@ -42,19 +58,48 @@ function installFetchMock() {
       return jsonResponse({ runs_root_status: "available", runs: [] });
     }
     if (url.includes("/context")) {
-      return jsonResponse({ problem_summary: "Public-safe context" });
+      return jsonResponse({
+        dataset_slug: datasets[0].dataset_slug,
+        context: { problem_summary_body: "Public-safe context" },
+      });
+    }
+    if (url.endsWith("/customization")) {
+      return jsonResponse({}, 404);
+    }
+    if (/\/views\/[^/]+$/.test(url)) {
+      return jsonResponse({
+        view_id: "churn-risk-overview",
+        dataset_slug: datasets[0].dataset_slug,
+        display: { title: "Churn risk overview" },
+        intent: {},
+        release_mode: null,
+      });
     }
     if (url.includes("/contract")) {
-      return jsonResponse({ features: [{ name: "tenure", optional: true }] });
+      return jsonResponse({
+        contract: {
+          schema_version: "1.0.0",
+          features: [
+            { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
+          ],
+        },
+        result_contract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
+      });
     }
     if (url.includes("/metrics")) {
-      return jsonResponse({ auc_roc: 0.91 });
+      return jsonResponse({
+        dataset_slug: datasets[0].dataset_slug,
+        metrics: { auc_roc: 0.91 },
+      });
     }
     if (url.includes("/model-card")) {
       return jsonResponse({ model_name: "Validation model" });
     }
     if (url.includes("/visualizations")) {
-      return jsonResponse({});
+      return jsonResponse({
+        dataset_slug: datasets[0].dataset_slug,
+        visualizations: {},
+      });
     }
     if (url.includes("/views")) {
       return jsonResponse([
@@ -88,6 +133,7 @@ async function renderApp(route: string, enableAdmin: boolean) {
 describe("App admin routing", () => {
   beforeEach(() => {
     installFetchMock();
+    mockMatchMedia(true);
   });
 
   afterEach(() => {
@@ -186,5 +232,86 @@ describe("App admin routing", () => {
 
     expect(await screen.findByRole("heading", { name: /Atlas DataFlow/i })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Admin sections" })).not.toBeInTheDocument();
+  });
+});
+
+// Project Spec S0137: /dataset/:slug requests an explicit collapsed initial
+// navigation state at every viewport size, while / and the Predict View
+// route keep the existing viewport-derived default. Route isolation --
+// neither route leaks the other's initial navigation state.
+describe("PublicShell initial navigation route isolation (Project Spec S0137)", () => {
+  beforeEach(() => {
+    installFetchMock();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("starts /dataset/:slug collapsed on a desktop viewport", async () => {
+    mockMatchMedia(true);
+    const { container } = await renderApp("/dataset/telco-customer-churn", false);
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+
+    const toggle = screen.getByLabelText("Mostrar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("keeps / open by default on a desktop viewport", async () => {
+    mockMatchMedia(true);
+    const { container } = await renderApp("/", false);
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    const toggle = screen.getByLabelText("Ocultar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+  });
+
+  it("keeps /dataset/:slug/view/:viewId open by default on a desktop viewport", async () => {
+    mockMatchMedia(true);
+    const { container } = await renderApp("/dataset/telco-customer-churn/view/churn-risk-overview", false);
+    await screen.findByRole("heading", { name: "Churn risk overview", level: 1 });
+
+    const toggle = screen.getByLabelText("Ocultar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+  });
+
+  it("keeps /dataset/:slug closed by default on a mobile viewport, matching the existing default", async () => {
+    mockMatchMedia(false);
+    const { container } = await renderApp("/dataset/telco-customer-churn", false);
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+
+    const toggle = screen.getByLabelText("Mostrar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("keeps / and the Predict View route closed by default on a mobile viewport", async () => {
+    mockMatchMedia(false);
+    const { container: homeContainer } = await renderApp("/", false);
+    await screen.findByRole("heading", { name: /Atlas DataFlow/i });
+
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(homeContainer.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("still opens and closes the rail on /dataset/:slug after the explicit collapsed initialization", async () => {
+    mockMatchMedia(true);
+    const { container } = await renderApp("/dataset/telco-customer-churn", false);
+    await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 });
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+
+    fireEvent.click(screen.getByLabelText("Ocultar navegação"));
+
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
   });
 });

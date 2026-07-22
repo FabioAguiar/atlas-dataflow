@@ -6,7 +6,7 @@ import DatasetDetailSurface, {
 } from "../components/DatasetDetail/DatasetDetailSurface";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
-import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
+import type { VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
 import type { BinaryResultContract, BinaryResultPresentation } from "../components/ResultCard/types";
 import LoadingState from "../components/LoadingState/LoadingState";
@@ -504,17 +504,6 @@ export default function DatasetPage() {
     </>
   );
 
-  const targetDistributionContent = (
-    <>
-      {visualizationsState.status === "loading" && <LoadingState />}
-      {visualizationsState.status !== "loading" && (
-        <TargetDistribution
-          visualizations={visualizationsState.status === "ready" ? visualizationsState.data : null}
-        />
-      )}
-    </>
-  );
-
   const featureImportanceContent = (
     <>
       {visualizationsState.status === "loading" && <LoadingState />}
@@ -549,7 +538,6 @@ export default function DatasetPage() {
           performanceContent={performanceContent}
           problemSummaryBody={problemSummaryText}
           problemSummaryTitle={problemSummaryTitle}
-          targetDistributionContent={targetDistributionContent}
           themePresetId={context?.theme_preset}
         />
       </div>

@@ -18,10 +18,10 @@ function mockMatchMedia(matches: boolean) {
   }));
 }
 
-function renderPublicShell(mainMode?: "constrained" | "full_bleed") {
+function renderPublicShell(mainMode?: "constrained" | "full_bleed", initialNavOpen?: boolean) {
   return render(
     <MemoryRouter>
-      <PublicShell mainMode={mainMode}>
+      <PublicShell mainMode={mainMode} initialNavOpen={initialNavOpen}>
         <div>content</div>
       </PublicShell>
     </MemoryRouter>,
@@ -192,5 +192,103 @@ describe("PublicShell main mode (Project Spec S0130)", () => {
     fireEvent.click(toggle);
     expect(getOverlay()).toBeInTheDocument();
     expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
+// Project Spec S0137: an explicit, initialization-only nav authority --
+// omitted, the existing viewport-derived default is preserved; `false`
+// collapses the rail on first render regardless of viewport, without
+// becoming a continuously controlled component or leaking into mainMode.
+describe("PublicShell initial navigation authority (Project Spec S0137)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("preserves the existing desktop default when initialNavOpen is omitted", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell();
+
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+  });
+
+  it("preserves the existing mobile default when initialNavOpen is omitted", () => {
+    mockMatchMedia(false);
+    const { container } = renderPublicShell();
+
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("initializes collapsed on a desktop viewport when initialNavOpen is false", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell(undefined, false);
+
+    const toggle = screen.getByLabelText("Mostrar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+    expect(getOverlay()).not.toBeInTheDocument();
+  });
+
+  it("initializes collapsed on a mobile viewport when initialNavOpen is false", () => {
+    mockMatchMedia(false);
+    const { container } = renderPublicShell(undefined, false);
+
+    const toggle = screen.getByLabelText("Mostrar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+    expect(getOverlay()).not.toBeInTheDocument();
+  });
+
+  it("still opens and closes the rail after an explicit collapsed initialization", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell(undefined, false);
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+
+    fireEvent.click(screen.getByLabelText("Ocultar navegação"));
+
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+  });
+
+  it("preserves mobile overlay and Escape behavior after an explicit collapsed initialization", () => {
+    mockMatchMedia(false);
+    renderPublicShell(undefined, false);
+
+    fireEvent.click(screen.getByLabelText("Mostrar navegação"));
+    const toggle = screen.getByLabelText("Ocultar navegação");
+    expect(getOverlay()).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(getOverlay()).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Mostrar navegação")).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-controls", "public-shell-nav");
+  });
+
+  it("does not let full_bleed alone imply a collapsed rail", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell("full_bleed");
+
+    expect(screen.getByLabelText("Ocultar navegação")).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".public-shell")).toHaveClass("public-shell--nav-open");
+  });
+
+  it("combines full_bleed main mode with explicit collapsed initialization independently", () => {
+    mockMatchMedia(true);
+    const { container } = renderPublicShell("full_bleed", false);
+
+    const toggle = screen.getByLabelText("Mostrar navegação");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".public-shell")).not.toHaveClass("public-shell--nav-open");
+
+    const main = getMain(container);
+    expect(main).toHaveClass("public-shell__main--full-bleed");
+    expect(main).toHaveAttribute("data-main-mode", "full_bleed");
   });
 });

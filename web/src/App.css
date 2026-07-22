@@ -1120,6 +1120,176 @@ h1 {
   min-width: 0;
 }
 
+/*
+ * Project Spec S0135: scoped visual vocabulary for the shared public
+ * Inference Form -- reused unchanged by Dataset Admin Live Preview via the
+ * same InferenceForm component. Deliberately scoped under
+ * `.public-inference-form*` (never raw `label`/`input`/`select`/`fieldset`/
+ * `legend`) so nothing here can leak into Admin production forms or other
+ * public surfaces.
+ */
+.public-inference-form {
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-lg);
+  background: var(--atlas-color-surface);
+  box-shadow: var(--atlas-shadow-sm);
+  padding: var(--atlas-space-5);
+}
+
+.public-inference-form__heading {
+  margin: 0;
+}
+
+.public-inference-form__form {
+  display: grid;
+  gap: var(--atlas-space-4);
+  margin-top: var(--atlas-space-4);
+}
+
+.public-inference-form__group {
+  margin: 0;
+  min-width: 0;
+  padding: var(--atlas-space-4);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+  display: grid;
+  gap: var(--atlas-space-3);
+}
+
+.public-inference-form__legend {
+  padding: 0 var(--atlas-space-1);
+  color: var(--atlas-color-accent-strong);
+  font-size: var(--atlas-text-md);
+  font-weight: 700;
+}
+
+.public-inference-form__group-description {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-sm);
+  overflow-wrap: anywhere;
+}
+
+.public-inference-form__field-grid {
+  display: grid;
+  gap: var(--atlas-space-4);
+  grid-template-columns: 1fr;
+}
+
+/*
+ * Tablet (768-1199px, see design/screens/dataset-detail/responsive.md): the
+ * form panel's own width at this range runs from ~700px (768px viewport) up
+ * to ~1100px (1199px viewport, just below the two-column desktop split), so
+ * a 22rem (352px) minimum keeps this at one or two columns and never three.
+ */
+@media (min-width: 768px) {
+  .public-inference-form__field-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  }
+}
+
+/*
+ * Desktop (1200px+): the form column is the narrower ~1.4fr share of
+ * `.public-inference-surface`, so a smaller safe minimum still yields a
+ * compact multi-column grid (never a fixed three columns) without controls
+ * clipping.
+ */
+@media (min-width: 1200px) {
+  .public-inference-form__field-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  }
+}
+
+.public-inference-form__field {
+  display: grid;
+  gap: var(--atlas-space-1);
+  min-width: 0;
+}
+
+.public-inference-form__field--checkbox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--atlas-space-2);
+}
+
+.public-inference-form__field--checkbox .public-inference-form__helper {
+  flex-basis: 100%;
+}
+
+.public-inference-form__label {
+  margin: 0;
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.public-inference-form__required {
+  color: var(--atlas-color-danger);
+}
+
+.public-inference-form__control {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.9rem;
+  padding: 0 var(--atlas-space-3);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-surface);
+  color: var(--atlas-color-text);
+  font: inherit;
+}
+
+.public-inference-form__control:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.public-inference-form__control--checkbox {
+  width: 1.15rem;
+  height: 1.15rem;
+  min-height: 0;
+  flex: 0 0 auto;
+  accent-color: var(--atlas-color-accent-strong);
+}
+
+.public-inference-form__helper {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Project Spec S0135: `accent-strong` is a light/bright foreground color in
+ * several dark dataset themes (e.g. monochrome-dark's accent-strong is
+ * #fafafa on a #18181b surface) rather than a safe solid fill for a
+ * white-text button, so the submit action reuses the same accent-muted
+ * background / accent-strong text pairing already proven theme-safe by the
+ * active-tab treatment above instead of a hardcoded white-on-accent fill.
+ */
+.public-inference-form__submit {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-accent-muted);
+  color: var(--atlas-color-accent-strong);
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.public-inference-form__submit:not(:disabled):hover {
+  opacity: 0.85;
+}
+
+.public-inference-form__submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .result-panel {
   min-width: 0;
   border: 1px solid var(--atlas-color-border);
@@ -1195,17 +1365,6 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-.binary-classification-result__technical {
-  margin: 0;
-  color: var(--atlas-color-text-subtle);
-  font-size: var(--atlas-text-sm);
-  overflow-wrap: anywhere;
-}
-
-.binary-classification-result__technical span {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
 .probability-meter {
   display: block;
 }
@@ -1264,15 +1423,14 @@ h1 {
   }
 }
 
-.probability-meter__threshold-text,
-.probability-meter__band-text,
-.probability-meter__range-text {
+/*
+ * Project Spec S0135: the compact public interpretation status treatment --
+ * decision threshold and band range no longer render as visible text here;
+ * they remain available via the probability meter's accessible
+ * `aria-label` (see BinaryClassificationResult.tsx).
+ */
+.binary-classification-result__interpretation {
   margin: var(--atlas-space-1) 0 0;
-  font-size: var(--atlas-text-sm);
-  color: var(--atlas-color-text-muted);
-  display: flex;
-  align-items: center;
-  gap: var(--atlas-space-2);
 }
 
 @media (max-width: 767px) {
@@ -2751,8 +2909,7 @@ h1 {
    its own vertical scroll (never expands the page indefinitely); horizontal
    overflow is structurally impossible since every line wraps via
    overflow-wrap. Monospace treatment reuses this codebase's existing
-   ui-monospace stack (see .binary-classification-result__technical span). No
-   terminal prompt or command-input styling is used. */
+   ui-monospace stack. No terminal prompt or command-input styling is used. */
 .dataset-admin-console {
   display: grid;
   gap: var(--atlas-space-1);

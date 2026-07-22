@@ -473,6 +473,7 @@ export default function DatasetPage() {
         <InferenceForm
           contract={contractState.data.contract}
           slug={slug!}
+          customization={boundViewCustomization ?? undefined}
           submitButtonLabel={resolvedSubmitButtonLabel}
           resultContract={contractState.data.result_contract}
           resultPresentation={context?.result_card ?? undefined}

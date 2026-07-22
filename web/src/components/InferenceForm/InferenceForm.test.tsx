@@ -269,3 +269,145 @@ describe("InferenceForm preview mode (Admin Live Preview compatibility)", () => 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("InferenceForm scoped visual structure (Project Spec S0135)", () => {
+  it("renders the Inference heading and a scoped field-grid for an ungrouped form, without inventing a legend", () => {
+    const { container } = render(<InferenceForm contract={contract} slug={slug} previewMode />);
+
+    expect(screen.getByRole("heading", { name: "Inference" })).toHaveClass("public-inference-form__heading");
+    expect(container.querySelector("fieldset")).not.toBeInTheDocument();
+
+    const fieldGrid = container.querySelector(".public-inference-form__field-grid");
+    expect(fieldGrid).toBeInTheDocument();
+    expect(fieldGrid!.querySelector(".public-inference-form__field")).toBeInTheDocument();
+  });
+
+  it("gives every visible field a stable scoped wrapper, label, control and helper text", () => {
+    const singleFieldContract: ContractPayload = {
+      schema_version: "1.0.0",
+      features: [
+        {
+          name: "tenure",
+          label: "Tenure",
+          input_type: "number",
+          optional: true,
+          display_order: 1,
+          description: "Months as a customer.",
+        },
+      ],
+    };
+
+    const { container } = render(<InferenceForm contract={singleFieldContract} slug={slug} previewMode />);
+
+    const field = container.querySelector(".public-inference-form__field");
+    expect(field).toBeInTheDocument();
+    expect(field!.querySelector(".public-inference-form__label")).toHaveTextContent("Tenure");
+    expect(field!.querySelector(".public-inference-form__control")).toHaveAttribute("type", "number");
+    expect(field!.querySelector(".public-inference-form__helper")).toHaveTextContent("Months as a customer.");
+    expect(field!.querySelector(".public-inference-form__required")).not.toBeInTheDocument();
+  });
+
+  it("marks required fields with a scoped required marker", () => {
+    const requiredFieldContract: ContractPayload = {
+      schema_version: "1.0.0",
+      features: [
+        { name: "tenure", label: "Tenure", input_type: "number", optional: false, display_order: 1 },
+      ],
+    };
+
+    const { container } = render(<InferenceForm contract={requiredFieldContract} slug={slug} previewMode />);
+
+    expect(container.querySelector(".public-inference-form__required")).toBeInTheDocument();
+  });
+
+  it("uses a dedicated scoped row treatment for checkbox fields while preserving native semantics and label association", () => {
+    const checkboxContract: ContractPayload = {
+      schema_version: "1.0.0",
+      features: [
+        { name: "auto_pay", label: "AutoPay", input_type: "checkbox", optional: true, display_order: 1 },
+      ],
+    };
+
+    render(<InferenceForm contract={checkboxContract} slug={slug} previewMode />);
+
+    const checkbox = screen.getByLabelText("AutoPay");
+    expect(checkbox).toHaveAttribute("type", "checkbox");
+    expect(checkbox).toHaveClass("public-inference-form__control--checkbox");
+    expect(checkbox.closest(".public-inference-form__field")).toHaveClass("public-inference-form__field--checkbox");
+  });
+
+  it("preserves the S0134 synthetic customization fixture (two groups, group/field order, renamed label, helper text, hidden field, submit label) while applying scoped group structure", () => {
+    const fixtureContract: ContractPayload = {
+      schema_version: "1.0.0",
+      features: [
+        { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
+        {
+          name: "contract_type",
+          label: "Contract Type",
+          input_type: "select",
+          optional: false,
+          display_order: 2,
+          options: [
+            { value: "month", label: "Month-to-month" },
+            { value: "year", label: "One year" },
+          ],
+        },
+        { name: "auto_pay", label: "AutoPay", input_type: "checkbox", optional: true, display_order: 3 },
+        { name: "internal_notes", label: "Internal Notes", input_type: "number", optional: true, display_order: 4 },
+      ],
+    };
+
+    const fixtureCustomization = {
+      groups: [
+        { group_id: "account", label: "Account profile" },
+        { group_id: "billing", label: "Billing", description: "Billing-related fields." },
+      ],
+      field_hints: [
+        { field_name: "tenure", group: "account", display_order_hint: 1 },
+        {
+          field_name: "contract_type",
+          group: "account",
+          display_order_hint: 2,
+          display_label: "Contract length",
+          explanatory_copy: "Choose the current contract term.",
+        },
+        { field_name: "auto_pay", group: "billing", display_order_hint: 3 },
+        { field_name: "internal_notes", hidden: true, display_order_hint: 4 },
+      ],
+      view_copy: { submit_button_label: "Run Prediction" },
+    };
+
+    const { container } = render(
+      <InferenceForm
+        contract={fixtureContract}
+        slug={slug}
+        customization={fixtureCustomization}
+        previewMode
+        submitButtonLabel={fixtureCustomization.view_copy.submit_button_label}
+      />,
+    );
+
+    const groups = container.querySelectorAll(".public-inference-form__group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].querySelector(".public-inference-form__legend")).toHaveTextContent("Account profile");
+    expect(groups[1].querySelector(".public-inference-form__legend")).toHaveTextContent("Billing");
+    expect(groups[1].querySelector(".public-inference-form__group-description")).toHaveTextContent(
+      "Billing-related fields.",
+    );
+
+    const accountLabels = groups[0].querySelectorAll(".public-inference-form__label");
+    expect(accountLabels).toHaveLength(2);
+    expect(accountLabels[0]).toHaveTextContent("Tenure");
+    expect(accountLabels[1]).toHaveTextContent("Contract length");
+    expect(groups[0].querySelector(".public-inference-form__helper")).toHaveTextContent(
+      "Choose the current contract term.",
+    );
+
+    expect(groups[1].querySelector(".public-inference-form__label")).toHaveTextContent("AutoPay");
+
+    expect(screen.queryByText("Internal Notes")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".public-inference-form__field")).toHaveLength(3);
+
+    expect(screen.getByRole("button", { name: "Run Prediction" })).toHaveClass("public-inference-form__submit");
+  });
+});

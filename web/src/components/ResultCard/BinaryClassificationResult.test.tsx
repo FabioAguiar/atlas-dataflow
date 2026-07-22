@@ -44,17 +44,12 @@ const presentation: BinaryResultPresentation = {
 };
 
 describe("BinaryClassificationResult semantic rendering", () => {
-  it("renders the positive outcome copy, technical class, and event meaning from decision.predicted_positive", () => {
+  it("renders the positive outcome copy from decision.predicted_positive, without a raw class id in normal visible text", () => {
     render(<BinaryClassificationResult result={buildResult()} presentation={presentation} />);
 
     expect(screen.getByText("Likely to churn")).toBeInTheDocument();
     expect(screen.queryByText("Unlikely to churn")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Yes", { selector: ".binary-classification-result__technical span" })).toHaveLength(2);
-    expect(
-      screen.getByText(/Churn/, {
-        selector: ".binary-classification-result__probability .binary-classification-result__technical",
-      }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Yes", { exact: false })).not.toBeInTheDocument();
   });
 
   it("renders the negative outcome copy when decision.predicted_positive is false, without deriving it from probability", () => {
@@ -70,11 +65,13 @@ describe("BinaryClassificationResult semantic rendering", () => {
     expect(screen.queryByText("Likely to churn")).not.toBeInTheDocument();
   });
 
-  it("displays threshold equality outcomes exactly as resolved by the backend result", () => {
+  it("does not render decision threshold, band range or a 'Predicted class' line as visible public text", () => {
     const result = buildResult({ positive_class_probability: 0.5, decision: { threshold: 0.5, predicted_positive: true } });
     render(<BinaryClassificationResult result={result} presentation={presentation} />);
 
-    expect(screen.getByText("Decision threshold: 50%")).toBeInTheDocument();
+    expect(screen.queryByText(/Decision threshold/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Range:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Predicted class/)).not.toBeInTheDocument();
     expect(screen.getByText("Likely to churn")).toBeInTheDocument();
   });
 
@@ -82,11 +79,12 @@ describe("BinaryClassificationResult semantic rendering", () => {
     ["low", "Low risk"],
     ["medium", "Medium risk"],
     ["high", "High risk"],
-  ])("renders the interpretation label for a returned %s band ID without recomputing the band", (bandId, label) => {
+  ])("renders the interpretation label for a returned %s band ID as the compact status treatment, without recomputing the band", (bandId, label) => {
     const result = buildResult({ interpretation: { preset: "risk", band_id: bandId, bands } });
     render(<BinaryClassificationResult result={result} presentation={presentation} />);
 
     expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText(/^Band:/)).not.toBeInTheDocument();
   });
 
   it.each([
@@ -101,12 +99,20 @@ describe("BinaryClassificationResult semantic rendering", () => {
     expect(screen.getByText(expected, { selector: ".binary-classification-result__probability-value" })).toBeInTheDocument();
   });
 
-  it("renders the textual decision threshold and band range alongside the probability meter", () => {
+  it("retains the formatted probability, interpretation label and decision threshold in the probability meter's accessible description", () => {
     render(<BinaryClassificationResult result={buildResult()} presentation={presentation} />);
 
-    expect(screen.getByText("Decision threshold: 50%")).toBeInTheDocument();
-    expect(screen.getByText("Range: 65%–100%")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Positive class probability 68%/ })).toBeInTheDocument();
+    const meter = screen.getByRole("img", { name: /Positive class probability 68%/ });
+    expect(meter).toHaveAccessibleName(/Positive class probability 68%/);
+    expect(meter).toHaveAccessibleName(/Decision threshold 50%/);
+    expect(meter).toHaveAccessibleName(/High risk/);
+  });
+
+  it("includes the selected band range in the accessible description when available", () => {
+    render(<BinaryClassificationResult result={buildResult()} presentation={presentation} />);
+
+    const meter = screen.getByRole("img", { name: /Positive class probability 68%/ });
+    expect(meter).toHaveAccessibleName(/Range: 65%–100%/);
   });
 
   it("renders the technical model descriptor's display name under the model section label", () => {
@@ -114,15 +120,6 @@ describe("BinaryClassificationResult semantic rendering", () => {
 
     expect(screen.getByText("Model")).toBeInTheDocument();
     expect(screen.getByText("Gradient Boosting")).toBeInTheDocument();
-  });
-
-  it("renders the positive technical class id in a secondary traceable presentation distinct from event meaning", () => {
-    render(<BinaryClassificationResult result={buildResult()} presentation={presentation} />);
-
-    const positiveClassLine = screen.getByText(/Churn/, {
-      selector: ".binary-classification-result__probability .binary-classification-result__technical",
-    });
-    expect(positiveClassLine.textContent).toContain("Yes");
   });
 
   it("falls back to the bounded generic presentation without inventing technical identity", () => {

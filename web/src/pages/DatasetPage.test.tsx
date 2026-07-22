@@ -802,6 +802,319 @@ describe("DatasetPage bound predict view submit-label resolution (Project Spec S
   });
 });
 
+// Project Spec S0134: the route already fetched the published bound view's
+// customization for the submit-button label (S0110) -- these tests prove
+// the *complete* fetched PredictViewCustomization object is now passed to
+// InferenceForm itself, driving the public field/group projection, and that
+// absent/failed/stale customization never leaks or hides the form.
+describe("DatasetPage bound predict view customization application (Project Spec S0134)", () => {
+  const boundViewId = "synthetic-risk-view";
+
+  const customizationContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      { name: "feature_a", label: "Feature A", input_type: "number" as const, optional: true, display_order: 1 },
+      { name: "feature_b", label: "Feature B Original Label", input_type: "number" as const, optional: true, display_order: 2 },
+      { name: "feature_c", label: "Feature C", input_type: "number" as const, optional: true, display_order: 3 },
+      { name: "feature_d", label: "Feature D Hidden", input_type: "number" as const, optional: true, display_order: 4 },
+    ],
+  };
+
+  const syntheticCustomization = {
+    schema_version: "1.0.0",
+    view_id: boundViewId,
+    dataset_slug: slug,
+    field_hints: [
+      { field_name: "feature_b", group: "primary", display_order_hint: 1, display_label: "Renamed B Label" },
+      { field_name: "feature_a", group: "primary", display_order_hint: 2 },
+      { field_name: "feature_c", group: "secondary", display_order_hint: 3, explanatory_copy: "Helper text for feature C" },
+      { field_name: "feature_d", hidden: true },
+    ],
+    groups: [
+      { group_id: "secondary", label: "Secondary Group" },
+      { group_id: "primary", label: "Primary Group" },
+    ],
+    view_copy: { submit_button_label: "Run Synthetic Prediction" },
+  };
+
+  function installCustomizationFetchMock(
+    options: {
+      boundPredictViewId?: string | null;
+      customization?: typeof syntheticCustomization | null;
+      customizationStatus?: number;
+      contract?: typeof customizationContractPayload;
+    } = {},
+  ) {
+    const contract = options.contract ?? customizationContractPayload;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: { ...contextPayload, bound_predict_view_id: options.boundPredictViewId ?? null },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/views/${boundViewId}/customization`)) {
+        if (options.customizationStatus) {
+          return jsonResponse({}, options.customizationStatus);
+        }
+        if (options.customization === null) {
+          return jsonResponse({}, 404);
+        }
+        return jsonResponse(options.customization ?? syntheticCustomization);
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract, result_contract: resultContractAvailable });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+
+      throw new Error(`unexpected fetch for a synthetic customization-projection test: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  async function openInferenceTab() {
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+  }
+
+  it("projects the complete published customization: group order, field order, renamed label, helper text, hidden field and submit-button label", async () => {
+    const fetchMock = installCustomizationFetchMock({ boundPredictViewId: boundViewId });
+    const { container } = renderDatasetPage();
+    await openInferenceTab();
+
+    await screen.findByRole("button", { name: "Run Synthetic Prediction" });
+
+    const legends = Array.from(container.querySelectorAll("fieldset legend")).map((el) => el.textContent);
+    expect(legends).toEqual(["Secondary Group", "Primary Group"]);
+
+    const fieldsets = Array.from(container.querySelectorAll("fieldset"));
+    const primaryFieldset = fieldsets.find((fs) => fs.querySelector("legend")?.textContent === "Primary Group")!;
+    const primaryLabels = Array.from(primaryFieldset.querySelectorAll("label")).map((el) => el.textContent);
+    expect(primaryLabels).toEqual(["Renamed B Label", "Feature A"]);
+
+    const secondaryFieldset = fieldsets.find((fs) => fs.querySelector("legend")?.textContent === "Secondary Group")!;
+    expect(secondaryFieldset.textContent).toContain("Feature C");
+    expect(secondaryFieldset.textContent).toContain("Helper text for feature C");
+
+    expect(screen.queryByText("Feature D Hidden")).not.toBeInTheDocument();
+
+    // Exactly the bound view's customization endpoint is requested -- never
+    // a views list, an Admin endpoint, or another view id.
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(calledUrls.some((url) => url.endsWith(`/datasets/${slug}/views/${boundViewId}/customization`))).toBe(true);
+    expect(calledUrls.some((url) => url.endsWith(`/datasets/${slug}/views`))).toBe(false);
+    expect(calledUrls.some((url) => url.includes("/admin"))).toBe(false);
+    expect(calledUrls.some((url) => url.includes("/customization") && !url.includes(boundViewId))).toBe(false);
+  });
+
+  it("falls back to ungrouped contract fields in display_order, without hiding any field, when no bound view is published", async () => {
+    const fetchMock = installCustomizationFetchMock({ boundPredictViewId: null });
+    const { container } = renderDatasetPage();
+    await openInferenceTab();
+
+    await screen.findByText("Feature A");
+    expect(container.querySelectorAll("fieldset")).toHaveLength(0);
+    const labels = Array.from(container.querySelectorAll(".public-inference-surface label")).map((el) => el.textContent);
+    expect(labels).toEqual(["Feature A", "Feature B Original Label", "Feature C", "Feature D Hidden"]);
+
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/customization"))).toBe(false);
+  });
+
+  it("falls back to the ungrouped contract form when the bound view's customization returns 404", async () => {
+    installCustomizationFetchMock({ boundPredictViewId: boundViewId, customization: null });
+    const { container } = renderDatasetPage();
+    await openInferenceTab();
+
+    await screen.findByText("Feature A");
+    expect(container.querySelectorAll("fieldset")).toHaveLength(0);
+    expect(screen.getByText("Feature D Hidden")).toBeInTheDocument();
+  });
+
+  it("ignores a stale customization response after switching to a dataset with a different bound-view identity", async () => {
+    const slugA = slug;
+    const slugB = "another-synthetic-dataset";
+    let slugASignal: AbortSignal | undefined;
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith(`/datasets/${slugA}/views/${boundViewId}/customization`)) {
+        slugASignal = init?.signal ?? undefined;
+        return new Promise(() => {
+          /* never resolves -- must be aborted on slug switch, not raced */
+        });
+      }
+      if (url.endsWith(`/datasets/${slugA}/context`)) {
+        return Promise.resolve(
+          jsonResponse({ dataset_slug: slugA, context: { ...contextPayload, bound_predict_view_id: boundViewId } }),
+        );
+      }
+      if (url.endsWith(`/datasets/${slugA}/metrics`))
+        return Promise.resolve(jsonResponse({ dataset_slug: slugA, metrics: metricsPayload }));
+      if (url.endsWith(`/datasets/${slugA}/visualizations`))
+        return Promise.resolve(jsonResponse({ dataset_slug: slugA, visualizations: visualizationsPayload }));
+      if (url.endsWith(`/datasets/${slugA}/contract`))
+        return Promise.resolve(
+          jsonResponse({ dataset_slug: slugA, contract: customizationContractPayload, result_contract: resultContractAvailable }),
+        );
+      if (url.endsWith(`/datasets/${slugA}`)) return Promise.resolve(jsonResponse(datasetMetadata));
+
+      if (url.endsWith(`/datasets/${slugB}`))
+        return Promise.resolve(jsonResponse({ ...datasetMetadata, dataset_slug: slugB, title: "Another Synthetic Dataset" }));
+      if (url.endsWith(`/datasets/${slugB}/context`))
+        return Promise.resolve(
+          jsonResponse({
+            dataset_slug: slugB,
+            // Published context.title takes precedence over the primary
+            // route payload's own title (see the datasetTitle precedence
+            // chain in DatasetPage.tsx) -- blank it here so this assertion
+            // proves the *primary* route data, not a copy-pasted fixture.
+            context: { ...contextPayload, title: "", bound_predict_view_id: null },
+          }),
+        );
+      if (url.endsWith(`/datasets/${slugB}/metrics`))
+        return Promise.resolve(jsonResponse({ dataset_slug: slugB, metrics: metricsPayload }));
+      if (url.endsWith(`/datasets/${slugB}/visualizations`))
+        return Promise.resolve(jsonResponse({ dataset_slug: slugB, visualizations: visualizationsPayload }));
+      if (url.endsWith(`/datasets/${slugB}/contract`))
+        return Promise.resolve(
+          jsonResponse({ dataset_slug: slugB, contract: contractPayload, result_contract: resultContractAvailable }),
+        );
+
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={[`/dataset/${slugA}`]}>
+        <Routes>
+          <Route
+            path="/dataset/:slug"
+            element={
+              <>
+                <Link to={`/dataset/${slugB}`}>Go to B</Link>
+                <DatasetPage />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await waitFor(() => expect(slugASignal).toBeDefined());
+    expect(slugASignal?.aborted).toBe(false);
+
+    fireEvent.click(screen.getByRole("link", { name: "Go to B" }));
+
+    expect(await screen.findByRole("heading", { name: "Another Synthetic Dataset", level: 1 })).toBeInTheDocument();
+    expect(slugASignal?.aborted).toBe(true);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+    // slugB has no bound view: the stale slugA customization must never be
+    // reused, so the form falls all the way through to InferenceForm's own
+    // "Submit" default rather than any label/grouping from slugA.
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+  });
+});
+
+// Project Spec S0134: submitting the customized public form still uses the
+// shared InferenceForm/ResultCardShell execution path -- the route never
+// introduces a second Result Card state machine, and a rendered result is
+// confined to the Inference panel even though every tab panel stays mounted
+// (hidden, not unmounted) for tab switching.
+describe("DatasetPage inference result execution (Project Spec S0134)", () => {
+  const validResult = {
+    schema_version: "binary-classification-result.v1",
+    problem_type: "binary_classification",
+    predicted_class: { class_id: "Yes" },
+    positive_class: { class_id: "Yes", event_label: "Churn" },
+    positive_class_probability: 0.68,
+    class_probabilities: [
+      { class_id: "No", probability: 0.32 },
+      { class_id: "Yes", probability: 0.68 },
+    ],
+    decision: { threshold: 0.5, predicted_positive: true },
+    interpretation: {
+      preset: "risk" as const,
+      band_id: "high",
+      bands: resultContractAvailable.semantics.interpretation.bands,
+    },
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+  };
+
+  function getVisiblePanel(container: HTMLElement) {
+    return Array.from(container.querySelectorAll<HTMLElement>(".dataset-detail-tabs__panel")).find(
+      (panel) => panel.getAttribute("hidden") === null,
+    )!;
+  }
+
+  function installResultExecutionFetchMock() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+        return jsonResponse({ dataset_slug: slug, result: validResult });
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      if (url.endsWith(`/datasets/${slug}/metrics`)) return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slug}/visualizations`))
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slug}/contract`))
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
+      if (url.endsWith(`/datasets/${slug}`)) return jsonResponse(datasetMetadata);
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("submits from the Inference tab, updates the published Result Card exactly once, and never leaks the result into Overview", async () => {
+    const fetchMock = installResultExecutionFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
+    expect(screen.getByText("68%")).toBeInTheDocument();
+
+    const postCalls = fetchMock.mock.calls.filter(
+      (call) => call[1]?.method === "POST" && String(call[0]).endsWith(`/datasets/${slug}/inference`),
+    );
+    expect(postCalls).toHaveLength(1);
+
+    const inferencePanel = getVisiblePanel(container);
+    expect(inferencePanel.textContent).toContain("Likely to churn");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    const overviewPanel = getVisiblePanel(container);
+    expect(overviewPanel.textContent).not.toContain("Likely to churn");
+    expect(overviewPanel.querySelector('[aria-label="Prediction result"]')).not.toBeInTheDocument();
+
+    // Still mounted exactly once (hidden, not unmounted, inside Inference).
+    expect(screen.getAllByLabelText("Prediction result")).toHaveLength(1);
+  });
+});
+
 describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () => {
   it("renders real Source/Release metadata and the curated metric highlight when context provides them", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

@@ -16,7 +16,11 @@ export type ResultCardShellProps =
 
 export default function ResultCardShell(props: ResultCardShellProps) {
   return (
-    <section className="inference-result result-panel" aria-label="Prediction result" aria-live="polite">
+    <section
+      className={`inference-result result-panel result-panel--${props.state}`}
+      aria-label="Prediction result"
+      aria-live="polite"
+    >
       <h3 className="result-panel__heading">Result</h3>
 
       {props.state === "idle" && (

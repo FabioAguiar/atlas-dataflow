@@ -56,28 +56,26 @@ export default function BinaryClassificationResult({ result, presentation }: Pro
     ? `${formatProbability(selectedBand.lower_bound)}–${formatProbability(selectedBand.upper_bound)}`
     : null;
 
+  const meterAccessibleLabel = `Positive class probability ${probabilityText}. Decision threshold ${thresholdText}. Band: ${bandLabel}.${
+    rangeText ? ` Range: ${rangeText}.` : ""
+  }`;
+
   return (
     <div className="binary-classification-result">
       <div className="binary-classification-result__outcome">
         <p className="binary-classification-result__label">{presentation.predicted_outcome_label}</p>
         <p className="binary-classification-result__outcome-value">{outcomeCopy}</p>
-        <p className="binary-classification-result__technical">
-          Predicted class: <span>{result.predicted_class.class_id}</span>
-        </p>
       </div>
 
       <div className="binary-classification-result__probability">
         <p className="binary-classification-result__label">{presentation.positive_class_probability_label}</p>
         <p className="binary-classification-result__probability-value">{probabilityText}</p>
-        <p className="binary-classification-result__technical">
-          {result.positive_class.event_label} (<span>{result.positive_class.class_id}</span>)
-        </p>
       </div>
 
       <div
         className="probability-meter"
         role="img"
-        aria-label={`Positive class probability ${probabilityText}. Decision threshold ${thresholdText}. Band: ${bandLabel}.`}
+        aria-label={meterAccessibleLabel}
       >
         <div className="probability-meter__track">
           {result.interpretation.bands.map((band) => (
@@ -98,11 +96,9 @@ export default function BinaryClassificationResult({ result, presentation }: Pro
         </div>
       </div>
 
-      <p className="probability-meter__threshold-text">Decision threshold: {thresholdText}</p>
-      <p className="probability-meter__band-text">
-        Band: <StatusPill tone={tone}>{bandLabel}</StatusPill>
+      <p className="binary-classification-result__interpretation">
+        <StatusPill tone={tone}>{bandLabel}</StatusPill>
       </p>
-      {rangeText && <p className="probability-meter__range-text">Range: {rangeText}</p>}
 
       <div className="binary-classification-result__model">
         <p className="binary-classification-result__label">{presentation.model_section_label}</p>

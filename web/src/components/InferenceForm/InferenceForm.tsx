@@ -139,43 +139,60 @@ function presentationSortKey(feature: Feature, hint: FieldHint | undefined): num
 function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | undefined }) {
   const displayLabel = hint?.display_label ?? feature.label;
   const explanatoryCopy = hint?.explanatory_copy;
+  const helperText = explanatoryCopy || feature.description;
+  const isCheckbox = feature.input_type === "checkbox";
+
+  const label = (
+    <label className="public-inference-form__label" htmlFor={`field-${feature.name}`}>
+      {displayLabel}
+      {feature.input_type === "select" && " (categorical field)"}
+      {!feature.optional && <span className="public-inference-form__required" aria-hidden="true"> *</span>}
+    </label>
+  );
+
+  const control = isCheckbox ? (
+    <input
+      className="public-inference-form__control public-inference-form__control--checkbox"
+      type="checkbox"
+      id={`field-${feature.name}`}
+      name={feature.name}
+      required={!feature.optional}
+    />
+  ) : feature.input_type === "select" && feature.options && feature.options.length > 0 ? (
+    <select
+      className="public-inference-form__control"
+      id={`field-${feature.name}`}
+      name={feature.name}
+      required={!feature.optional}
+    >
+      {feature.options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ) : (
+    <input
+      className="public-inference-form__control"
+      type={feature.input_type === "number" ? "number" : "text"}
+      id={`field-${feature.name}`}
+      name={feature.name}
+      required={!feature.optional}
+    />
+  );
 
   return (
-    <div key={feature.name}>
-      <label htmlFor={`field-${feature.name}`}>
-        {displayLabel}
-        {feature.input_type === "select" && " (categorical field)"}
-        {!feature.optional && <span aria-hidden="true"> *</span>}
-      </label>
-      {feature.input_type === "checkbox" ? (
-        <input
-          type="checkbox"
-          id={`field-${feature.name}`}
-          name={feature.name}
-          required={!feature.optional}
-        />
-      ) : feature.input_type === "select" && feature.options && feature.options.length > 0 ? (
-        <select
-          id={`field-${feature.name}`}
-          name={feature.name}
-          required={!feature.optional}
-        >
-          {feature.options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          type={feature.input_type === "number" ? "number" : "text"}
-          id={`field-${feature.name}`}
-          name={feature.name}
-          required={!feature.optional}
-        />
-      )}
-      {explanatoryCopy && <p>{explanatoryCopy}</p>}
-      {!explanatoryCopy && feature.description && <p>{feature.description}</p>}
+    <div
+      className={
+        isCheckbox
+          ? "public-inference-form__field public-inference-form__field--checkbox"
+          : "public-inference-form__field"
+      }
+      key={feature.name}
+    >
+      {isCheckbox ? control : label}
+      {isCheckbox ? label : control}
+      {helperText && <p className="public-inference-form__helper">{helperText}</p>}
     </div>
   );
 }
@@ -300,17 +317,17 @@ export default function InferenceForm({
           const members = grouped.get(group.group_id) ?? [];
           if (members.length === 0) return null;
           return (
-            <fieldset key={group.group_id}>
-              <legend>{group.label}</legend>
-              {group.description && <p>{group.description}</p>}
-              {renderFields(members)}
+            <fieldset className="public-inference-form__group" key={group.group_id}>
+              <legend className="public-inference-form__legend">{group.label}</legend>
+              {group.description && (
+                <p className="public-inference-form__group-description">{group.description}</p>
+              )}
+              <div className="public-inference-form__field-grid">{renderFields(members)}</div>
             </fieldset>
           );
         })}
         {ungrouped.length > 0 && (
-          <div>
-            {renderFields(ungrouped)}
-          </div>
+          <div className="public-inference-form__field-grid">{renderFields(ungrouped)}</div>
         )}
       </>
     );
@@ -325,11 +342,17 @@ export default function InferenceForm({
       aria-label="Inference Form"
       className={previewMode ? undefined : "public-inference-surface"}
     >
-      <div className="public-inference-surface__form-panel">
-        <h2>Make a Prediction</h2>
-        <form onSubmit={handleSubmit}>
-          {hasGroups ? renderGrouped() : renderFields(sortedForPresentation)}
-          <button type="submit" disabled={submitDisabled}>
+      <div className="public-inference-surface__form-panel public-inference-form">
+        <h2 className="public-inference-form__heading">Inference</h2>
+        <form className="public-inference-form__form" onSubmit={handleSubmit}>
+          {hasGroups ? (
+            renderGrouped()
+          ) : (
+            <div className="public-inference-form__field-grid">
+              {renderFields(sortedForPresentation)}
+            </div>
+          )}
+          <button type="submit" className="public-inference-form__submit" disabled={submitDisabled}>
             {submission.status === "submitting" ? "Submitting…" : idleLabel}
           </button>
         </form>

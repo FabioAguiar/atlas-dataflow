@@ -3036,30 +3036,26 @@ h1 {
 }
 
 /*
- * Project Spec S0142: a full-width bounded wrapper around the shared
- * DatasetDetailSurface in Dataset Detail Live Preview -- Admin workspace
- * spacing/clipping/theme containment only, never a simulated public
- * navigation rail, PublicShell, iframe, or duplicated public page
- * implementation. Replaces the pre-S0142 two-column rail composition
- * (S0120), which reserved a fixed-width column for a decorative,
- * non-interactive nav miniature.
+ * Project Spec S0145: Dataset Detail Live Preview mode -- the shared
+ * DatasetDetailSurface renders directly inside `.dataset-admin-preview-stage`
+ * with no Admin-only frame/page wrapper. `.dataset-admin-preview-stage` keeps
+ * its own border, radius, canvas background and theme containment; this
+ * modifier only zeroes the stage's own padding/gap and clips overflow so the
+ * shared surface sits flush against the stage's inner border on every side.
+ * Supersedes the pre-S0145 `.dataset-admin-detail-preview-frame` /
+ * `.dataset-admin-detail-preview-page` nested wrapper (S0142), which added a
+ * second border/radius and page-level padding around the shared surface.
  */
-.dataset-admin-detail-preview-frame {
-  display: grid;
+.dataset-admin-preview-stage--detail {
+  padding: 0;
+  gap: 0;
   overflow: hidden;
-  border: 1px solid var(--atlas-color-border-strong);
-  border-radius: var(--atlas-radius-lg);
-  background: var(--atlas-color-canvas);
 }
 
-.dataset-admin-detail-preview-frame > * {
+.dataset-admin-preview-panel--detail,
+.dataset-admin-preview-panel--detail > .dataset-detail-surface {
   min-width: 0;
-}
-
-.dataset-admin-detail-preview-page {
-  min-width: 0;
-  padding: var(--atlas-space-5);
-  overflow-x: hidden;
+  width: 100%;
 }
 
 @media (max-width: 1400px) {

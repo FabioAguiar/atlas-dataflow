@@ -2688,10 +2688,11 @@ describe("DatasetAdminPage", () => {
   // Documentation, Overview selected initially), no duplicated Admin
   // markup, and no Model Card (dropped entirely from this surface).
   //
-  // Project Spec S0142: the pre-S0142 documentation frame's simulated
-  // side rail (fixed-width column plus decorative Home/Projetos/GitHub/
-  // Contato nav labels) is removed entirely -- the shared surface now
-  // occupies the full available preview width instead of a fake shell.
+  // Project Spec S0145: the shared surface renders directly inside
+  // `.dataset-admin-preview-panel--detail`, itself sitting flush against
+  // `.dataset-admin-preview-stage`'s inner border via the stage's own
+  // `--detail` mode -- no Admin-only frame/page wrapper, and no simulated
+  // public navigation rail, menu toggle or nav labels.
   it("renders Live Preview subviews from real public components and the loaded customization", async () => {
     const fetchMock = installFetchMock();
     const { container } = renderAdminPage();
@@ -2709,14 +2710,19 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByText("Curated home card copy")).not.toBeInTheDocument();
 
     expect(screen.getByRole("tab", { name: "Dataset Detail", selected: true })).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-admin-preview-stage")).toHaveLength(1);
+    expect(container.querySelector(".dataset-admin-preview-stage")).toHaveClass("dataset-admin-preview-stage--detail");
+    expect(container.querySelectorAll(".dataset-admin-preview-panel--detail")).toHaveLength(1);
     expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
 
-    // The bounded documentation frame spans the full available width and
-    // contains only the shared surface -- no simulated public navigation
-    // rail, menu toggle or nav labels are rendered or reserved for.
-    const previewFrame = container.querySelector(".dataset-admin-detail-preview-frame");
-    expect(previewFrame).toBeInTheDocument();
-    expect(previewFrame?.children).toHaveLength(1);
+    // The shared surface is the Dataset Detail panel's only content -- no
+    // Admin-only frame/page wrapper, and no simulated public navigation
+    // rail, menu toggle or nav labels.
+    const detailPanel = container.querySelector(".dataset-admin-preview-panel--detail")!;
+    expect(detailPanel.children).toHaveLength(1);
+    expect(detailPanel.firstElementChild).toHaveClass("dataset-detail-surface");
+    expect(container.querySelector(".dataset-admin-detail-preview-frame")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-admin-detail-preview-page")).not.toBeInTheDocument();
     expect(container.querySelector(".dataset-admin-detail-preview-rail")).not.toBeInTheDocument();
     expect(container.querySelector(".dataset-admin-detail-preview-menu")).not.toBeInTheDocument();
     expect(container.querySelector(".dataset-admin-detail-preview-nav")).not.toBeInTheDocument();
@@ -2804,10 +2810,23 @@ describe("DatasetAdminPage", () => {
     // Level-scoped heading role proves DatasetCard's real <h3> title element.
     expect(screen.getByRole("heading", { level: 3, name: "Curated churn profile" })).toBeInTheDocument();
     expect(screen.getByText("Curated home card copy")).toBeInTheDocument();
+    // Switching to Home Card removes the Dataset Detail stage modifier, the
+    // Home Card panel remains present with its existing bounded layout, the
+    // Dataset Detail surface is not mounted, and the obsolete wrappers stay
+    // absent.
+    expect(container.querySelector(".dataset-admin-preview-stage")).not.toHaveClass("dataset-admin-preview-stage--detail");
+    expect(container.querySelectorAll(".dataset-admin-preview-panel--card")).toHaveLength(1);
+    expect(container.querySelectorAll(".dataset-admin-preview-panel--detail")).toHaveLength(0);
     expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(0);
+    expect(container.querySelector(".dataset-admin-detail-preview-frame")).not.toBeInTheDocument();
+    expect(container.querySelector(".dataset-admin-detail-preview-page")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
     expect(container.querySelectorAll(".dataset-detail-surface")).toHaveLength(1);
+    // Switching back to Dataset Detail restores the edge-to-edge stage
+    // modifier without retaining stale Home Card geometry.
+    expect(container.querySelector(".dataset-admin-preview-stage")).toHaveClass("dataset-admin-preview-stage--detail");
+    expect(container.querySelectorAll(".dataset-admin-preview-panel--card")).toHaveLength(0);
     // Remounting the shared surface resets its internal tab state back to
     // Overview, matching a fresh visit to /dataset/:slug.
     expect(screen.getByRole("tab", { name: "Overview", selected: true })).toBeInTheDocument();

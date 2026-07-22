@@ -4193,7 +4193,9 @@ function LivePreviewTab({
           </button>
         ))}
       </div>
-      <div className="dataset-admin-preview-stage">
+      <div
+        className={`dataset-admin-preview-stage${previewMode === "detail" ? " dataset-admin-preview-stage--detail" : ""}`}
+      >
         {previewMode === "card" && (
           <article className="dataset-admin-preview-panel dataset-admin-preview-panel--card" aria-label="Home Card preview">
             <DatasetCard
@@ -4220,27 +4222,26 @@ function LivePreviewTab({
           </article>
         )}
         {previewMode === "detail" && (
-          <article className="dataset-admin-preview-panel dataset-admin-preview-panel--detail" aria-label="Dataset Detail preview">
+          <article
+            aria-label="Dataset Detail preview"
+            className="dataset-admin-preview-panel dataset-admin-preview-panel--detail"
+          >
             {/*
-              Project Spec S0142: full-width bounded wrapper around the
-              shared DatasetDetailSurface -- Admin workspace spacing/
-              clipping/theme containment only. No simulated public
-              navigation rail, PublicShell, iframe, or duplicated public
-              page implementation.
+              Project Spec S0145: the shared DatasetDetailSurface renders
+              directly inside this panel, which itself sits flush against
+              `.dataset-admin-preview-stage`'s inner border via the stage's
+              own `--detail` mode (no Admin-only frame/page wrapper, no
+              simulated public navigation rail, PublicShell or iframe).
             */}
-            <div className="dataset-admin-detail-preview-frame">
-              <div className="dataset-admin-detail-preview-page">
-                <DatasetDetailLivePreview
-                  customizationEditorState={customizationEditorState}
-                  dataset={dataset}
-                  form={form}
-                  liveInferenceExecutor={liveInferenceExecutor}
-                  onLiveInferenceLifecycleEvent={onLiveInferenceLifecycleEvent}
-                  readOnlyData={readOnlyData}
-                  selectedSlug={selectedSlug}
-                />
-              </div>
-            </div>
+            <DatasetDetailLivePreview
+              customizationEditorState={customizationEditorState}
+              dataset={dataset}
+              form={form}
+              liveInferenceExecutor={liveInferenceExecutor}
+              onLiveInferenceLifecycleEvent={onLiveInferenceLifecycleEvent}
+              readOnlyData={readOnlyData}
+              selectedSlug={selectedSlug}
+            />
           </article>
         )}
       </div>

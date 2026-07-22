@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-21T23:52:31Z",
+  "published_at": "2026-07-22T22:48:41Z",
   "active_release_at_publish_time": "release-20260721t231025z",
   "profile": {
     "display": {
@@ -15,7 +15,7 @@
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": null,
+      "background_image_ref": "/media/home-cards/4ae425262a934f56933e8bcec9856b1d.jpg",
       "primary_metric_key": null
     },
     "performance_focus": {
@@ -46,7 +46,7 @@
       ]
     },
     "theme": {
-      "preset": "atlas-green"
+      "preset": "cyber-neon"
     },
     "inference_presentation": {
       "bound_predict_view_id": "churn-risk-overview"

@@ -7,26 +7,42 @@
   --public-shell-color-accent-soft: #e9f3ea;
   --public-shell-color-shadow: rgb(17 24 39 / 8%);
 
+  /*
+   * Project Spec S0131: one shared geometry contract for the fixed nav
+   * toggle and the rail it sits on top of, so the toggle's open-state
+   * center and the rail's reserved control-slot height both derive from
+   * the same tokens instead of independently recalculated offsets.
+   */
+  --public-nav-rail-width: 7rem;
+  --public-nav-toggle-size: 2.75rem;
+  --public-nav-toggle-top: var(--atlas-space-4);
+  --public-nav-toggle-edge-offset: var(--atlas-space-4);
+  --public-nav-control-slot-clearance: var(--atlas-space-4);
+  --public-nav-control-slot-height: calc(
+    var(--public-nav-toggle-top) + var(--public-nav-toggle-size) + var(--public-nav-control-slot-clearance)
+  );
+  --public-nav-list-gap: var(--atlas-space-3);
+
   min-height: 100vh;
   background: var(--public-shell-color-bg);
 }
 
 .public-shell__nav-toggle {
   position: fixed;
-  top: var(--atlas-space-4);
-  left: var(--atlas-space-4);
+  top: var(--public-nav-toggle-top);
+  left: var(--public-nav-toggle-edge-offset);
   z-index: 30;
   display: grid;
   gap: 4px;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: var(--public-nav-toggle-size);
+  height: var(--public-nav-toggle-size);
   place-items: center;
   border: 1px solid var(--public-shell-color-border);
   border-radius: var(--atlas-radius-md);
   background: var(--public-shell-color-surface);
   box-shadow: 0 1px 2px var(--public-shell-color-shadow);
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, left 0.2s ease;
 }
 
 .public-shell__nav-toggle span {
@@ -46,6 +62,24 @@
 
 .public-shell__nav-toggle:focus-visible {
   outline: none;
+}
+
+/*
+ * Project Spec S0131: while the rail is open (mobile overlay or desktop
+ * sticky rail), the toggle's horizontal center tracks the rail's own width
+ * token instead of a fixed `left` offset, so it stays aligned with the
+ * centered nav icons even if the rail width token changes. While closed
+ * (mobile off-canvas, desktop collapsed) the toggle keeps the safe
+ * viewport-edge offset above so it remains reachable on its own.
+ */
+.public-shell--nav-open .public-shell__nav-toggle {
+  left: calc(var(--public-nav-rail-width) / 2);
+  transform: translateX(-50%);
+}
+
+.public-shell--nav-open .public-shell__nav-toggle:hover,
+.public-shell--nav-open .public-shell__nav-toggle:focus-visible {
+  transform: translateX(-50%) translateY(-1px);
 }
 
 .public-shell__nav-overlay {
@@ -69,9 +103,15 @@
   display: grid;
   align-content: start;
   gap: var(--atlas-space-6);
-  width: 7rem;
+  width: var(--public-nav-rail-width);
   height: 100vh;
-  padding: var(--atlas-space-6) var(--atlas-space-3);
+  /*
+   * Project Spec S0131: the top inset reserves an explicit control slot
+   * sized off the fixed toggle's own geometry (top offset + size +
+   * clearance) so Home starts below the toggle structurally, rather than
+   * via a margin or transform owned by the Home item itself.
+   */
+  padding: var(--public-nav-control-slot-height) var(--atlas-space-3) var(--atlas-space-6);
   background: var(--public-shell-color-surface);
   border-right: 1px solid var(--public-shell-color-border);
   transform: translateX(-100%);
@@ -89,7 +129,7 @@
 
 .public-shell__nav-list {
   display: grid;
-  gap: var(--atlas-space-3);
+  gap: var(--public-nav-list-gap);
   margin: 0;
   padding: 0;
   list-style: none;

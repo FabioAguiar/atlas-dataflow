@@ -45,6 +45,32 @@ _RELEASE_ROOT_KEYS = (
 # strategy's loading behavior.
 JOBLIB_SKLEARN_PREDICT_STRATEGY = "joblib_sklearn_predict"
 
+# S0151: the closed runtime diagnostic vocabulary. Every diagnostic_code
+# ever attached to an InferenceRuntimeError (or left unset -- meaning
+# "unclassified, generic fallback") is one of these seven values. Callers
+# must never invent, derive, or accept any other code -- see
+# api/main.py's RUNTIME_DIAGNOSTIC_CODES membership check before this value
+# is ever surfaced to a private response.
+DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE = "INFERENCE_BUNDLE_UNAVAILABLE"
+DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE = "MODEL_ARTIFACT_UNAVAILABLE"
+DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH = "MODEL_ARTIFACT_HASH_MISMATCH"
+DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE = "RUNTIME_DEPENDENCY_UNAVAILABLE"
+DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED = "MODEL_DESERIALIZATION_FAILED"
+DIAGNOSTIC_PREDICTION_EXECUTION_FAILED = "PREDICTION_EXECUTION_FAILED"
+DIAGNOSTIC_RESULT_VALIDATION_FAILED = "RESULT_VALIDATION_FAILED"
+
+RUNTIME_DIAGNOSTIC_CODES = frozenset(
+    {
+        DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE,
+        DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
+        DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+        DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED,
+        DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+    }
+)
+
 # Strict tolerance for "two probabilities sum to 1.0".
 _PROBABILITY_SUM_TOLERANCE = 1e-6
 
@@ -156,7 +182,17 @@ _BINARY_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
 
 
 class InferenceRuntimeError(Exception):
-    """Base exception for sanitized inference runtime failures."""
+    """Base exception for sanitized inference runtime failures.
+
+    S0151: every instance carries a ``diagnostic_code`` -- one of the closed
+    ``RUNTIME_DIAGNOSTIC_CODES`` vocabulary, or ``None`` when the failure
+    cannot be classified through a controlled typed boundary (the caller must
+    then keep the generic response with no runtime diagnostic).
+    """
+
+    def __init__(self, message: str, *, diagnostic_code: str | None = None) -> None:
+        super().__init__(message)
+        self.diagnostic_code = diagnostic_code
 
 
 class BundleReferenceError(InferenceRuntimeError):
@@ -174,8 +210,8 @@ class BundleExecutionError(InferenceRuntimeError):
 class BundleValidationError(InferenceRuntimeError):
     """Raised when bundle metadata is invalid before runtime loading."""
 
-    def __init__(self, code: str, message: str, *, field: str) -> None:
-        super().__init__(message)
+    def __init__(self, code: str, message: str, *, field: str, diagnostic_code: str | None = None) -> None:
+        super().__init__(message, diagnostic_code=diagnostic_code)
         self.code = code
         self.field = field
 
@@ -232,14 +268,25 @@ def load_inference_bundle(
     bundle_path = _resolve_release_relative_path(release_root, bundle_reference)
 
     if not bundle_path.is_file():
-        raise BundleUnavailableError("Inference bundle is unavailable.")
+        raise BundleUnavailableError(
+            "Inference bundle is unavailable.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
 
     try:
         bundle = bundle_loader(bundle_path)
     except InferenceRuntimeError:
         raise
+    except ImportError as exc:
+        raise BundleUnavailableError(
+            "Inference runtime dependency is unavailable.",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+        ) from exc
     except Exception as exc:  # pragma: no cover - message is intentionally generic
-        raise BundleUnavailableError("Inference bundle could not be loaded.") from exc
+        raise BundleUnavailableError(
+            "Inference bundle could not be loaded.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        ) from exc
 
     return LoadedInferenceBundle(source_path=bundle_path, bundle=bundle)
 
@@ -288,14 +335,25 @@ def load_runtime_bundle_adapter(
             raise BundleReferenceError("Inference model artifact reference is not defined.")
         model_artifact_path = _resolve_release_relative_path(release_root, model_reference)
         if not model_artifact_path.is_file():
-            raise BundleUnavailableError("Inference model artifact is unavailable.")
+            raise BundleUnavailableError(
+                "Inference model artifact is unavailable.",
+                diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE,
+            )
         _verify_model_artifact_hash(model_artifact_path, declaration)
         try:
             bundle = loader_strategies[strategy](model_artifact_path, declaration)
         except InferenceRuntimeError:
             raise
+        except ImportError as exc:
+            raise BundleUnavailableError(
+                "Inference runtime dependency is unavailable.",
+                diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+            ) from exc
         except Exception as exc:  # pragma: no cover - message is intentionally generic
-            raise BundleUnavailableError("Inference model artifact could not be loaded.") from exc
+            raise BundleUnavailableError(
+                "Inference model artifact could not be loaded.",
+                diagnostic_code=DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED,
+            ) from exc
 
     return RuntimeBundleAdapter(
         source_path=loaded.source_path,
@@ -358,7 +416,10 @@ def execute_prediction(
     except InferenceRuntimeError:
         raise
     except Exception as exc:  # pragma: no cover - message is intentionally generic
-        raise BundleExecutionError("Prediction execution failed.") from exc
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
 
     return {"prediction": prediction}
 
@@ -378,6 +439,7 @@ def validate_binary_classification_result(result: Mapping[str, Any]) -> None:
             "invalid_binary_classification_result",
             "Binary classification result failed schema validation.",
             field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
         ) from exc
 
 
@@ -397,14 +459,31 @@ def load_joblib_sklearn_model(model_path: Path, declaration: Mapping[str, Any]) 
     if serialization_format != "joblib":
         raise BundleUnavailableError("Inference model serialization format is unsupported.")
 
-    import joblib  # local import: keep this dependency scoped to the loader strategy
+    try:
+        import joblib  # local import: keep this dependency scoped to the loader strategy
+    except ImportError as exc:
+        raise BundleUnavailableError(
+            "Inference runtime dependency is unavailable.",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+        ) from exc
 
     try:
         return joblib.load(model_path)
     except InferenceRuntimeError:
         raise
+    except ImportError as exc:
+        # A missing/incompatible transitive dependency (e.g. scikit-learn)
+        # needed to unpickle the model surfaces here too -- never expose the
+        # package name, only the closed diagnostic code.
+        raise BundleUnavailableError(
+            "Inference runtime dependency is unavailable.",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+        ) from exc
     except Exception as exc:  # pragma: no cover - message is intentionally generic
-        raise BundleUnavailableError("Inference model artifact could not be loaded.") from exc
+        raise BundleUnavailableError(
+            "Inference model artifact could not be loaded.",
+            diagnostic_code=DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED,
+        ) from exc
 
 
 def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
@@ -453,23 +532,38 @@ def _execute_binary_prediction(
     predict = getattr(model, "predict", None)
     predict_proba = getattr(model, "predict_proba", None)
     if not callable(predict) or not callable(predict_proba):
-        raise BundleExecutionError("Inference model does not expose a binary prediction interface.")
+        raise BundleExecutionError(
+            "Inference model does not expose a binary prediction interface.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
 
     try:
         raw_prediction = predict(row)
     except Exception as exc:  # pragma: no cover - message is intentionally generic
-        raise BundleExecutionError("Prediction execution failed.") from exc
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
     predicted_values = _as_flat_list(raw_prediction)
     if len(predicted_values) != 1:
-        raise BundleExecutionError("Prediction execution failed.")
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
 
     try:
         raw_proba = predict_proba(row)
     except Exception as exc:  # pragma: no cover - message is intentionally generic
-        raise BundleExecutionError("Prediction execution failed.") from exc
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
     proba_rows = _as_matrix(raw_proba)
     if len(proba_rows) != 1 or len(proba_rows[0]) != 2:
-        raise BundleExecutionError("Prediction execution failed.")
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
     proba_row = proba_rows[0]
 
     model_classes = _resolve_model_classes(model)
@@ -478,7 +572,10 @@ def _execute_binary_prediction(
         raise BundleExecutionError("Inference model does not expose exactly two classes.")
 
     if _normalize_class_id(predicted_values[0]) not in unique_model_classes:
-        raise BundleExecutionError("Prediction execution failed.")
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
 
     positive_class_id = semantics["positive_class"]["class_id"]
     positive_normalized = _normalize_class_id(positive_class_id)
@@ -564,15 +661,24 @@ def _release_root(active_release: Mapping[str, Any]) -> Path:
             root = Path(value).expanduser().resolve(strict=False)
             if root.is_dir():
                 return root
-            raise BundleReferenceError("Active release package is unavailable.")
+            raise BundleReferenceError(
+                "Active release package is unavailable.",
+                diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            )
 
-    raise BundleReferenceError("Active release package path is not defined.")
+    raise BundleReferenceError(
+        "Active release package path is not defined.",
+        diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+    )
 
 
 def _bundle_reference(source: Mapping[str, Any]) -> str:
     artifact = _find_bundle_artifact(source)
     if artifact is None:
-        raise BundleReferenceError("Inference bundle reference is not defined.")
+        raise BundleReferenceError(
+            "Inference bundle reference is not defined.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
 
     if isinstance(artifact, str):
         reference = artifact
@@ -582,7 +688,10 @@ def _bundle_reference(source: Mapping[str, Any]) -> str:
         reference = None
 
     if not reference:
-        raise BundleReferenceError("Inference bundle reference is not defined.")
+        raise BundleReferenceError(
+            "Inference bundle reference is not defined.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
 
     return reference
 
@@ -794,6 +903,7 @@ def _verify_model_artifact_hash(model_artifact_path: Path, declaration: Mapping[
             "model_artifact_hash_mismatch",
             "Inference model artifact hash does not match the bundle declaration.",
             field="model_artifact.sha256",
+            diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
         )
 
 
@@ -1173,7 +1283,13 @@ def _build_ordered_row(feature_order: Sequence[str], validated_payload: Mapping[
             )
         row[feature_name] = validated_payload[feature_name]
 
-    import pandas as pd  # local import: keep this dependency scoped to the binary flow
+    try:
+        import pandas as pd  # local import: keep this dependency scoped to the binary flow
+    except ImportError as exc:
+        raise BundleUnavailableError(
+            "Inference runtime dependency is unavailable.",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+        ) from exc
 
     return pd.DataFrame([row], columns=list(feature_order))
 
@@ -1205,31 +1321,49 @@ def _as_matrix(value: Any) -> list[list[Any]]:
     try:
         rows = list(value)
     except TypeError:
-        raise BundleExecutionError("Prediction execution failed.")
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
     matrix: list[list[Any]] = []
     for row in rows:
         try:
             matrix.append(list(row))
         except TypeError:
-            raise BundleExecutionError("Prediction execution failed.")
+            raise BundleExecutionError(
+                "Prediction execution failed.",
+                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+            )
     return matrix
 
 
 def _validate_probabilities(proba_row: Sequence[Any]) -> list[float]:
     if len(proba_row) != 2:
-        raise BundleExecutionError("Prediction execution failed.")
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
 
     values: list[float] = []
     for value in proba_row:
         if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise BundleExecutionError("Prediction execution failed.")
+            raise BundleExecutionError(
+                "Prediction execution failed.",
+                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+            )
         numeric = float(value)
         if not math.isfinite(numeric) or not 0.0 <= numeric <= 1.0:
-            raise BundleExecutionError("Prediction execution failed.")
+            raise BundleExecutionError(
+                "Prediction execution failed.",
+                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+            )
         values.append(numeric)
 
     if abs(sum(values) - 1.0) > _PROBABILITY_SUM_TOLERANCE:
-        raise BundleExecutionError("Prediction execution failed.")
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
 
     return values
 

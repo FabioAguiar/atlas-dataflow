@@ -309,6 +309,11 @@ function installFetchMock(
     // with safe structured validation detail (and, in malformed-entry
     // tests, with entries the normalizer must safely ignore).
     adminInferenceErrors?: unknown[];
+    // Project Spec S0151: a raw `runtime_diagnostic` value included alongside
+    // adminInferenceErrorCode, for exercising the frontend normalizer and
+    // Publishing console line pipeline with both allowlisted and
+    // malformed/unknown values.
+    adminInferenceRuntimeDiagnostic?: unknown;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -836,6 +841,9 @@ function installFetchMock(
                     {
                       error_code: options.adminInferenceErrorCode,
                       ...(options.adminInferenceErrors ? { errors: options.adminInferenceErrors } : {}),
+                      ...(options.adminInferenceRuntimeDiagnostic !== undefined
+                        ? { runtime_diagnostic: options.adminInferenceRuntimeDiagnostic }
+                        : {}),
                     },
                     422,
                   )
@@ -851,6 +859,9 @@ function installFetchMock(
           {
             error_code: options.adminInferenceErrorCode,
             ...(options.adminInferenceErrors ? { errors: options.adminInferenceErrors } : {}),
+            ...(options.adminInferenceRuntimeDiagnostic !== undefined
+              ? { runtime_diagnostic: options.adminInferenceRuntimeDiagnostic }
+              : {}),
           },
           422,
         );
@@ -6141,6 +6152,113 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0151: pure unit coverage for the runtime-diagnostic
+  // extension to the S0144 audit model -- the console-line projection and
+  // the reducer's retention rule, exercised directly (no DOM, no network).
+  describe("Publishing console runtime diagnostic model (Project Spec S0151)", () => {
+    const auditSlug = "audit-runtime-diagnostic-dataset";
+
+    it("renders one additional bounded runtime-diagnostic line immediately after the generic execution_failed line", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(
+        state,
+        auditSlug,
+        "started",
+      );
+      state = reduceLiveInferenceAuditEvent(
+        state,
+        auditSlug,
+        "execution_failed",
+        undefined,
+        undefined,
+        "RUNTIME_DEPENDENCY_UNAVAILABLE",
+      );
+
+      expect(liveInferenceAuditConsoleLines(state.records)).toEqual([
+        { id: expect.any(String), severity: "INFO", text: "Live Preview inference attempt #1 started." },
+        {
+          id: expect.any(String),
+          severity: "ERROR",
+          text: "Live Preview inference attempt #1 could not be completed.",
+        },
+        {
+          id: expect.any(String),
+          severity: "ERROR",
+          text: "Runtime diagnostic: a required inference runtime dependency is unavailable.",
+        },
+      ]);
+    });
+
+    it("renders the required deterministic copy for every allowlisted diagnostic code", () => {
+      const expectedCopy: Record<string, string> = {
+        INFERENCE_BUNDLE_UNAVAILABLE: "Runtime diagnostic: the active release inference bundle is unavailable.",
+        MODEL_ARTIFACT_UNAVAILABLE: "Runtime diagnostic: the active release model artifact is unavailable.",
+        MODEL_ARTIFACT_HASH_MISMATCH:
+          "Runtime diagnostic: the active release model artifact failed integrity verification.",
+        RUNTIME_DEPENDENCY_UNAVAILABLE:
+          "Runtime diagnostic: a required inference runtime dependency is unavailable.",
+        MODEL_DESERIALIZATION_FAILED: "Runtime diagnostic: the active release model could not be loaded.",
+        PREDICTION_EXECUTION_FAILED: "Runtime diagnostic: the model could not complete prediction execution.",
+        RESULT_VALIDATION_FAILED:
+          "Runtime diagnostic: the inference result failed governed result validation.",
+      };
+
+      for (const [code, expectedText] of Object.entries(expectedCopy)) {
+        let state = emptyLiveInferenceAuditState(auditSlug);
+        state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+        state = reduceLiveInferenceAuditEvent(
+          state,
+          auditSlug,
+          "execution_failed",
+          undefined,
+          undefined,
+          code as never,
+        );
+        const lines = liveInferenceAuditConsoleLines(state.records);
+        expect(lines[2].text).toBe(expectedText);
+      }
+    });
+
+    it("adds no diagnostic line when the executor reports no runtime diagnostic (existing generic-only behavior)", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "execution_failed");
+
+      const lines = liveInferenceAuditConsoleLines(state.records);
+      expect(lines).toHaveLength(2);
+      expect(lines[1].text).toBe("Live Preview inference attempt #1 could not be completed.");
+    });
+
+    it("never retains a runtime diagnostic on succeeded or validation_failed records, even if a caller passes one", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(
+        state,
+        auditSlug,
+        "succeeded",
+        { predictedPositive: true, positiveClassProbability: 0.5 },
+        undefined,
+        "RUNTIME_DEPENDENCY_UNAVAILABLE" as never,
+      );
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(
+        state,
+        auditSlug,
+        "validation_failed",
+        undefined,
+        undefined,
+        "RUNTIME_DEPENDENCY_UNAVAILABLE" as never,
+      );
+
+      const terminalRecords = state.records.filter((record) => record.kind !== "started");
+      expect(terminalRecords).toHaveLength(2);
+      expect(terminalRecords.every((record) => record.runtimeDiagnosticCode === undefined)).toBe(true);
+
+      const lines = liveInferenceAuditConsoleLines(state.records);
+      expect(lines.some((line) => line.text.startsWith("Runtime diagnostic:"))).toBe(false);
+    });
+  });
+
   // Project Spec S0147: DOM-level wiring coverage using the real
   // InferenceForm/executeAdminInference path and the fetch-mock's
   // adminInferenceErrors option -- confirms DatasetAdminPage actually
@@ -6336,6 +6454,193 @@ describe("DatasetAdminPage", () => {
       expect(startedIndex).toBeGreaterThan(datasetLineIndex);
       expect(summaryIndex).toBeGreaterThan(startedIndex);
       expect(detailIndex).toBeGreaterThan(summaryIndex);
+    });
+  });
+
+  // Project Spec S0151: DOM-level wiring coverage using the real
+  // InferenceForm/executeAdminInference path and the fetch-mock's
+  // adminInferenceRuntimeDiagnostic option -- confirms DatasetAdminPage
+  // actually normalizes and projects the private runtime diagnostic into the
+  // Publishing console, rather than only exercising the pure model above.
+  describe("Publishing console runtime diagnostic wiring (Project Spec S0151)", () => {
+    function openLivePreviewInferenceTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+          name: "Inference",
+        }),
+      );
+    }
+
+    function openPublishingTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    }
+
+    function consoleLineTexts(): string[] {
+      const panel = screen.getByRole("tabpanel");
+      const consoleEl = within(panel).getByRole("log", { name: "Dataset publication operational status" });
+      return Array.from(consoleEl.querySelectorAll(".dataset-admin-console-line")).map((el) => el.textContent ?? "");
+    }
+
+    it("renders the generic execution-failed line plus one bounded runtime-diagnostic line for an allowlisted code", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INFERENCE_FAILURE",
+        adminInferenceRuntimeDiagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts).toContain("[ERROR] Live Preview inference attempt #1 could not be completed.");
+      expect(lineTexts).toContain(
+        "[ERROR] Runtime diagnostic: a required inference runtime dependency is unavailable.",
+      );
+    });
+
+    it("renders the required deterministic copy for each remaining allowlisted diagnostic code", async () => {
+      const cases: Array<[string, string]> = [
+        [
+          "INFERENCE_BUNDLE_UNAVAILABLE",
+          "[ERROR] Runtime diagnostic: the active release inference bundle is unavailable.",
+        ],
+        [
+          "MODEL_ARTIFACT_UNAVAILABLE",
+          "[ERROR] Runtime diagnostic: the active release model artifact is unavailable.",
+        ],
+        [
+          "MODEL_ARTIFACT_HASH_MISMATCH",
+          "[ERROR] Runtime diagnostic: the active release model artifact failed integrity verification.",
+        ],
+        [
+          "MODEL_DESERIALIZATION_FAILED",
+          "[ERROR] Runtime diagnostic: the active release model could not be loaded.",
+        ],
+        [
+          "PREDICTION_EXECUTION_FAILED",
+          "[ERROR] Runtime diagnostic: the model could not complete prediction execution.",
+        ],
+        [
+          "RESULT_VALIDATION_FAILED",
+          "[ERROR] Runtime diagnostic: the inference result failed governed result validation.",
+        ],
+      ];
+
+      for (const [code, expectedLine] of cases) {
+        cleanup();
+        installFetchMock({
+          adminInferenceErrorCode: "INFERENCE_FAILURE",
+          adminInferenceRuntimeDiagnostic: { code },
+        });
+        renderAdminPage();
+        await loadDraftAndCustomization();
+
+        openLivePreviewInferenceTab();
+        fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+        await screen.findByRole("alert");
+
+        openPublishingTab();
+        expect(consoleLineTexts()).toContain(expectedLine);
+      }
+    });
+
+    it("adds no runtime-diagnostic line when the backend omits it, preserving the existing generic-only line", async () => {
+      installFetchMock({ adminInferenceErrorCode: "INFERENCE_FAILURE" });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts).toContain("[ERROR] Live Preview inference attempt #1 could not be completed.");
+      expect(lineTexts.some((text) => text.includes("Runtime diagnostic:"))).toBe(false);
+    });
+
+    it("drops an unknown or malformed runtime diagnostic value, never rendering a diagnostic line for it", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INFERENCE_FAILURE",
+        adminInferenceRuntimeDiagnostic: { code: "SOME_UNKNOWN_CODE" },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts).toContain("[ERROR] Live Preview inference attempt #1 could not be completed.");
+      expect(lineTexts.some((text) => text.includes("Runtime diagnostic:"))).toBe(false);
+      expect(lineTexts.some((text) => text.includes("SOME_UNKNOWN_CODE"))).toBe(false);
+    });
+
+    it("never carries a runtime diagnostic line for an INVALID_PAYLOAD response, even if the backend attaches one", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceRuntimeDiagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      expect(consoleLineTexts().some((text) => text.includes("Runtime diagnostic:"))).toBe(false);
+    });
+
+    it("never exposes the raw backend error_code or any additional runtime_diagnostic property in the console DOM", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INFERENCE_FAILURE",
+        adminInferenceRuntimeDiagnostic: {
+          code: "RUNTIME_DEPENDENCY_UNAVAILABLE",
+          message: "joblib==1.5.3 is not installed",
+          package: "joblib",
+        },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const consoleText = consoleLineTexts().join(" ");
+      expect(consoleText).not.toContain("INFERENCE_FAILURE");
+      expect(consoleText).not.toContain("joblib");
+      expect(consoleText).not.toContain("1.5.3");
+    });
+
+    it("renders the runtime-diagnostic line as the newest console line, so it becomes the S0149 latest-line target", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INFERENCE_FAILURE",
+        adminInferenceRuntimeDiagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const panel = screen.getByRole("tabpanel");
+      const consoleEl = within(panel).getByRole("log", { name: "Dataset publication operational status" });
+      const lines = Array.from(consoleEl.querySelectorAll(".dataset-admin-console-line"));
+      const lastLine = lines[lines.length - 1];
+      expect(lastLine.textContent).toBe(
+        "[ERROR] Runtime diagnostic: a required inference runtime dependency is unavailable.",
+      );
     });
   });
 

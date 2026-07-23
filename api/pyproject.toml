@@ -10,4 +10,16 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "jsonschema>=4.20.0",
+    # Pinned to the exact versions verified against the controlled training
+    # environment (conda env `atlas`, the environment used to run
+    # pipeline.training for the active Telco release): joblib matches the
+    # recorded training-parameter-record.json serializer version (1.5.3)
+    # exactly, and pandas/scikit-learn were confirmed compatible by loading
+    # the real governed model artifact (models/model.pkl,
+    # sha256 ec2eb1127b5489449195629f8cbb5500291002fae0f633f99324a77e29bf8282)
+    # with these versions and observing no
+    # sklearn.exceptions.InconsistentVersionWarning.
+    "joblib==1.5.3",
+    "pandas==3.0.3",
+    "scikit-learn==1.9.0",
 ]

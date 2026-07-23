@@ -28,6 +28,7 @@ import {
 } from "../../components/ResultCard/types";
 import InferenceForm, {
   normalizeAdminInferenceGuidance,
+  normalizeInferenceRuntimeDiagnostic,
   normalizeInferenceValidationIssues,
   type FieldHint,
   type GroupDef,
@@ -35,6 +36,7 @@ import InferenceForm, {
   type InferenceExecutor,
   type InferenceLifecycleEvent,
   type InferenceLifecycleValidationIssue,
+  type InferenceRuntimeDiagnosticCode,
   type InferenceValidationViolation,
   type PredictViewCustomization,
 } from "../../components/InferenceForm/InferenceForm";
@@ -1939,7 +1941,12 @@ async function executeAdminInference(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const body = (await res.json()) as { result?: unknown; error_code?: string; errors?: unknown };
+    const body = (await res.json()) as {
+      result?: unknown;
+      error_code?: string;
+      errors?: unknown;
+      runtime_diagnostic?: unknown;
+    };
     if (res.ok) {
       return { ok: true, result: body?.result };
     }
@@ -1947,10 +1954,16 @@ async function executeAdminInference(
     // private executor carries the same bounded, safe validationIssues
     // shape the public executor does -- never the raw backend `errors`
     // value, never a raw message.
+    //
+    // Project Spec S0151: likewise reuses InferenceForm's shared
+    // normalizeInferenceRuntimeDiagnostic, so this private-only executor is
+    // the sole place body.runtime_diagnostic is ever read -- the public
+    // executor in InferenceForm.tsx never reads this field.
     return {
       ok: false,
       errorCode: body?.error_code,
       validationIssues: normalizeInferenceValidationIssues(body?.errors),
+      runtimeDiagnostic: normalizeInferenceRuntimeDiagnostic(body?.runtime_diagnostic),
     };
   } catch {
     return { ok: false };
@@ -3632,6 +3645,11 @@ export type LiveInferenceAuditRecord = {
   // console line. Never present for "started", "succeeded" or
   // "execution_failed".
   issues?: InferenceLifecycleValidationIssue[];
+  // Project Spec S0151: present only for kind "execution_failed", and only
+  // when the backend safely classified the failure through a controlled
+  // typed boundary. Never present for "started", "succeeded" or
+  // "validation_failed".
+  runtimeDiagnosticCode?: InferenceRuntimeDiagnosticCode;
 };
 
 // Owned by DatasetAdminPage (Section "Keep the history above top-level tab
@@ -3685,6 +3703,7 @@ export function reduceLiveInferenceAuditEvent(
   kind: LiveInferenceAuditEventKind,
   successSummary?: LiveInferenceAuditSuccessSummary,
   validationIssues?: InferenceLifecycleValidationIssue[],
+  runtimeDiagnosticCode?: InferenceRuntimeDiagnosticCode,
 ): LiveInferenceAuditState {
   if (datasetSlugAtCapture !== state.datasetSlug) {
     return state;
@@ -3716,6 +3735,9 @@ export function reduceLiveInferenceAuditEvent(
     kind === "validation_failed" && validationIssues && validationIssues.length > 0
       ? validationIssues.slice(0, LIVE_INFERENCE_AUDIT_ISSUE_LIMIT)
       : undefined;
+  // Project Spec S0151: retained only for "execution_failed" -- never for
+  // "succeeded" or "validation_failed", even if a caller passes one.
+  const retainedRuntimeDiagnosticCode = kind === "execution_failed" ? runtimeDiagnosticCode : undefined;
   return appendBoundedLiveInferenceAuditRecord(
     { ...state, nextEventId: state.nextEventId + 1, activeAttemptSequence: null },
     {
@@ -3724,6 +3746,7 @@ export function reduceLiveInferenceAuditEvent(
       kind,
       successSummary: kind === "succeeded" ? successSummary : undefined,
       issues: boundedIssues,
+      runtimeDiagnosticCode: retainedRuntimeDiagnosticCode,
     },
   );
 }
@@ -3748,6 +3771,21 @@ const VALIDATION_VIOLATION_LINE_COPY: Record<InferenceValidationViolation, strin
   missing_required_field: "a required value was not submitted.",
   type_mismatch: "the submitted value has the wrong type.",
   domain_violation: "the submitted value is outside the accepted domain.",
+};
+
+// Project Spec S0151: the bounded, frontend-owned copy for each allowlisted
+// runtime diagnostic code. Deliberately never interpolates a backend
+// message, package name, path, or exception -- console copy is owned
+// entirely by this mapping.
+const RUNTIME_DIAGNOSTIC_LINE_COPY: Record<InferenceRuntimeDiagnosticCode, string> = {
+  INFERENCE_BUNDLE_UNAVAILABLE: "Runtime diagnostic: the active release inference bundle is unavailable.",
+  MODEL_ARTIFACT_UNAVAILABLE: "Runtime diagnostic: the active release model artifact is unavailable.",
+  MODEL_ARTIFACT_HASH_MISMATCH:
+    "Runtime diagnostic: the active release model artifact failed integrity verification.",
+  RUNTIME_DEPENDENCY_UNAVAILABLE: "Runtime diagnostic: a required inference runtime dependency is unavailable.",
+  MODEL_DESERIALIZATION_FAILED: "Runtime diagnostic: the active release model could not be loaded.",
+  PREDICTION_EXECUTION_FAILED: "Runtime diagnostic: the model could not complete prediction execution.",
+  RESULT_VALIDATION_FAILED: "Runtime diagnostic: the inference result failed governed result validation.",
 };
 
 // Project Spec S0144: renders the required bounded, explicit console text
@@ -3810,6 +3848,20 @@ export function liveInferenceAuditConsoleLines(records: LiveInferenceAuditRecord
         severity: "ERROR",
         text: `Live Preview inference attempt #${record.attemptSequence} could not be completed.`,
       });
+      // Project Spec S0151: at most one additional bounded runtime-diagnostic
+      // line, immediately following the generic line above, only when the
+      // backend safely classified the failure through a controlled typed
+      // boundary. No diagnostic line is added when the code is absent,
+      // malformed, or unknown (normalizeInferenceRuntimeDiagnostic already
+      // dropped anything outside the closed allowlist before this record was
+      // ever created).
+      if (record.runtimeDiagnosticCode) {
+        lines.push({
+          id: `${record.id}-runtime-diagnostic`,
+          severity: "ERROR",
+          text: RUNTIME_DIAGNOSTIC_LINE_COPY[record.runtimeDiagnosticCode],
+        });
+      }
       continue;
     }
 
@@ -5581,8 +5633,20 @@ export default function DatasetAdminPage() {
     // handler only forwards them into the reducer, it does not inspect or
     // re-derive them.
     const validationIssues = event.type === "validation_failed" ? event.issues : undefined;
+    // Project Spec S0151: InferenceForm has already normalized this
+    // diagnostic (or dropped it) before this callback ever runs -- this
+    // handler only forwards it into the reducer, it does not inspect or
+    // re-derive it.
+    const runtimeDiagnosticCode = event.type === "execution_failed" ? event.runtimeDiagnostic?.code : undefined;
     setLiveInferenceAudit((current) =>
-      reduceLiveInferenceAuditEvent(current, datasetSlugAtCapture, event.type, successSummary, validationIssues),
+      reduceLiveInferenceAuditEvent(
+        current,
+        datasetSlugAtCapture,
+        event.type,
+        successSummary,
+        validationIssues,
+        runtimeDiagnosticCode,
+      ),
     );
   }
 

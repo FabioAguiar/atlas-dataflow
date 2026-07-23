@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import InferenceForm, {
   normalizeAdminInferenceGuidance,
+  normalizeInferenceRuntimeDiagnostic,
   normalizeInferenceValidationIssues,
   type ContractPayload,
   type InferenceExecutionResult,
@@ -1260,5 +1261,161 @@ describe("InferenceForm structured validation diagnostics (Project Spec S0147)",
     await screen.findByRole("alert");
 
     expect(JSON.stringify(events)).not.toContain("999999");
+  });
+});
+
+// Project Spec S0151: normalizeInferenceRuntimeDiagnostic is the sole
+// boundary that may turn an unknown backend `runtime_diagnostic` value into
+// a safe, bounded InferenceRuntimeDiagnostic -- exercised directly here (pure
+// function, no DOM, no network) for every normalization invariant.
+describe("normalizeInferenceRuntimeDiagnostic (Project Spec S0151)", () => {
+  it("normalizes every allowlisted diagnostic code", () => {
+    const codes = [
+      "INFERENCE_BUNDLE_UNAVAILABLE",
+      "MODEL_ARTIFACT_UNAVAILABLE",
+      "MODEL_ARTIFACT_HASH_MISMATCH",
+      "RUNTIME_DEPENDENCY_UNAVAILABLE",
+      "MODEL_DESERIALIZATION_FAILED",
+      "PREDICTION_EXECUTION_FAILED",
+      "RESULT_VALIDATION_FAILED",
+    ];
+    for (const code of codes) {
+      expect(normalizeInferenceRuntimeDiagnostic({ code })).toEqual({ code });
+    }
+  });
+
+  it("drops an unknown code", () => {
+    expect(normalizeInferenceRuntimeDiagnostic({ code: "SOME_UNKNOWN_CODE" })).toBeUndefined();
+  });
+
+  it("drops a non-object, an array, and a missing code", () => {
+    expect(normalizeInferenceRuntimeDiagnostic(undefined)).toBeUndefined();
+    expect(normalizeInferenceRuntimeDiagnostic(null)).toBeUndefined();
+    expect(normalizeInferenceRuntimeDiagnostic("RUNTIME_DEPENDENCY_UNAVAILABLE")).toBeUndefined();
+    expect(normalizeInferenceRuntimeDiagnostic(["RUNTIME_DEPENDENCY_UNAVAILABLE"])).toBeUndefined();
+    expect(normalizeInferenceRuntimeDiagnostic({})).toBeUndefined();
+  });
+
+  it("never retains a backend message or additional property", () => {
+    const result = normalizeInferenceRuntimeDiagnostic({
+      code: "RUNTIME_DEPENDENCY_UNAVAILABLE",
+      message: "joblib is not installed",
+      package: "joblib",
+    });
+    expect(result).toEqual({ code: "RUNTIME_DEPENDENCY_UNAVAILABLE" });
+    expect(Object.keys(result!)).toEqual(["code"]);
+  });
+});
+
+describe("InferenceForm runtime diagnostic propagation (Project Spec S0151)", () => {
+  it("carries a normalized runtime diagnostic on the execution_failed lifecycle event", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INFERENCE_FAILURE",
+        runtimeDiagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" },
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([
+      { type: "started" },
+      { type: "execution_failed", runtimeDiagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" } },
+    ]);
+  });
+
+  it("emits the existing diagnostic-free execution_failed event when the executor reports none", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: false, errorCode: "INFERENCE_FAILURE" }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "execution_failed" }]);
+  });
+
+  it("never carries a runtime diagnostic on a validation_failed lifecycle event, even if the executor attaches one", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        runtimeDiagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" },
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "validation_failed" }]);
+  });
+
+  it("the public default executor never surfaces a runtime diagnostic even when the response body includes one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          {
+            error_code: "INFERENCE_FAILURE",
+            runtime_diagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" },
+          },
+          503,
+        ),
+      ),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "execution_failed" }]);
   });
 });

@@ -210,6 +210,51 @@ export function normalizeInferenceValidationIssues(errors: unknown): InferenceVa
 }
 
 /**
+ * Project Spec S0151: the closed runtime diagnostic vocabulary the private
+ * Admin route may attach to an otherwise-generic execution failure. No
+ * free-form or dynamically constructed code is ever accepted -- see
+ * normalizeInferenceRuntimeDiagnostic below.
+ */
+export type InferenceRuntimeDiagnosticCode =
+  | "INFERENCE_BUNDLE_UNAVAILABLE"
+  | "MODEL_ARTIFACT_UNAVAILABLE"
+  | "MODEL_ARTIFACT_HASH_MISMATCH"
+  | "RUNTIME_DEPENDENCY_UNAVAILABLE"
+  | "MODEL_DESERIALIZATION_FAILED"
+  | "PREDICTION_EXECUTION_FAILED"
+  | "RESULT_VALIDATION_FAILED";
+
+export type InferenceRuntimeDiagnostic = {
+  code: InferenceRuntimeDiagnosticCode;
+};
+
+const RUNTIME_DIAGNOSTIC_CODES: ReadonlySet<string> = new Set<InferenceRuntimeDiagnosticCode>([
+  "INFERENCE_BUNDLE_UNAVAILABLE",
+  "MODEL_ARTIFACT_UNAVAILABLE",
+  "MODEL_ARTIFACT_HASH_MISMATCH",
+  "RUNTIME_DEPENDENCY_UNAVAILABLE",
+  "MODEL_DESERIALIZATION_FAILED",
+  "PREDICTION_EXECUTION_FAILED",
+  "RESULT_VALIDATION_FAILED",
+]);
+
+/**
+ * Project Spec S0151: the sole boundary that may turn an unknown backend
+ * `runtime_diagnostic` value into a bounded, safe InferenceRuntimeDiagnostic.
+ * The backend response is always treated as untrusted input -- a non-object,
+ * an array, a missing/unknown/malformed `code`, or any other shape is
+ * dropped entirely. The returned value never carries any property beyond the
+ * allowlisted `code`, so no backend message or additional property can ever
+ * be retained.
+ */
+export function normalizeInferenceRuntimeDiagnostic(value: unknown): InferenceRuntimeDiagnostic | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const code = (value as Record<string, unknown>).code;
+  if (typeof code !== "string" || !RUNTIME_DIAGNOSTIC_CODES.has(code)) return undefined;
+  return { code: code as InferenceRuntimeDiagnosticCode };
+}
+
+/**
  * Project Spec S0143: the bounded typed outcome every inference executor
  * resolves to, whether it POSTs to the public route or a private Admin
  * route. Callers never see a raw Response/exception -- only this shape --
@@ -220,10 +265,21 @@ export function normalizeInferenceValidationIssues(errors: unknown): InferenceVa
  * already-normalized validationIssues list (see
  * normalizeInferenceValidationIssues) -- never the raw backend `errors`
  * value, and never present on a successful outcome.
+ *
+ * Project Spec S0151: a failed outcome may additionally carry a bounded,
+ * already-normalized runtimeDiagnostic (see
+ * normalizeInferenceRuntimeDiagnostic) -- the public executor never reads or
+ * sets this field, even if a malformed/misconfigured public response
+ * includes one.
  */
 export type InferenceExecutionResult =
   | { ok: true; result: unknown }
-  | { ok: false; errorCode?: string; validationIssues?: InferenceValidationIssue[] };
+  | {
+      ok: false;
+      errorCode?: string;
+      validationIssues?: InferenceValidationIssue[];
+      runtimeDiagnostic?: InferenceRuntimeDiagnostic;
+    };
 
 /**
  * Project Spec S0143: an injectable execution boundary so InferenceForm can
@@ -293,12 +349,16 @@ export type InferenceLifecycleValidationIssue = {
  * bounded, contract-filtered, label-resolved issues list. Absent or empty
  * when no valid issue remains, so the existing generic Publishing-console
  * fallback line stays available.
+ *
+ * Project Spec S0151: an execution_failed event may additionally carry a
+ * bounded, already-normalized runtimeDiagnostic -- never present on any
+ * other event type, even if a caller's outcome carries one.
  */
 export type InferenceLifecycleEvent =
   | { type: "started" }
   | { type: "succeeded" }
   | { type: "validation_failed"; issues?: InferenceLifecycleValidationIssue[] }
-  | { type: "execution_failed" };
+  | { type: "execution_failed"; runtimeDiagnostic?: InferenceRuntimeDiagnostic };
 
 type Props = {
   contract: ContractPayload;
@@ -682,7 +742,7 @@ export default function InferenceForm({
         const issues = resolveLifecycleValidationIssues(outcome.validationIssues, contract.features, hintMap);
         onLifecycleEvent?.(issues ? { type: "validation_failed", issues } : { type: "validation_failed" });
       } else {
-        onLifecycleEvent?.({ type: "execution_failed" });
+        onLifecycleEvent?.({ type: "execution_failed", runtimeDiagnostic: outcome.runtimeDiagnostic });
       }
     }
   }

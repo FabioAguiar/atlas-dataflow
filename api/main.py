@@ -36,8 +36,10 @@ from public_errors import (  # noqa: E402
 )
 from runtime.inference import (  # noqa: E402
     BundleUnavailableError,
+    DIAGNOSTIC_RESULT_VALIDATION_FAILED,
     InferenceRuntimeError,
     JOBLIB_SKLEARN_PREDICT_STRATEGY,
+    RUNTIME_DIAGNOSTIC_CODES,
     execute_prediction,
     load_inference_bundle,
     load_joblib_sklearn_model,
@@ -601,7 +603,41 @@ def _project_result_contract_safely(active_release: str) -> dict:
         return unavailable
 
 
-def _execute_governed_inference(dataset_slug: str, active_release: str, payload):
+def _inference_failure_response(
+    *, diagnostic_code: str | None, include_runtime_diagnostic: bool
+) -> JSONResponse:
+    """
+    Project Spec S0151: the single place a bounded, allowlisted
+    ``runtime_diagnostic`` may be attached to the existing generic
+    INFERENCE_FAILURE response. ``include_runtime_diagnostic`` is an explicit
+    caller decision (the private Admin route opts in; the public route never
+    does) -- route privacy is never inferred here from anything about the
+    request itself. ``diagnostic_code`` must be a member of the closed
+    RUNTIME_DIAGNOSTIC_CODES vocabulary or the response stays generic; this
+    never reads public_errors.py's INFERENCE_FAILURE.response() `errors` path,
+    only its status/type/code/message fields, so the extra key can be added
+    without modifying public_errors.py (outside this request's edit scope).
+    """
+    if include_runtime_diagnostic and diagnostic_code in RUNTIME_DIAGNOSTIC_CODES:
+        return JSONResponse(
+            status_code=INFERENCE_FAILURE.status_code,
+            content={
+                "error_type": INFERENCE_FAILURE.error_type,
+                "error_code": INFERENCE_FAILURE.error_code,
+                "message": INFERENCE_FAILURE.message,
+                "runtime_diagnostic": {"code": diagnostic_code},
+            },
+        )
+    return public_error_response(INFERENCE_FAILURE)
+
+
+def _execute_governed_inference(
+    dataset_slug: str,
+    active_release: str,
+    payload,
+    *,
+    include_runtime_diagnostic: bool = False,
+):
     """
     Project Spec S0143: the shared post-resolution inference execution
     boundary used by both the public inference route and the private Admin
@@ -611,6 +647,11 @@ def _execute_governed_inference(dataset_slug: str, active_release: str, payload)
     resolution for the private route -- this function performs no access
     classification of its own and must not be reachable before that
     resolution has already succeeded.
+
+    Project Spec S0151: ``include_runtime_diagnostic`` is the caller's
+    explicit, route-level decision to allow one bounded allowlisted
+    ``runtime_diagnostic.code`` onto an otherwise-unchanged generic
+    INFERENCE_FAILURE response -- the public route always omits it.
     """
     if not isinstance(payload, dict):
         return validation_error_response(
@@ -647,19 +688,31 @@ def _execute_governed_inference(dataset_slug: str, active_release: str, payload)
             loader_strategies=_INFERENCE_LOADER_STRATEGIES,
             supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
         )
-    except InferenceRuntimeError:
-        return public_error_response(INFERENCE_FAILURE)
+    except InferenceRuntimeError as exc:
+        return _inference_failure_response(
+            diagnostic_code=exc.diagnostic_code,
+            include_runtime_diagnostic=include_runtime_diagnostic,
+        )
     except Exception:
-        return public_error_response(INFERENCE_FAILURE)
+        return _inference_failure_response(
+            diagnostic_code=None,
+            include_runtime_diagnostic=include_runtime_diagnostic,
+        )
 
     result = prediction_result.get("result") if isinstance(prediction_result, dict) else None
     if not isinstance(result, dict):
-        return public_error_response(INFERENCE_FAILURE)
+        return _inference_failure_response(
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+            include_runtime_diagnostic=include_runtime_diagnostic,
+        )
 
     try:
         validate_binary_classification_result(result)
-    except InferenceRuntimeError:
-        return public_error_response(INFERENCE_FAILURE)
+    except InferenceRuntimeError as exc:
+        return _inference_failure_response(
+            diagnostic_code=exc.diagnostic_code,
+            include_runtime_diagnostic=include_runtime_diagnostic,
+        )
 
     return {
         "dataset_slug": dataset_slug,
@@ -715,7 +768,12 @@ def post_admin_dataset_inference(
     except RegistryInvalidError:
         return public_error_response(REGISTRY_UNAVAILABLE)
 
-    return _execute_governed_inference(resolved.dataset_slug, resolved.active_release, payload)
+    return _execute_governed_inference(
+        resolved.dataset_slug,
+        resolved.active_release,
+        payload,
+        include_runtime_diagnostic=True,
+    )
 
 
 @app.get("/datasets/{dataset_slug}/metrics")

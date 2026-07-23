@@ -9,9 +9,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from runtime import (  # noqa: E402
     BundleReferenceError,
     BundleUnavailableError,
+    load_inference_bundle,
     load_runtime_bundle_adapter,
 )
-from runtime.inference import JOBLIB_SKLEARN_PREDICT_STRATEGY, load_joblib_sklearn_model  # noqa: E402
+from runtime.inference import (  # noqa: E402
+    BundleValidationError,
+    DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+    DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
+    DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE,
+    DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED,
+    DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+    DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+    JOBLIB_SKLEARN_PREDICT_STRATEGY,
+    load_joblib_sklearn_model,
+    validate_binary_classification_result,
+)
 
 
 def _write_json(path: Path, data: Mapping[str, Any]) -> None:
@@ -266,8 +278,173 @@ def test_joblib_sklearn_predict_loader_maps_corrupt_file_to_sanitized_error(tmp_
         assert message == "Inference model artifact could not be loaded."
         assert str(tmp_path) not in message
         assert "Traceback" not in message
+        # Project Spec S0151: a genuine deserialization failure (real joblib,
+        # bad bytes) classifies through the typed boundary, never string
+        # matching.
+        assert exc.diagnostic_code == DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED
     else:
         raise AssertionError("corrupt joblib file was accepted")
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0151: the closed runtime diagnostic vocabulary. Every case
+# below asserts the sanitized message is unchanged (or newly generic/safe)
+# and that diagnostic_code is the correct allowlisted value -- proving
+# classification happens at controlled typed boundaries, never by matching
+# substrings of str(exc).
+# ---------------------------------------------------------------------------
+
+
+def test_load_joblib_sklearn_model_classifies_missing_dependency_without_naming_the_package(
+    tmp_path: Path, monkeypatch
+) -> None:
+    model_path = tmp_path / "model.pkl"
+    model_path.write_bytes(b"irrelevant")
+
+    # Forces the loader's own `import joblib` to raise ImportError without
+    # actually uninstalling joblib from this environment.
+    monkeypatch.setitem(sys.modules, "joblib", None)
+
+    try:
+        load_joblib_sklearn_model(
+            model_path,
+            {"runtime_execution": {"serialization_format": "joblib"}},
+        )
+    except BundleUnavailableError as exc:
+        message = str(exc)
+        assert exc.diagnostic_code == DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE
+        assert "joblib" not in message.lower()
+        assert str(tmp_path) not in message
+    else:
+        raise AssertionError("missing joblib dependency was accepted")
+
+
+def test_runtime_bundle_adapter_classifies_missing_model_artifact(tmp_path: Path) -> None:
+    release_root = tmp_path / "release"
+    declaration = {
+        "feature_order": ["age"],
+        "runtime_execution": {
+            "loader_strategy": JOBLIB_SKLEARN_PREDICT_STRATEGY,
+            "serialization_format": "joblib",
+        },
+        "model_artifact": {"path": "models/model.pkl"},
+        "output_schema": {"class_labels": ["No", "Yes"]},
+    }
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+
+    def load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    try:
+        load_runtime_bundle_adapter(
+            {
+                "release_root": str(release_root),
+                "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+            },
+            bundle_loader=load_declaration,
+            loader_strategies={JOBLIB_SKLEARN_PREDICT_STRATEGY: load_joblib_sklearn_model},
+            supported_serialization_formats=["joblib"],
+        )
+    except BundleUnavailableError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE
+    else:
+        raise AssertionError("missing model artifact was accepted")
+
+
+def test_runtime_bundle_adapter_classifies_model_artifact_hash_mismatch(tmp_path: Path) -> None:
+    import joblib
+
+    release_root = tmp_path / "release"
+    (release_root / "models").mkdir(parents=True)
+    joblib.dump({"marker": "real-model"}, release_root / "models" / "model.pkl")
+    declaration = {
+        "feature_order": ["age"],
+        "runtime_execution": {
+            "loader_strategy": JOBLIB_SKLEARN_PREDICT_STRATEGY,
+            "serialization_format": "joblib",
+        },
+        "model_artifact": {"path": "models/model.pkl", "sha256": "0" * 64},
+        "output_schema": {"class_labels": ["No", "Yes"]},
+    }
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+
+    def load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    try:
+        load_runtime_bundle_adapter(
+            {
+                "release_root": str(release_root),
+                "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+            },
+            bundle_loader=load_declaration,
+            loader_strategies={JOBLIB_SKLEARN_PREDICT_STRATEGY: load_joblib_sklearn_model},
+            supported_serialization_formats=["joblib"],
+        )
+    except BundleValidationError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH
+        assert "0" * 64 not in str(exc)
+    else:
+        raise AssertionError("model artifact hash mismatch was accepted")
+
+
+def test_load_inference_bundle_classifies_missing_bundle_as_inference_bundle_unavailable(
+    tmp_path: Path,
+) -> None:
+    release_root = tmp_path / "release"
+    release_root.mkdir()
+
+    def load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    try:
+        load_inference_bundle(
+            {
+                "release_root": str(release_root),
+                "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+            },
+            bundle_loader=load_declaration,
+        )
+    except BundleUnavailableError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
+    else:
+        raise AssertionError("missing bundle file was accepted")
+
+
+def test_validate_binary_classification_result_classifies_schema_failure(tmp_path: Path) -> None:
+    try:
+        validate_binary_classification_result({"schema_version": "binary-classification-result.v1"})
+    except BundleValidationError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_RESULT_VALIDATION_FAILED
+    else:
+        raise AssertionError("invalid binary classification result was accepted")
+
+
+def test_unclassified_bundle_failure_carries_no_diagnostic_code(tmp_path: Path) -> None:
+    release_root = tmp_path / "release"
+    _write_json(release_root / "predictions" / "bundle.json", _bundle_declaration())
+
+    def load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    try:
+        load_runtime_bundle_adapter(
+            {
+                "release_root": str(release_root),
+                "artifacts": {"inference_bundle": {"path": "predictions/bundle.json"}},
+            },
+            bundle_loader=load_declaration,
+            loader_strategies={},
+            compatibility_status={"status": "compatible"},
+        )
+    except BundleUnavailableError as exc:
+        # Project Spec S0151: an unsupported loader strategy name is a
+        # configuration/allowlist issue, not one of the seven closed runtime
+        # diagnostic codes -- it must stay unclassified so the caller keeps
+        # the fully generic INFERENCE_FAILURE response.
+        assert exc.diagnostic_code is None
+    else:
+        raise AssertionError("unsupported loader strategy was accepted")
 
 
 def test_runtime_bundle_adapter_loads_via_joblib_sklearn_predict_allowlist(tmp_path: Path) -> None:

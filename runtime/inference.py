@@ -45,9 +45,9 @@ _RELEASE_ROOT_KEYS = (
 # strategy's loading behavior.
 JOBLIB_SKLEARN_PREDICT_STRATEGY = "joblib_sklearn_predict"
 
-# S0151: the closed runtime diagnostic vocabulary. Every diagnostic_code
+# S0151/S0152: the closed runtime diagnostic vocabulary. Every diagnostic_code
 # ever attached to an InferenceRuntimeError (or left unset -- meaning
-# "unclassified, generic fallback") is one of these seven values. Callers
+# "unclassified, generic fallback") is one of these eight values. Callers
 # must never invent, derive, or accept any other code -- see
 # api/main.py's RUNTIME_DIAGNOSTIC_CODES membership check before this value
 # is ever surfaced to a private response.
@@ -58,6 +58,13 @@ DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE = "RUNTIME_DEPENDENCY_UNAVAILABLE"
 DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED = "MODEL_DESERIALIZATION_FAILED"
 DIAGNOSTIC_PREDICTION_EXECUTION_FAILED = "PREDICTION_EXECUTION_FAILED"
 DIAGNOSTIC_RESULT_VALIDATION_FAILED = "RESULT_VALIDATION_FAILED"
+# S0152: assigned only when the runtime cannot reconcile the bundle's
+# declared feature_order with the active runtime-contract feature metadata
+# after normal payload validation has already succeeded -- never for
+# ordinary INVALID_PAYLOAD failures, model/dependency/deserialization
+# failures, generic predict/predict_proba failures, result validation
+# failures, or a successfully materialized optional omission.
+DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT = "RUNTIME_INPUT_CONTRACT_INCONSISTENT"
 
 RUNTIME_DIAGNOSTIC_CODES = frozenset(
     {
@@ -68,8 +75,18 @@ RUNTIME_DIAGNOSTIC_CODES = frozenset(
         DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED,
         DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
         DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT,
     }
 )
+
+# S0152: the single deterministic in-memory missing-value sentinel used to
+# materialize a contractually optional feature omitted from the request
+# payload. Must be a real IEEE NaN float (not None/object) so pandas assigns
+# a numeric dtype to the column and scikit-learn's SimpleImputer(missing
+# values=nan) reliably detects it -- see _build_ordered_row. Never a
+# fabricated business value (zero/min/max/average), and never branched on
+# dataset slug or field name.
+_MISSING_OPTIONAL_FEATURE_VALUE = float("nan")
 
 # Strict tolerance for "two probabilities sum to 1.0".
 _PROBABILITY_SUM_TOLERANCE = 1e-6
@@ -378,6 +395,7 @@ def execute_prediction(
     supported_serialization_formats: Sequence[str] | None = None,
     compatibility_status: Mapping[str, Any] | None = None,
     prediction_executor: PredictionExecutor | None = None,
+    runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Load the active release bundle and execute prediction.
 
@@ -396,6 +414,16 @@ def execute_prediction(
     With neither ``loader_strategies`` nor ``prediction_executor``, the
     original generic bundle-execution behavior (including the historical
     JSON-descriptor fallback) is unchanged.
+
+    S0152: ``runtime_feature_metadata`` is an optional normalized map of
+    ``{feature_name: {"required": bool}}`` built by the caller from the
+    already-loaded, already-validated-against runtime contract. It is only
+    consulted by the binary/joblib row-construction path
+    (``_execute_binary_prediction`` / ``_build_ordered_row``) to decide
+    whether a ``feature_order`` entry absent from ``validated_payload`` may
+    be materialized as a missing sentinel (contractually optional) or must be
+    classified as a runtime input-contract inconsistency. It has no effect on
+    the legacy generic/``prediction_executor`` path.
     """
 
     adapter = load_runtime_bundle_adapter(
@@ -409,7 +437,11 @@ def execute_prediction(
     )
 
     if loader_strategies is not None and prediction_executor is None:
-        return {"result": _execute_binary_prediction(adapter, validated_payload)}
+        return {
+            "result": _execute_binary_prediction(
+                adapter, validated_payload, runtime_feature_metadata
+            )
+        }
 
     try:
         prediction = adapter.predict(validated_payload)
@@ -523,10 +555,13 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
 def _execute_binary_prediction(
     adapter: RuntimeBundleAdapter,
     validated_payload: Mapping[str, Any],
+    runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     semantics = _validate_result_semantics(adapter.declaration)
 
-    row = _build_ordered_row(adapter.metadata.feature_order, validated_payload)
+    row = _build_ordered_row(
+        adapter.metadata.feature_order, validated_payload, runtime_feature_metadata
+    )
 
     model = adapter.bundle
     predict = getattr(model, "predict", None)
@@ -1259,7 +1294,35 @@ def _resolve_binary_class_identities(
     }
 
 
-def _build_ordered_row(feature_order: Sequence[str], validated_payload: Mapping[str, Any]) -> Any:
+def _build_ordered_row(
+    feature_order: Sequence[str],
+    validated_payload: Mapping[str, Any],
+    runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Any:
+    """Materialize the ordered, bundle-declared row for governed execution.
+
+    S0152: for each ``feature_order`` entry absent from ``validated_payload``,
+    consults ``runtime_feature_metadata`` (built by the caller from the
+    already-validated-against runtime contract) to decide the outcome:
+
+    - entry present in ``validated_payload`` -> preserve the validated value
+      unchanged (existing behavior).
+    - entry absent, and ``runtime_feature_metadata`` declares it
+      ``required: False`` -> materialize the one deterministic missing
+      sentinel (never a fabricated business value).
+    - entry absent, and ``runtime_feature_metadata`` is not supplied at all
+      (``None``) -> preserve the original strict behavior (raise
+      ``missing_feature_value``) since the caller gave no way to know the
+      name is contractually optional.
+    - entry absent, and ``runtime_feature_metadata`` is supplied but either
+      has no entry for this name (the bundle references a feature the
+      runtime contract does not declare) or declares it required -> this is
+      a genuine runtime input-contract inconsistency: payload validation
+      should already have rejected a missing required field, so reaching
+      this point means the bundle and the active runtime contract cannot be
+      reconciled. Classified through typed control flow, never by matching
+      exception text.
+    """
     if not feature_order:
         raise BundleValidationError(
             "missing_feature_order",
@@ -1275,13 +1338,32 @@ def _build_ordered_row(feature_order: Sequence[str], validated_payload: Mapping[
 
     row: dict[str, Any] = {}
     for feature_name in feature_order:
-        if feature_name not in validated_payload:
+        if feature_name in validated_payload:
+            row[feature_name] = validated_payload[feature_name]
+            continue
+
+        if runtime_feature_metadata is None:
             raise BundleValidationError(
                 "missing_feature_value",
                 "Validated payload is missing a required feature-order value.",
                 field=f"feature_order.{feature_name}",
             )
-        row[feature_name] = validated_payload[feature_name]
+
+        feature_metadata = runtime_feature_metadata.get(feature_name)
+        is_declared_optional = (
+            isinstance(feature_metadata, Mapping) and feature_metadata.get("required") is False
+        )
+        if is_declared_optional:
+            row[feature_name] = _MISSING_OPTIONAL_FEATURE_VALUE
+            continue
+
+        raise BundleValidationError(
+            "runtime_input_contract_inconsistent",
+            "Inference bundle feature order could not be reconciled with the "
+            "active runtime contract.",
+            field=f"feature_order.{feature_name}",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT,
+        )
 
     try:
         import pandas as pd  # local import: keep this dependency scoped to the binary flow

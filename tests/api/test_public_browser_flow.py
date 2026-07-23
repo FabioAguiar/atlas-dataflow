@@ -240,7 +240,12 @@ def test_public_predict_view_route_dependencies_are_frontend_compatible(monkeypa
     monkeypatch.setattr(
         api_main,
         "load_public_predict_view_customization",
-        lambda slug, view_id: {"dataset_slug": slug, "view_id": view_id, "field_hints": {}, "groups": []},
+        lambda slug, view_id, active_release: {
+            "dataset_slug": slug,
+            "view_id": view_id,
+            "field_hints": {},
+            "groups": [],
+        },
     )
     view = _first_view_for_dataset(dataset_slug)
     assert view is not None

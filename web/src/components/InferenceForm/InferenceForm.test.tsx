@@ -776,6 +776,44 @@ describe("InferenceForm injectable execution boundary (Project Spec S0143)", () 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("Project Spec S0152 regression: an empty optional numeric input is omitted entirely from the request payload, and a provided value is included", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    const { unmount } = render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenLastCalledWith(slug, {});
+    unmount();
+
+    const executeInferenceWithValue = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInferenceWithValue}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Tenure"), { target: { value: "24" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(executeInferenceWithValue).toHaveBeenCalledTimes(1));
+    expect(executeInferenceWithValue).toHaveBeenLastCalledWith(slug, { tenure: 24 });
+  });
+
   it("renders the safe error state when the injected executor reports a bounded failure", async () => {
     const executeInference = vi.fn(
       async (): Promise<InferenceExecutionResult> => ({ ok: false, errorCode: "INFERENCE_FAILURE" }),
@@ -1278,6 +1316,8 @@ describe("normalizeInferenceRuntimeDiagnostic (Project Spec S0151)", () => {
       "MODEL_DESERIALIZATION_FAILED",
       "PREDICTION_EXECUTION_FAILED",
       "RESULT_VALIDATION_FAILED",
+      // Project Spec S0152
+      "RUNTIME_INPUT_CONTRACT_INCONSISTENT",
     ];
     for (const code of codes) {
       expect(normalizeInferenceRuntimeDiagnostic({ code })).toEqual({ code });
@@ -1335,6 +1375,36 @@ describe("InferenceForm runtime diagnostic propagation (Project Spec S0151)", ()
     expect(events).toEqual([
       { type: "started" },
       { type: "execution_failed", runtimeDiagnostic: { code: "RUNTIME_DEPENDENCY_UNAVAILABLE" } },
+    ]);
+  });
+
+  it("carries the S0152 RUNTIME_INPUT_CONTRACT_INCONSISTENT diagnostic on the execution_failed lifecycle event", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INFERENCE_FAILURE",
+        runtimeDiagnostic: { code: "RUNTIME_INPUT_CONTRACT_INCONSISTENT" },
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([
+      { type: "started" },
+      { type: "execution_failed", runtimeDiagnostic: { code: "RUNTIME_INPUT_CONTRACT_INCONSISTENT" } },
     ]);
   });
 

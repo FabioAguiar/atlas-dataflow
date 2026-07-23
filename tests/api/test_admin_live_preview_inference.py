@@ -573,3 +573,227 @@ def test_public_route_never_surfaces_a_runtime_diagnostic_for_the_same_classifie
     body = json.loads(response.body)
     assert body["error_code"] == "INFERENCE_FAILURE"
     assert "runtime_diagnostic" not in body
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0152: optional inference feature missing-value materialization
+# and the new RUNTIME_INPUT_CONTRACT_INCONSISTENT diagnostic, exercised
+# through the real private Admin route with a real joblib/scikit-learn
+# pipeline whose fitted preprocessing includes a real SimpleImputer step --
+# mirrors the S0150/S0151 real-model technique above.
+# ---------------------------------------------------------------------------
+
+_S0152_FEATURE_ORDER = ["tenure", "monthly_charges", "total_charges"]
+
+
+def _s0152_train_real_pipeline() -> Pipeline:
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+
+    X = pd.DataFrame(
+        {
+            "tenure": [1, 2, 3, 4, 60, 61, 62, 63, 64, 65],
+            "monthly_charges": [95.0, 98.0, 90.0, 92.0, 20.0, 22.0, 18.0, 25.0, 19.0, 21.0],
+            "total_charges": [95.0, 196.0, 270.0, 368.0, 1200.0, 1342.0, 1116.0, 1575.0, 1216.0, 1365.0],
+        }
+    )
+    y = ["Yes", "Yes", "Yes", "Yes", "No", "No", "No", "No", "No", "No"]
+    preprocessor = ColumnTransformer(
+        [("numeric", SimpleImputer(strategy="median"), list(_S0152_FEATURE_ORDER))]
+    )
+    pipeline = Pipeline([("pre", preprocessor), ("clf", LogisticRegression())])
+    pipeline.fit(X, y)
+    return pipeline
+
+
+def _s0152_write_real_release(releases_root: Path) -> None:
+    release_root = releases_root / ACTIVE_RELEASE
+    models_dir = release_root / "models"
+    predictions_dir = release_root / "predictions"
+    models_dir.mkdir(parents=True)
+    predictions_dir.mkdir(parents=True)
+
+    pipeline = _s0152_train_real_pipeline()
+    model_path = models_dir / "model.pkl"
+    joblib.dump(pipeline, model_path)
+    model_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
+
+    bundle = {
+        "contract_version": "inference_bundle.v1",
+        "feature_order": list(_S0152_FEATURE_ORDER),
+        "runtime_execution": {
+            "loader_strategy": "joblib_sklearn_predict",
+            "serialization_format": "joblib",
+            "prediction_interface": "predict",
+            "model_family": "logistic_regression",
+        },
+        "model_artifact": {"path": "models/model.pkl", "sha256": model_sha256},
+        "output_schema": {
+            "class_labels": ["No", "Yes"],
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "probability_output": True,
+        },
+        "result_semantics": {
+            "schema_version": "binary-result-semantics.v1",
+            "problem_type": "binary_classification",
+            "result_schema_version": "binary-classification-result.v1",
+            "primary_output": "positive_class_probability",
+            "positive_class": {"class_id": "Yes", "event_label": "Churn"},
+            "decision": {"threshold": 0.5},
+            "interpretation": {
+                "preset": "risk",
+                "bands": [
+                    {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                    {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                    {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+                ],
+            },
+            "model_descriptor": {
+                "model_family": "logistic_regression",
+                "display_name": "Logistic Regression",
+            },
+        },
+    }
+    _s0150_write_json(predictions_dir / "bundle.json", bundle)
+    _s0150_write_json(
+        release_root / "manifest.json",
+        {
+            "schema_version": "release-manifest.v1",
+            "artifacts": [{"role": "predictive_bundle", "reference": "predictions/bundle.json"}],
+        },
+    )
+
+
+def _install_s0152_real_model_dependencies(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ATLAS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("RELEASES_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda dataset_slug: SimpleNamespace(dataset_slug=dataset_slug, active_release=ACTIVE_RELEASE),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "load_contract",
+        lambda active_release: {
+            "features": [
+                {"name": "tenure", "type": "numeric", "required": True, "domain_constraints": {"min": 0, "max": 72}},
+                {
+                    "name": "monthly_charges",
+                    "type": "numeric",
+                    "required": True,
+                    "domain_constraints": {"min": 0, "max": 150},
+                },
+                {
+                    "name": "total_charges",
+                    "type": "numeric",
+                    "required": False,
+                    "domain_constraints": {"min": 0, "max": 10000},
+                },
+            ]
+        },
+    )
+    _s0152_write_real_release(tmp_path)
+
+
+def test_private_admin_route_materializes_omitted_optional_feature_and_executes_real_model(monkeypatch, tmp_path):
+    """
+    Project Spec S0152, acceptance criteria 1/2/3/6/9/27: omitting the
+    contractually optional total_charges feature must reach the real
+    joblib/scikit-learn pipeline (whose fitted SimpleImputer step provides
+    the real missing-value handling) and produce a normal successful result,
+    not a missing_feature_value failure.
+    """
+    _install_s0152_real_model_dependencies(monkeypatch, tmp_path)
+
+    status_code, body, response_text = _post_json(
+        f"/admin/datasets/{DATASET_SLUG}/inference",
+        {"tenure": 63, "monthly_charges": 19.0},
+    )
+
+    assert status_code == 200
+    result = body["result"]
+    assert result["schema_version"] == "binary-classification-result.v1"
+    assert result["predicted_class"]["class_id"] in {"No", "Yes"}
+    assert 0.0 <= result["positive_class_probability"] <= 1.0
+    for forbidden in ("traceback", "exception", "credential", "authorization", "total_charges"):
+        assert forbidden not in response_text.lower()
+
+
+def test_private_admin_route_preserves_provided_optional_feature_value(monkeypatch, tmp_path):
+    """
+    Project Spec S0152, acceptance criterion 4: a provided optional value is
+    preserved exactly after validation -- proven by comparing the real
+    model's own probability for the omitted-value case against the
+    explicitly-provided-value case, which must differ because the submitted
+    value is actually used rather than silently ignored/overwritten by the
+    sentinel.
+    """
+    _install_s0152_real_model_dependencies(monkeypatch, tmp_path)
+
+    _, omitted_body, _ = _post_json(
+        f"/admin/datasets/{DATASET_SLUG}/inference",
+        {"tenure": 63, "monthly_charges": 19.0},
+    )
+    _, provided_body, _ = _post_json(
+        f"/admin/datasets/{DATASET_SLUG}/inference",
+        {"tenure": 63, "monthly_charges": 19.0, "total_charges": 9999.0},
+    )
+
+    omitted_probability = omitted_body["result"]["positive_class_probability"]
+    provided_probability = provided_body["result"]["positive_class_probability"]
+    assert omitted_probability != provided_probability
+
+
+def test_private_admin_route_surfaces_runtime_input_contract_inconsistent_diagnostic(monkeypatch, tmp_path):
+    """
+    Project Spec S0152, acceptance criteria 11/12/13/16/19: a bundle
+    feature_order entry absent from the active runtime contract (a genuine
+    bundle/contract drift, not a client omission) must be classified as
+    RUNTIME_INPUT_CONTRACT_INCONSISTENT through typed control flow, and the
+    private response must carry no field name, submitted value, path, or
+    exception text beyond the closed diagnostic code.
+    """
+    _install_s0152_real_model_dependencies(monkeypatch, tmp_path)
+    # Widen the real release's bundle feature_order to reference a feature the
+    # runtime contract (mocked above) does not declare at all.
+    bundle_path = tmp_path / ACTIVE_RELEASE / "predictions" / "bundle.json"
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle["feature_order"] = list(_S0152_FEATURE_ORDER) + ["undeclared_feature"]
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    status_code, body, response_text = _post_json(
+        f"/admin/datasets/{DATASET_SLUG}/inference",
+        {"tenure": 63, "monthly_charges": 19.0},
+    )
+
+    assert status_code == 503
+    _assert_generic_inference_failure_shape(body, response_text)
+    assert body["runtime_diagnostic"] == {"code": "RUNTIME_INPUT_CONTRACT_INCONSISTENT"}
+    assert set(body.keys()) == {"error_type", "error_code", "message", "runtime_diagnostic"}
+    assert "undeclared_feature" not in response_text
+    assert str(tmp_path) not in response_text
+
+
+def test_private_admin_route_still_rejects_missing_required_feature_before_execution_with_optional_present(
+    monkeypatch, tmp_path
+):
+    """
+    Project Spec S0152, acceptance criterion 5: a genuinely required field
+    (tenure) omitted from the payload is still rejected by validate_payload
+    with structured INVALID_PAYLOAD before any execution attempt, even
+    though this same contract also declares a contractually optional feature
+    (total_charges).
+    """
+    _install_s0152_real_model_dependencies(monkeypatch, tmp_path)
+
+    status_code, body, _response_text = _post_json(
+        f"/admin/datasets/{DATASET_SLUG}/inference",
+        {"monthly_charges": 19.0},
+    )
+
+    assert status_code == 422
+    assert body["error_code"] == "INVALID_PAYLOAD"
+    assert body["errors"][0]["field"] == "tenure"
+    assert body["errors"][0]["error_code"] == "MISSING_REQUIRED_FIELD"

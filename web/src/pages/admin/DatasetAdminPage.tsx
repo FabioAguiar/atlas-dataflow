@@ -3773,10 +3773,10 @@ const VALIDATION_VIOLATION_LINE_COPY: Record<InferenceValidationViolation, strin
   domain_violation: "the submitted value is outside the accepted domain.",
 };
 
-// Project Spec S0151: the bounded, frontend-owned copy for each allowlisted
-// runtime diagnostic code. Deliberately never interpolates a backend
-// message, package name, path, or exception -- console copy is owned
-// entirely by this mapping.
+// Project Spec S0151/S0152: the bounded, frontend-owned copy for each
+// allowlisted runtime diagnostic code. Deliberately never interpolates a
+// backend message, field name, submitted value, package name, path, or
+// exception -- console copy is owned entirely by this mapping.
 const RUNTIME_DIAGNOSTIC_LINE_COPY: Record<InferenceRuntimeDiagnosticCode, string> = {
   INFERENCE_BUNDLE_UNAVAILABLE: "Runtime diagnostic: the active release inference bundle is unavailable.",
   MODEL_ARTIFACT_UNAVAILABLE: "Runtime diagnostic: the active release model artifact is unavailable.",
@@ -3786,6 +3786,8 @@ const RUNTIME_DIAGNOSTIC_LINE_COPY: Record<InferenceRuntimeDiagnosticCode, strin
   MODEL_DESERIALIZATION_FAILED: "Runtime diagnostic: the active release model could not be loaded.",
   PREDICTION_EXECUTION_FAILED: "Runtime diagnostic: the model could not complete prediction execution.",
   RESULT_VALIDATION_FAILED: "Runtime diagnostic: the inference result failed governed result validation.",
+  RUNTIME_INPUT_CONTRACT_INCONSISTENT:
+    "Runtime diagnostic: the active release input contract is inconsistent with the inference bundle.",
 };
 
 // Project Spec S0144: renders the required bounded, explicit console text

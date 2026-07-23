@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(API_ROOT))
 
 import main as api_main  # noqa: E402
+import public_predict_view_customization_loader as customization_loader_module  # noqa: E402
 from fastapi import Request  # noqa: E402
 from registry.list import AdminListedDataset, ListedDataset, list_admin_datasets, list_datasets  # noqa: E402
 from registry.resolve import (  # noqa: E402
@@ -531,7 +532,7 @@ def test_customization_endpoint_returns_200_with_payload(monkeypatch):
             lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
         )
         api_main.load_public_predict_view_customization = (
-            lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
+            lambda dataset_slug, view_id, active_release: _VALID_CUSTOMIZATION
         )
         response = api_main.get_predict_view_customization("telco-customer-churn", "churn-risk-overview")
         assert not hasattr(response, "status_code") or response.status_code == 200
@@ -565,7 +566,7 @@ def test_customization_endpoint_returns_customization_not_found_when_absent(monk
             lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
         )
 
-        def raise_not_found(dataset_slug, view_id):
+        def raise_not_found(dataset_slug, view_id, active_release):
             raise api_main.CustomizationNotFoundError("No customization for this view.")
 
         api_main.load_public_predict_view_customization = raise_not_found
@@ -609,7 +610,7 @@ def test_customization_response_structure_matches_expected_fields(monkeypatch):
             lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
         )
         api_main.load_public_predict_view_customization = (
-            lambda dataset_slug, view_id: _VALID_CUSTOMIZATION
+            lambda dataset_slug, view_id, active_release: _VALID_CUSTOMIZATION
         )
         response = api_main.get_predict_view_customization("telco-customer-churn", "churn-risk-overview")
         if hasattr(response, "status_code"):
@@ -632,6 +633,181 @@ def test_customization_response_structure_matches_expected_fields(monkeypatch):
     finally:
         api_main.resolve_dataset = original_resolve
         api_main.load_public_predict_view_customization = original_load
+
+
+# ---------------------------------------------------------------------------
+# Real active-release resolution chain end-to-end (Project Spec S0153): proves
+# the endpoint's real (unmocked) load_public_predict_view_customization ->
+# load_public_contract chain resolves the registered active_release rather
+# than replacing the loader itself with a lambda as the sole endpoint proof.
+# ---------------------------------------------------------------------------
+
+def test_customization_endpoint_exercises_real_loader_chain_without_replacing_it(monkeypatch, tmp_path):
+    dataset_slug = "fixture-s0153-endpoint-dataset"
+    view_id = "fixture-s0153-endpoint-view"
+    active_release = "release-s0153-endpoint-001"
+
+    customizations_path = tmp_path / "predict-view-customizations.json"
+    customizations_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "atlas.dataflow.predict-view-customizations.v1",
+                "predict_view_customizations": [
+                    {
+                        "schema_version": "1.0.0",
+                        "view_id": view_id,
+                        "dataset_slug": dataset_slug,
+                        "view_copy": {
+                            "heading": "Fixture Heading",
+                            "description": "Fixture description.",
+                            "usage_guidance": "Fixture guidance.",
+                        },
+                        "field_hints": [],
+                        "groups": [],
+                        "contract_precedence": {
+                            "canonical_contracts_are_source_of_truth": True,
+                            "customization_defines_runtime_validation": False,
+                            "customization_duplicates_contract": False,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    releases_root = tmp_path / "releases"
+    release_dir = releases_root / active_release
+    release_dir.mkdir(parents=True)
+    release_dir.joinpath("manifest.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {"role": "public_contract", "reference": "public-contract.json"},
+                    {"role": "contracts", "reference": "runtime-contract.json"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    release_dir.joinpath("public-contract.json").write_text(
+        json.dumps({"features": []}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        customization_loader_module,
+        "_DEFAULT_PREDICT_VIEW_CUSTOMIZATIONS_PATH",
+        customizations_path,
+    )
+    monkeypatch.setenv("RELEASES_ROOT", str(releases_root))
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda _dataset_slug: SimpleNamespace(dataset_slug=dataset_slug, active_release=active_release),
+    )
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+    )
+
+    # api_main.load_public_predict_view_customization is never replaced here --
+    # the real loader (and its real load_public_contract call) runs end to end.
+    response = api_main.get_predict_view_customization(dataset_slug, view_id)
+    payload = response if not hasattr(response, "status_code") else _response_json(response)
+
+    assert payload["view_id"] == view_id
+    assert payload["dataset_slug"] == dataset_slug
+    assert payload["view_copy"]["heading"] == "Fixture Heading"
+
+
+def test_customization_endpoint_real_loader_chain_rejects_slug_named_release_directory(
+    monkeypatch, tmp_path
+):
+    """
+    If the endpoint or loader ever regresses to passing dataset_slug where
+    active_release is required, this fixture would resolve against the
+    slug-named directory below and incorrectly succeed. Only a directory
+    named after the real registered active_release exists.
+    """
+    dataset_slug = "fixture-s0153-endpoint-dataset"
+    view_id = "fixture-s0153-endpoint-view"
+    registered_active_release = "release-s0153-endpoint-genuine-002"
+
+    customizations_path = tmp_path / "predict-view-customizations.json"
+    customizations_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "atlas.dataflow.predict-view-customizations.v1",
+                "predict_view_customizations": [
+                    {
+                        "schema_version": "1.0.0",
+                        "view_id": view_id,
+                        "dataset_slug": dataset_slug,
+                        "view_copy": {
+                            "heading": "Fixture Heading",
+                            "description": "Fixture description.",
+                            "usage_guidance": "Fixture guidance.",
+                        },
+                        "field_hints": [],
+                        "groups": [],
+                        "contract_precedence": {
+                            "canonical_contracts_are_source_of_truth": True,
+                            "customization_defines_runtime_validation": False,
+                            "customization_duplicates_contract": False,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    releases_root = tmp_path / "releases"
+    slug_named_dir = releases_root / dataset_slug
+    slug_named_dir.mkdir(parents=True)
+    slug_named_dir.joinpath("manifest.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {"role": "public_contract", "reference": "public-contract.json"},
+                    {"role": "contracts", "reference": "runtime-contract.json"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    slug_named_dir.joinpath("public-contract.json").write_text(
+        json.dumps({"features": []}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        customization_loader_module,
+        "_DEFAULT_PREDICT_VIEW_CUSTOMIZATIONS_PATH",
+        customizations_path,
+    )
+    monkeypatch.setenv("RELEASES_ROOT", str(releases_root))
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset",
+        lambda _dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug, active_release=registered_active_release
+        ),
+    )
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(
+        api_main,
+        "resolve_dataset_snapshot_readiness",
+        lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+    )
+
+    response = api_main.get_predict_view_customization(dataset_slug, view_id)
+    assert response.status_code == 404
+    payload = _response_json(response)
+    assert payload["error_code"] == "CUSTOMIZATION_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -1855,6 +2031,213 @@ def test_real_route_select_projected_categorical_value_domain_validation():
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0152: optional-feature missing-value materialization and the
+# new RUNTIME_INPUT_CONTRACT_INCONSISTENT diagnostic, exercised through the
+# real public inference route. Mirrors the existing M32-03 style above
+# (mocking api_main.execute_prediction directly to prove wiring without
+# needing a real model) rather than duplicating the S0150-style real-model
+# fixture, which is already covered by the private Admin route tests and by
+# tests/test_local_inference_smoke.py's real scikit-learn pipeline coverage.
+# ---------------------------------------------------------------------------
+
+_S0152_RUNTIME_CONTRACT = {
+    "schema_version": "atlas.dataflow.runtime_contract.v1",
+    "features": [
+        {
+            "name": "tenure",
+            "type": "numeric",
+            "required": True,
+            "domain_constraints": {"min": 0, "max": 72},
+        },
+        {
+            "name": "MonthlyCharges",
+            "type": "numeric",
+            "required": True,
+            "domain_constraints": {"min": 0, "max": 150},
+        },
+        {
+            "name": "TotalCharges",
+            "type": "numeric",
+            "required": False,
+            "domain_constraints": {"min": 0, "max": 10000},
+        },
+    ],
+}
+
+_S0152_VALID_PAYLOAD_WITHOUT_OPTIONAL_FEATURE = {"tenure": 12, "MonthlyCharges": 70.0}
+
+
+def test_real_route_passes_contract_derived_runtime_feature_metadata_and_omits_optional_feature_safely():
+    """
+    Project Spec S0152, acceptance criteria 1/3/6/9/27: an omitted
+    contractually-optional feature (TotalCharges, required: false) must
+    reach execute_prediction rather than being rejected by validate_payload,
+    and the caller must derive runtime_feature_metadata from the exact same
+    runtime contract used for validation (required True for tenure/
+    MonthlyCharges, False for TotalCharges) -- proven here by capturing the
+    real kwargs execute_prediction is invoked with, through the real public
+    route, without inventing a business value for the omitted feature.
+    """
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_releases_root = api_main._inference_releases_root
+    original_snapshot_readiness = _install_snapshot_ready_stub()
+    captured_calls = []
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-s0152-optional-feature-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _S0152_RUNTIME_CONTRACT
+
+        with tempfile.TemporaryDirectory() as releases_root:
+            release_dir = Path(releases_root) / "release-s0152-optional-feature-fixture"
+            release_dir.mkdir(parents=True)
+            (release_dir / "manifest.json").write_text(
+                json.dumps({"artifacts": []}), encoding="utf-8"
+            )
+            api_main._inference_releases_root = lambda: Path(releases_root)
+
+            def _capture_execute_prediction(*args, **kwargs):
+                captured_calls.append((args, kwargs))
+                return {"result": _S0109_VALID_BINARY_RESULT}
+
+            api_main.execute_prediction = _capture_execute_prediction
+
+            response = api_main.validate_dataset_inference_payload(
+                "fixture-dataset",
+                payload=dict(_S0152_VALID_PAYLOAD_WITHOUT_OPTIONAL_FEATURE),
+            )
+
+        assert not hasattr(response, "status_code")
+        assert response["result"] == _S0109_VALID_BINARY_RESULT
+        _assert_no_internal_public_exposure(response)
+
+        assert len(captured_calls) == 1
+        _, call_kwargs = captured_calls[0]
+        assert call_kwargs["runtime_feature_metadata"] == {
+            "tenure": {"required": True},
+            "MonthlyCharges": {"required": True},
+            "TotalCharges": {"required": False},
+        }
+        # The HTTP request body itself is unchanged -- the client never sent
+        # TotalCharges, and no fabricated value was inserted before
+        # execute_prediction was called. execute_prediction's second
+        # positional argument is the payload dict.
+        positional_payload = captured_calls[0][0][1]
+        assert "TotalCharges" not in positional_payload
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        api_main._inference_releases_root = original_releases_root
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
+
+
+def test_real_route_required_field_omission_still_rejected_before_execution_when_contract_has_optional_feature():
+    """
+    Project Spec S0152, acceptance criteria 5/18/28: a genuinely required
+    field (tenure) omitted from the payload must still be rejected by
+    validate_payload with structured MISSING_REQUIRED_FIELD before
+    execute_prediction is ever reached, even though this same contract also
+    declares one contractually optional feature (TotalCharges).
+    """
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_snapshot_readiness = _install_snapshot_ready_stub()
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-s0152-required-omission-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _S0152_RUNTIME_CONTRACT
+        api_main.execute_prediction = (
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("required-field omission should fail before prediction execution")
+            )
+        )
+
+        missing_required_payload = {"MonthlyCharges": 70.0}
+        response = api_main.validate_dataset_inference_payload(
+            "fixture-dataset",
+            payload=missing_required_payload,
+        )
+
+        _assert_invalid_payload_response(
+            response,
+            "tenure",
+            "MISSING_REQUIRED_FIELD",
+            "missing_required_field",
+        )
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
+
+
+def test_public_route_never_surfaces_runtime_input_contract_inconsistent_diagnostic():
+    """
+    Project Spec S0152, acceptance criteria 12/17: when the runtime raises
+    the new RUNTIME_INPUT_CONTRACT_INCONSISTENT-classified error, the public
+    route must still return only the existing generic INFERENCE_FAILURE
+    envelope with no runtime_diagnostic property at all -- mirroring the
+    pre-existing S0151 public-route-never-leaks tests above for the other
+    seven codes.
+    """
+    from runtime.inference import BundleValidationError, DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT
+
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_releases_root = api_main._inference_releases_root
+    original_snapshot_readiness = _install_snapshot_ready_stub()
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-s0152-inconsistent-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _S0152_RUNTIME_CONTRACT
+
+        with tempfile.TemporaryDirectory() as releases_root:
+            release_dir = Path(releases_root) / "release-s0152-inconsistent-fixture"
+            release_dir.mkdir(parents=True)
+            (release_dir / "manifest.json").write_text(
+                json.dumps({"artifacts": []}), encoding="utf-8"
+            )
+            api_main._inference_releases_root = lambda: Path(releases_root)
+
+            def _raise_inconsistent(*_args, **_kwargs):
+                raise BundleValidationError(
+                    "runtime_input_contract_inconsistent",
+                    "Inference bundle feature order could not be reconciled with the active runtime contract.",
+                    field="feature_order.unknown_feature",
+                    diagnostic_code=DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT,
+                )
+
+            api_main.execute_prediction = _raise_inconsistent
+
+            response = api_main.validate_dataset_inference_payload(
+                "fixture-dataset",
+                payload=dict(_S0152_VALID_PAYLOAD_WITHOUT_OPTIONAL_FEATURE),
+            )
+
+        assert response.status_code == 503
+        body = _response_json(response)
+        assert body["error_code"] == "INFERENCE_FAILURE"
+        assert "runtime_diagnostic" not in body
+        _assert_no_internal_public_exposure(body)
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        api_main._inference_releases_root = original_releases_root
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
+
+
+# ---------------------------------------------------------------------------
 # S0101: GET /datasets/{dataset_slug}/contract loads the manifest-declared
 # public_contract role from a promoted release. api_main.load_public_contract
 # and api_main.PublicContractUnavailableError are api/public_contract_loader.py
@@ -2695,6 +3078,8 @@ if __name__ == "__main__":
         test_customization_endpoint_returns_customization_not_found_when_absent,
         test_customization_endpoint_unknown_dataset_returns_dataset_not_found,
         test_customization_response_structure_matches_expected_fields,
+        test_customization_endpoint_exercises_real_loader_chain_without_replacing_it,
+        test_customization_endpoint_real_loader_chain_rejects_slug_named_release_directory,
         test_real_registry_listing_returns_non_empty_list,
         test_real_registry_listing_contains_telco_customer_churn,
         test_real_registry_listing_telco_customer_churn_safe_fields_non_empty,

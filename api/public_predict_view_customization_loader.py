@@ -30,6 +30,7 @@ class CustomizationNotFoundError(Exception):
 def load_public_predict_view_customization(
     dataset_slug: str,
     view_id: str,
+    active_release: str,
     customizations_path: Path | None = None,
 ) -> dict:
     """
@@ -38,7 +39,10 @@ def load_public_predict_view_customization(
     Resolution steps:
     1. Read registry/predict-view-customizations.json.
     2. Find the record where view_id and dataset_slug both match.
-    3. Load the public contract for dataset_slug via load_public_contract.
+    3. Load the public contract for the caller-supplied active_release (the
+       same registry-resolved active release already accepted by the public
+       access guard) via load_public_contract. active_release is never
+       inferred from dataset_slug.
     4. Call validate_customization(record, public_contract) from the M19-02 validator.
     5. If validation fails, treat the record as absent (raise CustomizationNotFoundError).
     6. Return the matching record.
@@ -88,11 +92,12 @@ def load_public_predict_view_customization(
         )
 
     try:
-        public_contract = load_public_contract(dataset_slug)
+        public_contract = load_public_contract(active_release)
     except PublicContractUnavailableError:
         logger.warning(
-            "Public contract unavailable for dataset_slug=%r; treating customization as absent.",
+            "Public contract unavailable for dataset_slug=%r active_release=%r; treating customization as absent.",
             dataset_slug,
+            active_release,
         )
         raise CustomizationNotFoundError(
             "Customization record cannot be validated: public contract unavailable."

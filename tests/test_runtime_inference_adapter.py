@@ -20,7 +20,9 @@ from runtime.inference import (  # noqa: E402
     DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED,
     DIAGNOSTIC_RESULT_VALIDATION_FAILED,
     DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+    DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT,
     JOBLIB_SKLEARN_PREDICT_STRATEGY,
+    _build_ordered_row,
     load_joblib_sklearn_model,
     validate_binary_classification_result,
 )
@@ -511,3 +513,115 @@ def test_runtime_bundle_adapter_rejects_arbitrary_loader_strategy_name(tmp_path:
         assert str(exc) == "Inference bundle loader strategy is unsupported."
     else:
         raise AssertionError("arbitrary loader strategy name was accepted")
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0152: white-box coverage of _build_ordered_row's optional-
+# feature materialization and runtime input-contract-inconsistency
+# classification. _build_ordered_row is private, but the row-construction
+# decision (present / contractually-optional-omitted / inconsistent) has no
+# other seam to exercise directly -- the public execute_prediction() path is
+# covered end-to-end separately in tests/test_local_inference_smoke.py (real
+# scikit-learn pipeline) and tests/api/test_admin_live_preview_inference.py
+# (real HTTP route).
+# ---------------------------------------------------------------------------
+
+
+def test_build_ordered_row_preserves_provided_values_unchanged() -> None:
+    row = _build_ordered_row(["a", "b"], {"a": 1, "b": 2})
+    assert list(row.columns) == ["a", "b"]
+    assert row.iloc[0]["a"] == 1
+    assert row.iloc[0]["b"] == 2
+
+
+def test_build_ordered_row_materializes_missing_sentinel_for_declared_optional_feature() -> None:
+    row = _build_ordered_row(
+        ["a", "b"],
+        {"a": 1},
+        {"a": {"required": True}, "b": {"required": False}},
+    )
+    assert list(row.columns) == ["a", "b"]
+    assert row.iloc[0]["a"] == 1
+    import math
+
+    assert math.isnan(row.iloc[0]["b"])
+
+
+def test_build_ordered_row_materializes_multiple_optional_omissions_deterministically() -> None:
+    metadata = {
+        "a": {"required": True},
+        "b": {"required": False},
+        "c": {"required": False},
+    }
+    first = _build_ordered_row(["a", "b", "c"], {"a": 5}, metadata)
+    second = _build_ordered_row(["a", "b", "c"], {"a": 5}, metadata)
+
+    import math
+
+    for row in (first, second):
+        assert list(row.columns) == ["a", "b", "c"]
+        assert row.iloc[0]["a"] == 5
+        assert math.isnan(row.iloc[0]["b"])
+        assert math.isnan(row.iloc[0]["c"])
+
+
+def test_build_ordered_row_preserves_column_order_and_other_field_values() -> None:
+    row = _build_ordered_row(
+        ["x", "y", "z"],
+        {"x": 10, "z": 30},
+        {"x": {"required": True}, "y": {"required": False}, "z": {"required": True}},
+    )
+    assert list(row.columns) == ["x", "y", "z"]
+    assert row.iloc[0]["x"] == 10
+    assert row.iloc[0]["z"] == 30
+    import math
+
+    assert math.isnan(row.iloc[0]["y"])
+
+
+def test_build_ordered_row_classifies_required_feature_missing_after_validation_as_runtime_inconsistency() -> None:
+    try:
+        _build_ordered_row(
+            ["a", "b"],
+            {"a": 1},
+            {"a": {"required": True}, "b": {"required": True}},
+        )
+    except BundleValidationError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT
+        assert exc.code == "runtime_input_contract_inconsistent"
+    else:
+        raise AssertionError("required feature missing after validation was accepted")
+
+
+def test_build_ordered_row_classifies_bundle_feature_absent_from_runtime_contract_as_runtime_inconsistency() -> None:
+    try:
+        _build_ordered_row(
+            ["a", "b"],
+            {"a": 1},
+            {"a": {"required": True}},
+        )
+    except BundleValidationError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT
+        assert exc.code == "runtime_input_contract_inconsistent"
+    else:
+        raise AssertionError("bundle feature absent from runtime contract was accepted")
+
+
+def test_build_ordered_row_without_metadata_preserves_legacy_missing_feature_value_error() -> None:
+    """Backward compatibility: a caller that supplies no runtime_feature_metadata
+    at all (runtime_feature_metadata=None, the default) has given no way to
+    know a name is contractually optional, so the original strict behavior
+    is preserved rather than silently materializing."""
+    try:
+        _build_ordered_row(["a", "b"], {"a": 1})
+    except BundleValidationError as exc:
+        assert exc.code == "missing_feature_value"
+        assert exc.diagnostic_code is None
+    else:
+        raise AssertionError("missing feature value without metadata was accepted")
+
+
+def test_build_ordered_row_diagnostic_code_is_a_member_of_runtime_diagnostic_codes() -> None:
+    from runtime.inference import RUNTIME_DIAGNOSTIC_CODES
+
+    assert DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT in RUNTIME_DIAGNOSTIC_CODES

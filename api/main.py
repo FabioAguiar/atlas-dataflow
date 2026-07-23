@@ -687,6 +687,7 @@ def _execute_governed_inference(
             bundle_loader=_load_bundle,
             loader_strategies=_INFERENCE_LOADER_STRATEGIES,
             supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
+            runtime_feature_metadata=_runtime_feature_metadata(runtime_contract),
         )
     except InferenceRuntimeError as exc:
         return _inference_failure_response(
@@ -886,12 +887,14 @@ def get_predict_view(dataset_slug: str, view_id: str):
 
 @app.get("/datasets/{dataset_slug}/views/{view_id}/customization")
 def get_predict_view_customization(dataset_slug: str, view_id: str):
-    guard = _resolve_public_dataset_detail_access(dataset_slug)
-    if isinstance(guard, JSONResponse):
-        return guard
+    resolved = _resolve_public_dataset_detail_access(dataset_slug)
+    if isinstance(resolved, JSONResponse):
+        return resolved
 
     try:
-        customization = load_public_predict_view_customization(dataset_slug, view_id)
+        customization = load_public_predict_view_customization(
+            dataset_slug, view_id, resolved.active_release
+        )
     except CustomizationNotFoundError:
         return public_error_response(CUSTOMIZATION_NOT_FOUND)
 
@@ -1311,6 +1314,33 @@ def _authoring_resource_unavailable(public_error: PublicError) -> dict:
             "message": public_error.message,
         },
     }
+
+
+def _runtime_feature_metadata(runtime_contract: dict) -> dict[str, dict[str, bool]]:
+    """
+    Project Spec S0152: normalized ``{feature_name: {"required": bool}}`` map
+    built from the same already-loaded, already-validated-against runtime
+    contract used by ``validate_payload`` -- carried into ``execute_prediction``
+    so the post-validation row-construction boundary can distinguish a
+    contractually optional omission (materialize a missing sentinel) from a
+    genuine runtime input-contract inconsistency. Mirrors the exact
+    ``required`` convention already used by
+    ``_project_admin_inference_guidance`` below (default True unless the
+    feature explicitly declares ``required: false``).
+    """
+    features = runtime_contract.get("features")
+    if not isinstance(features, list):
+        return {}
+
+    metadata: dict[str, dict[str, bool]] = {}
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        name = feature.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        metadata[name] = {"required": feature.get("required", True) is not False}
+    return metadata
 
 
 def _project_admin_inference_guidance(runtime_contract: dict) -> list[dict]:

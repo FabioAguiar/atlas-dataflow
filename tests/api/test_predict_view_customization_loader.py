@@ -23,6 +23,7 @@ or directly:
 """
 
 import json
+import os
 import sys
 import tempfile
 import types
@@ -106,8 +107,11 @@ def _failing_validator(customization: dict, public_contract: dict) -> dict:
     return {"valid": False, "errors": [{"field": "field_hints", "message": "Field not found in contract."}]}
 
 
-def _stub_load_contract(dataset_slug: str) -> dict:
+def _stub_load_contract(active_release: str) -> dict:
     return _STUB_CONTRACT
+
+
+_FIXTURE_ACTIVE_RELEASE = "release-fixture-001"
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +130,7 @@ def test_load_returns_customization_record():
                 result = load_public_predict_view_customization(
                     "telco-customer-churn",
                     "churn-risk-overview",
+                    _FIXTURE_ACTIVE_RELEASE,
                     customizations_path=path,
                 )
         finally:
@@ -156,6 +161,7 @@ def test_raises_not_found_for_unknown_view_id():
                     load_public_predict_view_customization(
                         "telco-customer-churn",
                         "nonexistent-view",
+                        _FIXTURE_ACTIVE_RELEASE,
                         customizations_path=path,
                     )
                 except CustomizationNotFoundError:
@@ -179,6 +185,7 @@ def test_raises_not_found_for_unknown_dataset_slug():
                     load_public_predict_view_customization(
                         "unknown-dataset",
                         "churn-risk-overview",
+                        _FIXTURE_ACTIVE_RELEASE,
                         customizations_path=path,
                     )
                 except CustomizationNotFoundError:
@@ -206,6 +213,7 @@ def test_raises_not_found_when_validation_fails():
                     load_public_predict_view_customization(
                         "telco-customer-churn",
                         "churn-risk-overview",
+                        _FIXTURE_ACTIVE_RELEASE,
                         customizations_path=path,
                     )
                 except CustomizationNotFoundError:
@@ -225,6 +233,7 @@ def test_raises_not_found_when_registry_file_missing():
         load_public_predict_view_customization(
             "telco-customer-churn",
             "churn-risk-overview",
+            _FIXTURE_ACTIVE_RELEASE,
             customizations_path=Path("/nonexistent/path/predict-view-customizations.json"),
         )
     except CustomizationNotFoundError:
@@ -241,6 +250,7 @@ def test_raises_not_found_when_registry_is_malformed():
             load_public_predict_view_customization(
                 "telco-customer-churn",
                 "churn-risk-overview",
+                _FIXTURE_ACTIVE_RELEASE,
                 customizations_path=path,
             )
         except CustomizationNotFoundError:
@@ -264,6 +274,7 @@ def test_result_does_not_contain_schema_version_root_key_added_by_registry():
                 result = load_public_predict_view_customization(
                     "telco-customer-churn",
                     "churn-risk-overview",
+                    _FIXTURE_ACTIVE_RELEASE,
                     customizations_path=path,
                 )
         finally:
@@ -400,6 +411,7 @@ def test_load_returns_customization_record_for_synthetic_non_telco_bank_dataset(
                 result = load_public_predict_view_customization(
                     "fixture-arbitrary-dataset",
                     "fixture-arbitrary-view",
+                    _FIXTURE_ACTIVE_RELEASE,
                     customizations_path=path,
                 )
         finally:
@@ -425,6 +437,7 @@ def test_raises_customization_not_found_for_valid_arbitrary_dataset_with_no_cust
                     load_public_predict_view_customization(
                         "fixture-arbitrary-dataset",
                         "fixture-arbitrary-view",
+                        _FIXTURE_ACTIVE_RELEASE,
                         customizations_path=path,
                     )
                 except CustomizationNotFoundError:
@@ -434,6 +447,119 @@ def test_raises_customization_not_found_for_valid_arbitrary_dataset_with_no_cust
         assert raised, (
             "Expected CustomizationNotFoundError for a valid but uncustomized "
             "arbitrary dataset/view pair"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Real active-release chain proof (Project Spec S0153): the loader must
+# resolve the public contract from the caller-supplied active_release, never
+# from dataset_slug, through the real (unmocked) load_public_contract. These
+# tests build a genuine releases/<active_release>/manifest.json +
+# public-contract.json fixture chain rather than stubbing load_public_contract
+# to accept a slug as a release identifier.
+# ---------------------------------------------------------------------------
+
+def _write_release_public_contract_fixture(
+    releases_root: Path, release_id: str, contract: dict
+) -> None:
+    release_dir = releases_root / release_id
+    release_dir.mkdir(parents=True)
+    release_dir.joinpath("manifest.json").write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {"role": "public_contract", "reference": "public-contract.json"},
+                    {"role": "contracts", "reference": "runtime-contract.json"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    release_dir.joinpath("public-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+
+
+def _with_releases_root(releases_root: Path, fn):
+    original_env = os.environ.get("RELEASES_ROOT")
+    os.environ["RELEASES_ROOT"] = str(releases_root)
+    try:
+        return fn()
+    finally:
+        if original_env is None:
+            os.environ.pop("RELEASES_ROOT", None)
+        else:
+            os.environ["RELEASES_ROOT"] = original_env
+
+
+def test_loader_resolves_real_active_release_public_contract_chain():
+    """The real (unmocked) load_public_contract must be reached via active_release."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        customizations_path = _write_customization_registry(tmp_path, _VALID_REGISTRY)
+        releases_root = tmp_path / "releases"
+        active_release = "release-real-chain-001"
+        _write_release_public_contract_fixture(releases_root, active_release, _STUB_CONTRACT)
+
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            result = _with_releases_root(
+                releases_root,
+                lambda: load_public_predict_view_customization(
+                    "telco-customer-churn",
+                    "churn-risk-overview",
+                    active_release,
+                    customizations_path=customizations_path,
+                ),
+            )
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
+
+        assert result["view_id"] == "churn-risk-overview"
+        assert result["dataset_slug"] == "telco-customer-churn"
+
+
+def test_loader_does_not_fall_back_to_slug_named_release_directory():
+    """
+    A release directory named after dataset_slug must never be used as a
+    substitute for the registered active_release -- proves the loader would
+    fail this test if it silently reinterpreted dataset_slug as a release id.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        customizations_path = _write_customization_registry(tmp_path, _VALID_REGISTRY)
+        releases_root = tmp_path / "releases"
+        # Only a slug-named directory exists; the registered active_release
+        # below has no corresponding release directory at all.
+        _write_release_public_contract_fixture(
+            releases_root, "telco-customer-churn", _STUB_CONTRACT
+        )
+
+        sys.modules["registry.predict_view_customization_validate"] = types.SimpleNamespace(
+            validate_customization=_passing_validator
+        )
+        try:
+            raised = False
+            try:
+                _with_releases_root(
+                    releases_root,
+                    lambda: load_public_predict_view_customization(
+                        "telco-customer-churn",
+                        "churn-risk-overview",
+                        "release-genuinely-registered-001",
+                        customizations_path=customizations_path,
+                    ),
+                )
+            except CustomizationNotFoundError:
+                raised = True
+        finally:
+            del sys.modules["registry.predict_view_customization_validate"]
+
+        assert raised, (
+            "Expected CustomizationNotFoundError: the loader must resolve the "
+            "release directory by active_release, never by a dataset_slug fallback"
         )
 
 
@@ -456,6 +582,8 @@ if __name__ == "__main__":
         test_existing_records_unaffected_by_hidden_field_check,
         test_load_returns_customization_record_for_synthetic_non_telco_bank_dataset,
         test_raises_customization_not_found_for_valid_arbitrary_dataset_with_no_customization_entry,
+        test_loader_resolves_real_active_release_public_contract_chain,
+        test_loader_does_not_fall_back_to_slug_named_release_directory,
     ]
     passed = 0
     failed = 0

@@ -210,9 +210,9 @@ export function normalizeInferenceValidationIssues(errors: unknown): InferenceVa
 }
 
 /**
- * Project Spec S0151: the closed runtime diagnostic vocabulary the private
- * Admin route may attach to an otherwise-generic execution failure. No
- * free-form or dynamically constructed code is ever accepted -- see
+ * Project Spec S0151/S0152: the closed runtime diagnostic vocabulary the
+ * private Admin route may attach to an otherwise-generic execution failure.
+ * No free-form or dynamically constructed code is ever accepted -- see
  * normalizeInferenceRuntimeDiagnostic below.
  */
 export type InferenceRuntimeDiagnosticCode =
@@ -222,7 +222,8 @@ export type InferenceRuntimeDiagnosticCode =
   | "RUNTIME_DEPENDENCY_UNAVAILABLE"
   | "MODEL_DESERIALIZATION_FAILED"
   | "PREDICTION_EXECUTION_FAILED"
-  | "RESULT_VALIDATION_FAILED";
+  | "RESULT_VALIDATION_FAILED"
+  | "RUNTIME_INPUT_CONTRACT_INCONSISTENT";
 
 export type InferenceRuntimeDiagnostic = {
   code: InferenceRuntimeDiagnosticCode;
@@ -236,6 +237,7 @@ const RUNTIME_DIAGNOSTIC_CODES: ReadonlySet<string> = new Set<InferenceRuntimeDi
   "MODEL_DESERIALIZATION_FAILED",
   "PREDICTION_EXECUTION_FAILED",
   "RESULT_VALIDATION_FAILED",
+  "RUNTIME_INPUT_CONTRACT_INCONSISTENT",
 ]);
 
 /**

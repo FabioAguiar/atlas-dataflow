@@ -1228,3 +1228,295 @@ def test_s0109_result_matches_binary_classification_result_schema(tmp_path: Path
     # Re-validating an already-returned result must succeed (defense-in-depth,
     # matches the API layer's own second validation pass).
     validate_binary_classification_result(result)
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0152: optional inference feature missing-value materialization,
+# exercised end-to-end through execute_prediction() with a real, fitted
+# scikit-learn Pipeline whose preprocessing includes a real SimpleImputer step
+# -- proving the deterministic missing sentinel (float("nan")) is actually
+# accepted by real production-shaped preprocessing, not just constructed
+# in-memory. Mirrors the S0109 real-model technique above, extended with a
+# third, contractually optional numeric feature.
+# ---------------------------------------------------------------------------
+
+_S0152_FEATURE_ORDER = ["tenure", "monthly_charges", "total_charges"]
+
+
+def _s0152_train_pipeline() -> Pipeline:
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+
+    X = pd.DataFrame(
+        {
+            "tenure": [1, 2, 3, 4, 60, 61, 62, 63, 64, 65],
+            "monthly_charges": [95.0, 98.0, 90.0, 92.0, 20.0, 22.0, 18.0, 25.0, 19.0, 21.0],
+            "total_charges": [95.0, 196.0, 270.0, 368.0, 1200.0, 1342.0, 1116.0, 1575.0, 1216.0, 1365.0],
+        }
+    )
+    y = ["Yes", "Yes", "Yes", "Yes", "No", "No", "No", "No", "No", "No"]
+    preprocessor = ColumnTransformer(
+        [("numeric", SimpleImputer(strategy="median"), list(_S0152_FEATURE_ORDER))]
+    )
+    pipeline = Pipeline([("pre", preprocessor), ("clf", LogisticRegression())])
+    pipeline.fit(X, y)
+    return pipeline
+
+
+def _s0152_write_isolated_release(tmp_path: Path, *, pipeline: Pipeline) -> Path:
+    release_root = tmp_path / "release-s0152-smoke"
+    models_dir = release_root / "models"
+    predictions_dir = release_root / "predictions"
+    models_dir.mkdir(parents=True)
+    predictions_dir.mkdir(parents=True)
+
+    model_path = models_dir / "model.pkl"
+    joblib.dump(pipeline, model_path)
+    model_sha256 = _sha256_bytes(model_path.read_bytes())
+
+    bundle: dict[str, Any] = {
+        "contract_version": "inference_bundle.v1",
+        "feature_order": list(_S0152_FEATURE_ORDER),
+        "runtime_execution": {
+            "loader_strategy": "joblib_sklearn_predict",
+            "serialization_format": "joblib",
+            "prediction_interface": "predict",
+            "model_family": "logistic_regression",
+        },
+        "model_artifact": {"path": "models/model.pkl", "sha256": model_sha256},
+        "output_schema": {
+            "class_labels": ["No", "Yes"],
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "probability_output": True,
+        },
+        "result_semantics": _s0109_result_semantics(),
+    }
+    _write_json(predictions_dir / "bundle.json", bundle)
+    _write_json(
+        release_root / "manifest.json",
+        {
+            "schema_version": "release-manifest.v1",
+            "artifacts": [
+                {"role": "predictive_bundle", "reference": "predictions/bundle.json"},
+            ],
+        },
+    )
+    return release_root
+
+
+_S0152_RUNTIME_FEATURE_METADATA = {
+    "tenure": {"required": True},
+    "monthly_charges": {"required": True},
+    "total_charges": {"required": False},
+}
+
+
+def test_s0152_omitted_optional_feature_materializes_and_executes_real_pipeline(tmp_path: Path) -> None:
+    pipeline = _s0152_train_pipeline()
+    release_root = _s0152_write_isolated_release(tmp_path, pipeline=pipeline)
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+            runtime_feature_metadata=_S0152_RUNTIME_FEATURE_METADATA,
+        )["result"]
+
+    assert result["schema_version"] == "binary-classification-result.v1"
+    assert result["predicted_class"]["class_id"] in {"No", "Yes"}
+    assert 0.0 <= result["positive_class_probability"] <= 1.0
+    validate_binary_classification_result(result)
+
+
+def test_s0152_provided_optional_feature_value_preserved_and_used(tmp_path: Path) -> None:
+    pipeline = _s0152_train_pipeline()
+    release_root = _s0152_write_isolated_release(tmp_path, pipeline=pipeline)
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        omitted_result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+            runtime_feature_metadata=_S0152_RUNTIME_FEATURE_METADATA,
+        )["result"]
+        provided_result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"tenure": 63, "monthly_charges": 19.0, "total_charges": 50000.0},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+            runtime_feature_metadata=_S0152_RUNTIME_FEATURE_METADATA,
+        )["result"]
+
+    # An extreme, out-of-training-range submitted value must actually move the
+    # probability -- proving it was used unchanged, not overwritten by the
+    # missing sentinel or ignored.
+    assert omitted_result["positive_class_probability"] != provided_result["positive_class_probability"]
+
+
+def test_s0152_unknown_bundle_feature_classified_as_runtime_input_contract_inconsistent(tmp_path: Path) -> None:
+    pipeline = _s0152_train_pipeline()
+    release_root = _s0152_write_isolated_release(tmp_path, pipeline=pipeline)
+    bundle_path = release_root / "predictions" / "bundle.json"
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    bundle["feature_order"] = list(_S0152_FEATURE_ORDER) + ["undeclared_feature"]
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+
+    from runtime.inference import DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT
+
+    try:
+        with _expect_known_joblib_numpy_pickle_deprecation():
+            execute_prediction(
+                {"path": str(release_root), "artifacts": manifest["artifacts"]},
+                {"tenure": 63, "monthly_charges": 19.0},
+                manifest=manifest,
+                bundle_loader=_s0109_bundle_loader,
+                loader_strategies=_S0109_LOADER_STRATEGIES,
+                supported_serialization_formats=["joblib"],
+                runtime_feature_metadata=_S0152_RUNTIME_FEATURE_METADATA,
+            )
+    except BundleValidationError as exc:
+        assert exc.diagnostic_code == DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT
+    else:
+        raise AssertionError("bundle feature absent from runtime contract metadata was accepted")
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0152, acceptance criteria 27/28/29: the real, currently-active
+# Telco runtime contract (contracts/telco-customer-churn/runtime-contract.json,
+# TotalCharges required: false, tenure/MonthlyCharges required: true) drives a
+# real production-shaped ColumnTransformer (pipeline.training._build_preprocessor,
+# the exact function real governed training uses) fitted over synthetic data
+# covering every declared Telco feature, proving the current Telco contract's
+# real required-flag wiring produces the materialize-vs-inconsistency split
+# this spec requires, not just a small isolated fixture's wiring.
+# ---------------------------------------------------------------------------
+
+_TELCO_RUNTIME_CONTRACT_PATH = Path(__file__).parent.parent / "contracts" / "telco-customer-churn" / "runtime-contract.json"
+
+
+def _load_real_telco_runtime_contract() -> dict[str, Any]:
+    return json.loads(_TELCO_RUNTIME_CONTRACT_PATH.read_text(encoding="utf-8"))
+
+
+def _telco_runtime_feature_metadata(contract: dict[str, Any]) -> dict[str, dict[str, bool]]:
+    return {
+        feature["name"]: {"required": feature.get("required", True) is not False}
+        for feature in contract["features"]
+    }
+
+
+def _telco_synthetic_training_frame(feature_order: list[str], row_count: int = 20) -> "pd.DataFrame":
+    contract = _load_real_telco_runtime_contract()
+    features_by_name = {feature["name"]: feature for feature in contract["features"]}
+    columns: dict[str, list[Any]] = {}
+    for name in feature_order:
+        feature = features_by_name[name]
+        feature_type = feature.get("type")
+        if feature_type == "numeric":
+            constraints = feature.get("domain_constraints") or {}
+            minimum = constraints.get("min", 0)
+            maximum = constraints.get("max", minimum + 100)
+            columns[name] = [minimum + (maximum - minimum) * (i / (row_count - 1)) for i in range(row_count)]
+        elif feature_type == "boolean":
+            columns[name] = [bool(i % 2) for i in range(row_count)]
+        elif feature_type == "categorical":
+            values = (feature.get("domain_constraints") or {}).get("values") or ["value"]
+            columns[name] = [values[i % len(values)] for i in range(row_count)]
+        else:
+            raise AssertionError(f"Unsupported Telco runtime feature type: {feature_type}")
+    return pd.DataFrame(columns)
+
+
+def test_s0152_current_telco_contract_omitted_total_charges_materializes_and_executes(tmp_path: Path) -> None:
+    contract = _load_real_telco_runtime_contract()
+    feature_order = [feature["name"] for feature in contract["features"]]
+    assert "TotalCharges" in feature_order
+    metadata = _telco_runtime_feature_metadata(contract)
+    assert metadata["TotalCharges"] == {"required": False}
+    assert metadata["tenure"] == {"required": True}
+    assert metadata["MonthlyCharges"] == {"required": True}
+
+    training_features = _telco_synthetic_training_frame(feature_order)
+    target = pd.Series(["Yes", "No"] * (len(training_features) // 2))
+    preprocessor = training_module._build_preprocessor(training_features)
+    pipeline = Pipeline([("pre", preprocessor), ("clf", LogisticRegression())])
+    pipeline.fit(training_features, target)
+
+    release_root = tmp_path / "release-s0152-telco-smoke"
+    models_dir = release_root / "models"
+    predictions_dir = release_root / "predictions"
+    models_dir.mkdir(parents=True)
+    predictions_dir.mkdir(parents=True)
+    model_path = models_dir / "model.pkl"
+    joblib.dump(pipeline, model_path)
+    model_sha256 = _sha256_bytes(model_path.read_bytes())
+
+    bundle: dict[str, Any] = {
+        "contract_version": "inference_bundle.v1",
+        "feature_order": feature_order,
+        "runtime_execution": {
+            "loader_strategy": "joblib_sklearn_predict",
+            "serialization_format": "joblib",
+            "prediction_interface": "predict",
+            "model_family": "logistic_regression",
+        },
+        "model_artifact": {"path": "models/model.pkl", "sha256": model_sha256},
+        "output_schema": {
+            "class_labels": ["No", "Yes"],
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "probability_output": True,
+        },
+        "result_semantics": _s0109_result_semantics(),
+    }
+    _write_json(predictions_dir / "bundle.json", bundle)
+    manifest = {
+        "schema_version": "release-manifest.v1",
+        "artifacts": [{"role": "predictive_bundle", "reference": "predictions/bundle.json"}],
+    }
+    _write_json(release_root / "manifest.json", manifest)
+
+    # A valid payload with every required field present, TotalCharges omitted
+    # entirely -- must reach ordered-row construction as a missing value and
+    # execute successfully, not raise missing_feature_value.
+    payload = {}
+    for feature in contract["features"]:
+        name = feature["name"]
+        if name == "TotalCharges":
+            continue
+        feature_type = feature.get("type")
+        if feature_type == "numeric":
+            constraints = feature.get("domain_constraints") or {}
+            payload[name] = (constraints.get("min", 0) + constraints.get("max", 1)) / 2
+        elif feature_type == "boolean":
+            payload[name] = False
+        elif feature_type == "categorical":
+            payload[name] = (feature.get("domain_constraints") or {}).get("values", ["value"])[0]
+
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            payload,
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+            runtime_feature_metadata=metadata,
+        )["result"]
+
+    assert result["schema_version"] == "binary-classification-result.v1"
+    assert result["predicted_class"]["class_id"] in {"No", "Yes"}
+    validate_binary_classification_result(result)

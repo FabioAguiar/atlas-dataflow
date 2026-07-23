@@ -6201,6 +6201,9 @@ describe("DatasetAdminPage", () => {
         PREDICTION_EXECUTION_FAILED: "Runtime diagnostic: the model could not complete prediction execution.",
         RESULT_VALIDATION_FAILED:
           "Runtime diagnostic: the inference result failed governed result validation.",
+        // Project Spec S0152
+        RUNTIME_INPUT_CONTRACT_INCONSISTENT:
+          "Runtime diagnostic: the active release input contract is inconsistent with the inference bundle.",
       };
 
       for (const [code, expectedText] of Object.entries(expectedCopy)) {
@@ -6527,6 +6530,11 @@ describe("DatasetAdminPage", () => {
         [
           "RESULT_VALIDATION_FAILED",
           "[ERROR] Runtime diagnostic: the inference result failed governed result validation.",
+        ],
+        // Project Spec S0152
+        [
+          "RUNTIME_INPUT_CONTRACT_INCONSISTENT",
+          "[ERROR] Runtime diagnostic: the active release input contract is inconsistent with the inference bundle.",
         ],
       ];
 

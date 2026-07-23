@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import InferenceForm, {
+  normalizeInferenceValidationIssues,
   type ContractPayload,
   type InferenceExecutionResult,
   type InferenceLifecycleEvent,
@@ -538,6 +539,160 @@ describe("InferenceForm scoped visual structure (Project Spec S0135)", () => {
   });
 });
 
+// Project Spec S0146: a rendered checkbox always represents a complete
+// two-state boolean -- checked/true and unchecked/false are both valid and
+// complete -- so a contract-required checkbox must never carry the native
+// HTML `required` constraint (which means "must be checked") or its visual
+// required marker, while required number/select controls keep both.
+describe("InferenceForm boolean checkbox false-state submission (Project Spec S0146)", () => {
+  const requiredCheckboxContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [{ name: "consent", label: "Consent", input_type: "checkbox", optional: false, display_order: 1 }],
+  };
+
+  const optionalCheckboxContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [{ name: "consent", label: "Consent", input_type: "checkbox", optional: true, display_order: 1 }],
+  };
+
+  const mixedRequiredContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      { name: "tenure", label: "Tenure", input_type: "number", optional: false, display_order: 1 },
+      {
+        name: "contract_type",
+        label: "Contract Type",
+        input_type: "select",
+        optional: false,
+        display_order: 2,
+        options: [
+          { value: "month", label: "Month-to-month" },
+          { value: "year", label: "One year" },
+        ],
+      },
+      { name: "auto_pay", label: "AutoPay", input_type: "checkbox", optional: false, display_order: 3 },
+    ],
+  };
+
+  const optionalNumberSelectContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
+      {
+        name: "contract_type",
+        label: "Contract Type",
+        input_type: "select",
+        optional: true,
+        display_order: 2,
+        options: [
+          { value: "month", label: "Month-to-month" },
+          { value: "year", label: "One year" },
+        ],
+      },
+    ],
+  };
+
+  it("renders a contract-required checkbox without the native required attribute", () => {
+    render(<InferenceForm contract={requiredCheckboxContract} slug={slug} previewMode />);
+    expect(screen.getByLabelText("Consent")).not.toHaveAttribute("required");
+  });
+
+  it("renders a contract-optional checkbox without the native required attribute", () => {
+    render(<InferenceForm contract={optionalCheckboxContract} slug={slug} previewMode />);
+    expect(screen.getByLabelText("Consent")).not.toHaveAttribute("required");
+  });
+
+  it("does not render a required marker for a contract-required checkbox", () => {
+    const { container } = render(<InferenceForm contract={requiredCheckboxContract} slug={slug} previewMode />);
+    expect(container.querySelector(".public-inference-form__required")).not.toBeInTheDocument();
+  });
+
+  it("keeps the required marker and native required attribute on required number/select fields while omitting both from a required checkbox in the same form", () => {
+    const { container } = render(<InferenceForm contract={mixedRequiredContract} slug={slug} previewMode />);
+
+    expect(screen.getByLabelText(/^Tenure/)).toHaveAttribute("required");
+    expect(screen.getByLabelText(/Contract Type/)).toHaveAttribute("required");
+    expect(screen.getByLabelText("AutoPay")).not.toHaveAttribute("required");
+    expect(container.querySelectorAll(".public-inference-form__required")).toHaveLength(2);
+  });
+
+  it("keeps optional number and select fields optional, with no required marker", () => {
+    const { container } = render(<InferenceForm contract={optionalNumberSelectContract} slug={slug} previewMode />);
+
+    expect(screen.getByLabelText("Tenure")).not.toHaveAttribute("required");
+    expect(screen.getByLabelText(/Contract Type/)).not.toHaveAttribute("required");
+    expect(container.querySelector(".public-inference-form__required")).not.toBeInTheDocument();
+  });
+
+  it("never marks a required checkbox invalid via native constraint validation, in either checked state", () => {
+    render(<InferenceForm contract={requiredCheckboxContract} slug={slug} previewMode />);
+    const checkbox = screen.getByLabelText("Consent") as HTMLInputElement;
+
+    expect(checkbox.checkValidity()).toBe(true);
+    expect(checkbox.validationMessage).toBe("");
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    expect(checkbox.checkValidity()).toBe(true);
+    expect(checkbox.validationMessage).toBe("");
+  });
+
+  it("submits an unchecked contract-required checkbox to the injected executor as boolean false, and still emits the started lifecycle event", async () => {
+    const executeInference = vi.fn(
+      async (
+        _slug: string,
+        _payload: Record<string, string | number | boolean>,
+      ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={requiredCheckboxContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    expect(screen.getByLabelText("Consent")).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenCalledWith(slug, { consent: false });
+    expect(typeof executeInference.mock.calls[0][1].consent).toBe("boolean");
+    expect(events[0]).toEqual({ type: "started" });
+  });
+
+  it("submits a checked contract-required checkbox to the injected executor as boolean true", async () => {
+    const executeInference = vi.fn(
+      async (
+        _slug: string,
+        _payload: Record<string, string | number | boolean>,
+      ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={requiredCheckboxContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Consent"));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenCalledWith(slug, { consent: true });
+    expect(typeof executeInference.mock.calls[0][1].consent).toBe("boolean");
+  });
+});
+
 // Project Spec S0143: the injectable execution boundary a private Admin
 // Live Preview executor plugs into, plus the resetKey stale-response guard
 // and lifecycle seam it relies on -- exercised here independently of any
@@ -753,5 +908,304 @@ describe("InferenceForm injectable execution boundary (Project Spec S0143)", () 
     expect(
       screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
     ).toBeInTheDocument();
+  });
+});
+
+// Project Spec S0147: normalizeInferenceValidationIssues is the sole
+// boundary that may turn an unknown backend `errors` value into a safe,
+// bounded InferenceValidationIssue list -- exercised directly here (pure
+// function, no DOM, no network) for every normalization invariant.
+describe("normalizeInferenceValidationIssues (Project Spec S0147)", () => {
+  it("normalizes a valid API issues array into bounded canonical field+violation pairs", () => {
+    const errors = [
+      { error_code: "MISSING_REQUIRED_FIELD", field: "tenure", violation: "missing_required_field", message: "raw backend message" },
+      { error_code: "DOMAIN_VIOLATION", field: "MonthlyCharges", violation: "domain_violation", message: "raw backend message" },
+    ];
+
+    expect(normalizeInferenceValidationIssues(errors)).toEqual([
+      { field: "tenure", violation: "missing_required_field" },
+      { field: "MonthlyCharges", violation: "domain_violation" },
+    ]);
+  });
+
+  it("ignores malformed issue entries (non-object, missing field, blank field, non-string violation)", () => {
+    const errors = [
+      null,
+      "raw-string",
+      42,
+      {},
+      { field: "" },
+      { field: "   " },
+      { field: "tenure" },
+      { field: "tenure", violation: 123 },
+      { field: 123, violation: "type_mismatch" },
+    ];
+
+    expect(normalizeInferenceValidationIssues(errors)).toBeUndefined();
+  });
+
+  it("ignores unknown violation values", () => {
+    expect(normalizeInferenceValidationIssues([{ field: "tenure", violation: "some_unknown_violation" }])).toBeUndefined();
+  });
+
+  it("deduplicates identical canonical field+violation pairs, preserving first-seen backend order", () => {
+    const errors = [
+      { field: "tenure", violation: "missing_required_field" },
+      { field: "MonthlyCharges", violation: "domain_violation" },
+      { field: "tenure", violation: "missing_required_field" },
+    ];
+
+    expect(normalizeInferenceValidationIssues(errors)).toEqual([
+      { field: "tenure", violation: "missing_required_field" },
+      { field: "MonthlyCharges", violation: "domain_violation" },
+    ]);
+  });
+
+  it("retains at most 20 unique issues from one failed response", () => {
+    const errors = Array.from({ length: 25 }, (_, index) => ({ field: `field_${index}`, violation: "type_mismatch" }));
+
+    const result = normalizeInferenceValidationIssues(errors);
+
+    expect(result).toHaveLength(20);
+    expect(result?.[0]).toEqual({ field: "field_0", violation: "type_mismatch" });
+    expect(result?.[19]).toEqual({ field: "field_19", violation: "type_mismatch" });
+  });
+
+  it("ignores an oversized field string rather than exposing arbitrary content", () => {
+    const oversizedField = "x".repeat(500);
+    expect(normalizeInferenceValidationIssues([{ field: oversizedField, violation: "type_mismatch" }])).toBeUndefined();
+  });
+
+  it("returns undefined for a non-array, empty, or entirely-invalid errors value", () => {
+    expect(normalizeInferenceValidationIssues(undefined)).toBeUndefined();
+    expect(normalizeInferenceValidationIssues(null)).toBeUndefined();
+    expect(normalizeInferenceValidationIssues("errors")).toBeUndefined();
+    expect(normalizeInferenceValidationIssues({})).toBeUndefined();
+    expect(normalizeInferenceValidationIssues([])).toBeUndefined();
+  });
+});
+
+// Project Spec S0147: the private Admin audit flow's structured
+// diagnostics -- contract filtering, display-label resolution, and the
+// bounded validation_failed lifecycle event -- exercised through the real
+// InferenceForm submission path, exactly as DatasetAdminPage's private
+// executor and Publishing console consume it.
+describe("InferenceForm structured validation diagnostics (Project Spec S0147)", () => {
+  const diagnosticsContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
+      { name: "MonthlyCharges", label: "Monthly charges", input_type: "number", optional: true, display_order: 2 },
+      {
+        name: "contract_type",
+        label: "Contract Type",
+        input_type: "select",
+        optional: true,
+        display_order: 3,
+        options: [{ value: "month", label: "Month-to-month" }],
+      },
+    ],
+  };
+
+  const diagnosticsCustomization = {
+    field_hints: [{ field_name: "contract_type", display_label: "Contract length" }],
+    groups: [],
+  };
+
+  it("filters out non-contract fields, resolves customization label precedence, retains a payload type_mismatch, and preserves normalized order", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [
+          { field: "tenure", violation: "missing_required_field" },
+          { field: "contract_type", violation: "domain_violation" },
+          { field: "MonthlyCharges", violation: "type_mismatch" },
+          { field: "totally_unrelated_field", violation: "type_mismatch" },
+          { field: "payload", violation: "type_mismatch" },
+          { field: "payload", violation: "missing_required_field" },
+        ],
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={diagnosticsContract}
+        slug={slug}
+        customization={diagnosticsCustomization}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    // Project Spec S0147: the shared visible form/Result Card error stays
+    // generic -- the field-level diagnosis belongs to the Publishing
+    // console only.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Some inputs are invalid. Please check your answers and try again.",
+    );
+
+    expect(events.find((event) => event.type === "validation_failed")).toEqual({
+      type: "validation_failed",
+      issues: [
+        { field: "tenure", fieldLabel: "Tenure", violation: "missing_required_field" },
+        { field: "contract_type", fieldLabel: "Contract length", violation: "domain_violation" },
+        { field: "MonthlyCharges", fieldLabel: "Monthly charges", violation: "type_mismatch" },
+        { field: "payload", fieldLabel: "Inference payload", violation: "type_mismatch" },
+      ],
+    });
+  });
+
+  it("falls back to the contract feature label, then the canonical feature name, when no customization label applies", async () => {
+    const blankLabelContract: ContractPayload = {
+      schema_version: "1.0.0",
+      features: [
+        { name: "internal_score", label: "", input_type: "number", optional: true, display_order: 1 },
+        { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 2 },
+      ],
+    };
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [
+          { field: "internal_score", violation: "type_mismatch" },
+          { field: "tenure", violation: "missing_required_field" },
+        ],
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={blankLabelContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events.find((event) => event.type === "validation_failed")).toEqual({
+      type: "validation_failed",
+      issues: [
+        { field: "internal_score", fieldLabel: "internal_score", violation: "type_mismatch" },
+        { field: "tenure", fieldLabel: "Tenure", violation: "missing_required_field" },
+      ],
+    });
+  });
+
+  it("emits the existing issue-free validation_failed event when the executor reports no structured details", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: false, errorCode: "INVALID_PAYLOAD" }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "validation_failed" }]);
+  });
+
+  it("emits the existing issue-free validation_failed event when every reported field is unrelated to the active contract", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [{ field: "totally_unrelated_field", violation: "type_mismatch" }],
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "validation_failed" }]);
+  });
+
+  it("never carries validation issues on an execution_failed lifecycle event, even if the executor attaches them", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INFERENCE_FAILURE",
+        validationIssues: [{ field: "tenure", violation: "type_mismatch" }],
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(events).toEqual([{ type: "started" }, { type: "execution_failed" }]);
+  });
+
+  it("never exposes a submitted field value anywhere in the emitted lifecycle events", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [{ field: "tenure", violation: "domain_violation" }],
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Tenure"), { target: { value: "999999" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await screen.findByRole("alert");
+
+    expect(JSON.stringify(events)).not.toContain("999999");
   });
 });

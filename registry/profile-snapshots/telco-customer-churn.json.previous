@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-22T22:48:41Z",
+  "published_at": "2026-07-22T23:05:12Z",
   "active_release_at_publish_time": "release-20260721t231025z",
   "profile": {
     "display": {
@@ -46,7 +46,7 @@
       ]
     },
     "theme": {
-      "preset": "cyber-neon"
+      "preset": "copper-circuit"
     },
     "inference_presentation": {
       "bound_predict_view_id": "churn-risk-overview"

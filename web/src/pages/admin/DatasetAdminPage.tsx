@@ -26,11 +26,14 @@ import {
   type BinaryResultSemantics,
 } from "../../components/ResultCard/types";
 import InferenceForm, {
+  normalizeInferenceValidationIssues,
   type FieldHint,
   type GroupDef,
   type InferenceExecutionResult,
   type InferenceExecutor,
   type InferenceLifecycleEvent,
+  type InferenceLifecycleValidationIssue,
+  type InferenceValidationViolation,
   type PredictViewCustomization,
 } from "../../components/InferenceForm/InferenceForm";
 import {
@@ -1931,11 +1934,19 @@ async function executeAdminInference(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const body = (await res.json()) as { result?: unknown; error_code?: string };
+    const body = (await res.json()) as { result?: unknown; error_code?: string; errors?: unknown };
     if (res.ok) {
       return { ok: true, result: body?.result };
     }
-    return { ok: false, errorCode: body?.error_code };
+    // Project Spec S0147: reuses InferenceForm's shared normalizer so the
+    // private executor carries the same bounded, safe validationIssues
+    // shape the public executor does -- never the raw backend `errors`
+    // value, never a raw message.
+    return {
+      ok: false,
+      errorCode: body?.error_code,
+      validationIssues: normalizeInferenceValidationIssues(body?.errors),
+    };
   } catch {
     return { ok: false };
   }
@@ -3599,11 +3610,23 @@ export type LiveInferenceAuditSuccessSummary = {
   modelDisplayName?: string;
 };
 
+// Project Spec S0147: retention bound for a single validation_failed
+// record's nested issue list -- independent of, and much smaller than,
+// LIVE_INFERENCE_AUDIT_RETENTION_LIMIT below (which bounds the number of
+// lifecycle *records*, not the issues nested inside one of them).
+const LIVE_INFERENCE_AUDIT_ISSUE_LIMIT = 20;
+
 export type LiveInferenceAuditRecord = {
   id: string;
   attemptSequence: number;
   kind: LiveInferenceAuditEventKind;
   successSummary?: LiveInferenceAuditSuccessSummary;
+  // Project Spec S0147: present only for kind "validation_failed", and only
+  // when at least one contract-filtered, label-resolved issue survived
+  // normalization -- absent/empty falls back to the existing generic
+  // console line. Never present for "started", "succeeded" or
+  // "execution_failed".
+  issues?: InferenceLifecycleValidationIssue[];
 };
 
 // Owned by DatasetAdminPage (Section "Keep the history above top-level tab
@@ -3656,6 +3679,7 @@ export function reduceLiveInferenceAuditEvent(
   datasetSlugAtCapture: string,
   kind: LiveInferenceAuditEventKind,
   successSummary?: LiveInferenceAuditSuccessSummary,
+  validationIssues?: InferenceLifecycleValidationIssue[],
 ): LiveInferenceAuditState {
   if (datasetSlugAtCapture !== state.datasetSlug) {
     return state;
@@ -3679,6 +3703,14 @@ export function reduceLiveInferenceAuditEvent(
   }
 
   const attemptSequence = state.activeAttemptSequence;
+  // Project Spec S0147: defensively re-bounded here (in addition to
+  // InferenceForm's own normalizer bound) so this reducer's own retention
+  // guarantee never depends on an upstream caller having already bounded
+  // the list.
+  const boundedIssues =
+    kind === "validation_failed" && validationIssues && validationIssues.length > 0
+      ? validationIssues.slice(0, LIVE_INFERENCE_AUDIT_ISSUE_LIMIT)
+      : undefined;
   return appendBoundedLiveInferenceAuditRecord(
     { ...state, nextEventId: state.nextEventId + 1, activeAttemptSequence: null },
     {
@@ -3686,6 +3718,7 @@ export function reduceLiveInferenceAuditEvent(
       attemptSequence,
       kind,
       successSummary: kind === "succeeded" ? successSummary : undefined,
+      issues: boundedIssues,
     },
   );
 }
@@ -3703,33 +3736,76 @@ function formatLiveInferenceAuditProbability(value: number): string | null {
   return `${text}%`;
 }
 
+// Project Spec S0147: the bounded, frontend-owned copy for each allowlisted
+// violation. Deliberately never interpolates the backend's own `message`
+// property -- console copy is owned entirely by this mapping.
+const VALIDATION_VIOLATION_LINE_COPY: Record<InferenceValidationViolation, string> = {
+  missing_required_field: "a required value was not submitted.",
+  type_mismatch: "the submitted value has the wrong type.",
+  domain_violation: "the submitted value is outside the accepted domain.",
+};
+
 // Project Spec S0144: renders the required bounded, explicit console text
 // for each retained audit record. Only ever built from the record's own
 // bounded fields -- never a raw payload, response, or exception message. An
 // absent optional success-summary field is omitted cleanly rather than
 // rendered as undefined/null/an object.
+//
+// Project Spec S0147: a validation_failed record with at least one retained
+// issue renders one bounded attempt-level summary line (singular/plural)
+// followed by one bounded field-level detail line per issue, in original
+// normalized order; each detail line's id is derived from the parent
+// record's own event id plus its issue position, so repeated attempts with
+// identical field failures still produce distinct line ids (their parent
+// record ids always differ). A record with no valid retained issue falls
+// back to the existing generic line.
 export function liveInferenceAuditConsoleLines(records: LiveInferenceAuditRecord[]): ConsoleLine[] {
-  return records.map((record): ConsoleLine => {
+  const lines: ConsoleLine[] = [];
+
+  for (const record of records) {
     if (record.kind === "started") {
-      return {
+      lines.push({
         id: record.id,
         severity: "INFO",
         text: `Live Preview inference attempt #${record.attemptSequence} started.`,
-      };
+      });
+      continue;
     }
+
     if (record.kind === "validation_failed") {
-      return {
-        id: record.id,
-        severity: "ERROR",
-        text: `Live Preview inference attempt #${record.attemptSequence} was rejected because the submitted fields were invalid.`,
-      };
+      if (record.issues && record.issues.length > 0) {
+        const count = record.issues.length;
+        lines.push({
+          id: record.id,
+          severity: "ERROR",
+          text: `Live Preview inference attempt #${record.attemptSequence} was rejected with ${count} invalid ${
+            count === 1 ? "input" : "inputs"
+          }.`,
+        });
+        record.issues.forEach((issue, index) => {
+          lines.push({
+            id: `${record.id}-issue-${index}`,
+            severity: "ERROR",
+            text: `${issue.fieldLabel}: ${VALIDATION_VIOLATION_LINE_COPY[issue.violation]}`,
+          });
+        });
+      } else {
+        lines.push({
+          id: record.id,
+          severity: "ERROR",
+          text: `Live Preview inference attempt #${record.attemptSequence} was rejected because the submitted fields were invalid.`,
+        });
+      }
+      continue;
     }
+
     if (record.kind === "execution_failed") {
-      return {
+      lines.push({
         id: record.id,
         severity: "ERROR",
         text: `Live Preview inference attempt #${record.attemptSequence} could not be completed.`,
-      };
+      });
+      continue;
     }
 
     const clauses: string[] = [];
@@ -3744,12 +3820,14 @@ export function liveInferenceAuditConsoleLines(records: LiveInferenceAuditRecord
       }
     }
     const summarySuffix = clauses.length > 0 ? `: ${clauses.join(", ")}` : "";
-    return {
+    lines.push({
       id: record.id,
       severity: "OK",
       text: `Live Preview inference attempt #${record.attemptSequence} completed successfully${summarySuffix}.`,
-    };
-  });
+    });
+  }
+
+  return lines;
 }
 
 // Translates the bounded publication-state request machine, plus local
@@ -5446,8 +5524,13 @@ export default function DatasetAdminPage() {
   function handleLiveInferenceLifecycleEvent(datasetSlugAtCapture: string, event: InferenceLifecycleEvent) {
     const successSummary =
       event.type === "succeeded" ? pendingLiveInferenceSuccessSummaryRef.current ?? undefined : undefined;
+    // Project Spec S0147: InferenceForm has already contract-filtered and
+    // label-resolved these issues before this callback ever runs -- this
+    // handler only forwards them into the reducer, it does not inspect or
+    // re-derive them.
+    const validationIssues = event.type === "validation_failed" ? event.issues : undefined;
     setLiveInferenceAudit((current) =>
-      reduceLiveInferenceAuditEvent(current, datasetSlugAtCapture, event.type, successSummary),
+      reduceLiveInferenceAuditEvent(current, datasetSlugAtCapture, event.type, successSummary, validationIssues),
     );
   }
 

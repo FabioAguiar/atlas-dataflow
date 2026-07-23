@@ -419,3 +419,72 @@ describe("DatasetViewPage shared Result Card surface (Project Spec S0112)", () =
     expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument();
   });
 });
+
+// Project Spec S0146: a contract-required checkbox must remain a complete
+// two-state boolean field on the public Predict View -- leaving it unchecked
+// must still reach the shared public inference execution path (never
+// blocked by native checkbox constraint validation), serializing to a
+// boolean false payload key.
+describe("DatasetViewPage boolean checkbox false-state submission (Project Spec S0146)", () => {
+  const checkboxContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      { name: "synthetic_feature", label: "Synthetic Feature", input_type: "number" as const, optional: true, display_order: 1 },
+      { name: "consent", label: "Consent", input_type: "checkbox" as const, optional: false, display_order: 2 },
+    ],
+  };
+
+  function installCheckboxFetchMock() {
+    let capturedBody: string | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith(`/datasets/${slug}/views/${viewId}/customization`)) return jsonResponse({}, 404);
+      if (url.endsWith(`/datasets/${slug}/views/${viewId}`)) return jsonResponse(viewPayload);
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: checkboxContractPayload,
+          result_contract: resultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: { legacy_submit_button_label: null, result_card: resultCardPresentation },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/inference`) && init?.method === "POST") {
+        capturedBody = String(init.body);
+        return jsonResponse({ dataset_slug: slug, result: binaryResult });
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, getCapturedBody: () => capturedBody };
+  }
+
+  it("permits an unchecked contract-required checkbox to reach the public inference execution path, with the payload key serialized as boolean false", async () => {
+    const { fetchMock, getCapturedBody } = installCheckboxFetchMock();
+    renderDatasetViewPage();
+
+    const checkbox = await screen.findByLabelText("Consent");
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).not.toHaveAttribute("required");
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        (call) => String(call[0]).endsWith(`/datasets/${slug}/inference`) && call[1]?.method === "POST",
+      ),
+    ).toBe(true);
+
+    const body = JSON.parse(getCapturedBody()!);
+    expect(body.consent).toBe(false);
+    expect(typeof body.consent).toBe("boolean");
+  });
+});

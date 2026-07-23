@@ -263,7 +263,15 @@ function installFetchMock(
     // compatible customization was last saved, to exercise the
     // required/optional default rule applied only to a field the loaded
     // overlay never covered.
-    extraContractFields?: Array<{ name: string; label: string; optional: boolean }>;
+    extraContractFields?: Array<{
+      name: string;
+      label: string;
+      optional: boolean;
+      // Project Spec S0146: defaults to "number" (every pre-existing caller
+      // of this option), letting a test append a checkbox field to exercise
+      // the boolean false-state submission contract alongside it.
+      input_type?: "number" | "checkbox";
+    }>;
     // Project Spec S0116: GET /admin/datasets/{slug}/publication-state.
     // publicationStateUnavailable simulates the private route returning 404
     // (Admin runtime disabled/unreachable). publicationStateMalformed
@@ -292,6 +300,12 @@ function installFetchMock(
     adminInferenceResult?: Record<string, unknown>;
     adminInferenceErrorCode?: string;
     adminInferenceDeferredOnce?: boolean;
+    // Project Spec S0147: raw `errors` array entries included alongside
+    // adminInferenceErrorCode in the bounded INVALID_PAYLOAD response, for
+    // exercising the frontend normalizer/filter/label-resolution pipeline
+    // with safe structured validation detail (and, in malformed-entry
+    // tests, with entries the normalizer must safely ignore).
+    adminInferenceErrors?: unknown[];
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -379,7 +393,7 @@ function installFetchMock(
                   ...(options.extraContractFields ?? []).map((field, index) => ({
                     name: field.name,
                     label: field.label,
-                    input_type: "number" as const,
+                    input_type: field.input_type ?? ("number" as const),
                     optional: field.optional,
                     display_order: 3 + index,
                   })),
@@ -811,7 +825,13 @@ function installFetchMock(
           releaseDeferredAdminInference = () =>
             resolve(
               options.adminInferenceErrorCode
-                ? jsonResponse({ error_code: options.adminInferenceErrorCode }, 422)
+                ? jsonResponse(
+                    {
+                      error_code: options.adminInferenceErrorCode,
+                      ...(options.adminInferenceErrors ? { errors: options.adminInferenceErrors } : {}),
+                    },
+                    422,
+                  )
                 : jsonResponse({
                     dataset_slug: datasetSlug,
                     result: options.adminInferenceResult ?? DEFAULT_ADMIN_INFERENCE_RESULT,
@@ -820,7 +840,13 @@ function installFetchMock(
         });
       }
       if (options.adminInferenceErrorCode) {
-        return jsonResponse({ error_code: options.adminInferenceErrorCode }, 422);
+        return jsonResponse(
+          {
+            error_code: options.adminInferenceErrorCode,
+            ...(options.adminInferenceErrors ? { errors: options.adminInferenceErrors } : {}),
+          },
+          422,
+        );
       }
       return jsonResponse({
         dataset_slug: datasetSlug,
@@ -5854,6 +5880,403 @@ describe("DatasetAdminPage", () => {
       const consoleText = consoleLineTexts().join(" ");
       expect(consoleText).not.toContain("424242");
       expect(consoleText).not.toContain("INVALID_PAYLOAD");
+    });
+  });
+
+  // Project Spec S0147: pure unit coverage for the field-level diagnostics
+  // extension to the S0144 audit model -- the console-line projection and
+  // the reducer's own independent 20-issue bound, exercised directly (no
+  // DOM, no network) alongside the existing S0144 model coverage above.
+  describe("Publishing console field-level validation diagnostics model (Project Spec S0147)", () => {
+    const auditSlug = "audit-diagnostics-dataset";
+
+    function validationIssue(
+      overrides: Partial<{
+        field: string;
+        fieldLabel: string;
+        violation: "missing_required_field" | "type_mismatch" | "domain_violation";
+      }> = {},
+    ) {
+      return { field: "tenure", fieldLabel: "Tenure", violation: "missing_required_field" as const, ...overrides };
+    }
+
+    it("renders a singular attempt summary followed by one detail line for a single retained issue", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed", undefined, [
+        validationIssue({ field: "tenure", fieldLabel: "Tenure", violation: "missing_required_field" }),
+      ]);
+
+      expect(liveInferenceAuditConsoleLines(state.records)).toEqual([
+        { id: expect.any(String), severity: "INFO", text: "Live Preview inference attempt #1 started." },
+        {
+          id: expect.any(String),
+          severity: "ERROR",
+          text: "Live Preview inference attempt #1 was rejected with 1 invalid input.",
+        },
+        { id: expect.any(String), severity: "ERROR", text: "Tenure: a required value was not submitted." },
+      ]);
+    });
+
+    it("renders a plural attempt summary with the retained issue count, and one detail line per issue in normalized order", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed", undefined, [
+        validationIssue({ field: "tenure", fieldLabel: "Tenure", violation: "missing_required_field" }),
+        validationIssue({ field: "MonthlyCharges", fieldLabel: "Monthly charges", violation: "domain_violation" }),
+      ]);
+
+      const lines = liveInferenceAuditConsoleLines(state.records);
+      expect(lines[1]).toEqual({
+        id: expect.any(String),
+        severity: "ERROR",
+        text: "Live Preview inference attempt #1 was rejected with 2 invalid inputs.",
+      });
+      expect(lines[2].text).toBe("Tenure: a required value was not submitted.");
+      expect(lines[3].text).toBe("Monthly charges: the submitted value is outside the accepted domain.");
+    });
+
+    it("renders the required copy for each of the three allowlisted violations", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed", undefined, [
+        validationIssue({ field: "tenure", fieldLabel: "Tenure", violation: "missing_required_field" }),
+        validationIssue({ field: "MonthlyCharges", fieldLabel: "Monthly charges", violation: "type_mismatch" }),
+        validationIssue({ field: "contract_type", fieldLabel: "Contract length", violation: "domain_violation" }),
+      ]);
+
+      const detailTexts = liveInferenceAuditConsoleLines(state.records).slice(2).map((line) => line.text);
+      expect(detailTexts).toEqual([
+        "Tenure: a required value was not submitted.",
+        "Monthly charges: the submitted value has the wrong type.",
+        "Contract length: the submitted value is outside the accepted domain.",
+      ]);
+    });
+
+    it("gives every detail line severity ERROR and a unique stable id, distinct across repeated equivalent attempts", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed", undefined, [validationIssue()]);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed", undefined, [validationIssue()]);
+
+      const lines = liveInferenceAuditConsoleLines(state.records);
+      const detailLines = lines.filter((line) => line.text.startsWith("Tenure:"));
+      expect(detailLines).toHaveLength(2);
+      expect(detailLines.every((line) => line.severity === "ERROR")).toBe(true);
+      expect(detailLines[0].id).not.toBe(detailLines[1].id);
+
+      const summaryLines = lines.filter((line) => line.text.includes("was rejected with"));
+      expect(summaryLines[0].text).toContain("attempt #1");
+      expect(summaryLines[1].text).toContain("attempt #2");
+    });
+
+    it("falls back to the existing generic line when no valid issue remains", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed", undefined, []);
+
+      expect(liveInferenceAuditConsoleLines(state.records)[1]).toEqual({
+        id: expect.any(String),
+        severity: "ERROR",
+        text: "Live Preview inference attempt #1 was rejected because the submitted fields were invalid.",
+      });
+    });
+
+    it("bounds a single validation-failure record's nested issue list to 20, independently of the 50-record retention limit", () => {
+      const manyIssues = Array.from({ length: 30 }, (_, index) => ({
+        field: `field_${index}`,
+        fieldLabel: `Field ${index}`,
+        violation: "type_mismatch" as const,
+      }));
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "validation_failed", undefined, manyIssues);
+
+      const record = state.records.find((r) => r.kind === "validation_failed");
+      expect(record?.issues).toHaveLength(20);
+
+      const detailLines = liveInferenceAuditConsoleLines(state.records).filter((line) => line.text.startsWith("Field "));
+      expect(detailLines).toHaveLength(20);
+    });
+
+    it("never retains validation issues on succeeded or execution_failed records, even if a caller passes them", () => {
+      let state = emptyLiveInferenceAuditState(auditSlug);
+      state = reduceLiveInferenceAuditEvent(
+        state,
+        auditSlug,
+        "started",
+      );
+      state = reduceLiveInferenceAuditEvent(
+        state,
+        auditSlug,
+        "succeeded",
+        { predictedPositive: true, positiveClassProbability: 0.5 },
+        [validationIssue()],
+      );
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "started");
+      state = reduceLiveInferenceAuditEvent(state, auditSlug, "execution_failed", undefined, [validationIssue()]);
+
+      const terminalRecords = state.records.filter((record) => record.kind !== "started");
+      expect(terminalRecords).toHaveLength(2);
+      expect(terminalRecords.every((record) => record.issues === undefined)).toBe(true);
+    });
+  });
+
+  // Project Spec S0147: DOM-level wiring coverage using the real
+  // InferenceForm/executeAdminInference path and the fetch-mock's
+  // adminInferenceErrors option -- confirms DatasetAdminPage actually
+  // normalizes, filters, label-resolves and projects field-level
+  // diagnostics into the Publishing console, rather than only exercising
+  // the pure model above.
+  describe("Publishing console field-level validation diagnostics wiring (Project Spec S0147)", () => {
+    function openLivePreviewInferenceTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+          name: "Inference",
+        }),
+      );
+    }
+
+    function openPublishingTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+    }
+
+    function consoleLineTexts(): string[] {
+      const panel = screen.getByRole("tabpanel");
+      const consoleEl = within(panel).getByRole("log", { name: "Dataset publication operational status" });
+      return Array.from(consoleEl.querySelectorAll(".dataset-admin-console-line")).map((el) => el.textContent ?? "");
+    }
+
+    it("renders a bounded attempt summary plus one field-level line per retained issue for a private Admin error response with safe errors[]", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [
+          { error_code: "MISSING_REQUIRED_FIELD", field: "tenure", violation: "missing_required_field", message: "raw backend message" },
+          { error_code: "DOMAIN_VIOLATION", field: "MonthlyCharges", violation: "domain_violation", message: "raw backend message" },
+        ],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      expect(lineTexts).toContain("[ERROR] Live Preview inference attempt #1 was rejected with 2 invalid inputs.");
+      expect(lineTexts).toContain("[ERROR] Tenure: a required value was not submitted.");
+      expect(lineTexts).toContain("[ERROR] Monthly charges: the submitted value is outside the accepted domain.");
+    });
+
+    it("renders a singular summary for exactly one retained issue", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [{ field: "tenure", violation: "missing_required_field" }],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      expect(consoleLineTexts()).toContain(
+        "[ERROR] Live Preview inference attempt #1 was rejected with 1 invalid input.",
+      );
+    });
+
+    it("prefers a non-blank customization display_label over the contract feature label for a field-level line", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [{ field: "tenure", violation: "domain_violation" }],
+        // Overrides the shared fixture's display_label (which happens to
+        // equal the contract feature label, "Tenure") with a distinct value,
+        // so this test actually distinguishes customization-label
+        // precedence from a contract-label fallback rather than passing
+        // vacuously.
+        customizationOverride: {
+          ...customization,
+          field_hints: [
+            {
+              field_name: "tenure",
+              display_label: "Customer tenure (yrs)",
+              explanatory_copy: "",
+              display_order_hint: 1,
+              group: "",
+            },
+          ],
+          groups: [],
+        },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      expect(consoleLineTexts()).toContain(
+        "[ERROR] Customer tenure (yrs): the submitted value is outside the accepted domain.",
+      );
+    });
+
+    it("falls back to the existing generic line when the reported errors are malformed or unrelated to the active contract", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [
+          { field: "", violation: "missing_required_field" },
+          { field: "tenure", violation: "some_unknown_violation" },
+          { field: "totally_unrelated_field", violation: "type_mismatch" },
+        ],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      expect(consoleLineTexts()).toContain(
+        "[ERROR] Live Preview inference attempt #1 was rejected because the submitted fields were invalid.",
+      );
+    });
+
+    it("never exposes a submitted value or a raw backend message in the console DOM alongside field-level diagnostics", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [
+          { field: "tenure", violation: "domain_violation", message: "The submitted value 424242 is out of range." },
+        ],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.change(screen.getByLabelText(/Tenure/), { target: { value: "424242" } });
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const consoleText = consoleLineTexts().join(" ");
+      expect(consoleText).not.toContain("424242");
+      expect(consoleText).not.toContain("out of range");
+      expect(consoleText).not.toContain("INVALID_PAYLOAD");
+    });
+
+    it("keeps repeated attempts with identical field failures distinct through attempt sequence and line ids", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [{ field: "tenure", violation: "missing_required_field" }],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await waitFor(() => {
+        expect(screen.getAllByRole("alert")).toHaveLength(1);
+      });
+
+      openPublishingTab();
+      const detailLines = consoleLineTexts().filter((text) => text.includes("a required value was not submitted."));
+      expect(detailLines).toHaveLength(2);
+      const summaryLines = consoleLineTexts().filter((text) => text.includes("was rejected with"));
+      expect(summaryLines).toEqual([
+        "[ERROR] Live Preview inference attempt #1 was rejected with 1 invalid input.",
+        "[ERROR] Live Preview inference attempt #2 was rejected with 1 invalid input.",
+      ]);
+    });
+
+    it("appends field-level diagnostic lines after existing publication lines, in started -> summary -> detail order", async () => {
+      installFetchMock({
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [{ field: "tenure", violation: "missing_required_field" }],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInferenceTab();
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+      await screen.findByRole("alert");
+
+      openPublishingTab();
+      const lineTexts = consoleLineTexts();
+      const datasetLineIndex = lineTexts.findIndex((text) => text.includes("Dataset selected"));
+      const startedIndex = lineTexts.findIndex((text) => text === "[INFO] Live Preview inference attempt #1 started.");
+      const summaryIndex = lineTexts.findIndex((text) => text.includes("was rejected with"));
+      const detailIndex = lineTexts.findIndex((text) => text.includes("a required value was not submitted."));
+
+      expect(datasetLineIndex).toBeGreaterThanOrEqual(0);
+      expect(startedIndex).toBeGreaterThan(datasetLineIndex);
+      expect(summaryIndex).toBeGreaterThan(startedIndex);
+      expect(detailIndex).toBeGreaterThan(summaryIndex);
+    });
+  });
+
+  // Project Spec S0146: a contract-required checkbox must remain a complete
+  // two-state boolean field in the Dataset Admin Live Preview too -- leaving
+  // it unchecked must still reach the private Admin inference executor
+  // (never blocked by native checkbox constraint validation), and the
+  // existing S0144 lifecycle/Publishing-console wiring must keep recording
+  // the attempt.
+  describe("Live Preview boolean checkbox false-state submission (Project Spec S0146)", () => {
+    function openLivePreviewInference() {
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+          name: "Inference",
+        }),
+      );
+    }
+
+    it("permits an unchecked contract-required checkbox to reach the private Admin inference executor, with the payload key serialized as boolean false, and still records the attempt in the Publishing console", async () => {
+      const fetchMock = installFetchMock({
+        extraContractFields: [{ name: "consent", label: "Consent", optional: false, input_type: "checkbox" }],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      openLivePreviewInference();
+
+      const checkbox = screen.getByLabelText("Consent") as HTMLInputElement;
+      expect(checkbox).not.toBeChecked();
+      expect(checkbox).not.toHaveAttribute("required");
+
+      const callsBeforeSubmit = fetchMock.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: /Run prediction/ }));
+
+      expect(
+        await screen.findByText("82%", { selector: ".binary-classification-result__probability-value" }),
+      ).toBeInTheDocument();
+
+      const inferenceCall = fetchMock.mock.calls
+        .slice(callsBeforeSubmit)
+        .find(
+          (call) =>
+            (call[1] as RequestInit | undefined)?.method === "POST" &&
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/inference`),
+        );
+      expect(inferenceCall).toBeDefined();
+      const body = JSON.parse(String((inferenceCall![1] as RequestInit).body));
+      expect(body.consent).toBe(false);
+      expect(typeof body.consent).toBe("boolean");
+
+      fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+      const panel = screen.getByRole("tabpanel");
+      const consoleEl = within(panel).getByRole("log", { name: "Dataset publication operational status" });
+      const lineTexts = Array.from(consoleEl.querySelectorAll(".dataset-admin-console-line")).map(
+        (el) => el.textContent ?? "",
+      );
+      expect(lineTexts).toContain("[INFO] Live Preview inference attempt #1 started.");
+      expect(lineTexts.some((text) => text.includes("attempt #1 completed successfully"))).toBe(true);
     });
   });
 });

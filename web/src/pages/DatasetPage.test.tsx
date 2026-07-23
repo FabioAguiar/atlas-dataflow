@@ -1144,6 +1144,89 @@ describe("DatasetPage inference result execution (Project Spec S0134)", () => {
   });
 });
 
+// Project Spec S0146: a contract-required checkbox must remain a complete
+// two-state boolean field on public Dataset Detail -- leaving it unchecked
+// must still reach the shared public inference execution path (never
+// blocked by native checkbox constraint validation), serializing to a
+// boolean false payload key.
+describe("DatasetPage boolean checkbox false-state submission (Project Spec S0146)", () => {
+  const checkboxContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      { name: "synthetic_feature", label: "Synthetic Feature", input_type: "number" as const, optional: true, display_order: 1 },
+      { name: "consent", label: "Consent", input_type: "checkbox" as const, optional: false, display_order: 2 },
+    ],
+  };
+
+  const validResult = {
+    schema_version: "binary-classification-result.v1",
+    problem_type: "binary_classification",
+    predicted_class: { class_id: "Yes" },
+    positive_class: { class_id: "Yes", event_label: "Churn" },
+    positive_class_probability: 0.68,
+    class_probabilities: [
+      { class_id: "No", probability: 0.32 },
+      { class_id: "Yes", probability: 0.68 },
+    ],
+    decision: { threshold: 0.5, predicted_positive: true },
+    interpretation: {
+      preset: "risk" as const,
+      band_id: "high",
+      bands: resultContractAvailable.semantics.interpretation.bands,
+    },
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+  };
+
+  function installCheckboxFetchMock() {
+    let capturedBody: string | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+        capturedBody = String(init.body);
+        return jsonResponse({ dataset_slug: slug, result: validResult });
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      if (url.endsWith(`/datasets/${slug}/metrics`)) return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slug}/visualizations`))
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slug}/contract`))
+        return jsonResponse({ dataset_slug: slug, contract: checkboxContractPayload, result_contract: resultContractAvailable });
+      if (url.endsWith(`/datasets/${slug}`)) return jsonResponse(datasetMetadata);
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, getCapturedBody: () => capturedBody };
+  }
+
+  it("permits an unchecked contract-required checkbox to reach the public inference execution path, with the payload key serialized as boolean false", async () => {
+    const { fetchMock, getCapturedBody } = installCheckboxFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+
+    const checkbox = await screen.findByLabelText("Consent");
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).not.toHaveAttribute("required");
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("Likely to churn")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        (call) => String(call[0]).endsWith(`/datasets/${slug}/inference`) && call[1]?.method === "POST",
+      ),
+    ).toBe(true);
+
+    const body = JSON.parse(getCapturedBody()!);
+    expect(body.consent).toBe(false);
+    expect(typeof body.consent).toBe("boolean");
+  });
+});
+
 // Project Spec S0141: before any submission, the public Dataset Detail
 // Inference tab must render exactly one complete Result Card at the local
 // zero-probability initial projection -- never the idle placeholder -- and

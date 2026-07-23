@@ -82,15 +82,91 @@ function mapErrorCode(errorCode: string | undefined): string {
 }
 
 /**
+ * Project Spec S0147: the exhaustive allowlisted violation vocabulary the
+ * shared governed inference boundary can report for an INVALID_PAYLOAD
+ * response. An unrecognized value is never retained -- see
+ * normalizeInferenceValidationIssues below.
+ */
+export type InferenceValidationViolation =
+  | "missing_required_field"
+  | "type_mismatch"
+  | "domain_violation";
+
+/**
+ * Project Spec S0147: one normalized, execution-level validation issue.
+ * Deliberately narrower than the backend's own error entry -- carries only
+ * the canonical field name and the allowlisted violation, never the
+ * backend's raw message, error_code, submitted value, or any other
+ * property.
+ */
+export type InferenceValidationIssue = {
+  field: string;
+  violation: InferenceValidationViolation;
+};
+
+const VALIDATION_ISSUE_VIOLATIONS: ReadonlySet<string> = new Set<InferenceValidationViolation>([
+  "missing_required_field",
+  "type_mismatch",
+  "domain_violation",
+]);
+
+const MAX_VALIDATION_ISSUE_FIELD_LENGTH = 200;
+const MAX_VALIDATION_ISSUES = 20;
+
+/**
+ * Project Spec S0147: the sole boundary that may turn an unknown backend
+ * `errors` value into a bounded, safe InferenceValidationIssue list. Every
+ * retained entry must be a plain object carrying a non-empty, bounded-length
+ * string `field` and an allowlisted `violation`; no other entry property is
+ * ever retained (never the backend's `message`, `error_code`, or anything
+ * else). Malformed records, unknown violation values, and oversized field
+ * strings are dropped rather than surfaced. Duplicate canonical
+ * field+violation pairs collapse to their first occurrence, preserving
+ * backend order, and at most MAX_VALIDATION_ISSUES unique issues are
+ * retained.
+ */
+export function normalizeInferenceValidationIssues(errors: unknown): InferenceValidationIssue[] | undefined {
+  if (!Array.isArray(errors)) return undefined;
+
+  const seen = new Set<string>();
+  const issues: InferenceValidationIssue[] = [];
+
+  for (const entry of errors) {
+    if (issues.length >= MAX_VALIDATION_ISSUES) break;
+    if (typeof entry !== "object" || entry === null) continue;
+
+    const field = (entry as Record<string, unknown>).field;
+    const violation = (entry as Record<string, unknown>).violation;
+
+    if (typeof field !== "string") continue;
+    const trimmedField = field.trim();
+    if (!trimmedField || trimmedField.length > MAX_VALIDATION_ISSUE_FIELD_LENGTH) continue;
+    if (typeof violation !== "string" || !VALIDATION_ISSUE_VIOLATIONS.has(violation)) continue;
+
+    const key = `${trimmedField}::${violation}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    issues.push({ field: trimmedField, violation: violation as InferenceValidationViolation });
+  }
+
+  return issues.length > 0 ? issues : undefined;
+}
+
+/**
  * Project Spec S0143: the bounded typed outcome every inference executor
  * resolves to, whether it POSTs to the public route or a private Admin
  * route. Callers never see a raw Response/exception -- only this shape --
  * so no executor can smuggle a caller-supplied raw URL, header, or
  * transport detail through this boundary.
+ *
+ * Project Spec S0147: a failed outcome may additionally carry a bounded,
+ * already-normalized validationIssues list (see
+ * normalizeInferenceValidationIssues) -- never the raw backend `errors`
+ * value, and never present on a successful outcome.
  */
 export type InferenceExecutionResult =
   | { ok: true; result: unknown }
-  | { ok: false; errorCode?: string };
+  | { ok: false; errorCode?: string; validationIssues?: InferenceValidationIssue[] };
 
 /**
  * Project Spec S0143: an injectable execution boundary so InferenceForm can
@@ -116,15 +192,38 @@ async function defaultExecuteInference(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const body = (await res.json()) as { result?: unknown; error_code?: string };
+    const body = (await res.json()) as { result?: unknown; error_code?: string; errors?: unknown };
     if (res.ok) {
       return { ok: true, result: body?.result };
     }
-    return { ok: false, errorCode: body?.error_code };
+    // Project Spec S0147: normalized for type consistency with the private
+    // Admin executor -- the public InferenceForm rendering path never reads
+    // validationIssues, so no public UI begins showing field-level
+    // diagnostics merely because this executor now carries them.
+    return {
+      ok: false,
+      errorCode: body?.error_code,
+      validationIssues: normalizeInferenceValidationIssues(body?.errors),
+    };
   } catch {
     return { ok: false };
   }
 }
+
+/**
+ * Project Spec S0147: one contract-filtered, label-resolved validation issue
+ * captured into a validation_failed lifecycle event. The display label is
+ * resolved once, at failure-capture time, using the same
+ * customization-hint/feature-label/canonical-name precedence FieldInput
+ * already renders with, so a later customization-draft edit can never
+ * rewrite the meaning of a previously emitted session line. Never carries a
+ * submitted value.
+ */
+export type InferenceLifecycleValidationIssue = {
+  field: string;
+  fieldLabel: string;
+  violation: InferenceValidationViolation;
+};
 
 /**
  * Project Spec S0143: a bounded lifecycle seam consumers may observe without
@@ -132,11 +231,16 @@ async function defaultExecuteInference(
  * consumption belongs to S0144). Never carries submitted field values, raw
  * payloads, headers, raw responses, stack traces, secrets or internal
  * paths -- only which phase of one submission just occurred.
+ *
+ * Project Spec S0147: a validation_failed event may additionally carry a
+ * bounded, contract-filtered, label-resolved issues list. Absent or empty
+ * when no valid issue remains, so the existing generic Publishing-console
+ * fallback line stays available.
  */
 export type InferenceLifecycleEvent =
   | { type: "started" }
   | { type: "succeeded" }
-  | { type: "validation_failed" }
+  | { type: "validation_failed"; issues?: InferenceLifecycleValidationIssue[] }
   | { type: "execution_failed" };
 
 type Props = {
@@ -231,6 +335,72 @@ function presentationSortKey(feature: Feature, hint: FieldHint | undefined): num
   return feature.display_order;
 }
 
+const MAX_VALIDATION_FIELD_LABEL_LENGTH = 200;
+const RESERVED_PAYLOAD_VALIDATION_FIELD = "payload";
+const RESERVED_PAYLOAD_VALIDATION_FIELD_LABEL = "Inference payload";
+
+function boundValidationFieldLabel(label: string): string {
+  const trimmed = label.trim();
+  return trimmed.length > MAX_VALIDATION_FIELD_LABEL_LENGTH
+    ? trimmed.slice(0, MAX_VALIDATION_FIELD_LABEL_LENGTH)
+    : trimmed;
+}
+
+// Project Spec S0147: the same display-label precedence FieldInput already
+// renders with (customization display_label -> contract feature label ->
+// canonical feature name), reused so a Publishing-console audit line always
+// names a field the way the operator currently sees it in the form.
+function resolveValidationFieldLabel(feature: Feature, hint: FieldHint | undefined): string {
+  const custom = hint?.display_label?.trim();
+  if (custom) return boundValidationFieldLabel(custom);
+  const label = feature.label?.trim();
+  if (label) return boundValidationFieldLabel(label);
+  return boundValidationFieldLabel(feature.name);
+}
+
+/**
+ * Project Spec S0147: filters a bounded normalized execution-level issue
+ * list down to only fields the active form contract currently knows about
+ * (or the reserved "payload" field, retained only for a payload-level
+ * type_mismatch), resolving each retained issue's safe display label at
+ * capture time. Never inspects the submitted field value -- filtering is by
+ * field name only.
+ */
+function resolveLifecycleValidationIssues(
+  issues: InferenceValidationIssue[] | undefined,
+  features: Feature[],
+  hintMap: Map<string, FieldHint>,
+): InferenceLifecycleValidationIssue[] | undefined {
+  if (!issues || issues.length === 0) return undefined;
+
+  const featureMap = new Map(features.map((feature) => [feature.name, feature]));
+  const resolved: InferenceLifecycleValidationIssue[] = [];
+
+  for (const issue of issues) {
+    if (issue.field === RESERVED_PAYLOAD_VALIDATION_FIELD) {
+      if (issue.violation === "type_mismatch") {
+        resolved.push({
+          field: RESERVED_PAYLOAD_VALIDATION_FIELD,
+          fieldLabel: RESERVED_PAYLOAD_VALIDATION_FIELD_LABEL,
+          violation: issue.violation,
+        });
+      }
+      continue;
+    }
+
+    const feature = featureMap.get(issue.field);
+    if (!feature) continue;
+
+    resolved.push({
+      field: issue.field,
+      fieldLabel: resolveValidationFieldLabel(feature, hintMap.get(issue.field)),
+      violation: issue.violation,
+    });
+  }
+
+  return resolved.length > 0 ? resolved : undefined;
+}
+
 function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | undefined }) {
   const displayLabel = hint?.display_label ?? feature.label;
   const explanatoryCopy = hint?.explanatory_copy;
@@ -241,7 +411,12 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
     <label className="public-inference-form__label" htmlFor={`field-${feature.name}`}>
       {displayLabel}
       {feature.input_type === "select" && " (categorical field)"}
-      {!feature.optional && <span className="public-inference-form__required" aria-hidden="true"> *</span>}
+      {/* Project Spec S0146: a checkbox always represents a complete
+          two-state boolean, so the required marker (which implies the
+          checked state is mandatory) is scoped to non-boolean controls. */}
+      {!feature.optional && !isCheckbox && (
+        <span className="public-inference-form__required" aria-hidden="true"> *</span>
+      )}
     </label>
   );
 
@@ -251,7 +426,6 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
       type="checkbox"
       id={`field-${feature.name}`}
       name={feature.name}
-      required={!feature.optional}
     />
   ) : feature.input_type === "select" && feature.options && feature.options.length > 0 ? (
     <select
@@ -412,9 +586,12 @@ export default function InferenceForm({
       }
     } else {
       setSubmission({ status: "error", message: mapErrorCode(outcome.errorCode) });
-      onLifecycleEvent?.({
-        type: outcome.errorCode === "INVALID_PAYLOAD" ? "validation_failed" : "execution_failed",
-      });
+      if (outcome.errorCode === "INVALID_PAYLOAD") {
+        const issues = resolveLifecycleValidationIssues(outcome.validationIssues, contract.features, hintMap);
+        onLifecycleEvent?.(issues ? { type: "validation_failed", issues } : { type: "validation_failed" });
+      } else {
+        onLifecycleEvent?.({ type: "execution_failed" });
+      }
     }
   }
 

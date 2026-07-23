@@ -11,6 +11,8 @@ import {
 import DatasetAdminPage, {
   emptyLiveInferenceAuditState,
   liveInferenceAuditConsoleLines,
+  OPERATIONAL_CONSOLE_BOTTOM_TOLERANCE_PX,
+  OperationalConsole,
   reduceLiveInferenceAuditEvent,
 } from "./DatasetAdminPage";
 
@@ -300,6 +302,7 @@ function installFetchMock(
     adminInferenceResult?: Record<string, unknown>;
     adminInferenceErrorCode?: string;
     adminInferenceDeferredOnce?: boolean;
+    inferenceGuidance?: unknown;
     // Project Spec S0147: raw `errors` array entries included alongside
     // adminInferenceErrorCode in the bounded INVALID_PAYLOAD response, for
     // exercising the frontend normalizer/filter/label-resolution pipeline
@@ -422,6 +425,10 @@ function installFetchMock(
               },
             },
           },
+      inference_guidance: {
+        status: "ready",
+        data: options.inferenceGuidance ?? [],
+      },
       metrics: {
         status: "ready",
         data: { evaluation: { metrics: options.metricsOverride ?? { auc_roc: 0.93, accuracy: 0.86 } } },
@@ -5242,6 +5249,23 @@ describe("DatasetAdminPage", () => {
       );
     }
 
+    it("applies private active-release numeric guidance only to the Live Preview form (Project Spec S0148)", async () => {
+      installFetchMock({
+        inferenceGuidance: [
+          { field_name: "tenure", required: false, numeric_domain: { min: 18.25, max: 118.75 } },
+        ],
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+      openLivePreviewInference();
+
+      const input = await screen.findByLabelText("Tenure");
+      expect(input).toHaveAttribute("min", "18.25");
+      expect(input).toHaveAttribute("max", "118.75");
+      expect(input).toHaveAttribute("step", "any");
+      expect(screen.getByText("Accepted range: 18.25 to 118.75.")).toBeInTheDocument();
+    });
+
     it("submits to the private Admin inference route (never the public route) and renders exactly one shared success Result Card", async () => {
       const fetchMock = installFetchMock();
       const { container } = renderAdminPage();
@@ -5499,6 +5523,100 @@ describe("DatasetAdminPage", () => {
         "Live Preview inference attempt #2 completed successfully: positive outcome, positive-class probability 50%.",
       );
       expect(successLines.map((line) => line.text).join(" ")).not.toMatch(/undefined|NaN|\[object/);
+    });
+  });
+
+  describe("Publishing console latest inference visibility boundary (Project Spec S0149)", () => {
+    const publicationLine = { id: "publication", severity: "INFO" as const, text: "Dataset selected." };
+    const firstInferenceLine = {
+      id: "live-inference-audit-2-issue-0",
+      severity: "ERROR" as const,
+      text: "Monthly charges: the submitted value is outside the accepted domain.",
+    };
+
+    function setScrollGeometry(
+      consoleElement: HTMLElement,
+      geometry: { clientHeight: number; scrollHeight: number; scrollTop: number },
+    ) {
+      Object.defineProperties(consoleElement, {
+        clientHeight: { configurable: true, value: geometry.clientHeight },
+        scrollHeight: { configurable: true, value: geometry.scrollHeight },
+        scrollTop: { configurable: true, value: geometry.scrollTop, writable: true },
+      });
+    }
+
+    it("does not reposition a no-history mount", () => {
+      const { container } = render(<OperationalConsole latestInferenceLineId={null} lines={[publicationLine]} />);
+      const consoleElement = container.querySelector(".dataset-admin-console") as HTMLElement;
+      setScrollGeometry(consoleElement, { clientHeight: 100, scrollHeight: 300, scrollTop: 17 });
+
+      expect(consoleElement.scrollTop).toBe(17);
+    });
+
+    it("positions a retained-history mount at the last field-level diagnostic without moving focus", () => {
+      const focusTarget = document.createElement("button");
+      document.body.append(focusTarget);
+      focusTarget.focus();
+
+      const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(300);
+
+      const { container } = render(
+        <OperationalConsole
+          latestInferenceLineId={firstInferenceLine.id}
+          lines={[publicationLine, firstInferenceLine]}
+        />,
+      );
+      const consoleElement = container.querySelector(".dataset-admin-console") as HTMLElement;
+      expect(consoleElement.scrollTop).toBe(300);
+      expect(document.activeElement).toBe(focusTarget);
+      scrollHeight.mockRestore();
+    });
+
+    it("follows a new stable inference identity near the bottom but ignores publication-only updates", () => {
+      const { container, rerender } = render(
+        <OperationalConsole latestInferenceLineId={firstInferenceLine.id} lines={[publicationLine, firstInferenceLine]} />,
+      );
+      const consoleElement = container.querySelector(".dataset-admin-console") as HTMLElement;
+      setScrollGeometry(consoleElement, { clientHeight: 100, scrollHeight: 300, scrollTop: 190 });
+      fireEvent.scroll(consoleElement);
+
+      const secondInferenceLine = { ...firstInferenceLine, id: "live-inference-audit-4-issue-0" };
+      Object.defineProperty(consoleElement, "scrollHeight", { configurable: true, value: 320 });
+      rerender(
+        <OperationalConsole
+          latestInferenceLineId={secondInferenceLine.id}
+          lines={[publicationLine, firstInferenceLine, secondInferenceLine]}
+        />,
+      );
+      expect(consoleElement.scrollTop).toBe(320);
+
+      consoleElement.scrollTop = 123;
+      rerender(
+        <OperationalConsole
+          latestInferenceLineId={secondInferenceLine.id}
+          lines={[{ ...publicationLine, text: "Publication state changed." }, firstInferenceLine, secondInferenceLine]}
+        />,
+      );
+      expect(consoleElement.scrollTop).toBe(123);
+    });
+
+    it("preserves deliberate historical inspection beyond the documented bottom tolerance", () => {
+      const { container, rerender } = render(
+        <OperationalConsole latestInferenceLineId={firstInferenceLine.id} lines={[publicationLine, firstInferenceLine]} />,
+      );
+      const consoleElement = container.querySelector(".dataset-admin-console") as HTMLElement;
+      const scrolledUpTop = 300 - 100 - OPERATIONAL_CONSOLE_BOTTOM_TOLERANCE_PX - 1;
+      setScrollGeometry(consoleElement, { clientHeight: 100, scrollHeight: 300, scrollTop: scrolledUpTop });
+      fireEvent.scroll(consoleElement);
+
+      const repeatedAttemptLine = { ...firstInferenceLine, id: "live-inference-audit-6-issue-0" };
+      rerender(
+        <OperationalConsole
+          latestInferenceLineId={repeatedAttemptLine.id}
+          lines={[publicationLine, firstInferenceLine, repeatedAttemptLine]}
+        />,
+      );
+      expect(consoleElement.scrollTop).toBe(scrolledUpTop);
     });
   });
 

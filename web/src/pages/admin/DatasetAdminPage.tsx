@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,6 +27,7 @@ import {
   type BinaryResultSemantics,
 } from "../../components/ResultCard/types";
 import InferenceForm, {
+  normalizeAdminInferenceGuidance,
   normalizeInferenceValidationIssues,
   type FieldHint,
   type GroupDef,
@@ -453,6 +455,7 @@ type AuthoringContextEnvelope = {
   dataset: AuthoringResourceEnvelope<AuthoringDatasetProjection>;
   context: AuthoringResourceEnvelope<ContextPayload>;
   contract: AuthoringResourceEnvelope<ContractEnvelope>;
+  inference_guidance?: AuthoringResourceEnvelope<unknown>;
   metrics: AuthoringResourceEnvelope<MetricsPayload>;
   visualizations: AuthoringResourceEnvelope<unknown>;
   views: AuthoringResourceEnvelope<PredictView[]>;
@@ -462,6 +465,7 @@ type ReadOnlyData = {
   dataset: SectionState<AuthoringDatasetProjection>;
   context: SectionState<ContextPayload>;
   contract: SectionState<ContractPayload>;
+  inferenceGuidance: SectionState<unknown>;
   resultContract: ResultContractState;
   metrics: SectionState<MetricsPayload>;
   visualizations: SectionState<unknown>;
@@ -915,6 +919,7 @@ const emptyReadOnlyData: ReadOnlyData = {
   dataset: { status: "idle" },
   context: { status: "idle" },
   contract: { status: "idle" },
+  inferenceGuidance: { status: "idle" },
   resultContract: { status: "idle" },
   metrics: { status: "idle" },
   visualizations: { status: "idle" },
@@ -3899,12 +3904,49 @@ function buildOperationalConsoleLines(
 // Read-only operational status surface (Section 4, "Create the operational
 // console"): no input, no command prompt, only the bounded deterministic
 // lines computed above.
-function OperationalConsole({ lines }: { lines: ConsoleLine[] }) {
+// Fractional layout values and sub-pixel rounding can make an exact
+// scrollHeight equality unstable. Within this fixed distance the operator
+// is treated as following the live tail; farther away preserves deliberate
+// historical inspection.
+export const OPERATIONAL_CONSOLE_BOTTOM_TOLERANCE_PX = 24;
+
+export function OperationalConsole({
+  latestInferenceLineId,
+  lines,
+}: {
+  latestInferenceLineId: string | null;
+  lines: ConsoleLine[];
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const previousInferenceLineIdRef = useRef<string | null>(null);
+  const followsLiveTailRef = useRef(true);
+
+  useLayoutEffect(() => {
+    if (!latestInferenceLineId || latestInferenceLineId === previousInferenceLineIdRef.current) return;
+
+    const container = containerRef.current;
+    const isInitialInferenceMount = previousInferenceLineIdRef.current === null;
+    previousInferenceLineIdRef.current = latestInferenceLineId;
+    if (!container || (!isInitialInferenceMount && !followsLiveTailRef.current)) return;
+
+    container.scrollTop = container.scrollHeight;
+    followsLiveTailRef.current = true;
+  }, [latestInferenceLineId]);
+
+  function trackOperatorScroll() {
+    const container = containerRef.current;
+    if (!container) return;
+    const bottomDistance = container.scrollHeight - container.clientHeight - container.scrollTop;
+    followsLiveTailRef.current = bottomDistance <= OPERATIONAL_CONSOLE_BOTTOM_TOLERANCE_PX;
+  }
+
   return (
     <div
       aria-label="Dataset publication operational status"
       aria-live="polite"
       className="dataset-admin-console"
+      onScroll={trackOperatorScroll}
+      ref={containerRef}
       role="log"
     >
       {lines.map((line) => (
@@ -3997,11 +4039,13 @@ function PublishingTab({
       : visibilityWriteFailed
       ? "Save failed. Previous value restored."
       : null;
+  const liveInferenceLines = liveInferenceAuditConsoleLines(liveInferenceAuditRecords);
+  const latestInferenceLineId = liveInferenceLines.at(-1)?.id ?? null;
   const consoleLines = buildOperationalConsoleLines(
     projectionState,
     visibilityWriteFailed,
     reviewApprovalWriteFailed,
-    liveInferenceAuditConsoleLines(liveInferenceAuditRecords),
+    liveInferenceLines,
   );
 
   const reviewStatusText =
@@ -4058,7 +4102,7 @@ function PublishingTab({
           Approve Dataset Detail
         </button>
       </Card>
-      <OperationalConsole lines={consoleLines} />
+      <OperationalConsole latestInferenceLineId={latestInferenceLineId} lines={consoleLines} />
     </div>
   );
 }
@@ -4126,6 +4170,11 @@ function DatasetDetailLivePreview({
 
   const inferenceContent = contract ? (
     <InferenceForm
+      adminInferenceGuidance={
+        readOnlyData.inferenceGuidance.status === "ready"
+          ? normalizeAdminInferenceGuidance(readOnlyData.inferenceGuidance.data, contract.features)
+          : undefined
+      }
       contract={contract}
       customization={liveInferenceCustomization}
       executeInference={liveInferenceExecutor}
@@ -4757,6 +4806,7 @@ export default function DatasetAdminPage() {
         dataset: { status: "loading" },
         context: { status: "loading" },
         contract: { status: "loading" },
+        inferenceGuidance: { status: "loading" },
         resultContract: { status: "loading" },
         metrics: { status: "loading" },
         visualizations: { status: "loading" },
@@ -4780,6 +4830,7 @@ export default function DatasetAdminPage() {
           dataset: { status: "unavailable", message },
           context: { status: "unavailable", message },
           contract: { status: "unavailable", message },
+          inferenceGuidance: { status: "unavailable", message },
           resultContract: { status: "transport_failure", message },
           metrics: { status: "unavailable", message },
           visualizations: { status: "unavailable", message },
@@ -4801,6 +4852,7 @@ export default function DatasetAdminPage() {
         dataset: authoringResourceState<AuthoringDatasetProjection>(envelope.dataset),
         context: authoringResourceState<ContextPayload>(envelope.context),
         contract: mapSection(contractResource, (data) => data.contract),
+        inferenceGuidance: authoringResourceState<unknown>(envelope.inference_guidance),
         resultContract,
         metrics: authoringResourceState<MetricsPayload>(envelope.metrics),
         visualizations: authoringResourceState<unknown>(envelope.visualizations),

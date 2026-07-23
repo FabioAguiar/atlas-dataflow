@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import InferenceForm, {
+  normalizeAdminInferenceGuidance,
   normalizeInferenceValidationIssues,
   type ContractPayload,
   type InferenceExecutionResult,
@@ -101,6 +102,58 @@ const validResult = {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+describe("InferenceForm private numeric guidance (Project Spec S0148)", () => {
+  it("renders decimal min/max/step and associates description plus range guidance", () => {
+    const describedContract: ContractPayload = {
+      ...contract,
+      features: [{ ...contract.features[0], description: "Months as a customer." }],
+    };
+    render(
+      <InferenceForm
+        contract={describedContract}
+        slug={slug}
+        previewMode
+        adminInferenceGuidance={[
+          { field_name: "tenure", required: false, numeric_domain: { min: 18.25, max: 118.75 } },
+        ]}
+      />,
+    );
+
+    const input = screen.getByLabelText("Tenure");
+    expect(input).toHaveAttribute("min", "18.25");
+    expect(input).toHaveAttribute("max", "118.75");
+    expect(input).toHaveAttribute("step", "any");
+    expect(screen.getByText("Accepted range: 18.25 to 118.75.")).toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-describedby", "field-tenure-helper field-tenure-range");
+  });
+
+  it("keeps numeric step any without inventing bounds when guidance is absent", () => {
+    render(<InferenceForm contract={contract} slug={slug} previewMode />);
+    expect(screen.getByLabelText("Tenure")).toHaveAttribute("step", "any");
+    expect(screen.getByLabelText("Tenure")).not.toHaveAttribute("min");
+    expect(screen.getByLabelText("Tenure")).not.toHaveAttribute("max");
+  });
+
+  it("drops unknown, duplicate, non-finite, inverted, and non-number domains", () => {
+    const mixedContract: ContractPayload = {
+      schema_version: "1.0.0",
+      features: [
+        ...contract.features,
+        { name: "auto_pay", label: "AutoPay", input_type: "checkbox", optional: true, display_order: 2 },
+      ],
+    };
+    expect(normalizeAdminInferenceGuidance([
+      { field_name: "missing", required: true, numeric_domain: { min: 1 } },
+      { field_name: "tenure", required: false, numeric_domain: { min: 10, max: 1 } },
+      { field_name: "tenure", required: false, numeric_domain: { min: 2 } },
+      { field_name: "auto_pay", required: true, numeric_domain: { min: 0, max: 1 } },
+    ], mixedContract.features)).toEqual([
+      { field_name: "tenure", required: false },
+      { field_name: "auto_pay", required: true },
+    ]);
+  });
 });
 
 describe("InferenceForm public execution (Project Spec S0112)", () => {

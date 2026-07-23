@@ -31,6 +31,63 @@ export type ContractPayload = {
   features: Feature[];
 };
 
+export type AdminInferenceFieldGuidance = {
+  field_name: string;
+  required: boolean;
+  numeric_domain?: {
+    min?: number;
+    max?: number;
+  };
+};
+
+/**
+ * Bounded parser for the private Admin projection. It retains only exact
+ * canonical fields in the active public form contract, accepts finite bounds
+ * for numeric controls only, and resolves duplicates by first occurrence.
+ */
+export function normalizeAdminInferenceGuidance(
+  value: unknown,
+  features: Feature[],
+): AdminInferenceFieldGuidance[] {
+  if (!Array.isArray(value)) return [];
+
+  const featureByName = new Map(features.map((feature) => [feature.name, feature]));
+  const seen = new Set<string>();
+  const normalized: AdminInferenceFieldGuidance[] = [];
+
+  for (const raw of value) {
+    if (normalized.length >= features.length) break;
+    if (typeof raw !== "object" || raw === null) continue;
+    const record = raw as Record<string, unknown>;
+    const name = record.field_name;
+    if (typeof name !== "string" || seen.has(name)) continue;
+    const feature = featureByName.get(name);
+    if (!feature || typeof record.required !== "boolean") continue;
+    seen.add(name);
+
+    const entry: AdminInferenceFieldGuidance = { field_name: name, required: record.required };
+    const domain = record.numeric_domain;
+    if (feature.input_type === "number" && typeof domain === "object" && domain !== null) {
+      const domainRecord = domain as Record<string, unknown>;
+      const minimum = domainRecord.min;
+      const maximum = domainRecord.max;
+      const numericDomain: { min?: number; max?: number } = {};
+      if (typeof minimum === "number" && Number.isFinite(minimum)) numericDomain.min = minimum;
+      if (typeof maximum === "number" && Number.isFinite(maximum)) numericDomain.max = maximum;
+      if (!(
+        numericDomain.min !== undefined
+        && numericDomain.max !== undefined
+        && numericDomain.min > numericDomain.max
+      ) && (numericDomain.min !== undefined || numericDomain.max !== undefined)) {
+        entry.numeric_domain = numericDomain;
+      }
+    }
+    normalized.push(entry);
+  }
+
+  return normalized;
+}
+
 export type FieldHint = {
   field_name: string;
   display_label?: string;
@@ -247,6 +304,7 @@ type Props = {
   contract: ContractPayload;
   slug: string;
   customization?: PredictViewCustomization;
+  adminInferenceGuidance?: unknown;
   /**
    * When true, disables the real POST /datasets/{slug}/inference submit
    * path (and every public ResultCardShell state) so this component can be
@@ -401,11 +459,33 @@ function resolveLifecycleValidationIssues(
   return resolved.length > 0 ? resolved : undefined;
 }
 
-function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | undefined }) {
+function FieldInput({
+  feature,
+  hint,
+  guidance,
+}: {
+  feature: Feature;
+  hint: FieldHint | undefined;
+  guidance: AdminInferenceFieldGuidance | undefined;
+}) {
   const displayLabel = hint?.display_label ?? feature.label;
   const explanatoryCopy = hint?.explanatory_copy;
   const helperText = explanatoryCopy || feature.description;
   const isCheckbox = feature.input_type === "checkbox";
+  const isNumber = feature.input_type === "number";
+  const numericDomain = isNumber ? guidance?.numeric_domain : undefined;
+  const rangeText = numericDomain?.min !== undefined && numericDomain.max !== undefined
+    ? `Accepted range: ${numericDomain.min} to ${numericDomain.max}.`
+    : numericDomain?.min !== undefined
+      ? `Minimum accepted value: ${numericDomain.min}.`
+      : numericDomain?.max !== undefined
+        ? `Maximum accepted value: ${numericDomain.max}.`
+        : undefined;
+  const helperId = `field-${feature.name}-helper`;
+  const rangeId = `field-${feature.name}-range`;
+  const describedBy = [helperText ? helperId : undefined, rangeText ? rangeId : undefined]
+    .filter(Boolean)
+    .join(" ") || undefined;
 
   const label = (
     <label className="public-inference-form__label" htmlFor={`field-${feature.name}`}>
@@ -426,6 +506,7 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
       type="checkbox"
       id={`field-${feature.name}`}
       name={feature.name}
+      aria-describedby={describedBy}
     />
   ) : feature.input_type === "select" && feature.options && feature.options.length > 0 ? (
     <select
@@ -433,6 +514,7 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
       id={`field-${feature.name}`}
       name={feature.name}
       required={!feature.optional}
+      aria-describedby={describedBy}
     >
       {feature.options.map((option) => (
         <option key={option.value} value={option.value}>
@@ -447,6 +529,10 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
       id={`field-${feature.name}`}
       name={feature.name}
       required={!feature.optional}
+      aria-describedby={describedBy}
+      min={isNumber ? numericDomain?.min : undefined}
+      max={isNumber ? numericDomain?.max : undefined}
+      step={isNumber ? "any" : undefined}
     />
   );
 
@@ -461,7 +547,8 @@ function FieldInput({ feature, hint }: { feature: Feature; hint: FieldHint | und
     >
       {isCheckbox ? control : label}
       {isCheckbox ? label : control}
-      {helperText && <p className="public-inference-form__helper">{helperText}</p>}
+      {helperText && <p className="public-inference-form__helper" id={helperId}>{helperText}</p>}
+      {rangeText && <p className="public-inference-form__helper" id={rangeId}>{rangeText}</p>}
     </div>
   );
 }
@@ -470,6 +557,7 @@ export default function InferenceForm({
   contract,
   slug,
   customization,
+  adminInferenceGuidance,
   previewMode = false,
   submitButtonLabel,
   resultContract,
@@ -500,6 +588,10 @@ export default function InferenceForm({
   }, [resetKey]);
 
   const hintMap = buildHintMap(customization);
+  const guidanceMap = new Map(
+    normalizeAdminInferenceGuidance(adminInferenceGuidance, contract.features)
+      .map((entry) => [entry.field_name, entry]),
+  );
   const contractAvailable = !previewMode && isAvailableBinaryResultContract(resultContract);
   const effectivePresentation = resultPresentation ?? GENERIC_RESULT_PRESENTATION;
 
@@ -599,7 +691,7 @@ export default function InferenceForm({
     return features.map((feature) => {
       const hint = hintMap.get(feature.name);
       if (hint?.hidden === true) return null;
-      return <FieldInput key={feature.name} feature={feature} hint={hint} />;
+      return <FieldInput key={feature.name} feature={feature} hint={hint} guidance={guidanceMap.get(feature.name)} />;
     });
   }
 

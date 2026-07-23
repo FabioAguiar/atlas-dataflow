@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import pickle
 import re
@@ -1254,6 +1255,55 @@ def _authoring_resource_unavailable(public_error: PublicError) -> dict:
     }
 
 
+def _project_admin_inference_guidance(runtime_contract: dict) -> list[dict]:
+    """Project the bounded, private form guidance needed by Dataset Admin."""
+    features = runtime_contract.get("features")
+    if not isinstance(features, list):
+        return []
+
+    guidance: list[dict] = []
+    seen_names: set[str] = set()
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        name = feature.get("name")
+        if not isinstance(name, str) or not name.strip() or name in seen_names:
+            continue
+        seen_names.add(name)
+
+        entry = {
+            "field_name": name,
+            "required": feature.get("required", True) is not False,
+        }
+        if feature.get("type") == "numeric":
+            constraints = feature.get("domain_constraints")
+            if isinstance(constraints, dict):
+                numeric_domain = {}
+                minimum = constraints.get("min")
+                maximum = constraints.get("max")
+                if (
+                    isinstance(minimum, (int, float))
+                    and not isinstance(minimum, bool)
+                    and math.isfinite(minimum)
+                ):
+                    numeric_domain["min"] = minimum
+                if (
+                    isinstance(maximum, (int, float))
+                    and not isinstance(maximum, bool)
+                    and math.isfinite(maximum)
+                ):
+                    numeric_domain["max"] = maximum
+                if not (
+                    "min" in numeric_domain
+                    and "max" in numeric_domain
+                    and numeric_domain["min"] > numeric_domain["max"]
+                ) and numeric_domain:
+                    entry["numeric_domain"] = numeric_domain
+        guidance.append(entry)
+
+    return guidance
+
+
 def _project_admin_authoring_dataset_identity(dataset_slug: str) -> dict | None:
     """
     Admin-safe `dataset` resource projection for the private authoring read
@@ -1324,6 +1374,14 @@ def get_admin_dataset_authoring_context(dataset_slug: str, request: Request):
         contract_resource = _authoring_resource_unavailable(PUBLIC_CONTRACT_UNAVAILABLE)
 
     try:
+        runtime_contract = load_contract(resolved.active_release)
+        inference_guidance_resource = _authoring_resource_ready(
+            _project_admin_inference_guidance(runtime_contract)
+        )
+    except ContractUnavailableError:
+        inference_guidance_resource = _authoring_resource_unavailable(CONTRACT_UNAVAILABLE)
+
+    try:
         metrics = load_public_metrics(resolved.active_release)
         metrics_resource = _authoring_resource_ready(metrics)
     except PublicMetricsUnavailableError:
@@ -1347,6 +1405,7 @@ def get_admin_dataset_authoring_context(dataset_slug: str, request: Request):
         "dataset": dataset_resource,
         "context": context_resource,
         "contract": contract_resource,
+        "inference_guidance": inference_guidance_resource,
         "metrics": metrics_resource,
         "visualizations": visualizations_resource,
         "views": views_resource,

@@ -314,6 +314,15 @@ function installFetchMock(
     // Publishing console line pipeline with both allowlisted and
     // malformed/unknown values.
     adminInferenceRuntimeDiagnostic?: unknown;
+    // Project Spec S0154: overrides the authoring-context contract
+    // resource's result_contract field for the Dataset Detail Live Preview
+    // Target metadata parity contract. Defaults to the shared available
+    // churn/retained semantics every other test relies on.
+    resultContractOverride?: Record<string, unknown>;
+    // Project Spec S0154: overrides the authoring-context context
+    // resource's prediction_target_description independently of the shared
+    // default ("Customer churn"). Pass null to omit the field entirely.
+    predictionTargetDescriptionOverride?: string | null;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -366,7 +375,10 @@ function installFetchMock(
           domain: "telecom",
           tags: ["telecom"],
           problem_type: "binary_classification",
-          prediction_target_description: "Customer churn",
+          prediction_target_description:
+            options.predictionTargetDescriptionOverride === null
+              ? undefined
+              : options.predictionTargetDescriptionOverride ?? "Customer churn",
         },
       },
       contract: options.contractResourceUnavailable
@@ -407,7 +419,7 @@ function installFetchMock(
                   })),
                 ],
               },
-              result_contract: {
+              result_contract: options.resultContractOverride ?? {
                 status: "available",
                 semantics: {
                   schema_version: "binary-result-semantics.v1",
@@ -2912,6 +2924,223 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
     expect(screen.queryByText("Atlas Release Registry")).not.toBeInTheDocument();
     expect(screen.getByText("Source").nextElementSibling).toHaveTextContent("Pending");
+  });
+
+  // Project Spec S0154: the Dataset Detail Live Preview Target metadata now
+  // comes from the same shared datasetPresentation.resolveDatasetTargetDescription
+  // helper the public Dataset Detail calls, fed from the currently loaded
+  // private authoring-context result-contract state (readOnlyData.resultContract)
+  // -- never a second, independently-maintained Admin formatter, and never
+  // an additional request.
+  describe("Dataset Detail Live Preview Target metadata parity (Project Spec S0154)", () => {
+    it("renders the shared helper's exact formatted output when the active release's result semantics are available, no longer showing Pending", async () => {
+      const fetchMock = installFetchMock();
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      // The shared fixture's result semantics (positive_class.event_label
+      // "Customer churn", class_id "churn"; negative_class.class_id
+      // "retained") take precedence over the also-present context
+      // prediction_target_description ("Customer churn" alone), proving
+      // this is genuinely the shared-helper's formatted output and not a
+      // coincidental match with the unformatted context description.
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Customer churn (churn/retained)");
+      expect(screen.queryByText("Pending", { selector: ".dataset-detail-header__metadata-item dd" })).not.toBeInTheDocument();
+
+      // This preview never triggers a second, public-endpoint request for
+      // its own Target projection -- the private authoring-context read is
+      // the only source.
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${datasetSlug}/contract`))).toBe(
+        false,
+      );
+    });
+
+    it("falls back to the nonblank published context description when the result contract is unavailable", async () => {
+      installFetchMock({ resultContractOverride: { status: "unavailable", reason: "n/a" } });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Customer churn");
+      expect(screen.getByText("Target").nextElementSibling).not.toHaveTextContent("Customer churn (churn/retained)");
+    });
+
+    it("shows Pending (a null value) only when both result semantics and a context description are unavailable, never falling back to problem_type", async () => {
+      installFetchMock({
+        resultContractOverride: { status: "incompatible", reason: "n/a" },
+        predictionTargetDescriptionOverride: null,
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      // The shared context fixture still carries problem_type
+      // "binary_classification" -- it must never leak into the Target row
+      // specifically (the separate, out-of-scope analysis badge is allowed
+      // to keep showing it elsewhere on the page).
+      const targetValue = screen.getByText("Target").nextElementSibling;
+      expect(targetValue).toHaveTextContent("Pending");
+      expect(targetValue).not.toHaveTextContent("binary_classification");
+      expect(targetValue).not.toHaveTextContent("Binary Classification");
+    });
+
+    it("never retains the previous dataset's Target metadata while the newly selected dataset's result contract is loading or unavailable", async () => {
+      const otherSlug = "energy-consumption-forecast";
+      const otherViewId = "demand-forecast-overview";
+      const firstSlugAuthoringContextHolder: { release: (() => void) | null } = { release: null };
+
+      function availableResultContract(
+        positiveClassId: string,
+        positiveLabel: string,
+        negativeClassId: string,
+      ) {
+        return {
+          status: "available",
+          semantics: {
+            schema_version: "binary-result-semantics.v1",
+            problem_type: "binary_classification",
+            result_schema_version: "binary-classification-result.v1",
+            primary_output: "positive_class_probability",
+            positive_class: { class_id: positiveClassId, event_label: positiveLabel },
+            negative_class: { class_id: negativeClassId },
+            decision: { threshold: 0.5 },
+            interpretation: {
+              preset: "risk",
+              bands: [
+                { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+                { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+                { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+              ],
+            },
+            model_descriptor: { model_family: "model", display_name: "Model" },
+          },
+        };
+      }
+
+      function authoringContextFor(
+        slug: string,
+        title: string,
+        resolvedViewId: string,
+        resultContract: unknown,
+        predictionTargetDescription: string | undefined,
+      ) {
+        return jsonResponse({
+          dataset_slug: slug,
+          active_release: "release-20260619-001",
+          dataset: { status: "ready", data: { dataset_slug: slug, title, summary: "s", domain: "d", tags: [] } },
+          context: { status: "ready", data: { prediction_target_description: predictionTargetDescription } },
+          contract: {
+            status: "ready",
+            data: { contract: { schema_version: "1.0.0", features: [] }, result_contract: resultContract },
+          },
+          metrics: { status: "ready", data: {} },
+          visualizations: { status: "ready", data: {} },
+          views: { status: "ready", data: [{ view_id: resolvedViewId, display: { title } }] },
+        });
+      }
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: datasetSlug,
+                title: "Telco Customer Churn",
+                display_title: null,
+                summary: "s",
+                domain: "telecom",
+                tags: [],
+                active_release: "release-20260619-001",
+                publication_status: "ready",
+                last_updated: "2026-06-19T12:00:00Z",
+              },
+              {
+                dataset_slug: otherSlug,
+                title: "Energy Consumption Forecast",
+                display_title: null,
+                summary: "s",
+                domain: "energy",
+                tags: [],
+                active_release: "release-20260701-001",
+                publication_status: "ready",
+                last_updated: "2026-07-01T12:00:00Z",
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+          return new Promise((resolve) => {
+            firstSlugAuthoringContextHolder.release = () =>
+              resolve(
+                authoringContextFor(
+                  datasetSlug,
+                  "Telco Customer Churn",
+                  viewId,
+                  availableResultContract("churn", "Customer churn", "retained"),
+                  "Customer churn",
+                ),
+              );
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+          // Deliberately no usable Target source at all for the newly
+          // selected dataset (unavailable result contract, no context
+          // description) -- any leaked Telco text would be unambiguous.
+          return authoringContextFor(otherSlug, "Energy Consumption Forecast", otherViewId, { status: "unavailable" }, undefined);
+        }
+        if (
+          url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) ||
+          url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)
+        ) {
+          return jsonResponse({ draft_exists: false, profile: null });
+        }
+        if (
+          url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) ||
+          url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)
+        ) {
+          return jsonResponse({}, 404);
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+      // Let Telco's own authoring-context resolve first, so the Live
+      // Preview genuinely has a rendered churn/retained Target to switch
+      // away from (proving this is a real reset, not merely a first-paint
+      // absence).
+      firstSlugAuthoringContextHolder.release?.();
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await waitFor(() =>
+        expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Customer churn (churn/retained)"),
+      );
+
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+
+      // The moment the dataset switches, readOnlyData resets to "loading"
+      // synchronously (before otherSlug's own response even arrives) -- the
+      // previous dataset's Target text must never still be on screen here.
+      expect(screen.queryByText("Customer churn (churn/retained)")).not.toBeInTheDocument();
+      expect(screen.queryByText(/churn/i)).not.toBeInTheDocument();
+
+      await waitFor(() => expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Pending"));
+      expect(screen.queryByText("Customer churn (churn/retained)")).not.toBeInTheDocument();
+    });
   });
 
   it("updates each Live Preview mode's rendered output when a fed draft or customization field is edited", async () => {

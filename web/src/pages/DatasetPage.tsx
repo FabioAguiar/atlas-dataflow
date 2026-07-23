@@ -14,6 +14,7 @@ import ErrorState from "../components/ErrorState/ErrorState";
 import {
   datasetThemeStyle,
   presentDatasetDateOnly,
+  resolveDatasetTargetDescription,
   resolveDatasetThemePreset,
   safePublicSourceUrl,
 } from "../lib/datasetPresentation";
@@ -126,27 +127,6 @@ function resolveAnalysisType(
   const releaseBoundProblemType =
     resultContract?.status === "available" ? resultContract.semantics.problem_type : null;
   return humanizeProblemType(releaseBoundProblemType) ?? humanizeProblemType(context?.problem_type) ?? null;
-}
-
-/**
- * Project Spec S0127: Target communicates release-bound class identity
- * (e.g. "Churn (Yes/No)") when available, never the raw problem_type. Falls
- * back to the published technical target description, then unavailable.
- */
-function resolveTargetDescription(
-  resultContract: BinaryResultContract | null,
-  context: PublicContextPayload | null,
-): string | null {
-  if (resultContract?.status === "available") {
-    const semantics = resultContract.semantics;
-    const eventLabel = nonBlank(semantics.positive_class?.event_label);
-    const positiveClassId = nonBlank(semantics.positive_class?.class_id);
-    const negativeClassId = nonBlank(semantics.negative_class?.class_id);
-    if (eventLabel && positiveClassId && negativeClassId) {
-      return `${eventLabel} (${positiveClassId}/${negativeClassId})`;
-    }
-  }
-  return nonBlank(context?.prediction_target_description);
 }
 
 export default function DatasetPage() {
@@ -446,7 +426,7 @@ export default function DatasetPage() {
     },
     {
       label: "Target",
-      value: resolveTargetDescription(resultContract, context),
+      value: resolveDatasetTargetDescription(resultContract, context?.prediction_target_description),
     },
     {
       label: "Release",

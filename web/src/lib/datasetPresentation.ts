@@ -324,3 +324,64 @@ export function resolveDatasetIcon(
   }
   return getDatasetIcon(domain, tags);
 }
+
+function nonBlankTargetValue(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed || null;
+}
+
+type DatasetTargetSemanticsLike = {
+  positive_class?: { event_label?: string | null; class_id?: string | null } | null;
+  negative_class?: { class_id?: string | null } | null;
+};
+
+/**
+ * Structurally accepts either a bounded result-contract state (an object
+ * with a `status` discriminant, e.g. this project's public
+ * BinaryResultContract or the private admin authoring context's richer
+ * idle/loading/available/unavailable/transport_failure/incompatible
+ * ResultContractState) or bare result semantics passed directly.
+ */
+export type DatasetTargetResultInput =
+  | { status: string; semantics?: DatasetTargetSemanticsLike | null }
+  | DatasetTargetSemanticsLike
+  | null
+  | undefined;
+
+function isDatasetTargetResultState(
+  value: NonNullable<DatasetTargetResultInput>,
+): value is { status: string; semantics?: DatasetTargetSemanticsLike | null } {
+  return typeof (value as { status?: unknown }).status === "string";
+}
+
+/**
+ * Project Spec S0154: the single shared Dataset Detail Target metadata
+ * projection -- both the public Dataset Detail and the Dataset Admin Live
+ * Preview must derive their Target row through this one function. Available
+ * release-bound result semantics (event label + both class IDs) are always
+ * the first authority; a nonblank published prediction_target_description is
+ * the fallback; otherwise null (the shared header renders that as Pending).
+ * Deterministic and side-effect free -- never inspects problem_type, model
+ * display name, metric names, visualization labels, Predict View copy,
+ * dataset title or dataset slug.
+ */
+export function resolveDatasetTargetDescription(
+  resultContract: DatasetTargetResultInput,
+  predictionTargetDescription?: string | null,
+): string | null {
+  const semantics: DatasetTargetSemanticsLike | null | undefined = resultContract
+    ? isDatasetTargetResultState(resultContract)
+      ? (resultContract.status === "available" ? resultContract.semantics : null)
+      : resultContract
+    : null;
+
+  const eventLabel = nonBlankTargetValue(semantics?.positive_class?.event_label);
+  const positiveClassId = nonBlankTargetValue(semantics?.positive_class?.class_id);
+  const negativeClassId = nonBlankTargetValue(semantics?.negative_class?.class_id);
+
+  if (eventLabel && positiveClassId && negativeClassId) {
+    return `${eventLabel} (${positiveClassId}/${negativeClassId})`;
+  }
+
+  return nonBlankTargetValue(predictionTargetDescription);
+}

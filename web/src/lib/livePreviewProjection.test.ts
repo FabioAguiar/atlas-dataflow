@@ -10,6 +10,7 @@ import {
   projectPerformanceFocusPreview,
 } from "./livePreviewProjection";
 import type { BinaryResultPresentation, BinaryResultSemantics } from "../components/ResultCard/types";
+import { resolveDatasetTargetDescription } from "./datasetPresentation";
 
 const dataset = {
   dataset_slug: "telco-customer-churn",
@@ -364,6 +365,198 @@ describe("projectDatasetDetailPreview: remaining metadata", () => {
       { label: "Target", value: "Customer churn" },
       { label: "Release", value: "2026-07-04", hint: "Format: yyyy-mm-dd" },
     ]);
+  });
+});
+
+// Project Spec S0154: the shared, side-effect-free Target metadata helper --
+// both the public Dataset Detail (DatasetPage.tsx) and this module's own
+// projectDatasetDetailPreview call resolveDatasetTargetDescription directly,
+// so this is the single owner of the precedence/formatting/fallback rule.
+describe("resolveDatasetTargetDescription (shared Target helper, Project Spec S0154)", () => {
+  const availableSemanticsContract = {
+    status: "available" as const,
+    semantics: {
+      positive_class: { event_label: "Churn", class_id: "Yes" },
+      negative_class: { class_id: "No" },
+    },
+  };
+
+  it("prefers available result semantics over a conflicting context description", () => {
+    expect(resolveDatasetTargetDescription(availableSemanticsContract, "A conflicting published description")).toBe(
+      "Churn (Yes/No)",
+    );
+  });
+
+  it("falls back to a nonblank context description when result semantics are unavailable", () => {
+    expect(resolveDatasetTargetDescription({ status: "unavailable" }, "Customer churn")).toBe("Customer churn");
+    expect(resolveDatasetTargetDescription({ status: "idle" }, "Customer churn")).toBe("Customer churn");
+    expect(resolveDatasetTargetDescription({ status: "loading" }, "Customer churn")).toBe("Customer churn");
+    expect(resolveDatasetTargetDescription({ status: "transport_failure" }, "Customer churn")).toBe(
+      "Customer churn",
+    );
+    expect(resolveDatasetTargetDescription({ status: "incompatible" }, "Customer churn")).toBe("Customer churn");
+  });
+
+  it("returns null when neither result semantics nor a context description are available", () => {
+    expect(resolveDatasetTargetDescription({ status: "unavailable" }, undefined)).toBeNull();
+    expect(resolveDatasetTargetDescription(null, null)).toBeNull();
+  });
+
+  it("trims whitespace on every semantics field and the context description, treating whitespace-only as absent", () => {
+    expect(
+      resolveDatasetTargetDescription(
+        {
+          status: "available",
+          semantics: {
+            positive_class: { event_label: "  Churn  ", class_id: " Yes " },
+            negative_class: { class_id: " No " },
+          },
+        },
+        undefined,
+      ),
+    ).toBe("Churn (Yes/No)");
+
+    expect(resolveDatasetTargetDescription({ status: "unavailable" }, "   ")).toBeNull();
+  });
+
+  it("falls back rather than emitting malformed punctuation when semantics are incomplete", () => {
+    expect(
+      resolveDatasetTargetDescription(
+        { status: "available", semantics: { positive_class: { event_label: "Churn", class_id: "" }, negative_class: { class_id: "No" } } },
+        "Fallback description",
+      ),
+    ).toBe("Fallback description");
+
+    expect(
+      resolveDatasetTargetDescription(
+        { status: "available", semantics: { positive_class: { event_label: "", class_id: "Yes" }, negative_class: { class_id: "No" } } },
+        "Fallback description",
+      ),
+    ).toBe("Fallback description");
+
+    expect(
+      resolveDatasetTargetDescription(
+        { status: "available", semantics: { positive_class: { event_label: "Churn", class_id: "Yes" }, negative_class: { class_id: "" } } },
+        "Fallback description",
+      ),
+    ).toBe("Fallback description");
+  });
+
+  it("never reads problem_type -- an object carrying only problem_type never produces Target content", () => {
+    expect(
+      resolveDatasetTargetDescription(
+        { status: "available", problem_type: "binary_classification" } as unknown as Parameters<
+          typeof resolveDatasetTargetDescription
+        >[0],
+        undefined,
+      ),
+    ).toBeNull();
+  });
+
+  it("also accepts bare result semantics passed directly (no status wrapper), treating them as available", () => {
+    expect(
+      resolveDatasetTargetDescription(
+        { positive_class: { event_label: "Churn", class_id: "Yes" }, negative_class: { class_id: "No" } },
+        "Fallback description",
+      ),
+    ).toBe("Churn (Yes/No)");
+  });
+});
+
+// Project Spec S0154: proves the public Dataset Detail and the Dataset Admin
+// Live Preview projection both derive Target through the exact same shared
+// helper -- not two independently-maintained formatters that merely happen
+// to agree today.
+describe("projectDatasetDetailPreview: Target metadata parity (Project Spec S0154)", () => {
+  const churnResultContract: { status: "available"; semantics: BinaryResultSemantics } = {
+    status: "available",
+    semantics: {
+      schema_version: "binary-result-semantics.v1",
+      problem_type: "binary_classification",
+      result_schema_version: "binary-classification-result.v1",
+      primary_output: "positive_class_probability",
+      positive_class: { class_id: "Yes", event_label: "Churn" },
+      negative_class: { class_id: "No" },
+      decision: { threshold: 0.5 },
+      interpretation: {
+        preset: "risk",
+        bands: [
+          { band_id: "low", lower_bound: 0, upper_bound: 0.35 },
+          { band_id: "medium", lower_bound: 0.35, upper_bound: 0.65 },
+          { band_id: "high", lower_bound: 0.65, upper_bound: 1 },
+        ],
+      },
+      model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting" },
+    },
+  };
+
+  it("renders through the shared helper's exact formatted output when available result semantics are fed in, even against a conflicting context description", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      { ...context, prediction_target_description: "A conflicting published description" },
+      contract,
+      metrics,
+      churnResultContract,
+    );
+    const target = preview.metadata.find((item) => item.label === "Target");
+    expect(target?.value).toBe("Churn (Yes/No)");
+    expect(target?.value).toBe(
+      resolveDatasetTargetDescription(churnResultContract, "A conflicting published description"),
+    );
+  });
+
+  it("no longer shows Pending when valid result semantics exist, even with no context description at all", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      { ...context, prediction_target_description: undefined },
+      contract,
+      metrics,
+      churnResultContract,
+    );
+    expect(preview.metadata.find((item) => item.label === "Target")?.value).toBe("Churn (Yes/No)");
+  });
+
+  it("shows Pending (a null value) only when both result semantics and a context description are unavailable", () => {
+    const stillFallsBack = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      context,
+      contract,
+      metrics,
+      { status: "unavailable" },
+    );
+    expect(stillFallsBack.metadata.find((item) => item.label === "Target")?.value).toBe("Customer churn");
+
+    const pending = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      { ...context, prediction_target_description: undefined },
+      contract,
+      metrics,
+      { status: "unavailable" },
+    );
+    expect(pending.metadata.find((item) => item.label === "Target")?.value).toBeNull();
+  });
+
+  it("never uses problem_type as the Target fallback even when the context carries one and semantics/description are both unavailable", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      { ...context, prediction_target_description: undefined, problem_type: "binary_classification" },
+      contract,
+      metrics,
+      { status: "incompatible" },
+    );
+    expect(preview.metadata.find((item) => item.label === "Target")?.value).toBeNull();
+  });
+
+  it("treats idle/loading/transport_failure/incompatible result-contract states identically to unavailable for Target fallback purposes", () => {
+    for (const status of ["idle", "loading", "transport_failure", "incompatible"] as const) {
+      const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, { status });
+      expect(preview.metadata.find((item) => item.label === "Target")?.value).toBe("Customer churn");
+    }
   });
 });
 

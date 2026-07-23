@@ -8,7 +8,12 @@ import {
 } from "../components/ResultCard/types";
 import type { DatasetIconName } from "./datasetPresentation";
 import type { PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
-import { presentDatasetDateOnly, safePublicSourceUrl, type DatasetDateFormat } from "./datasetPresentation";
+import {
+  presentDatasetDateOnly,
+  resolveDatasetTargetDescription,
+  safePublicSourceUrl,
+  type DatasetDateFormat,
+} from "./datasetPresentation";
 
 /**
  * Live Preview input shapes are declared locally (structurally compatible
@@ -51,6 +56,15 @@ type PreviewContract = {
 };
 
 type PreviewMetrics = Record<string, unknown>;
+
+// Project Spec S0154: structurally compatible with DatasetAdminPage.tsx's
+// own private ResultContractState (idle/loading/available/unavailable/
+// transport_failure/incompatible) -- declared locally, per this module's
+// existing convention, so it never imports a page type.
+type PreviewResultContract =
+  | { status: "idle" | "loading" }
+  | { status: "available"; semantics: BinaryResultSemantics }
+  | { status: "unavailable" | "transport_failure" | "incompatible"; message?: string };
 
 // Project Spec S0120: the draft fields required to feed the shared public
 // Dataset Detail surface (title/subtitle/Problem Summary/Source/Release) plus
@@ -151,7 +165,11 @@ export function projectHomeCardPreview(
  * Source and Release reuse the same shared public safety/date-only
  * contracts DatasetPage.tsx applies (safePublicSourceUrl,
  * presentDatasetDateOnly) so Live Preview can never render an unsafe link or
- * a JavaScript-timestamp-derived date.
+ * a JavaScript-timestamp-derived date. Project Spec S0154: Target reuses the
+ * same shared datasetPresentation.resolveDatasetTargetDescription helper
+ * DatasetPage.tsx calls, fed from the currently loaded, dataset-bound
+ * resultContract (the private authoring context's result-contract state,
+ * never an extra request), so both surfaces share one Target authority.
  */
 export function projectDatasetDetailPreview(
   dataset: PreviewDataset | undefined,
@@ -169,6 +187,7 @@ export function projectDatasetDetailPreview(
   context: PreviewContext | null,
   contract: PreviewContract | null,
   metrics: PreviewMetrics | null,
+  resultContract?: PreviewResultContract | null,
 ): DatasetDetailPreview {
   const datasetTitle =
     nonBlank(form.display_title) ||
@@ -201,7 +220,10 @@ export function projectDatasetDetailPreview(
     { label: "Source", value: sourceName, href: sourceHref ?? undefined },
     { label: "Instances", value: extractInstanceCount(metrics) },
     { label: "Features", value: fields.length ? String(fields.length) : null },
-    { label: "Target", value: context?.prediction_target_description || context?.problem_type || null },
+    {
+      label: "Target",
+      value: resolveDatasetTargetDescription(resultContract, context?.prediction_target_description),
+    },
     {
       label: "Release",
       value: release?.value ?? null,

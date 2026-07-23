@@ -4195,7 +4195,17 @@ function DatasetDetailLivePreview({
   // the real {features} contract shape into that shape here rather than
   // modifying livePreviewProjection.ts.
   const previewContract = contract ? { fields: contract.features } : null;
-  const preview = projectDatasetDetailPreview(dataset, form, context, previewContract, metrics);
+  // Project Spec S0154: feeds the currently loaded, dataset-bound private
+  // result-contract state into the shared Target projection -- no
+  // additional request, and never a public-endpoint read for this preview.
+  const preview = projectDatasetDetailPreview(
+    dataset,
+    form,
+    context,
+    previewContract,
+    metrics,
+    readOnlyData.resultContract,
+  );
 
   const performanceContent = (
     <PerformanceSummary

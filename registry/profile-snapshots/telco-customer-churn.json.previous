@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-07-22T23:05:12Z",
+  "published_at": "2026-07-30T16:40:08Z",
   "active_release_at_publish_time": "release-20260721t231025z",
   "profile": {
     "display": {
@@ -12,10 +12,12 @@
       "source_name": "teste",
       "source_url": "teste",
       "release_date_label": "2026-07-20",
+      "date_format": "mm/dd/yyyy",
       "canonical_name_fallback": true
     },
     "home_card": {
-      "background_image_ref": "/media/home-cards/4ae425262a934f56933e8bcec9856b1d.jpg",
+      "icon": "weather-cloud",
+      "background_image_ref": "/media/home-cards/f5e0327dd5dc422e975ccc540ca0d2e5.png",
       "primary_metric_key": null
     },
     "performance_focus": {
@@ -46,7 +48,7 @@
       ]
     },
     "theme": {
-      "preset": "copper-circuit"
+      "preset": "aurora"
     },
     "inference_presentation": {
       "bound_predict_view_id": "churn-risk-overview"

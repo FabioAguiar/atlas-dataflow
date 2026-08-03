@@ -566,6 +566,82 @@ def test_train_from_paths_rejects_execution_contract_draft(
     assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
 
 
+def test_train_from_paths_rejects_validated_external_fitted_model_source(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Project Spec S0157: a validated_external_fitted_model contract must be
+    rejected before estimator construction or fit -- monkeypatching
+    _build_estimator to raise proves the rejection happens before any
+    estimator is ever constructed, not just before a would-be successful
+    training run."""
+    monkeypatch.setattr(
+        training,
+        "_build_estimator",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("estimator must never be constructed for validated_external_fitted_model")
+        ),
+    )
+    contract = _valid_execution_contract()
+    contract["model_source_mode"] = "validated_external_fitted_model"
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _valid_prepared_dataset())
+
+    with pytest.raises(TrainingInputError) as exc:
+        train_from_paths(
+            contract_path,
+            dataset_path,
+            dataset_slug="training-pipeline-test",
+            run_id="train-20260626T010700Z",
+        )
+
+    assert exc.value.code == "external_fitted_model_not_trainable_by_atlas"
+    assert exc.value.field == "model_source_mode"
+    assert not (fixed_training_environment / "pipeline" / "training-runs").exists()
+
+
+def test_train_from_paths_explicit_atlas_internal_training_still_trains(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    """An explicit atlas_internal_training declaration proceeds through the
+    existing internal-training path unchanged (Project Spec S0157)."""
+    contract = _valid_execution_contract()
+    contract["model_source_mode"] = "atlas_internal_training"
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _valid_prepared_dataset())
+
+    result = train_from_paths(
+        contract_path,
+        dataset_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result.status == "trained"
+
+
+def test_train_from_paths_legacy_contract_without_model_source_mode_still_trains(
+    fixed_training_environment: Path,
+    tmp_path: Path,
+) -> None:
+    """A legacy contract omitting model_source_mode entirely retains the
+    current atlas_internal_training behavior unchanged (Project Spec
+    S0157)."""
+    contract_path, dataset_path = _write_valid_inputs(tmp_path)
+    assert "model_source_mode" not in json.loads(contract_path.read_text(encoding="utf-8"))
+
+    result = train_from_paths(
+        contract_path,
+        dataset_path,
+        dataset_slug="training-pipeline-test",
+        run_id="train-20260626T010700Z",
+    )
+
+    assert result.status == "trained"
+
+
 def test_customer_id_feature_column_is_rejected(
     fixed_training_environment: Path,
     tmp_path: Path,

@@ -128,6 +128,11 @@
     "result_semantics": {
       "$ref": "#/definitions/result_semantics",
       "description": "Project Spec S0108: optional, backward-compatible normalized binary-result semantics. Present only on new binary execution contracts with a reviewed, approved binary_result_semantics_intent; strictly validated when present. Excludes authoring-only fields such as review status/notes — those remain in the dataset modeling intent, not here."
+    },
+    "model_source_mode": {
+      "type": "string",
+      "enum": ["atlas_internal_training", "validated_external_fitted_model"],
+      "description": "Project Spec S0157: optional, backward-compatible explicit model-source declaration. Absent means atlas_internal_training (legacy behavior, unchanged). validated_external_fitted_model is only ever an explicit declaration -- never inferred from model_family, modeling_constraints, or any other field -- and is rejected by the governed training entrypoint (pipeline/training.py) before estimator construction or fit."
     }
   },
   "definitions": {
@@ -361,8 +366,20 @@
     },
     "metric": {
       "type": "string",
-      "enum": ["roc_auc", "f1", "accuracy", "log_loss", "pr_auc"],
-      "description": "Evaluation metric identifier. Scoped to Atlas classification use cases. roc_auc: area under ROC curve; f1: F1 score; accuracy: classification accuracy; log_loss: cross-entropy loss; pr_auc: area under precision-recall curve."
+      "enum": [
+        "roc_auc",
+        "f1",
+        "accuracy",
+        "log_loss",
+        "pr_auc",
+        "average_precision",
+        "precision",
+        "recall",
+        "f2",
+        "balanced_accuracy",
+        "brier_score"
+      ],
+      "description": "Evaluation metric identifier. Scoped to Atlas classification use cases. roc_auc: area under ROC curve; f1: F1 score; accuracy: classification accuracy; log_loss: cross-entropy loss; pr_auc: area under precision-recall curve (this project's existing internal-training identifier, computed via average_precision_score). Project Spec S0157 additions for the external fitted-model evidence profile: average_precision (a distinct canonical identifier from pr_auc -- both remain valid and are never silently translated into one another; pr_auc is this project's established internal-training name, average_precision is the external evidence profile's own name for the same class of ranking metric, kept separate so provenance is never lost); precision; recall; f2 (F-beta with beta=2, recall-weighted); balanced_accuracy; brier_score (mean squared error of predicted probabilities, lower_is_better semantics, distinct from log_loss). The governed internal training entrypoint (pipeline/training.py) only computes roc_auc/f1/accuracy/log_loss/pr_auc today; the new identifiers are schema-valid vocabulary for evidence artifacts and fail closed with a stable unsupported_metric error if ever selected as an internal training primary_metric."
     },
     "modeling_constraints": {
       "type": "object",
@@ -380,10 +397,11 @@
               "gradient_boosting",
               "random_forest",
               "xgboost",
-              "lightgbm"
+              "lightgbm",
+              "hist_gradient_boosting"
             ]
           },
-          "description": "Non-empty list of permitted model family identifiers. Training must use only families declared here. Scoped to the Atlas classification model families — broader ML families are out of scope for this contract."
+          "description": "Non-empty list of permitted model family identifiers. Training must use only families declared here. Scoped to the Atlas classification model families — broader ML families are out of scope for this contract. Project Spec S0157: hist_gradient_boosting is vocabulary for a validated_external_fitted_model contract's declared family only -- pipeline/training.py's SUPPORTED_MODEL_FAMILIES (the authoritative internal-fit capability list) does not include it and never constructs or fits a HistGradientBoostingClassifier."
         },
         "no_automl": {
           "type": "boolean",

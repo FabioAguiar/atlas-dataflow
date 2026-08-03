@@ -2,487 +2,633 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-parameter-record.schema.json",
   "title": "Atlas DataFlow Training Parameter Record",
-  "description": "Schema for the training-parameter-record.json artifact emitted by a governed M24 training run. The record is a reduced provenance artifact written under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json. It links the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes. It is distinct from metrics.json and must not embed raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
+  "description": "Two schema-version-discriminated profiles are supported: training-parameter-record.v1 (unchanged -- the reduced provenance artifact emitted by a governed M24 training run under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json, linking the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes) and training-parameter-record.external-fitted-model.v1 (Project Spec S0157, describing an already-fitted external model's parameters/provenance from a validated handoff/projection flow). Neither profile embeds raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "record_kind",
-    "training_timestamp",
-    "training_run_identity",
-    "consumed_inputs",
-    "produced_outputs",
-    "serializer",
-    "controlled_entrypoint_provenance",
-    "permitted_execution_contract_fields",
-    "training_parameters",
-    "hashes",
-    "record_boundary_confirmations",
-    "evidence_policy"
+  "required": ["schema_version"],
+  "oneOf": [
+    { "$ref": "#/$defs/internal_run_record_v1" },
+    { "$ref": "#/$defs/external_fitted_model_record_v1" }
   ],
-  "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "training-parameter-record.v1",
-      "description": "Schema version for the training parameter record artifact."
-    },
-    "record_kind": {
-      "type": "string",
-      "const": "training_parameter_record",
-      "description": "Identifies this artifact as the provenance and parameter record for a governed training run, not as the training metrics artifact."
-    },
-    "training_run_identity": {
+  "$defs": {
+    "internal_run_record_v1": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "dataset_slug",
-        "run_id",
-        "output_directory"
+        "schema_version",
+        "record_kind",
+        "training_timestamp",
+        "training_run_identity",
+        "consumed_inputs",
+        "produced_outputs",
+        "serializer",
+        "controlled_entrypoint_provenance",
+        "permitted_execution_contract_fields",
+        "training_parameters",
+        "hashes",
+        "record_boundary_confirmations",
+        "evidence_policy"
       ],
-      "description": "Identity of the training run that produced this record.",
       "properties": {
-        "dataset_slug": {
+        "schema_version": {
           "type": "string",
-          "minLength": 1,
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-          "description": "Stable dataset slug used to parameterize the training run path."
+          "const": "training-parameter-record.v1",
+          "description": "Schema version for the training parameter record artifact."
         },
-        "run_id": {
+        "record_kind": {
           "type": "string",
-          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$",
-          "description": "Training run identifier using the train-{timestamp}Z convention."
+          "const": "training_parameter_record",
+          "description": "Identifies this artifact as the provenance and parameter record for a governed training run, not as the training metrics artifact."
         },
-        "output_directory": {
-          "type": "string",
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$",
-          "description": "Concrete output directory for this run, derived from pipeline/training-runs/{dataset_slug}/{run_id}/."
-        }
-      }
-    },
-    "consumed_inputs": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "execution_contract_path",
-        "dataset_path",
-        "execution_contract_dataset_id",
-        "prepared_dataset_dataset_id"
-      ],
-      "description": "Reduced references to the governed training inputs. The dataset_id values must match before training proceeds.",
-      "properties": {
-        "execution_contract_path": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Explicit path reference to the execution_contract.v1 JSON consumed by the training entrypoint."
-        },
-        "dataset_path": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Explicit path reference to the prepared dataset consumed by the training entrypoint."
-        },
-        "execution_contract_dataset_id": {
-          "type": "string",
-          "minLength": 1,
-          "description": "dataset_id read from the execution contract."
-        },
-        "prepared_dataset_dataset_id": {
-          "type": "string",
-          "minLength": 1,
-          "description": "dataset_id read from the prepared dataset metadata. Must match execution_contract_dataset_id."
-        }
-      }
-    },
-    "produced_outputs": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "serialized_model_path",
-        "training_parameter_record_path"
-      ],
-      "description": "Reduced path references to artifacts produced by the same training run. M24-03 produces the serialized model and this parameter record only; metrics and model-card input remain later issue responsibilities.",
-      "properties": {
-        "serialized_model_path": {
-          "type": "string",
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model\\.[A-Za-z0-9._-]+$",
-          "description": "Path to the serialized model artifact. The default interface convention is model.pkl, but the role remains stable if a future serializer changes the extension."
-        },
-        "training_parameter_record_path": {
-          "type": "string",
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/training-parameter-record\\.json$",
-          "description": "Path to this reduced training parameter record artifact."
-        },
-        "metrics_path": {
-          "type": ["string", "null"],
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/metrics\\.json$",
-          "description": "Path to the distinct training metrics artifact. Null for M24-03 because metrics production is owned by M24-04."
-        },
-        "model_selection_evidence_path": {
-          "type": ["string", "null"],
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-selection-evidence\\.json$",
-          "description": "Path to conditional model selection evidence. Null when no multi-candidate comparison was performed."
-        },
-        "model_card_input_path": {
-          "type": ["string", "null"],
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-card-input\\.json$",
-          "description": "Path to reduced model card input data. Null for M24-03 because model-card input production is owned by M24-05."
-        }
-      }
-    },
-    "training_timestamp": {
-      "type": "string",
-      "format": "date-time",
-      "description": "UTC timestamp when the model artifact and training parameter record were produced."
-    },
-    "serializer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "installed_version",
-        "serialization_format_version"
-      ],
-      "description": "Serializer metadata required for future inference runtime compatibility checks.",
-      "properties": {
-        "name": {
-          "type": "string",
-          "const": "joblib"
-        },
-        "installed_version": {
-          "type": "string",
-          "minLength": 1
-        },
-        "serialization_format_version": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Versioned serialization format identifier recorded from the installed serializer."
-        }
-      }
-    },
-    "controlled_entrypoint_provenance": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "marker_version",
-        "marker_kind",
-        "entrypoint",
-        "generated_at",
-        "run_id",
-        "output_directory",
-        "execution_contract_sha256",
-        "prepared_dataset_sha256",
-        "marker_id"
-      ],
-      "description": "Structured marker generated by the controlled training entrypoint. This marker is required so notebook-originated or ad hoc model artifacts cannot be accepted as governed pipeline outputs.",
-      "properties": {
-        "marker_version": {
-          "type": "string",
-          "const": "controlled-entrypoint-provenance.v1"
-        },
-        "marker_kind": {
-          "type": "string",
-          "const": "controlled_training_entrypoint"
-        },
-        "entrypoint": {
-          "type": "string",
-          "const": "pipeline.training.train_from_paths"
-        },
-        "generated_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "UTC timestamp from the controlled training entrypoint."
-        },
-        "run_id": {
-          "type": "string",
-          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
-        },
-        "output_directory": {
-          "type": "string",
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
-        },
-        "execution_contract_sha256": {
-          "$ref": "#/$defs/sha256_hex"
-        },
-        "prepared_dataset_sha256": {
-          "$ref": "#/$defs/sha256_hex"
-        },
-        "marker_id": {
-          "$ref": "#/$defs/sha256_hex",
-          "description": "Non-static digest derived from controlled entrypoint inputs, run identity, and timestamp."
-        }
-      }
-    },
-    "permitted_execution_contract_fields": {
-      "type": "array",
-      "minItems": 15,
-      "maxItems": 15,
-      "uniqueItems": true,
-      "description": "Closed list of execution contract fields actually consumed by the training run. Must match the M24 training interface subset and must not include ignored_columns, required_columns, or optional_columns. Project Spec S0108 added result_semantics as an authorized, optional consumed field used to resolve the governed positive class.",
-      "items": {
-        "type": "string",
-        "enum": [
-          "contract_version",
-          "dataset_id",
-          "target_column",
-          "feature_columns",
-          "feature_definitions",
-          "missing_value_policy",
-          "categorical_encoding_policy",
-          "numeric_handling",
-          "allowed_transformations",
-          "split_policy",
-          "random_seed",
-          "primary_metric",
-          "secondary_metrics",
-          "modeling_constraints",
-          "result_semantics"
-        ]
-      }
-    },
-    "training_parameters": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "model_family",
-        "hyperparameters",
-        "target_column",
-        "feature_columns",
-        "split_policy",
-        "split_sizes",
-        "random_seed",
-        "primary_metric",
-        "secondary_metrics",
-        "modeling_constraints"
-      ],
-      "description": "Reduced parameter values selected from the permitted execution contract fields for reproducibility and audit. This record intentionally does not include ignored_columns, required_columns, or optional_columns.",
-      "properties": {
-        "model_family": {
-          "type": "string",
-          "enum": [
-            "logistic_regression",
-            "gradient_boosting",
-            "random_forest"
-          ]
-        },
-        "hyperparameters": {
-          "type": "object",
-          "description": "Reduced JSON-safe hyperparameters used by the fitted estimator."
-        },
-        "target_column": {
-          "type": "string",
-          "minLength": 1
-        },
-        "feature_columns": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "split_policy": {
-          "$ref": "#/$defs/split_policy"
-        },
-        "split_sizes": {
+        "training_run_identity": {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "training_rows",
-            "evaluation_rows"
+            "dataset_slug",
+            "run_id",
+            "output_directory"
           ],
+          "description": "Identity of the training run that produced this record.",
           "properties": {
-            "training_rows": {
-              "type": "integer",
-              "minimum": 1
+            "dataset_slug": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "description": "Stable dataset slug used to parameterize the training run path."
             },
-            "evaluation_rows": {
-              "type": "integer",
-              "minimum": 1
+            "run_id": {
+              "type": "string",
+              "pattern": "^train-[0-9]{8}T[0-9]{6}Z$",
+              "description": "Training run identifier using the train-{timestamp}Z convention."
+            },
+            "output_directory": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$",
+              "description": "Concrete output directory for this run, derived from pipeline/training-runs/{dataset_slug}/{run_id}/."
             }
           }
         },
-        "random_seed": {
-          "type": ["integer", "null"]
-        },
-        "primary_metric": {
-          "$ref": "#/$defs/metric"
-        },
-        "secondary_metrics": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/metric"
-          }
-        },
-        "modeling_constraints": {
-          "$ref": "#/$defs/modeling_constraints"
-        }
-      }
-    },
-    "binary_classification_evidence": {
-      "description": "Project Spec S0108: governed binary-classification evidence for the selected model, or null when the fitted model is not binary. Never embeds raw predictions or evaluation rows.",
-      "anyOf": [
-        { "type": "null" },
-        {
+        "consumed_inputs": {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "problem_type",
-            "ordered_class_labels",
-            "positive_class_id",
-            "positive_class_probability_index"
+            "execution_contract_path",
+            "dataset_path",
+            "execution_contract_dataset_id",
+            "prepared_dataset_dataset_id"
           ],
+          "description": "Reduced references to the governed training inputs. The dataset_id values must match before training proceeds.",
           "properties": {
-            "problem_type": {
+            "execution_contract_path": {
               "type": "string",
-              "const": "binary_classification"
+              "minLength": 1,
+              "description": "Explicit path reference to the execution_contract.v1 JSON consumed by the training entrypoint."
             },
-            "ordered_class_labels": {
-              "type": "array",
-              "minItems": 2,
-              "maxItems": 2,
-              "items": { "type": "string" },
-              "description": "The fitted model's actual classes_ ordering, so a reversed class order is recorded as evidence rather than hidden."
+            "dataset_path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Explicit path reference to the prepared dataset consumed by the training entrypoint."
             },
-            "positive_class_id": {
+            "execution_contract_dataset_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "dataset_id read from the execution contract."
+            },
+            "prepared_dataset_dataset_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "dataset_id read from the prepared dataset metadata. Must match execution_contract_dataset_id."
+            }
+          }
+        },
+        "produced_outputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "serialized_model_path",
+            "training_parameter_record_path"
+          ],
+          "description": "Reduced path references to artifacts produced by the same training run. M24-03 produces the serialized model and this parameter record only; metrics and model-card input remain later issue responsibilities.",
+          "properties": {
+            "serialized_model_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model\\.[A-Za-z0-9._-]+$",
+              "description": "Path to the serialized model artifact. The default interface convention is model.pkl, but the role remains stable if a future serializer changes the extension."
+            },
+            "training_parameter_record_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/training-parameter-record\\.json$",
+              "description": "Path to this reduced training parameter record artifact."
+            },
+            "metrics_path": {
+              "type": ["string", "null"],
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/metrics\\.json$",
+              "description": "Path to the distinct training metrics artifact. Null for M24-03 because metrics production is owned by M24-04."
+            },
+            "model_selection_evidence_path": {
+              "type": ["string", "null"],
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-selection-evidence\\.json$",
+              "description": "Path to conditional model selection evidence. Null when no multi-candidate comparison was performed."
+            },
+            "model_card_input_path": {
+              "type": ["string", "null"],
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-card-input\\.json$",
+              "description": "Path to reduced model card input data. Null for M24-03 because model-card input production is owned by M24-05."
+            }
+          }
+        },
+        "training_timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC timestamp when the model artifact and training parameter record were produced."
+        },
+        "serializer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "installed_version",
+            "serialization_format_version"
+          ],
+          "description": "Serializer metadata required for future inference runtime compatibility checks.",
+          "properties": {
+            "name": {
+              "type": "string",
+              "const": "joblib"
+            },
+            "installed_version": {
               "type": "string",
               "minLength": 1
             },
-            "positive_class_probability_index": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 1
+            "serialization_format_version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Versioned serialization format identifier recorded from the installed serializer."
+            }
+          }
+        },
+        "controlled_entrypoint_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "marker_version",
+            "marker_kind",
+            "entrypoint",
+            "generated_at",
+            "run_id",
+            "output_directory",
+            "execution_contract_sha256",
+            "prepared_dataset_sha256",
+            "marker_id"
+          ],
+          "description": "Structured marker generated by the controlled training entrypoint. This marker is required so notebook-originated or ad hoc model artifacts cannot be accepted as governed pipeline outputs.",
+          "properties": {
+            "marker_version": {
+              "type": "string",
+              "const": "controlled-entrypoint-provenance.v1"
+            },
+            "marker_kind": {
+              "type": "string",
+              "const": "controlled_training_entrypoint"
+            },
+            "entrypoint": {
+              "type": "string",
+              "const": "pipeline.training.train_from_paths"
+            },
+            "generated_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "UTC timestamp from the controlled training entrypoint."
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
+            },
+            "output_directory": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
+            },
+            "execution_contract_sha256": {
+              "$ref": "#/$defs/sha256_hex"
+            },
+            "prepared_dataset_sha256": {
+              "$ref": "#/$defs/sha256_hex"
+            },
+            "marker_id": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "Non-static digest derived from controlled entrypoint inputs, run identity, and timestamp."
+            }
+          }
+        },
+        "permitted_execution_contract_fields": {
+          "type": "array",
+          "minItems": 15,
+          "maxItems": 15,
+          "uniqueItems": true,
+          "description": "Closed list of execution contract fields actually consumed by the training run. Must match the M24 training interface subset and must not include ignored_columns, required_columns, or optional_columns. Project Spec S0108 added result_semantics as an authorized, optional consumed field used to resolve the governed positive class.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "contract_version",
+              "dataset_id",
+              "target_column",
+              "feature_columns",
+              "feature_definitions",
+              "missing_value_policy",
+              "categorical_encoding_policy",
+              "numeric_handling",
+              "allowed_transformations",
+              "split_policy",
+              "random_seed",
+              "primary_metric",
+              "secondary_metrics",
+              "modeling_constraints",
+              "result_semantics"
+            ]
+          }
+        },
+        "training_parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_family",
+            "hyperparameters",
+            "target_column",
+            "feature_columns",
+            "split_policy",
+            "split_sizes",
+            "random_seed",
+            "primary_metric",
+            "secondary_metrics",
+            "modeling_constraints"
+          ],
+          "description": "Reduced parameter values selected from the permitted execution contract fields for reproducibility and audit. This record intentionally does not include ignored_columns, required_columns, or optional_columns.",
+          "properties": {
+            "model_family": {
+              "type": "string",
+              "enum": [
+                "logistic_regression",
+                "gradient_boosting",
+                "random_forest"
+              ]
+            },
+            "hyperparameters": {
+              "type": "object",
+              "description": "Reduced JSON-safe hyperparameters used by the fitted estimator."
+            },
+            "target_column": {
+              "type": "string",
+              "minLength": 1
+            },
+            "feature_columns": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "split_policy": {
+              "$ref": "#/$defs/split_policy"
+            },
+            "split_sizes": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "training_rows",
+                "evaluation_rows"
+              ],
+              "properties": {
+                "training_rows": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "evaluation_rows": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "random_seed": {
+              "type": ["integer", "null"]
+            },
+            "primary_metric": {
+              "$ref": "#/$defs/metric"
+            },
+            "secondary_metrics": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/metric"
+              }
+            },
+            "modeling_constraints": {
+              "$ref": "#/$defs/modeling_constraints"
+            }
+          }
+        },
+        "binary_classification_evidence": {
+          "description": "Project Spec S0108: governed binary-classification evidence for the selected model, or null when the fitted model is not binary. Never embeds raw predictions or evaluation rows.",
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "problem_type",
+                "ordered_class_labels",
+                "positive_class_id",
+                "positive_class_probability_index"
+              ],
+              "properties": {
+                "problem_type": {
+                  "type": "string",
+                  "const": "binary_classification"
+                },
+                "ordered_class_labels": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "type": "string" },
+                  "description": "The fitted model's actual classes_ ordering, so a reversed class order is recorded as evidence rather than hidden."
+                },
+                "positive_class_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "positive_class_probability_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          ]
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "execution_contract_sha256",
+            "prepared_dataset_sha256",
+            "model_artifact_sha256"
+          ],
+          "description": "SHA-256 hashes linking the consumed inputs and serialized model output for this training run. The training parameter record hash is computed after this file is written and is reported by the caller because embedding it would change the bytes being hashed.",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "execution_contract_sha256": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "SHA-256 hex digest of the execution contract JSON file consumed."
+            },
+            "prepared_dataset_sha256": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "SHA-256 hex digest of the prepared dataset file consumed."
+            },
+            "model_artifact_sha256": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "SHA-256 hex digest of the serialized model artifact produced."
+            },
+            "metrics_sha256": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/sha256_hex"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "SHA-256 hex digest of the metrics.json artifact when produced by M24-04. Null or absent for M24-03."
+            }
+          }
+        },
+        "record_boundary_confirmations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "is_metrics_artifact",
+            "raw_dataset_embedded",
+            "model_bytes_embedded",
+            "notebook_state_embedded",
+            "unauthorized_contract_fields_consumed",
+            "controlled_entrypoint_provenance_marker_present"
+          ],
+          "description": "Boundary confirmations for the parameter record artifact.",
+          "properties": {
+            "is_metrics_artifact": {
+              "type": "boolean",
+              "const": false,
+              "description": "This parameter record is not the metrics artifact."
+            },
+            "raw_dataset_embedded": {
+              "type": "boolean",
+              "const": false
+            },
+            "model_bytes_embedded": {
+              "type": "boolean",
+              "const": false
+            },
+            "notebook_state_embedded": {
+              "type": "boolean",
+              "const": false
+            },
+            "unauthorized_contract_fields_consumed": {
+              "type": "boolean",
+              "const": false,
+              "description": "No execution contract fields outside the permitted M24 training subset were consumed."
+            },
+            "controlled_entrypoint_provenance_marker_present": {
+              "type": "boolean",
+              "const": true,
+              "description": "The governed training entrypoint generated and recorded a controlled-entrypoint provenance marker."
+            }
+          }
+        },
+        "evidence_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "raw_logs_prohibited",
+            "raw_runtime_prohibited",
+            "raw_api_payloads_prohibited",
+            "secrets_prohibited",
+            "private_source_paths_prohibited",
+            "raw_artifact_contents_prohibited",
+            "reduced_and_sanitized"
+          ],
+          "description": "Safety policy for the training parameter record.",
+          "properties": {
+            "raw_logs_prohibited": {
+              "type": "boolean",
+              "const": true
+            },
+            "raw_runtime_prohibited": {
+              "type": "boolean",
+              "const": true
+            },
+            "raw_api_payloads_prohibited": {
+              "type": "boolean",
+              "const": true
+            },
+            "secrets_prohibited": {
+              "type": "boolean",
+              "const": true
+            },
+            "private_source_paths_prohibited": {
+              "type": "boolean",
+              "const": true
+            },
+            "raw_artifact_contents_prohibited": {
+              "type": "boolean",
+              "const": true
+            },
+            "reduced_and_sanitized": {
+              "type": "boolean",
+              "const": true
             }
           }
         }
-      ]
+      }
     },
-    "hashes": {
+    "external_fitted_model_record_v1": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Project Spec S0157: parameter/provenance record for an already-fitted external model, from a validated handoff/projection flow. Never requires an Atlas training run ID, controlled-entrypoint provenance marker, or Atlas training output directory, and never embeds model bytes or raw partitions.",
       "required": [
-        "algorithm",
-        "execution_contract_sha256",
-        "prepared_dataset_sha256",
-        "model_artifact_sha256"
+        "schema_version",
+        "record_kind",
+        "origin",
+        "producer",
+        "handoff_lineage_reference",
+        "dataset_identity",
+        "selected_model_id",
+        "model_family",
+        "estimator_identity",
+        "hyperparameters",
+        "feature_order",
+        "preprocessing_evidence_reference",
+        "serializer_metadata_reference",
+        "model_artifact_reference",
+        "model_state_fingerprint",
+        "atlas_fit_confirmation",
+        "raw_partition_confirmation"
       ],
-      "description": "SHA-256 hashes linking the consumed inputs and serialized model output for this training run. The training parameter record hash is computed after this file is written and is reported by the caller because embedding it would change the bytes being hashed.",
       "properties": {
-        "algorithm": {
+        "schema_version": {
           "type": "string",
-          "const": "sha256"
+          "const": "training-parameter-record.external-fitted-model.v1"
         },
-        "execution_contract_sha256": {
-          "$ref": "#/$defs/sha256_hex",
-          "description": "SHA-256 hex digest of the execution contract JSON file consumed."
+        "record_kind": {
+          "type": "string",
+          "const": "training_parameter_record"
         },
-        "prepared_dataset_sha256": {
-          "$ref": "#/$defs/sha256_hex",
-          "description": "SHA-256 hex digest of the prepared dataset file consumed."
+        "origin": {
+          "type": "string",
+          "const": "validated_external_fitted_model"
         },
-        "model_artifact_sha256": {
-          "$ref": "#/$defs/sha256_hex",
-          "description": "SHA-256 hex digest of the serialized model artifact produced."
+        "producer": {
+          "type": "string",
+          "minLength": 1
         },
-        "metrics_sha256": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/sha256_hex"
-            },
-            {
-              "type": "null"
+        "handoff_lineage_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reference into the validated external handoff/projection lineage. Never an Atlas training-run path."
+        },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
             }
-          ],
-          "description": "SHA-256 hex digest of the metrics.json artifact when produced by M24-04. Null or absent for M24-03."
+          }
+        },
+        "selected_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_family": {
+          "type": "string",
+          "enum": ["hist_gradient_boosting"]
+        },
+        "estimator_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library", "class_name"],
+          "description": "Bounded structured estimator identity. Never an arbitrary module import path or callable string.",
+          "properties": {
+            "library": { "type": "string", "enum": ["scikit-learn"] },
+            "class_name": { "type": "string", "enum": ["HistGradientBoostingClassifier"] }
+          }
+        },
+        "hyperparameters": {
+          "type": "object",
+          "description": "JSON-safe selected hyperparameters. Never model bytes."
+        },
+        "feature_order": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "preprocessing_evidence_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reference to preprocessing evidence. Preprocessing is never executed here."
+        },
+        "positive_class_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Present only when the fitted model is binary. Preserved without raw labels or predictions."
+        },
+        "serializer_metadata_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reference to serializer metadata from the validated handoff lineage. Never embeds model bytes."
+        },
+        "model_artifact_reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!pipeline/training-runs/)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+            },
+            "sha256": { "$ref": "#/$defs/sha256_hex" }
+          }
+        },
+        "model_state_fingerprint": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "Semantic fingerprint of the fitted model's state. Must be consistent with the same fingerprint recorded in the corresponding external model-selection-evidence and, when present, inference-bundle evidence."
+        },
+        "atlas_fit_confirmation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["atlas_fit", "atlas_tuned", "atlas_recalibrated", "atlas_altered"],
+          "description": "Explicit confirmation that Atlas did not fit, tune, recalibrate, or alter this model.",
+          "properties": {
+            "atlas_fit": { "type": "boolean", "const": false },
+            "atlas_tuned": { "type": "boolean", "const": false },
+            "atlas_recalibrated": { "type": "boolean", "const": false },
+            "atlas_altered": { "type": "boolean", "const": false }
+          }
+        },
+        "raw_partition_confirmation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["raw_partitions_embedded"],
+          "properties": {
+            "raw_partitions_embedded": { "type": "boolean", "const": false }
+          }
         }
       }
     },
-    "record_boundary_confirmations": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "is_metrics_artifact",
-        "raw_dataset_embedded",
-        "model_bytes_embedded",
-        "notebook_state_embedded",
-        "unauthorized_contract_fields_consumed",
-        "controlled_entrypoint_provenance_marker_present"
-      ],
-      "description": "Boundary confirmations for the parameter record artifact.",
-      "properties": {
-        "is_metrics_artifact": {
-          "type": "boolean",
-          "const": false,
-          "description": "This parameter record is not the metrics artifact."
-        },
-        "raw_dataset_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "model_bytes_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "notebook_state_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "unauthorized_contract_fields_consumed": {
-          "type": "boolean",
-          "const": false,
-          "description": "No execution contract fields outside the permitted M24 training subset were consumed."
-        },
-        "controlled_entrypoint_provenance_marker_present": {
-          "type": "boolean",
-          "const": true,
-          "description": "The governed training entrypoint generated and recorded a controlled-entrypoint provenance marker."
-        }
-      }
-    },
-    "evidence_policy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "raw_logs_prohibited",
-        "raw_runtime_prohibited",
-        "raw_api_payloads_prohibited",
-        "secrets_prohibited",
-        "private_source_paths_prohibited",
-        "raw_artifact_contents_prohibited",
-        "reduced_and_sanitized"
-      ],
-      "description": "Safety policy for the training parameter record.",
-      "properties": {
-        "raw_logs_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "raw_runtime_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "raw_api_payloads_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "secrets_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "private_source_paths_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "raw_artifact_contents_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "reduced_and_sanitized": {
-          "type": "boolean",
-          "const": true
-        }
-      }
-    }
-  },
-  "$defs": {
     "sha256_hex": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
@@ -494,7 +640,13 @@
         "f1",
         "accuracy",
         "log_loss",
-        "pr_auc"
+        "pr_auc",
+        "average_precision",
+        "precision",
+        "recall",
+        "f2",
+        "balanced_accuracy",
+        "brier_score"
       ]
     },
     "split_policy": {

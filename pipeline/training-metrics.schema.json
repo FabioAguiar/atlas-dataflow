@@ -2,135 +2,297 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-metrics.schema.json",
   "title": "Atlas DataFlow Training Metrics Artifact",
-  "description": "Reduced metrics artifact emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json. Values are computed from the controlled evaluation split only.",
+  "description": "Reduced metrics artifact. Two schema-version-discriminated profiles are supported: training-metrics.v1 (unchanged, emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json, computed from the controlled evaluation split only) and training-metrics.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow, distinguishing cross-validation, validation, and final-test partition roles).",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "artifact_kind",
-    "created_at",
-    "training_run_identity",
-    "metric_source",
-    "metrics",
-    "path_references",
-    "hashes",
-    "evidence_policy"
+  "required": ["schema_version"],
+  "oneOf": [
+    { "$ref": "#/$defs/internal_run_metrics_v1" },
+    { "$ref": "#/$defs/external_metrics_v1" }
   ],
-  "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "training-metrics.v1"
-    },
-    "artifact_kind": {
-      "type": "string",
-      "const": "training_metrics"
-    },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "training_run_identity": {
-      "$ref": "#/$defs/training_run_identity"
-    },
-    "metric_source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "split_name",
-        "split_size",
-        "random_seed",
-        "computed_from_training_split",
-        "computed_from_mixed_split"
-      ],
-      "properties": {
-        "split_name": {
-          "type": "string",
-          "const": "evaluation"
-        },
-        "split_size": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "random_seed": {
-          "type": ["integer", "null"]
-        },
-        "computed_from_training_split": {
-          "type": "boolean",
-          "const": false
-        },
-        "computed_from_mixed_split": {
-          "type": "boolean",
-          "const": false
-        }
-      }
-    },
-    "metrics": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "primary_metric",
-        "secondary_metrics"
-      ],
-      "properties": {
-        "primary_metric": {
-          "$ref": "#/$defs/metric_value"
-        },
-        "secondary_metrics": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/metric_value"
-          }
-        }
-      }
-    },
-    "path_references": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "metrics_path",
-        "training_parameter_record_path",
-        "execution_contract_path",
-        "dataset_path"
-      ],
-      "properties": {
-        "metrics_path": {
-          "$ref": "#/$defs/metrics_path"
-        },
-        "training_parameter_record_path": {
-          "$ref": "#/$defs/training_parameter_record_path"
-        },
-        "execution_contract_path": {
-          "type": "string",
-          "minLength": 1
-        },
-        "dataset_path": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "hashes": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "algorithm",
-        "execution_contract_sha256"
-      ],
-      "properties": {
-        "algorithm": {
-          "type": "string",
-          "const": "sha256"
-        },
-        "execution_contract_sha256": {
-          "$ref": "#/$defs/sha256_hex"
-        }
-      }
-    },
-    "evidence_policy": {
-      "$ref": "#/$defs/evidence_policy"
-    }
-  },
   "$defs": {
+    "internal_run_metrics_v1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "training_run_identity",
+        "metric_source",
+        "metrics",
+        "path_references",
+        "hashes",
+        "evidence_policy"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-metrics.v1"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "const": "training_metrics"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "training_run_identity": {
+          "$ref": "#/$defs/training_run_identity"
+        },
+        "metric_source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "split_name",
+            "split_size",
+            "random_seed",
+            "computed_from_training_split",
+            "computed_from_mixed_split"
+          ],
+          "properties": {
+            "split_name": {
+              "type": "string",
+              "const": "evaluation"
+            },
+            "split_size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "random_seed": {
+              "type": ["integer", "null"]
+            },
+            "computed_from_training_split": {
+              "type": "boolean",
+              "const": false
+            },
+            "computed_from_mixed_split": {
+              "type": "boolean",
+              "const": false
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "primary_metric",
+            "secondary_metrics"
+          ],
+          "properties": {
+            "primary_metric": {
+              "$ref": "#/$defs/metric_value"
+            },
+            "secondary_metrics": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/metric_value"
+              }
+            }
+          }
+        },
+        "path_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metrics_path",
+            "training_parameter_record_path",
+            "execution_contract_path",
+            "dataset_path"
+          ],
+          "properties": {
+            "metrics_path": {
+              "$ref": "#/$defs/metrics_path"
+            },
+            "training_parameter_record_path": {
+              "$ref": "#/$defs/training_parameter_record_path"
+            },
+            "execution_contract_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dataset_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "execution_contract_sha256"
+          ],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "execution_contract_sha256": {
+              "$ref": "#/$defs/sha256_hex"
+            }
+          }
+        },
+        "evidence_policy": {
+          "$ref": "#/$defs/evidence_policy"
+        }
+      }
+    },
+    "external_metrics_v1": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0157: external fitted-model metrics evidence by partition role. Metric values must be finite numbers -- enforced by validating code alongside this schema, since JSON Schema's 'number' type alone does not reject NaN/Infinity. No raw predictions, probabilities, row identifiers, or partition rows are embedded anywhere in this profile.",
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "evidence_identity",
+        "cross_validation_summary",
+        "validation_evaluation"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-metrics.external-fitted-model.v1"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "const": "training_metrics"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evidence_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_source_mode", "dataset_slug"],
+          "properties": {
+            "model_source_mode": {
+              "type": "string",
+              "const": "validated_external_fitted_model"
+            },
+            "dataset_slug": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            }
+          }
+        },
+        "cross_validation_summary": {
+          "$ref": "#/$defs/cross_validation_partition"
+        },
+        "validation_evaluation": {
+          "$ref": "#/$defs/validation_partition"
+        },
+        "final_test_evaluation": {
+          "$ref": "#/$defs/final_test_partition"
+        }
+      }
+    },
+    "cross_validation_partition": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Cross-validation may only ever use the training partition.",
+      "required": [
+        "partition_role",
+        "used_for_fitting",
+        "used_for_model_selection",
+        "used_for_threshold_selection",
+        "used_for_adjustment",
+        "sealed_before_finalization",
+        "metrics"
+      ],
+      "properties": {
+        "partition_role": { "type": "string", "const": "train" },
+        "row_count": { "type": "integer", "minimum": 1 },
+        "used_for_fitting": { "type": "boolean", "const": true },
+        "used_for_model_selection": { "type": "boolean", "const": true },
+        "used_for_threshold_selection": { "type": "boolean", "const": false },
+        "used_for_adjustment": { "type": "boolean", "const": false },
+        "sealed_before_finalization": { "type": "boolean", "const": false },
+        "evaluation_count": { "type": "integer", "minimum": 1 },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/metric_value" }
+        }
+      }
+    },
+    "validation_partition": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Validation may be used for model selection and educational-threshold selection.",
+      "required": [
+        "partition_role",
+        "used_for_fitting",
+        "used_for_model_selection",
+        "used_for_threshold_selection",
+        "sealed_before_finalization",
+        "metrics"
+      ],
+      "properties": {
+        "partition_role": { "type": "string", "const": "validation" },
+        "row_count": { "type": "integer", "minimum": 1 },
+        "used_for_fitting": { "type": "boolean", "const": false },
+        "used_for_model_selection": { "type": "boolean" },
+        "used_for_threshold_selection": { "type": "boolean" },
+        "used_for_adjustment": { "type": "boolean" },
+        "sealed_before_finalization": { "type": "boolean", "const": false },
+        "evaluation_count": { "type": "integer", "minimum": 1 },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/metric_value" }
+        }
+      }
+    },
+    "final_test_partition": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Final test can never be used for fitting, model selection, threshold selection, or adjustment, and must be sealed before finalization. evaluation_count is bounded to [0, 1] so more than one final-test evaluation is structurally rejected; a completed evaluation (completed: true) additionally requires evaluation_count to equal exactly 1.",
+      "required": [
+        "partition_role",
+        "used_for_fitting",
+        "used_for_model_selection",
+        "used_for_threshold_selection",
+        "used_for_adjustment",
+        "sealed_before_finalization",
+        "completed",
+        "evaluation_count",
+        "metrics"
+      ],
+      "properties": {
+        "partition_role": { "type": "string", "const": "test" },
+        "row_count": { "type": "integer", "minimum": 1 },
+        "used_for_fitting": { "type": "boolean", "const": false },
+        "used_for_model_selection": { "type": "boolean", "const": false },
+        "used_for_threshold_selection": { "type": "boolean", "const": false },
+        "used_for_adjustment": { "type": "boolean", "const": false },
+        "sealed_before_finalization": { "type": "boolean", "const": true },
+        "completed": { "type": "boolean" },
+        "evaluation_count": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "metrics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/metric_value" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "completed": { "const": true } }, "required": ["completed"] },
+          "then": {
+            "properties": {
+              "evaluation_count": { "const": 1 },
+              "metrics": { "minItems": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "completed": { "const": false } }, "required": ["completed"] },
+          "then": { "properties": { "evaluation_count": { "const": 0 } } }
+        }
+      ]
+    },
     "training_run_identity": {
       "type": "object",
       "additionalProperties": false,
@@ -161,7 +323,13 @@
         "f1",
         "accuracy",
         "log_loss",
-        "pr_auc"
+        "pr_auc",
+        "average_precision",
+        "precision",
+        "recall",
+        "f2",
+        "balanced_accuracy",
+        "brier_score"
       ]
     },
     "metric_value": {

@@ -1,4 +1,6 @@
+import copy
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -839,3 +841,639 @@ def test_legacy_categorical_definitions_remain_valid_without_new_vocabulary():
     contract = _valid_contract()
     jsonschema.validate(contract, schema)
     assert "known_values" not in contract["feature_definitions"]["job"]["domain_constraints"]
+
+
+# ---------------------------------------------------------------------------
+# External Model Evidence, Sealed-Test, and Educational Readiness Contract
+# Evolution (Project Spec S0157).
+#
+# This spec's own implementation-request.md/context-pack authorizes editing
+# tests/test_execution_contract_schema.py and tests/test_training_pipeline.py
+# but authorizes creating no new file at all (repository_context.
+# allowed_create_paths is an empty array; tests/pipeline/
+# test_external_model_evidence_contracts.py only appears in
+# candidate_create_paths, which is informative scope discovery, not
+# authorization -- promoting it requires a later, separately-authorized
+# implementation request). The pure JSON-Schema validation coverage for all
+# five evolved schemas therefore lives here rather than in a dedicated new
+# test module; pipeline/training.py's fail-closed training-boundary coverage
+# lives in tests/test_training_pipeline.py instead. Every fixture below is
+# synthetic and uses inert digest strings -- no model is loaded, fit, or
+# used for prediction, and no train/validation/test data is read.
+# ---------------------------------------------------------------------------
+
+MODEL_SELECTION_EVIDENCE_SCHEMA_PATH = REPO_ROOT / "pipeline" / "model-selection-evidence.schema.json"
+TRAINING_METRICS_SCHEMA_PATH = REPO_ROOT / "pipeline" / "training-metrics.schema.json"
+TRAINING_PARAMETER_RECORD_SCHEMA_PATH = REPO_ROOT / "pipeline" / "training-parameter-record.schema.json"
+INFERENCE_BUNDLE_SCHEMA_PATH = REPO_ROOT / "contracts" / "inference-bundle.schema.json"
+TELCO_INFERENCE_BUNDLE_PATH = REPO_ROOT / "contracts" / "telco-customer-churn" / "inference-bundle.json"
+_TELCO_TRAINING_RUN_DIR = (
+    REPO_ROOT
+    / "pipeline"
+    / "training-runs"
+    / "telco-customer-churn"
+    / "train-20260721T124721Z"
+)
+TELCO_HISTORICAL_METRICS_PATH = _TELCO_TRAINING_RUN_DIR / "metrics.json"
+TELCO_HISTORICAL_MODEL_SELECTION_EVIDENCE_PATH = _TELCO_TRAINING_RUN_DIR / "model-selection-evidence.json"
+TELCO_HISTORICAL_TRAINING_PARAMETER_RECORD_PATH = _TELCO_TRAINING_RUN_DIR / "training-parameter-record.json"
+
+_INERT_FINGERPRINT_A = "a" * 64
+_INERT_FINGERPRINT_B = "b" * 64
+_INERT_SHA_MODEL = "c" * 64
+
+
+def _reduced_evidence_policy() -> dict:
+    return {
+        "raw_logs_prohibited": True,
+        "raw_runtime_prohibited": True,
+        "raw_api_payloads_prohibited": True,
+        "secrets_prohibited": True,
+        "raw_dataset_embedded": False,
+        "model_bytes_embedded": False,
+        "notebook_state_embedded": False,
+        "reduced_and_sanitized": True,
+    }
+
+
+def _assert_finite_metric_values(*sections) -> None:
+    """Mirrors pipeline.training._finite_metric_value's finiteness check --
+    JSON Schema's plain 'number' type does not, by itself, reject NaN or
+    Infinity constructed directly in a Python fixture (only JSON's own
+    number grammar excludes them), so finiteness is asserted here."""
+    for section in sections:
+        if not section:
+            continue
+        for entry in section.get("metrics", []) or section.get("metric_summaries", []):
+            value = entry.get("value", entry.get("mean"))
+            assert math.isfinite(value), f"non-finite metric value: {entry!r}"
+
+
+def _assert_selected_candidate_is_declared(evidence: dict) -> None:
+    candidate_ids = {candidate["candidate_id"] for candidate in evidence["candidates"]}
+    selected_id = evidence["selected_candidate"]["candidate_id"]
+    assert selected_id in candidate_ids, (
+        f"selected_candidate.candidate_id {selected_id!r} is not among the declared "
+        f"candidates {sorted(candidate_ids)!r}"
+    )
+
+
+def _assert_model_state_fingerprint_consistency(*fingerprints: str) -> None:
+    assert len(set(fingerprints)) == 1, f"model_state_fingerprint mismatch across evidence: {fingerprints}"
+
+
+# --- execution-contract.schema.json: model_source_mode / vocabulary -------
+
+
+def test_execution_contract_omitting_model_source_mode_is_valid():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    assert "model_source_mode" not in contract
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_explicit_atlas_internal_training_is_valid():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["model_source_mode"] = "atlas_internal_training"
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_validated_external_fitted_model_is_schema_valid():
+    """Schema-valid only -- pipeline.training.train_from_paths blocks this
+    declaration before estimator construction or fit (see
+    tests/test_training_pipeline.py)."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["model_source_mode"] = "validated_external_fitted_model"
+    contract["modeling_constraints"]["allowed_model_families"] = ["hist_gradient_boosting"]
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_rejects_boolean_model_source_mode():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["model_source_mode"] = True
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_rejects_free_form_model_source_mode():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["model_source_mode"] = "some_other_source"
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_hist_gradient_boosting_family_declaration_is_valid():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["modeling_constraints"]["allowed_model_families"] = ["hist_gradient_boosting"]
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_average_precision_and_brier_score_are_valid_and_distinct_from_pr_auc():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["primary_metric"] = "average_precision"
+    contract["secondary_metrics"] = ["pr_auc", "brier_score"]
+    jsonschema.validate(contract, schema)
+    assert contract["primary_metric"] != "pr_auc"
+    assert "pr_auc" in contract["secondary_metrics"] and "average_precision" not in contract["secondary_metrics"]
+
+
+def test_execution_contract_new_metric_identifiers_are_valid():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["secondary_metrics"] = ["precision", "recall", "f2", "balanced_accuracy"]
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_existing_metric_identifiers_remain_valid():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    for metric in ("roc_auc", "f1", "accuracy", "log_loss", "pr_auc"):
+        contract["primary_metric"] = metric
+        jsonschema.validate(contract, schema)
+
+
+# --- pipeline/model-selection-evidence.schema.json: external profile ------
+
+
+def _external_model_selection_evidence() -> dict:
+    return {
+        "schema_version": "model-selection-evidence.external-fitted-model.v1",
+        "artifact_kind": "model_selection_evidence",
+        "created_at": "2026-08-01T00:00:00Z",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "producer": "external-notebook-pipeline",
+            "handoff_lineage_reference": "handoff/telco-customer-churn/2026-08-01/lineage.json",
+        },
+        "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+        "selection_protocol": {"protocol_id": "cross_validation_with_practical_tie_break"},
+        "selection_policy": {
+            "primary_metric": "average_precision",
+            "ranking_direction": "higher_is_better",
+        },
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "metric_summaries": [
+                {"name": "average_precision", "mean": 0.71, "standard_deviation": 0.02},
+                {"name": "roc_auc", "mean": 0.84, "standard_deviation": 0.01},
+            ],
+        },
+        "validation_metrics": {
+            "partition_role": "validation",
+            "metrics": [
+                {"name": "average_precision", "value": 0.70},
+                {"name": "roc_auc", "value": 0.845},
+                {"name": "brier_score", "value": 0.14},
+            ],
+        },
+        "practical_tie": {
+            "tolerance": 0.005,
+            "tie_detected": True,
+            "tie_break_criteria": [
+                {
+                    "order": 1,
+                    "criterion": "brier_score",
+                    "observed_values": [
+                        {"candidate_id": "hist_gradient_boosting_candidate", "value": 0.14},
+                        {"candidate_id": "hist_gradient_boosting_alternate", "value": 0.16},
+                    ],
+                }
+            ],
+        },
+        "candidates": [
+            {
+                "candidate_id": "hist_gradient_boosting_candidate",
+                "model_family": "hist_gradient_boosting",
+                "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+            },
+            {
+                "candidate_id": "hist_gradient_boosting_alternate",
+                "model_family": "hist_gradient_boosting",
+                "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+            },
+        ],
+        "selected_candidate": {"candidate_id": "hist_gradient_boosting_candidate"},
+        "selection_rationale": (
+            "Highest cross-validated average_precision within practical tie tolerance; "
+            "brier_score tie-break favors the selected candidate."
+        ),
+        "sealed_test_confirmation": {
+            "test_partition_role": "test",
+            "used_for_model_selection": False,
+            "sealed_before_selection": True,
+        },
+        "path_references": {
+            "model_selection_evidence_reference": (
+                "external-handoff/telco-customer-churn/model-selection-evidence.json"
+            ),
+        },
+        "hashes": {"algorithm": "sha256", "model_state_fingerprint": _INERT_FINGERPRINT_A},
+        "evidence_policy": _reduced_evidence_policy(),
+    }
+
+
+def test_external_model_selection_evidence_valid_cv_validation_tie_and_tie_break():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _external_model_selection_evidence()
+    jsonschema.validate(evidence, schema)
+    _assert_selected_candidate_is_declared(evidence)
+    _assert_finite_metric_values(evidence["cross_validation_summary"], evidence["validation_metrics"])
+
+
+def test_external_model_selection_evidence_selected_candidate_missing_is_flagged():
+    """Selected candidate not present among declared candidates -- schema
+    cannot express this cross-referential invariant (no $data support), so
+    it is checked by the same deterministic cross-fixture assertion the
+    request.md's own validation flow describes."""
+    evidence = _external_model_selection_evidence()
+    evidence["selected_candidate"] = {"candidate_id": "not_a_declared_candidate"}
+    with pytest.raises(AssertionError):
+        _assert_selected_candidate_is_declared(evidence)
+
+
+def test_external_model_selection_evidence_final_test_used_for_selection_rejected():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _external_model_selection_evidence()
+    evidence["sealed_test_confirmation"]["used_for_model_selection"] = True
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
+def test_external_model_selection_evidence_arbitrary_estimator_import_path_rejected():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _external_model_selection_evidence()
+    evidence["candidates"][0]["estimator_identity"] = {
+        "library": "scikit-learn",
+        "class_name": "sklearn.ensemble.HistGradientBoostingClassifier",
+    }
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
+def test_external_model_selection_evidence_rejects_fabricated_training_run_path():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _external_model_selection_evidence()
+    evidence["path_references"]["model_selection_evidence_reference"] = (
+        "pipeline/training-runs/telco-customer-churn/train-20260721T124721Z/model-selection-evidence.json"
+    )
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
+def test_external_model_selection_evidence_undeclared_tie_break_criterion_rejected():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _external_model_selection_evidence()
+    evidence["practical_tie"]["tie_break_criteria"][0]["criterion"] = "coin_flip"
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
+def test_internal_model_selection_evidence_v1_still_valid_unmodified():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    doc = _load_json(TELCO_HISTORICAL_MODEL_SELECTION_EVIDENCE_PATH)
+    jsonschema.validate(doc, schema)
+
+
+# --- pipeline/training-metrics.schema.json: partition-role profile --------
+
+
+def _external_training_metrics(
+    *, final_test_completed: bool = True, final_test_evaluation_count: int = 1
+) -> dict:
+    return {
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "artifact_kind": "training_metrics",
+        "created_at": "2026-08-01T00:00:00Z",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": "telco-customer-churn",
+        },
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "row_count": 4225,
+            "used_for_fitting": True,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            "evaluation_count": 5,
+            "metrics": [{"name": "average_precision", "value": 0.71}],
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "row_count": 1056,
+            "used_for_fitting": False,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": True,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            "evaluation_count": 1,
+            "metrics": [
+                {"name": "average_precision", "value": 0.70},
+                {"name": "brier_score", "value": 0.14},
+            ],
+        },
+        "final_test_evaluation": {
+            "partition_role": "test",
+            "row_count": 1057,
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_threshold_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": True,
+            "completed": final_test_completed,
+            "evaluation_count": final_test_evaluation_count,
+            "metrics": [{"name": "average_precision", "value": 0.69}] if final_test_completed else [],
+        },
+    }
+
+
+def test_external_training_metrics_train_only_cv_summary_valid():
+    schema = _load_json(TRAINING_METRICS_SCHEMA_PATH)
+    doc = _external_training_metrics()
+    jsonschema.validate(doc, schema)
+    assert doc["cross_validation_summary"]["partition_role"] == "train"
+
+
+def test_external_training_metrics_validation_used_for_selection_and_threshold_valid():
+    schema = _load_json(TRAINING_METRICS_SCHEMA_PATH)
+    doc = _external_training_metrics()
+    jsonschema.validate(doc, schema)
+    assert doc["validation_evaluation"]["used_for_model_selection"] is True
+    assert doc["validation_evaluation"]["used_for_threshold_selection"] is True
+
+
+def test_external_training_metrics_final_test_sealed_count_one_valid():
+    schema = _load_json(TRAINING_METRICS_SCHEMA_PATH)
+    doc = _external_training_metrics(final_test_completed=True, final_test_evaluation_count=1)
+    jsonschema.validate(doc, schema)
+    _assert_finite_metric_values(
+        doc["cross_validation_summary"], doc["validation_evaluation"], doc["final_test_evaluation"]
+    )
+
+
+def test_external_training_metrics_final_test_count_two_rejected():
+    schema = _load_json(TRAINING_METRICS_SCHEMA_PATH)
+    doc = _external_training_metrics(final_test_completed=True, final_test_evaluation_count=2)
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(doc))
+
+
+def test_external_training_metrics_final_test_used_for_threshold_rejected():
+    schema = _load_json(TRAINING_METRICS_SCHEMA_PATH)
+    doc = _external_training_metrics()
+    doc["final_test_evaluation"]["used_for_threshold_selection"] = True
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(doc))
+
+
+def test_external_training_metrics_non_finite_metric_rejected():
+    doc = _external_training_metrics()
+    doc["validation_evaluation"]["metrics"][0]["value"] = float("nan")
+    with pytest.raises(AssertionError):
+        _assert_finite_metric_values(doc["validation_evaluation"])
+
+
+def test_internal_training_metrics_v1_still_valid_unmodified():
+    schema = _load_json(TRAINING_METRICS_SCHEMA_PATH)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    doc = _load_json(TELCO_HISTORICAL_METRICS_PATH)
+    jsonschema.validate(doc, schema)
+
+
+# --- pipeline/training-parameter-record.schema.json: external profile -----
+
+
+def _external_training_parameter_record() -> dict:
+    return {
+        "schema_version": "training-parameter-record.external-fitted-model.v1",
+        "record_kind": "training_parameter_record",
+        "origin": "validated_external_fitted_model",
+        "producer": "external-notebook-pipeline",
+        "handoff_lineage_reference": "handoff/telco-customer-churn/2026-08-01/lineage.json",
+        "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+        "selected_model_id": "hist_gradient_boosting_candidate",
+        "model_family": "hist_gradient_boosting",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        "hyperparameters": {"max_iter": 200, "learning_rate": 0.05, "max_depth": 6},
+        "feature_order": ["tenure", "MonthlyCharges", "Contract"],
+        "preprocessing_evidence_reference": "external-handoff/telco-customer-churn/preprocessing-evidence.json",
+        "positive_class_id": "Yes",
+        "serializer_metadata_reference": "external-handoff/telco-customer-churn/serializer-metadata.json",
+        "model_artifact_reference": {
+            "path": "external-handoff/telco-customer-churn/model.joblib",
+            "sha256": _INERT_SHA_MODEL,
+        },
+        "model_state_fingerprint": _INERT_FINGERPRINT_A,
+        "atlas_fit_confirmation": {
+            "atlas_fit": False,
+            "atlas_tuned": False,
+            "atlas_recalibrated": False,
+            "atlas_altered": False,
+        },
+        "raw_partition_confirmation": {"raw_partitions_embedded": False},
+    }
+
+
+def test_external_training_parameter_record_valid_no_atlas_fit():
+    schema = _load_json(TRAINING_PARAMETER_RECORD_SCHEMA_PATH)
+    doc = _external_training_parameter_record()
+    jsonschema.validate(doc, schema)
+    assert all(value is False for value in doc["atlas_fit_confirmation"].values())
+
+
+def test_external_training_parameter_record_does_not_require_atlas_run_id_or_marker():
+    doc = _external_training_parameter_record()
+    assert "controlled_entrypoint_provenance" not in doc
+    assert "training_run_identity" not in doc
+
+
+def test_external_training_parameter_record_fabricated_atlas_path_rejected():
+    schema = _load_json(TRAINING_PARAMETER_RECORD_SCHEMA_PATH)
+    doc = _external_training_parameter_record()
+    doc["model_artifact_reference"]["path"] = (
+        "pipeline/training-runs/telco-customer-churn/train-20260721T124721Z/model.pkl"
+    )
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(doc))
+
+
+def test_external_training_parameter_record_missing_fingerprint_rejected():
+    schema = _load_json(TRAINING_PARAMETER_RECORD_SCHEMA_PATH)
+    doc = _external_training_parameter_record()
+    del doc["model_state_fingerprint"]
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(doc))
+
+
+def test_external_training_parameter_record_arbitrary_estimator_callable_rejected():
+    schema = _load_json(TRAINING_PARAMETER_RECORD_SCHEMA_PATH)
+    doc = _external_training_parameter_record()
+    doc["estimator_identity"] = {"library": "scikit-learn", "class_name": "eval('HistGradientBoostingClassifier')"}
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(doc))
+
+
+def test_internal_training_parameter_record_v1_still_valid_unmodified():
+    schema = _load_json(TRAINING_PARAMETER_RECORD_SCHEMA_PATH)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    doc = _load_json(TELCO_HISTORICAL_TRAINING_PARAMETER_RECORD_PATH)
+    jsonschema.validate(doc, schema)
+
+
+# --- contracts/inference-bundle.schema.json: external model evidence ------
+
+
+def _external_inference_bundle() -> dict:
+    bundle = copy.deepcopy(_load_json(TELCO_INFERENCE_BUNDLE_PATH))
+    del bundle["training_evidence"]
+    bundle["model_provenance_origin"] = "validated_external_fitted_model"
+    bundle["external_model_evidence"] = {
+        "origin": "validated_external_fitted_model",
+        "evidence_references": {
+            "model_selection_evidence_reference": {
+                "path": "external-handoff/telco-customer-churn/model-selection-evidence.json",
+                "sha256": _INERT_SHA_MODEL,
+                "contract_version": "model-selection-evidence.external-fitted-model.v1",
+            },
+            "training_parameter_record_reference": {
+                "path": "external-handoff/telco-customer-churn/training-parameter-record.json",
+                "sha256": _INERT_SHA_MODEL,
+                "contract_version": "training-parameter-record.external-fitted-model.v1",
+            },
+            "training_metrics_reference": {
+                "path": "external-handoff/telco-customer-churn/metrics.json",
+                "sha256": _INERT_SHA_MODEL,
+                "contract_version": "training-metrics.external-fitted-model.v1",
+            },
+        },
+        "model_family": "hist_gradient_boosting",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        "model_state_fingerprint": _INERT_FINGERPRINT_A,
+        "educational_threshold": {
+            "value": 0.5,
+            "label": "educational",
+            "selection_partition": "validation",
+            "scenario": "classroom_demo_default_threshold",
+        },
+        "final_test_completion": {"used_for_threshold_selection": False, "evaluation_count": 1},
+        "readiness": {
+            "educational_final_model_complete": True,
+            "educational_inference_demo_ready": True,
+            "operational_modeling_ready": False,
+            "operational_validity": "unconfirmed",
+            "operational_threshold": {"status": "unresolved", "value": None},
+            "operational_prediction_available": False,
+        },
+    }
+    return bundle
+
+
+def test_external_inference_bundle_educational_ready_operationally_unresolved_valid():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    jsonschema.validate(bundle, schema)
+    readiness = bundle["external_model_evidence"]["readiness"]
+    assert readiness["educational_final_model_complete"] is True
+    assert readiness["educational_inference_demo_ready"] is True
+    assert readiness["operational_modeling_ready"] is False
+    assert readiness["operational_validity"] == "unconfirmed"
+    assert readiness["operational_threshold"] == {"status": "unresolved", "value": None}
+    assert readiness["operational_prediction_available"] is False
+
+
+def test_external_inference_bundle_educational_threshold_selected_on_validation_valid():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    jsonschema.validate(bundle, schema)
+    assert bundle["external_model_evidence"]["educational_threshold"]["selection_partition"] == "validation"
+
+
+def test_external_inference_bundle_operational_prediction_true_while_unconfirmed_rejected():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    bundle["external_model_evidence"]["readiness"]["operational_prediction_available"] = True
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(bundle))
+
+
+def test_external_inference_bundle_numeric_operational_threshold_while_unresolved_rejected():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    bundle["external_model_evidence"]["readiness"]["operational_threshold"] = {
+        "status": "unresolved",
+        "value": 0.42,
+    }
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(bundle))
+
+
+def test_external_inference_bundle_educational_threshold_cannot_be_labeled_operational():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    bundle["external_model_evidence"]["educational_threshold"]["label"] = "operational"
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(bundle))
+
+
+def test_external_inference_bundle_test_partition_cannot_be_threshold_selection_partition():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    bundle["external_model_evidence"]["educational_threshold"]["selection_partition"] = "test"
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(bundle))
+
+
+def test_external_inference_bundle_final_test_evaluation_count_above_one_rejected():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    bundle["external_model_evidence"]["final_test_completion"]["evaluation_count"] = 2
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(bundle))
+
+
+def test_external_inference_bundle_forbids_training_evidence_alongside_external_origin():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    bundle = _external_inference_bundle()
+    bundle["training_evidence"] = copy.deepcopy(_load_json(TELCO_INFERENCE_BUNDLE_PATH))["training_evidence"]
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(bundle))
+
+
+def test_external_inference_bundle_model_state_fingerprint_mismatch_across_evidence_rejected():
+    param_record = _external_training_parameter_record()
+    param_record["model_state_fingerprint"] = _INERT_FINGERPRINT_B
+    bundle = _external_inference_bundle()
+    with pytest.raises(AssertionError):
+        _assert_model_state_fingerprint_consistency(
+            bundle["external_model_evidence"]["model_state_fingerprint"],
+            param_record["model_state_fingerprint"],
+        )
+
+
+def test_external_inference_bundle_model_state_fingerprint_consistent_across_evidence():
+    param_record = _external_training_parameter_record()
+    selection_evidence = _external_model_selection_evidence()
+    bundle = _external_inference_bundle()
+    _assert_model_state_fingerprint_consistency(
+        bundle["external_model_evidence"]["model_state_fingerprint"],
+        param_record["model_state_fingerprint"],
+        selection_evidence["hashes"]["model_state_fingerprint"],
+    )
+
+
+def test_historical_telco_inference_bundle_still_valid_after_schema_evolution():
+    schema = _load_json(INFERENCE_BUNDLE_SCHEMA_PATH)
+    jsonschema.Draft202012Validator.check_schema(schema)
+    doc = _load_json(TELCO_INFERENCE_BUNDLE_PATH)
+    jsonschema.validate(doc, schema)
+    assert "model_provenance_origin" not in doc
+    assert "external_model_evidence" not in doc
+    assert "training_evidence" in doc

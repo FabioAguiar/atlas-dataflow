@@ -2,170 +2,474 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/model-selection-evidence.schema.json",
   "title": "Atlas DataFlow Model Selection Evidence",
-  "description": "Reduced model selection evidence emitted only when a governed M24 training run evaluates multiple model candidates.",
+  "description": "Reduced model selection evidence. Two schema-version-discriminated profiles are supported: model-selection-evidence.v1 (unchanged, produced only when a governed M24 training run evaluates multiple internal model candidates) and model-selection-evidence.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow describing an already-fitted external model's selection evidence -- never by pipeline/training.py, which never loads, fits, or selects an external model).",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "artifact_kind",
-    "created_at",
-    "training_run_identity",
-    "selection_policy",
-    "candidates",
-    "selected_model",
-    "selection_rationale",
-    "path_references",
-    "hashes",
-    "evidence_policy"
+  "required": ["schema_version"],
+  "oneOf": [
+    { "$ref": "#/$defs/internal_run_evidence_v1" },
+    { "$ref": "#/$defs/external_fitted_model_evidence_v1" }
   ],
-  "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "model-selection-evidence.v1"
-    },
-    "artifact_kind": {
-      "type": "string",
-      "const": "model_selection_evidence"
-    },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "training_run_identity": {
-      "$ref": "#/$defs/training_run_identity"
-    },
-    "selection_policy": {
+  "$defs": {
+    "internal_run_evidence_v1": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "primary_metric",
-        "ranking_direction",
-        "condition"
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "training_run_identity",
+        "selection_policy",
+        "candidates",
+        "selected_model",
+        "selection_rationale",
+        "path_references",
+        "hashes",
+        "evidence_policy"
       ],
       "properties": {
-        "primary_metric": {
-          "$ref": "#/$defs/metric_name"
-        },
-        "ranking_direction": {
+        "schema_version": {
           "type": "string",
-          "enum": [
-            "higher_is_better",
-            "lower_is_better"
-          ]
+          "const": "model-selection-evidence.v1"
         },
-        "condition": {
+        "artifact_kind": {
           "type": "string",
-          "const": "produced_only_when_multiple_model_candidates_are_evaluated"
-        }
-      }
-    },
-    "candidates": {
-      "type": "array",
-      "minItems": 2,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "candidate_id",
-          "model_family",
-          "primary_metric",
-          "secondary_metrics"
-        ],
-        "properties": {
-          "candidate_id": {
-            "$ref": "#/$defs/model_family"
-          },
-          "model_family": {
-            "$ref": "#/$defs/model_family"
-          },
-          "primary_metric": {
-            "$ref": "#/$defs/metric_value"
-          },
-          "secondary_metrics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/metric_value"
+          "const": "model_selection_evidence"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "training_run_identity": {
+          "$ref": "#/$defs/training_run_identity"
+        },
+        "selection_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "primary_metric",
+            "ranking_direction",
+            "condition"
+          ],
+          "properties": {
+            "primary_metric": {
+              "$ref": "#/$defs/metric_name"
+            },
+            "ranking_direction": {
+              "type": "string",
+              "enum": [
+                "higher_is_better",
+                "lower_is_better"
+              ]
+            },
+            "condition": {
+              "type": "string",
+              "const": "produced_only_when_multiple_model_candidates_are_evaluated"
             }
-          },
-          "classification_evidence": {
-            "$ref": "#/$defs/classification_evidence"
           }
-        }
-      }
-    },
-    "selected_model": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "candidate_id",
-        "model_family",
-        "selected_model_reference",
-        "reference_kind"
-      ],
-      "properties": {
-        "candidate_id": {
-          "$ref": "#/$defs/model_family"
         },
-        "model_family": {
-          "$ref": "#/$defs/model_family"
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "candidate_id",
+              "model_family",
+              "primary_metric",
+              "secondary_metrics"
+            ],
+            "properties": {
+              "candidate_id": {
+                "$ref": "#/$defs/model_family"
+              },
+              "model_family": {
+                "$ref": "#/$defs/model_family"
+              },
+              "primary_metric": {
+                "$ref": "#/$defs/metric_value"
+              },
+              "secondary_metrics": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/metric_value"
+                }
+              },
+              "classification_evidence": {
+                "$ref": "#/$defs/classification_evidence"
+              }
+            }
+          }
         },
-        "selected_model_reference": {
-          "$ref": "#/$defs/training_parameter_record_path"
+        "selected_model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "candidate_id",
+            "model_family",
+            "selected_model_reference",
+            "reference_kind"
+          ],
+          "properties": {
+            "candidate_id": {
+              "$ref": "#/$defs/model_family"
+            },
+            "model_family": {
+              "$ref": "#/$defs/model_family"
+            },
+            "selected_model_reference": {
+              "$ref": "#/$defs/training_parameter_record_path"
+            },
+            "reference_kind": {
+              "type": "string",
+              "const": "training_parameter_record_path"
+            }
+          }
         },
-        "reference_kind": {
-          "type": "string",
-          "const": "training_parameter_record_path"
-        }
-      }
-    },
-    "selection_rationale": {
-      "type": "string",
-      "minLength": 1
-    },
-    "path_references": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "model_selection_evidence_path",
-        "training_parameter_record_path",
-        "execution_contract_path"
-      ],
-      "properties": {
-        "model_selection_evidence_path": {
-          "type": "string",
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-selection-evidence\\.json$"
-        },
-        "training_parameter_record_path": {
-          "$ref": "#/$defs/training_parameter_record_path"
-        },
-        "execution_contract_path": {
+        "selection_rationale": {
           "type": "string",
           "minLength": 1
+        },
+        "path_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_selection_evidence_path",
+            "training_parameter_record_path",
+            "execution_contract_path"
+          ],
+          "properties": {
+            "model_selection_evidence_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-selection-evidence\\.json$"
+            },
+            "training_parameter_record_path": {
+              "$ref": "#/$defs/training_parameter_record_path"
+            },
+            "execution_contract_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "execution_contract_sha256"
+          ],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "execution_contract_sha256": {
+              "$ref": "#/$defs/sha256_hex"
+            }
+          }
+        },
+        "evidence_policy": {
+          "$ref": "#/$defs/evidence_policy"
         }
       }
     },
-    "hashes": {
+    "external_fitted_model_evidence_v1": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Project Spec S0157: external fitted-model selection evidence. Package-relative and handoff-lineage references only -- never fabricated pipeline/training-runs/** paths, since no Atlas training run produced this evidence.",
       "required": [
-        "algorithm",
-        "execution_contract_sha256"
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "evidence_identity",
+        "dataset_identity",
+        "selection_protocol",
+        "selection_policy",
+        "cross_validation_summary",
+        "validation_metrics",
+        "practical_tie",
+        "candidates",
+        "selected_candidate",
+        "selection_rationale",
+        "sealed_test_confirmation",
+        "path_references",
+        "hashes",
+        "evidence_policy"
       ],
       "properties": {
-        "algorithm": {
+        "schema_version": {
           "type": "string",
-          "const": "sha256"
+          "const": "model-selection-evidence.external-fitted-model.v1"
         },
-        "execution_contract_sha256": {
-          "$ref": "#/$defs/sha256_hex"
+        "artifact_kind": {
+          "type": "string",
+          "const": "model_selection_evidence"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evidence_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_source_mode", "producer", "handoff_lineage_reference"],
+          "properties": {
+            "model_source_mode": {
+              "type": "string",
+              "const": "validated_external_fitted_model"
+            },
+            "producer": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Identity of the external producer/pipeline that generated this evidence."
+            },
+            "handoff_lineage_reference": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reference into the validated external handoff/projection lineage this evidence was produced under. Never an Atlas training-run path."
+            }
+          }
+        },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": {
+              "$ref": "#/$defs/dataset_slug"
+            }
+          }
+        },
+        "selection_protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol_id"],
+          "properties": {
+            "protocol_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Identifier of the model-selection protocol used by the external producer (e.g. cross_validation_with_practical_tie_break)."
+            }
+          }
+        },
+        "selection_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary_metric", "ranking_direction"],
+          "properties": {
+            "primary_metric": {
+              "$ref": "#/$defs/metric_name"
+            },
+            "ranking_direction": {
+              "type": "string",
+              "enum": ["higher_is_better", "lower_is_better"]
+            }
+          }
+        },
+        "cross_validation_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["partition_role", "metric_summaries"],
+          "description": "Cross-validation may only ever use the training partition.",
+          "properties": {
+            "partition_role": {
+              "type": "string",
+              "const": "train"
+            },
+            "metric_summaries": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "mean"],
+                "properties": {
+                  "name": { "$ref": "#/$defs/metric_name" },
+                  "mean": { "type": "number" },
+                  "standard_deviation": { "type": "number", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        "validation_metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["partition_role", "metrics"],
+          "properties": {
+            "partition_role": {
+              "type": "string",
+              "const": "validation"
+            },
+            "metrics": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/metric_value" }
+            }
+          }
+        },
+        "practical_tie": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tolerance", "tie_detected", "tie_break_criteria"],
+          "description": "A practical tie must carry the numeric tolerance and unrounded evidence used to determine it -- never inferred from rounded display values.",
+          "properties": {
+            "tolerance": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "tie_detected": {
+              "type": "boolean"
+            },
+            "tie_break_criteria": {
+              "type": "array",
+              "description": "Ordered tie-break criteria actually applied. Empty when tie_detected is false.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["order", "criterion", "observed_values"],
+                "properties": {
+                  "order": { "type": "integer", "minimum": 1 },
+                  "criterion": { "$ref": "#/$defs/tie_break_criterion" },
+                  "observed_values": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["candidate_id", "value"],
+                      "properties": {
+                        "candidate_id": { "type": "string", "minLength": 1 },
+                        "value": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/external_candidate" }
+        },
+        "selected_candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["candidate_id"],
+          "description": "References a candidate_id from the candidates array by identity only -- no duplicated model_family/estimator fields here, so selected-candidate identity can never contradict its own candidate entry. Consumers must cross-check candidate_id membership against the candidates array.",
+          "properties": {
+            "candidate_id": { "type": "string", "minLength": 1 }
+          }
+        },
+        "selection_rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sealed_test_confirmation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["test_partition_role", "used_for_model_selection", "sealed_before_selection"],
+          "properties": {
+            "test_partition_role": {
+              "type": "string",
+              "const": "test"
+            },
+            "used_for_model_selection": {
+              "type": "boolean",
+              "const": false
+            },
+            "sealed_before_selection": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        },
+        "path_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_selection_evidence_reference"],
+          "properties": {
+            "model_selection_evidence_reference": {
+              "$ref": "#/$defs/package_relative_path"
+            }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "model_state_fingerprint"],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "model_state_fingerprint": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "Semantic fingerprint of the selected fitted model's state, supplied by the validated handoff lineage. Must be consistent with the same fingerprint recorded in the corresponding external training-parameter-record and, when present, inference-bundle evidence."
+            }
+          }
+        },
+        "evidence_policy": {
+          "$ref": "#/$defs/evidence_policy"
         }
       }
     },
-    "evidence_policy": {
-      "$ref": "#/$defs/evidence_policy"
-    }
-  },
-  "$defs": {
+    "external_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "model_family", "estimator_identity"],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "model_family": { "$ref": "#/$defs/external_model_family" },
+        "estimator_identity": { "$ref": "#/$defs/estimator_identity" }
+      }
+    },
+    "external_model_family": {
+      "type": "string",
+      "enum": ["hist_gradient_boosting"],
+      "description": "Project Spec S0157: bounded external-evidence model family vocabulary. Deliberately disjoint from pipeline.training's SUPPORTED_MODEL_FAMILIES."
+    },
+    "estimator_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["library", "class_name"],
+      "description": "Bounded structured estimator identity. Never an arbitrary module import path or callable string.",
+      "properties": {
+        "library": {
+          "type": "string",
+          "enum": ["scikit-learn"]
+        },
+        "class_name": {
+          "type": "string",
+          "enum": ["HistGradientBoostingClassifier"]
+        }
+      }
+    },
+    "tie_break_criterion": {
+      "type": "string",
+      "enum": [
+        "brier_score",
+        "log_loss",
+        "cross_validation_standard_deviation",
+        "roc_auc",
+        "interpretability",
+        "complexity"
+      ],
+      "description": "Bounded ordered tie-break vocabulary. brier_score and log_loss are lower-is-better criteria."
+    },
+    "package_relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!pipeline/training-runs/)[A-Za-z0-9][A-Za-z0-9._/-]*$",
+      "description": "Package-relative path belonging to the validated external handoff package. Explicitly never a pipeline/training-runs/** Atlas training-run path."
+    },
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
     "training_run_identity": {
       "type": "object",
       "additionalProperties": false,
@@ -196,7 +500,13 @@
         "f1",
         "accuracy",
         "log_loss",
-        "pr_auc"
+        "pr_auc",
+        "average_precision",
+        "precision",
+        "recall",
+        "f2",
+        "balanced_accuracy",
+        "brier_score"
       ]
     },
     "metric_value": {

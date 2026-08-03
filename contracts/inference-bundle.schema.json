@@ -12,7 +12,6 @@
     "release_context",
     "contract_references",
     "prepared_dataset",
-    "training_evidence",
     "model_artifact",
     "runtime_execution",
     "input_schema",
@@ -21,6 +20,29 @@
     "output_schema",
     "compatibility_constraints",
     "boundary_confirmations"
+  ],
+  "allOf": [
+    {
+      "description": "Project Spec S0157: training_evidence (Atlas internal-training-run-shaped) remains required for every historical bundle and every bundle that omits model_provenance_origin or declares it atlas_internal_training -- unchanged default behavior. A bundle explicitly declaring model_provenance_origin: validated_external_fitted_model must carry external_model_evidence instead, and must never also carry training_evidence, so an external fitted-model origin can never be paired with an Atlas internal training-run identity.",
+      "if": {
+        "properties": {
+          "model_provenance_origin": { "const": "validated_external_fitted_model" }
+        },
+        "required": ["model_provenance_origin"]
+      },
+      "then": {
+        "required": ["external_model_evidence"],
+        "properties": {
+          "training_evidence": { "not": {} }
+        }
+      },
+      "else": {
+        "required": ["training_evidence"],
+        "properties": {
+          "external_model_evidence": { "not": {} }
+        }
+      }
+    }
   ],
   "properties": {
     "contract_version": {
@@ -429,6 +451,15 @@
       "$ref": "#/$defs/binary_result_semantics",
       "description": "Project Spec S0108: optional, backward-compatible normalized binary-result release metadata. Present only on newly generated binary bundles whose execution contract carries a reviewed, materialized result_semantics; absent (never null) for historical bundles. Strictly validated when present."
     },
+    "model_provenance_origin": {
+      "type": "string",
+      "enum": ["atlas_internal_training", "validated_external_fitted_model"],
+      "description": "Project Spec S0157: optional, backward-compatible explicit model-provenance declaration for this bundle. Absent (the default for every historical bundle) or atlas_internal_training keeps the existing training_evidence-based shape unchanged. validated_external_fitted_model switches the required provenance block to external_model_evidence and forbids training_evidence on the same bundle. S0157 does not make the current Atlas runtime consume a validated_external_fitted_model bundle -- runtime architecture and load-safe implementation belong to later specs."
+    },
+    "external_model_evidence": {
+      "$ref": "#/$defs/external_model_evidence",
+      "description": "Project Spec S0157: present only when model_provenance_origin is validated_external_fitted_model. Carries external fitted-model provenance and educational-vs-operational readiness evidence. Never present on a bundle that also carries training_evidence."
+    },
     "boundary_confirmations": {
       "type": "object",
       "additionalProperties": false,
@@ -674,6 +705,131 @@
               "description": "Deterministic projection of model_family via a fixed code mapping. Never editable profile copy."
             }
           }
+        }
+      }
+    },
+    "estimator_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["library", "class_name"],
+      "description": "Project Spec S0157: bounded structured estimator identity. Never an arbitrary module import path or callable string.",
+      "properties": {
+        "library": { "type": "string", "enum": ["scikit-learn"] },
+        "class_name": { "type": "string", "enum": ["HistGradientBoostingClassifier"] }
+      }
+    },
+    "external_model_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0157: validated external fitted-model provenance and educational-vs-operational readiness evidence. S0157 does not make the current Atlas runtime consume this profile.",
+      "required": [
+        "origin",
+        "evidence_references",
+        "model_family",
+        "estimator_identity",
+        "model_state_fingerprint",
+        "educational_threshold",
+        "final_test_completion",
+        "readiness"
+      ],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "validated_external_fitted_model"
+        },
+        "evidence_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_selection_evidence_reference",
+            "training_parameter_record_reference",
+            "training_metrics_reference"
+          ],
+          "properties": {
+            "model_selection_evidence_reference": { "$ref": "#/$defs/versioned_artifact_reference" },
+            "training_parameter_record_reference": { "$ref": "#/$defs/versioned_artifact_reference" },
+            "training_metrics_reference": { "$ref": "#/$defs/versioned_artifact_reference" }
+          }
+        },
+        "model_family": {
+          "type": "string",
+          "enum": ["hist_gradient_boosting"]
+        },
+        "estimator_identity": { "$ref": "#/$defs/estimator_identity" },
+        "model_state_fingerprint": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "Must be consistent with the same fingerprint carried by the corresponding external model-selection-evidence and training-parameter-record evidence. A mismatch across those references is rejected."
+        },
+        "educational_threshold": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "label", "selection_partition", "scenario"],
+          "description": "An educational decision threshold retained as evidence -- structurally distinct from any future operational threshold, never mislabeled operational, and always selected on the validation partition (never test).",
+          "properties": {
+            "value": { "type": "number", "minimum": 0, "maximum": 1 },
+            "label": { "type": "string", "const": "educational" },
+            "selection_partition": { "type": "string", "const": "validation" },
+            "scenario": { "type": "string", "minLength": 1 }
+          }
+        },
+        "final_test_completion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["used_for_threshold_selection", "evaluation_count"],
+          "properties": {
+            "used_for_threshold_selection": { "type": "boolean", "const": false },
+            "evaluation_count": { "type": "integer", "const": 1 }
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "educational_final_model_complete",
+            "educational_inference_demo_ready",
+            "operational_modeling_ready",
+            "operational_validity",
+            "operational_threshold",
+            "operational_prediction_available"
+          ],
+          "properties": {
+            "educational_final_model_complete": { "type": "boolean" },
+            "educational_inference_demo_ready": { "type": "boolean" },
+            "operational_modeling_ready": { "type": "boolean", "const": false },
+            "operational_validity": { "type": "string", "enum": ["confirmed", "unconfirmed"] },
+            "operational_threshold": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "value"],
+              "properties": {
+                "status": { "type": "string", "enum": ["resolved", "unresolved"] },
+                "value": { "type": ["number", "null"] }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "status": { "const": "unresolved" } }, "required": ["status"] },
+                  "then": { "properties": { "value": { "const": null } } }
+                },
+                {
+                  "if": { "properties": { "status": { "const": "resolved" } }, "required": ["status"] },
+                  "then": { "properties": { "value": { "type": "number" } } }
+                }
+              ]
+            },
+            "operational_prediction_available": { "type": "boolean" }
+          },
+          "allOf": [
+            {
+              "description": "operational_prediction_available = true is rejected when operational_validity is unconfirmed.",
+              "if": {
+                "properties": { "operational_prediction_available": { "const": true } },
+                "required": ["operational_prediction_available"]
+              },
+              "then": {
+                "properties": { "operational_validity": { "const": "confirmed" } }
+              }
+            }
+          ]
         }
       }
     }

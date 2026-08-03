@@ -2053,6 +2053,35 @@ def _require_execution_ready_contract(full_contract: dict[str, Any]) -> None:
     )
 
 
+def _require_atlas_trainable_model_source(full_contract: dict[str, Any]) -> None:
+    """Reject an execution contract explicitly declaring a model source Atlas must never fit.
+
+    Project Spec S0157: a `validated_external_fitted_model` contract must
+    never reach estimator construction, `fit`, or `fit_transform` in this
+    governed entrypoint -- external fitted-model evidence requires the later
+    validated handoff/projection flow, not Atlas training. This is checked
+    before `_load_execution_contract` (which builds the reduced training
+    interface subset) and before any estimator-construction/model-selection
+    code runs. A contract that omits `model_source_mode` entirely, or that
+    declares it explicitly as `atlas_internal_training`, is unaffected and
+    proceeds through the existing internal-training path unchanged.
+    """
+    model_source_mode = full_contract.get("model_source_mode", "atlas_internal_training")
+    if model_source_mode != "validated_external_fitted_model":
+        return
+    raise TrainingInputError(
+        "external_fitted_model_not_trainable_by_atlas",
+        (
+            "execution_contract.model_source_mode is 'validated_external_fitted_model'; "
+            "this governed training entrypoint never constructs or fits an estimator for "
+            "a contract declaring a validated external fitted model. External fitted-model "
+            "evidence requires the later validated handoff/projection flow, not Atlas "
+            "training."
+        ),
+        field="model_source_mode",
+    )
+
+
 def train_from_paths(
     execution_contract_path: str | Path,
     dataset_path: str | Path,
@@ -2065,6 +2094,7 @@ def train_from_paths(
     prepared_dataset_path = Path(dataset_path)
     full_contract = _load_json_file(contract_path, "execution_contract_path")
     _require_execution_ready_contract(full_contract)
+    _require_atlas_trainable_model_source(full_contract)
     contract = _load_execution_contract(contract_path)
     rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
     _validate_dataset(rows, prepared_dataset_id, contract)

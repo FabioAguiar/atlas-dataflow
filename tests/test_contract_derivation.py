@@ -14,6 +14,11 @@ from pipeline.contract_derivation import (
     _derive_public_feature,
     _derive_public_options,
     _fresh_label,
+    categorical_known_values,
+    categorical_scalar_type,
+    categorical_validation_behavior,
+    condition_value_type_compatible,
+    conditional_policy_errors,
     project_execution_contract_draft,
 )
 from pipeline.discovery_evidence import build_binary_result_semantics_intent
@@ -87,6 +92,194 @@ def test_boolean_feature_never_has_options_key() -> None:
 def test_derive_public_options_returns_none_for_non_categorical_feature() -> None:
     feature = {"name": "age", "type": "numeric", "domain_constraints": {"min": 0, "max": 1}}
     assert _derive_public_options(feature) is None
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0156: categorical/conditional-policy helpers and their
+# effect on public projection.
+# ---------------------------------------------------------------------------
+
+
+def test_open_categorical_known_values_produce_typed_options_with_select_value_type():
+    feature = {
+        "name": "account_id_flag",
+        "type": "categorical",
+        "required": True,
+        "domain_constraints": {
+            "known_values": [0, 1],
+            "categorical_value_type": "integer",
+            "validation_behavior": "reject_unknown",
+        },
+    }
+    public = _derive_public_feature(feature, display_order=1)
+    assert public["options"] == [{"value": 0, "label": "0"}, {"value": 1, "label": "1"}]
+    assert public["select_value_type"] == "integer"
+
+
+def test_string_open_categorical_projects_string_select_value_type():
+    feature = {
+        "name": "plan_type",
+        "type": "categorical",
+        "required": True,
+        "domain_constraints": {
+            "known_values": ["basic", "pro"],
+            "categorical_value_type": "string",
+            "validation_behavior": "ignore_and_report",
+        },
+    }
+    public = _derive_public_feature(feature, display_order=1)
+    assert public["options"] == [
+        {"value": "basic", "label": "Basic"},
+        {"value": "pro", "label": "Pro"},
+    ]
+    assert public["select_value_type"] == "string"
+
+
+def test_legacy_categorical_feature_projects_string_select_value_type():
+    feature = _categorical_feature()
+    public = _derive_public_feature(feature, display_order=1)
+    assert public["select_value_type"] == "string"
+
+
+def test_numeric_and_boolean_features_never_carry_select_value_type():
+    numeric = {"name": "age", "type": "numeric", "required": True, "domain_constraints": {"min": 0, "max": 1}}
+    boolean = {"name": "employed", "type": "boolean", "required": False}
+    assert "select_value_type" not in _derive_public_feature(numeric, display_order=1)
+    assert "select_value_type" not in _derive_public_feature(boolean, display_order=1)
+
+
+def test_conditional_blank_policy_projects_presentation_metadata_only():
+    feature = {
+        "name": "total_amount",
+        "type": "numeric",
+        "required": True,
+        "input_policy": {
+            "conditional_blank_normalization": {
+                "accepted_representation": "blank_string_after_trim",
+                "when": {"field": "tenure_months", "operator": "equals", "value": 0},
+                "materialized_value": 0.0,
+                "otherwise": "reject",
+                "null_behavior": "reject",
+            }
+        },
+    }
+    public = _derive_public_feature(feature, display_order=1)
+    assert public["conditional_blank_policy"] == {"accepted_representation": "blank_string_after_trim"}
+    # The condition field/operator/comparison value and the materialized
+    # value must never leak into the public projection.
+    assert "when" not in public["conditional_blank_policy"]
+    assert "materialized_value" not in public["conditional_blank_policy"]
+
+
+def test_feature_without_input_policy_has_no_conditional_blank_policy_key():
+    feature = {"name": "age", "type": "numeric", "required": True}
+    public = _derive_public_feature(feature, display_order=1)
+    assert "conditional_blank_policy" not in public
+
+
+def test_categorical_scalar_type_defaults_to_string_when_undeclared():
+    assert categorical_scalar_type(None) == "string"
+    assert categorical_scalar_type({"values": ["a", "b"]}) == "string"
+    assert categorical_scalar_type({"categorical_value_type": "integer"}) == "integer"
+
+
+def test_categorical_known_values_falls_back_to_legacy_values():
+    assert categorical_known_values({"values": ["a", "b"]}) == ["a", "b"]
+    assert categorical_known_values({"known_values": [1, 2]}) == [1, 2]
+    assert categorical_known_values({}) is None
+
+
+def test_categorical_validation_behavior_defaults_to_reject_unknown():
+    assert categorical_validation_behavior(None) == "reject_unknown"
+    assert categorical_validation_behavior({"values": ["a"]}) == "reject_unknown"
+    assert categorical_validation_behavior({"validation_behavior": "ignore_and_report"}) == "ignore_and_report"
+
+
+def test_condition_value_type_compatible_across_feature_types():
+    assert condition_value_type_compatible(0, "numeric", {}) is True
+    assert condition_value_type_compatible(True, "numeric", {}) is False
+    assert condition_value_type_compatible(True, "boolean", {}) is True
+    assert condition_value_type_compatible(0, "boolean", {}) is False
+    assert condition_value_type_compatible(
+        "basic", "categorical", {"domain_constraints": {"categorical_value_type": "string"}}
+    ) is True
+    assert condition_value_type_compatible(
+        1, "categorical", {"domain_constraints": {"categorical_value_type": "integer"}}
+    ) is True
+    assert condition_value_type_compatible(
+        True, "categorical", {"domain_constraints": {"categorical_value_type": "integer"}}
+    ) is False
+
+
+def test_conditional_policy_errors_detects_self_reference_and_unknown_field():
+    feature_columns = ["total_amount", "tenure_months"]
+    feature_definitions = {
+        "total_amount": {
+            "type": "numeric",
+            "input_policy": {
+                "conditional_blank_normalization": {
+                    "accepted_representation": "blank_string_after_trim",
+                    "when": {"field": "total_amount", "operator": "equals", "value": 0},
+                    "materialized_value": 0.0,
+                    "otherwise": "reject",
+                    "null_behavior": "reject",
+                }
+            },
+        },
+        "tenure_months": {"type": "numeric"},
+    }
+    errors = conditional_policy_errors(feature_columns, feature_definitions)
+    assert any("reference itself" in e for e in errors)
+
+    feature_definitions["total_amount"]["input_policy"]["conditional_blank_normalization"]["when"][
+        "field"
+    ] = "not_a_real_field"
+    errors = conditional_policy_errors(feature_columns, feature_definitions)
+    assert any("not a declared feature column" in e for e in errors)
+
+
+def test_conditional_policy_errors_detects_type_incompatible_comparison_value():
+    feature_columns = ["total_amount", "plan_type"]
+    feature_definitions = {
+        "total_amount": {
+            "type": "numeric",
+            "input_policy": {
+                "conditional_blank_normalization": {
+                    "accepted_representation": "blank_string_after_trim",
+                    "when": {"field": "plan_type", "operator": "equals", "value": 0},
+                    "materialized_value": 0.0,
+                    "otherwise": "reject",
+                    "null_behavior": "reject",
+                }
+            },
+        },
+        "plan_type": {
+            "type": "categorical",
+            "domain_constraints": {"categorical_value_type": "string", "known_values": ["basic"]},
+        },
+    }
+    errors = conditional_policy_errors(feature_columns, feature_definitions)
+    assert any("incompatible" in e for e in errors)
+
+
+def test_conditional_policy_errors_empty_for_valid_condition():
+    feature_columns = ["total_amount", "tenure_months"]
+    feature_definitions = {
+        "total_amount": {
+            "type": "numeric",
+            "input_policy": {
+                "conditional_blank_normalization": {
+                    "accepted_representation": "blank_string_after_trim",
+                    "when": {"field": "tenure_months", "operator": "equals", "value": 0},
+                    "materialized_value": 0.0,
+                    "otherwise": "reject",
+                    "null_behavior": "reject",
+                }
+            },
+        },
+        "tenure_months": {"type": "numeric"},
+    }
+    assert conditional_policy_errors(feature_columns, feature_definitions) == []
 
 
 def test_derived_contract_with_options_passes_safety_check() -> None:

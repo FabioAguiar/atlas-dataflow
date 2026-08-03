@@ -145,6 +145,10 @@
         "domain_constraints": {
           "type": "object",
           "description": "Optional value domain constraints. Shape is determined by the feature type: numeric features use numeric_domain_constraints (min/max); categorical features use categorical_domain_constraints (values list). Must be absent for boolean features. Projected into runtime_contract feature.domain_constraints via M23-04."
+        },
+        "input_policy": {
+          "$ref": "#/definitions/input_policy",
+          "description": "Project Spec S0156: optional, backward-compatible runtime input-normalization policy, distinct from the generic training missing_value_policy above. Carried verbatim into the runtime contract projection. Absent for every feature that does not explicitly declare one."
         }
       },
       "if": {
@@ -185,15 +189,122 @@
     },
     "categorical_domain_constraints": {
       "type": "object",
-      "required": ["values"],
       "additionalProperties": false,
-      "description": "Enumerated accepted values for categorical features. Mirrors the runtime contract convention to allow direct projection into runtime_contract feature.domain_constraints.",
+      "description": "Enumerated accepted-value guidance for categorical features. Mirrors the runtime contract convention to allow direct projection into runtime_contract feature.domain_constraints. Exactly one of the legacy 'values' vocabulary and the Project Spec S0156 'known_values' vocabulary may be declared -- both present simultaneously is a contradictory dual declaration and is rejected structurally.",
       "properties": {
         "values": {
           "type": "array",
           "minItems": 1,
           "items": { "type": "string" },
-          "description": "Non-empty list of accepted string values for this categorical feature."
+          "description": "Legacy: non-empty list of accepted string values for this categorical feature. Absence of validation_behavior alongside 'values' preserves the existing closed-domain (reject_unknown) rejection semantics."
+        },
+        "known_values": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": ["string", "integer"] },
+          "description": "Project Spec S0156: non-empty, typed list of known values for this categorical feature -- rendering/documentation/evidence guidance, independent from validation_behavior. Every item must share the declared categorical_value_type scalar type; booleans are never accepted as integer known values."
+        },
+        "categorical_value_type": {
+          "type": "string",
+          "enum": ["string", "integer"],
+          "description": "Project Spec S0156: the declared scalar type of this categorical feature's values. Required whenever known_values is declared."
+        },
+        "validation_behavior": {
+          "type": "string",
+          "enum": ["reject_unknown", "ignore_and_report"],
+          "description": "Project Spec S0156: explicit runtime unknown-category behavior. reject_unknown preserves the existing closed-domain behavior; ignore_and_report accepts a correctly-typed unknown value, preserves it unchanged, and emits a bounded UNKNOWN_CATEGORY_ACCEPTED observation. Never inferred from model family or dataset slug."
+        }
+      },
+      "oneOf": [
+        { "required": ["values"] },
+        { "required": ["known_values"] }
+      ],
+      "allOf": [
+        {
+          "if": { "required": ["known_values"] },
+          "then": { "required": ["categorical_value_type"] }
+        },
+        {
+          "if": {
+            "properties": { "categorical_value_type": { "const": "string" } },
+            "required": ["categorical_value_type"]
+          },
+          "then": {
+            "properties": { "known_values": { "items": { "type": "string" } } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "categorical_value_type": { "const": "integer" } },
+            "required": ["categorical_value_type"]
+          },
+          "then": {
+            "properties": { "known_values": { "items": { "type": "integer" } } }
+          }
+        }
+      ]
+    },
+    "input_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0156: runtime input-normalization policy for a single feature, distinct from generic training missing_value_policy. Every listed behavior must be explicit and schema-validated.",
+      "properties": {
+        "conditional_blank_normalization": {
+          "$ref": "#/definitions/conditional_blank_normalization"
+        }
+      }
+    },
+    "conditional_blank_normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted_representation", "when", "materialized_value", "otherwise", "null_behavior"],
+      "description": "Project Spec S0156: a deterministic, side-effect-free conditional blank-input normalization rule. Distinct from generic learned missing-value imputation -- no learned strategy is ever applied here. A feature carrying this policy may remain required: true while still accepting an explicitly declared blank representation only under its declared condition.",
+      "properties": {
+        "accepted_representation": {
+          "type": "string",
+          "const": "blank_string_after_trim",
+          "description": "The only accepted blank input representation: a string that is empty after trimming leading/trailing whitespace."
+        },
+        "when": {
+          "$ref": "#/definitions/equality_condition",
+          "description": "The deterministic equality condition that must hold against another declared feature for the blank representation to be accepted."
+        },
+        "materialized_value": {
+          "type": ["number", "string", "boolean"],
+          "description": "The fixed constant value the accepted blank representation is normalized to when the condition holds. Never learned or inferred."
+        },
+        "otherwise": {
+          "type": "string",
+          "const": "reject",
+          "description": "Behavior when the condition does not hold: the blank representation is rejected with a stable, dedicated conditional-missing validation failure."
+        },
+        "null_behavior": {
+          "type": "string",
+          "const": "reject",
+          "description": "JSON null is never reclassified as an accepted blank representation, regardless of the condition."
+        }
+      }
+    },
+    "equality_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "operator", "value"],
+      "description": "Project Spec S0156: a bounded, deterministic equality comparison against another declared feature. Never an arbitrary expression, regex program, callable reference, or code string.",
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of another declared feature (must exist in feature_columns and must not reference the feature that owns this condition)."
+        },
+        "operator": {
+          "type": "string",
+          "const": "equals",
+          "description": "The only supported comparison operator."
+        },
+        "value": {
+          "type": ["string", "number", "boolean"],
+          "description": "The comparison value. Must be compatible with the referenced feature's declared scalar type."
         }
       }
     },

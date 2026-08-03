@@ -682,3 +682,160 @@ def test_real_telco_execution_contract_materialization_evidence_reports_full_cat
     assert sorted(coverage["approved_categorical_domains"]) == _TELCO_CATEGORICAL_FEATURE_NAMES
     assert coverage["unresolved_categorical_features"] == []
     assert coverage["values_inferred_during_materialization"] is False
+
+
+# ---------------------------------------------------------------------------
+# Conditional missing-value and open-categorical input contract evolution
+# (Project Spec S0156). Every fixture below is dataset-agnostic -- no
+# Telco-specific name or slug is used as a branching key.
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_contract_with_new_vocabulary() -> dict:
+    contract = _valid_contract()
+    contract["feature_columns"] = [
+        "total_amount",
+        "tenure_months",
+        "plan_type",
+        "account_id_flag",
+        "is_active",
+        "legacy_optional",
+    ]
+    contract["required_columns"] = [
+        "total_amount",
+        "tenure_months",
+        "plan_type",
+        "account_id_flag",
+        "is_active",
+    ]
+    contract["optional_columns"] = ["legacy_optional"]
+    contract["feature_definitions"] = {
+        "total_amount": {
+            "type": "numeric",
+            "input_policy": {
+                "conditional_blank_normalization": {
+                    "accepted_representation": "blank_string_after_trim",
+                    "when": {"field": "tenure_months", "operator": "equals", "value": 0},
+                    "materialized_value": 0.0,
+                    "otherwise": "reject",
+                    "null_behavior": "reject",
+                }
+            },
+        },
+        "tenure_months": {"type": "numeric"},
+        "plan_type": {
+            "type": "categorical",
+            "domain_constraints": {
+                "known_values": ["basic", "pro"],
+                "categorical_value_type": "string",
+                "validation_behavior": "ignore_and_report",
+            },
+        },
+        "account_id_flag": {
+            "type": "categorical",
+            "domain_constraints": {
+                "known_values": [0, 1],
+                "categorical_value_type": "integer",
+                "validation_behavior": "reject_unknown",
+            },
+        },
+        "is_active": {"type": "boolean"},
+        "legacy_optional": {
+            "type": "categorical",
+            "domain_constraints": {"values": ["x", "y"]},
+        },
+    }
+    contract["missing_value_policy"] = {}
+    return contract
+
+
+def test_synthetic_contract_with_new_vocabulary_passes_schema():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_synthetic_contract_with_new_vocabulary(), schema)
+
+
+def test_conditional_policy_rejects_arbitrary_operator():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    when = contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"]
+    when["operator"] = "greater_than"
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_conditional_policy_rejects_non_scalar_comparison_value():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    when = contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"]
+    when["value"] = {"$eval": "os.system('echo pwned')"}
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_conditional_policy_rejects_null_as_accepted_representation():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    policy = contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]
+    policy["null_behavior"] = "accept"
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_conditional_policy_requires_every_declared_field():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    del contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["otherwise"]
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_categorical_known_values_and_validation_behavior_independent_of_legacy_values():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    jsonschema.validate(contract, schema)
+    plan_type_domain = contract["feature_definitions"]["plan_type"]["domain_constraints"]
+    assert "values" not in plan_type_domain
+    assert plan_type_domain["known_values"] == ["basic", "pro"]
+    assert plan_type_domain["validation_behavior"] == "ignore_and_report"
+
+
+def test_contradictory_legacy_and_new_categorical_declarations_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    contract["feature_definitions"]["plan_type"]["domain_constraints"]["values"] = ["basic", "pro"]
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_integer_categorical_known_values_reject_boolean_items():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    contract["feature_definitions"]["account_id_flag"]["domain_constraints"]["known_values"] = [
+        True,
+        False,
+    ]
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_known_values_requires_categorical_value_type():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _synthetic_contract_with_new_vocabulary()
+    del contract["feature_definitions"]["plan_type"]["domain_constraints"]["categorical_value_type"]
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_legacy_categorical_definitions_remain_valid_without_new_vocabulary():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    jsonschema.validate(contract, schema)
+    assert "known_values" not in contract["feature_definitions"]["job"]["domain_constraints"]

@@ -246,6 +246,11 @@
           "enum": [
             "runtime_contract_features_object"
           ]
+        },
+        "input_policy_source": {
+          "type": "string",
+          "const": "runtime_contract",
+          "description": "Project Spec S0156: optional, backward-compatible explicit confirmation that input normalization (conditional blank-input policies) and categorical acceptance semantics (known_values/validation_behavior) are owned exclusively by the referenced runtime contract and must be honored before model invocation. Never a second, independently editable copy of those rules. Historical bundles omit this field and remain valid; only newly generated bundles for datasets using the new input-policy vocabulary need to set it."
         }
       }
     },

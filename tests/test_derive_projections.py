@@ -304,6 +304,211 @@ def test_form_ready_projection_reports_empty_unresolved_select_features(tmp_path
     assert evidence["unresolved_select_features"] == []
 
 
+def _contract_with_new_vocabulary() -> dict:
+    return _valid_contract(
+        feature_columns=[
+            "total_amount",
+            "tenure_months",
+            "plan_type",
+            "account_id_flag",
+            "is_active",
+            "legacy_optional",
+        ],
+        feature_definitions={
+            "total_amount": {
+                "type": "numeric",
+                "input_policy": {
+                    "conditional_blank_normalization": {
+                        "accepted_representation": "blank_string_after_trim",
+                        "when": {"field": "tenure_months", "operator": "equals", "value": 0},
+                        "materialized_value": 0.0,
+                        "otherwise": "reject",
+                        "null_behavior": "reject",
+                    }
+                },
+            },
+            "tenure_months": {"type": "numeric"},
+            "plan_type": {
+                "type": "categorical",
+                "domain_constraints": {
+                    "known_values": ["basic", "pro"],
+                    "categorical_value_type": "string",
+                    "validation_behavior": "ignore_and_report",
+                },
+            },
+            "account_id_flag": {
+                "type": "categorical",
+                "domain_constraints": {
+                    "known_values": [0, 1],
+                    "categorical_value_type": "integer",
+                    "validation_behavior": "reject_unknown",
+                },
+            },
+            "is_active": {"type": "boolean"},
+            "legacy_optional": {"type": "categorical", "domain_constraints": {"values": ["x", "y"]}},
+        },
+        required_columns=["total_amount", "tenure_months", "plan_type", "account_id_flag", "is_active"],
+        optional_columns=["legacy_optional"],
+    )
+
+
+def test_execution_input_semantics_carried_into_runtime_deterministically(tmp_path):
+    """Project Spec S0156: input_policy is CARRIED verbatim into the runtime
+    projection, and categorical known_values/categorical_value_type/
+    validation_behavior survive the projection inside domain_constraints."""
+    contract_path = _write_json(tmp_path, "contract.json", _contract_with_new_vocabulary())
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    runtime = json.loads((out_dir / "runtime-contract.json").read_text())
+    by_name = {f["name"]: f for f in runtime["features"]}
+
+    assert by_name["total_amount"]["input_policy"] == {
+        "conditional_blank_normalization": {
+            "accepted_representation": "blank_string_after_trim",
+            "when": {"field": "tenure_months", "operator": "equals", "value": 0},
+            "materialized_value": 0.0,
+            "otherwise": "reject",
+            "null_behavior": "reject",
+        }
+    }
+    assert by_name["plan_type"]["domain_constraints"] == {
+        "known_values": ["basic", "pro"],
+        "categorical_value_type": "string",
+        "validation_behavior": "ignore_and_report",
+    }
+    assert by_name["account_id_flag"]["domain_constraints"]["categorical_value_type"] == "integer"
+    assert by_name["is_active"].get("required") is True
+    assert by_name["total_amount"].get("required") is True
+
+
+def test_runtime_categorical_scalar_type_carried_into_public_serialization_hint(tmp_path):
+    """Project Spec S0156: known values become typed public options in
+    source order, and the public projection carries an explicit
+    select_value_type distinguishing string and integer selects."""
+    contract_path = _write_json(tmp_path, "contract.json", _contract_with_new_vocabulary())
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    public = json.loads((out_dir / "public-contract.json").read_text())
+    by_name = {f["name"]: f for f in public["features"]}
+
+    assert by_name["plan_type"]["select_value_type"] == "string"
+    assert [o["value"] for o in by_name["plan_type"]["options"]] == ["basic", "pro"]
+    assert by_name["account_id_flag"]["select_value_type"] == "integer"
+    assert [o["value"] for o in by_name["account_id_flag"]["options"]] == [0, 1]
+    assert all(isinstance(v, int) for v in [o["value"] for o in by_name["account_id_flag"]["options"]])
+    assert by_name["total_amount"]["conditional_blank_policy"] == {
+        "accepted_representation": "blank_string_after_trim"
+    }
+
+
+def test_ignore_and_report_categorical_still_projects_options_as_guidance_only(tmp_path):
+    """Project Spec S0156, acceptance criterion 26: an open ignore_and_report
+    categorical field may still expose known options as rendering guidance
+    -- derivation must not treat it as a closed-select-readiness gap."""
+    contract_path = _write_json(tmp_path, "contract.json", _contract_with_new_vocabulary())
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)  # must not raise
+    evidence = json.loads((out_dir / "projection-evidence.json").read_text())
+    assert evidence["unresolved_select_features"] == []
+
+
+def test_closed_select_without_known_values_still_blocks_derivation(tmp_path):
+    """Project Spec S0156, acceptance criterion 25: a closed (reject_unknown,
+    no legacy values) categorical field with no usable known options must
+    still fail the existing closed-select readiness gate."""
+    contract = _valid_contract(
+        feature_columns=["plan_type"],
+        feature_definitions={
+            "plan_type": {
+                "type": "categorical",
+                "domain_constraints": {
+                    "known_values": ["basic"],
+                    "categorical_value_type": "string",
+                    "validation_behavior": "reject_unknown",
+                },
+            },
+        },
+        required_columns=["plan_type"],
+    )
+    # Remove the only known value so the projected options list is empty --
+    # exercised via a second, genuinely-open-then-emptied fixture rather than
+    # a schema-invalid empty known_values (minItems: 1 forbids that).
+    contract["feature_definitions"]["plan_type"]["domain_constraints"]["known_values"] = ["basic"]
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    # A closed categorical WITH known_values is form-ready; confirm the
+    # positive case first.
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    public = json.loads((out_dir / "public-contract.json").read_text())
+    assert public["features"][0]["options"]
+
+    # Now the genuinely unresolved case: no values/known_values declared at
+    # all for a closed categorical field.
+    unresolved_contract = _valid_contract(
+        feature_columns=["housing"],
+        feature_definitions={"housing": {"type": "categorical"}},
+        required_columns=["housing"],
+    )
+    unresolved_path = _write_json(tmp_path, "unresolved.json", unresolved_contract)
+    with pytest.raises(DerivationFailed) as exc_info:
+        derive(unresolved_path, tmp_path / "unresolved_out", repo_root=REPO_ROOT)
+    assert any("housing" in e for e in exc_info.value.errors)
+
+
+def test_conditional_policy_self_reference_blocks_derivation(tmp_path):
+    contract = _contract_with_new_vocabulary()
+    contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"]["field"] = "total_amount"
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    with pytest.raises(DerivationFailed) as exc_info:
+        derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    assert any("reference itself" in e for e in exc_info.value.errors)
+    assert not (out_dir / "runtime-contract.json").exists()
+
+
+def test_conditional_policy_unknown_field_blocks_derivation(tmp_path):
+    contract = _contract_with_new_vocabulary()
+    contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"]["field"] = "does_not_exist"
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    with pytest.raises(DerivationFailed) as exc_info:
+        derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    assert any("does_not_exist" in e for e in exc_info.value.errors)
+
+
+def test_conditional_policy_incompatible_comparison_type_blocks_derivation(tmp_path):
+    contract = _contract_with_new_vocabulary()
+    contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"] = {"field": "plan_type", "operator": "equals", "value": 0}
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    with pytest.raises(DerivationFailed) as exc_info:
+        derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    assert any("incompatible" in e for e in exc_info.value.errors)
+
+
+def test_legacy_execution_contract_produces_equivalent_output_without_new_vocabulary(tmp_path):
+    """Project Spec S0156: a legacy execution contract with no new-vocabulary
+    declarations must project exactly the pre-S0156 shape -- no input_policy
+    key, no select_value_type/conditional_blank_policy surprises beyond the
+    always-present categorical select_value_type hint."""
+    contract_path = _write_json(tmp_path, "contract.json", _valid_contract())
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    runtime = json.loads((out_dir / "runtime-contract.json").read_text())
+    for feature in runtime["features"]:
+        assert "input_policy" not in feature
+    public = json.loads((out_dir / "public-contract.json").read_text())
+    by_name = {f["name"]: f for f in public["features"]}
+    assert "conditional_blank_policy" not in by_name["job"]
+    assert by_name["job"]["select_value_type"] == "string"
+
+
 def test_derivation_is_deterministic(tmp_path):
     """The same execution contract always produces identical runtime and public contract outputs."""
     contract_path = _write_json(tmp_path, "contract.json", _valid_contract())

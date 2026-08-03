@@ -20,7 +20,11 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from contract_loader import ContractUnavailableError, load_contract  # noqa: E402
-from payload_validator import TYPE_MISMATCH, ValidationFailure, validate_payload  # noqa: E402
+from payload_validator import (  # noqa: E402
+    TYPE_MISMATCH,
+    ValidationFailure,
+    validate_and_normalize_payload,
+)
 from public_errors import (  # noqa: E402
     CONTRACT_UNAVAILABLE,
     DATASET_MAINTENANCE,
@@ -670,9 +674,13 @@ def _execute_governed_inference(
     except ContractUnavailableError:
         return public_error_response(CONTRACT_UNAVAILABLE)
 
-    validation_failures = validate_payload(payload, runtime_contract)
-    if validation_failures:
-        return validation_error_response(validation_failures)
+    # Project Spec S0156: validate_and_normalize_payload is the governed
+    # entry point -- its normalized_payload (never the raw caller payload)
+    # is what reaches execute_prediction, so a conditional blank-input
+    # policy's materialized value is what the model actually sees.
+    validation_report = validate_and_normalize_payload(payload, runtime_contract)
+    if validation_report.failures:
+        return validation_error_response(validation_report.failures)
 
     resolved_manifest = _read_active_release_manifest(active_release)
     if resolved_manifest is None:
@@ -682,7 +690,7 @@ def _execute_governed_inference(
     try:
         prediction_result = execute_prediction(
             {"path": str(release_dir), "artifacts": manifest.get("artifacts", [])},
-            dict(payload),
+            dict(validation_report.normalized_payload),
             manifest=manifest,
             bundle_loader=_load_bundle,
             loader_strategies=_INFERENCE_LOADER_STRATEGIES,

@@ -72,11 +72,22 @@
         "options": {
           "type": "array",
           "title": "Safe Option Projection",
-          "description": "Projection rule OPTIONAL-DERIVED: present only for a categorical runtime feature (input_type 'select') whose domain_constraints.values is a non-empty list. Each entry is a minimal safe rendering option — a value identifier and a display label — derived from the runtime domain, never the runtime domain_constraints object itself. Must be entirely absent (not an empty array) when the runtime feature has no domain_constraints or an empty values list, giving the web experience a deterministic signal to fall back to an unguided input. This field is rendering guidance only; it is never authoritative for payload validation, which always happens against the runtime contract.",
+          "description": "Projection rule OPTIONAL-DERIVED: present only for a categorical runtime feature (input_type 'select') whose domain_constraints.values or known_values is a non-empty list. Each entry is a minimal safe rendering option — a value identifier and a display label — derived from the runtime domain, never the runtime domain_constraints object itself. Must be entirely absent (not an empty array) when the runtime feature has no domain_constraints or an empty values/known_values list, giving the web experience a deterministic signal to fall back to an unguided input. This field is rendering guidance only; it is never authoritative for payload validation, which always happens against the runtime contract. Project Spec S0156: for an 'ignore_and_report' categorical feature, options remain rendering guidance and must never be presented as the complete accepted runtime domain.",
           "minItems": 1,
           "items": {
             "$ref": "#/definitions/public_feature_option"
           }
+        },
+        "select_value_type": {
+          "type": "string",
+          "enum": ["string", "integer"],
+          "title": "Select Value Scalar Type",
+          "description": "Project Spec S0156: present only for a categorical runtime feature (input_type 'select'). A bounded scalar serialization hint copied from the runtime categorical scalar type, telling the web experience whether to submit a string or an integer JSON value for this field. Rendering/serialization guidance only -- never authoritative for backend payload validation, which always happens against the runtime contract."
+        },
+        "conditional_blank_policy": {
+          "$ref": "#/definitions/public_conditional_blank_policy",
+          "title": "Conditional Blank Presentation Metadata",
+          "description": "Project Spec S0156: present only when the runtime contract declares a conditional blank-input normalization policy for this feature. Presentation metadata only -- the backend runtime contract remains the sole authority that evaluates the cross-field condition; this tells the web experience to serialize the declared blank representation instead of omitting the key when the field is left blank."
         }
       }
     },
@@ -88,16 +99,29 @@
       "description": "A single safe rendering option for a select-type public contract feature. Required fields: value (CARRIED verbatim from the runtime domain value), label (FRESH display text for that value). Carries no domain bounds, validation semantics, or runtime-only structure.",
       "properties": {
         "value": {
-          "type": "string",
+          "type": ["string", "integer"],
           "minLength": 1,
           "title": "Option Value",
-          "description": "Projection rule CARRIED: value is carried verbatim from a single entry of the runtime contract feature's domain_constraints.values. Must match the value accepted by runtime payload validation for this feature."
+          "description": "Projection rule CARRIED: value is carried verbatim from a single entry of the runtime contract feature's domain_constraints.values or known_values. Must match the value accepted by runtime payload validation for this feature. Project Spec S0156: a categorical integer feature carries a JSON integer here, never a boolean and never a stringified number."
         },
         "label": {
           "type": "string",
           "minLength": 1,
           "title": "Option Display Label",
           "description": "Projection rule FRESH: label has no runtime contract equivalent and is independently derived for display purposes from the option value."
+        }
+      }
+    },
+    "public_conditional_blank_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted_representation"],
+      "title": "Public Conditional Blank Policy",
+      "description": "Project Spec S0156: presentation-only confirmation that this field has a contract-declared conditional blank-input policy. Deliberately does not expose the condition field/operator/comparison value or the materialized value -- the browser never evaluates the cross-field condition itself.",
+      "properties": {
+        "accepted_representation": {
+          "type": "string",
+          "const": "blank_string_after_trim"
         }
       }
     }

@@ -54,6 +54,7 @@ from pipeline.contract_derivation import (
     _check_safety,
     _derive_public_contract,
     _fresh_label,  # noqa: F401 — re-exported for downstream consumers
+    conditional_policy_errors,
     unresolved_select_features,
 )
 
@@ -135,6 +136,15 @@ def derive(
     if missing_errors:
         raise DerivationFailed(missing_errors)
 
+    # Step 2b — Project Spec S0156: validate every declared conditional
+    # blank-input policy's condition field before projecting anything --
+    # a self-referencing or unknown-field condition, or a comparison value
+    # incompatible with the referenced feature's declared scalar type, must
+    # block derivation rather than silently project a broken policy.
+    conditional_errors = conditional_policy_errors(feature_columns, feature_definitions)
+    if conditional_errors:
+        raise DerivationFailed(conditional_errors)
+
     # Step 3 — derive runtime contract (decision-08).
     runtime_features: list[dict] = []
     for name in feature_columns:
@@ -152,6 +162,11 @@ def derive(
             feature["domain_constraints"] = defn["domain_constraints"]
         if "description" in defn:
             feature["description"] = defn["description"]
+        # Project Spec S0156: runtime input-normalization policy is CARRIED
+        # verbatim from the execution contract -- api/payload_validator.py
+        # consumes it directly from the runtime contract.
+        if "input_policy" in defn:
+            feature["input_policy"] = defn["input_policy"]
         runtime_features.append(feature)
 
     runtime_contract: dict[str, Any] = {

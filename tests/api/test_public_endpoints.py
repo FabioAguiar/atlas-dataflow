@@ -2178,6 +2178,196 @@ def test_real_route_required_field_omission_still_rejected_before_execution_when
         _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0156: conditional blank-input normalization and open
+# ("ignore_and_report") categorical acceptance, exercised through the real
+# public inference route -- proving the governed path uses the *normalized*
+# payload (never the raw blank string) for execute_prediction, stops before
+# execution on a conditional-missing failure, and that an accepted unknown
+# category is observable only through successful route execution (never a
+# public response field). Mirrors the existing M32-03/S0152 route-mocking
+# style above rather than a real model fixture.
+# ---------------------------------------------------------------------------
+
+_S0156_RUNTIME_CONTRACT = {
+    "schema_version": "atlas.dataflow.runtime_contract.v1",
+    "features": [
+        {
+            "name": "total_amount",
+            "type": "numeric",
+            "required": True,
+            "input_policy": {
+                "conditional_blank_normalization": {
+                    "accepted_representation": "blank_string_after_trim",
+                    "when": {"field": "tenure_months", "operator": "equals", "value": 0},
+                    "materialized_value": 0.0,
+                    "otherwise": "reject",
+                    "null_behavior": "reject",
+                }
+            },
+        },
+        {"name": "tenure_months", "type": "numeric", "required": True},
+        {
+            "name": "plan_type",
+            "type": "categorical",
+            "required": True,
+            "domain_constraints": {
+                "known_values": ["basic", "pro"],
+                "categorical_value_type": "string",
+                "validation_behavior": "ignore_and_report",
+            },
+        },
+    ],
+}
+
+
+def _s0156_fixture_release(releases_root: str, release_id: str) -> None:
+    release_dir = Path(releases_root) / release_id
+    release_dir.mkdir(parents=True)
+    (release_dir / "manifest.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+
+
+def test_real_route_conditional_blank_field_materializes_declared_constant_before_execution():
+    """
+    A blank total_amount submitted while its condition (tenure_months == 0)
+    holds is trimmed and normalized to the declared constant, and it is that
+    normalized value -- never the raw blank string -- that reaches
+    execute_prediction.
+    """
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_releases_root = api_main._inference_releases_root
+    original_snapshot_readiness = _install_snapshot_ready_stub()
+    captured_calls = []
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-s0156-conditional-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _S0156_RUNTIME_CONTRACT
+
+        with tempfile.TemporaryDirectory() as releases_root:
+            _s0156_fixture_release(releases_root, "release-s0156-conditional-fixture")
+            api_main._inference_releases_root = lambda: Path(releases_root)
+
+            def _capture_execute_prediction(*args, **kwargs):
+                captured_calls.append((args, kwargs))
+                return {"result": _S0109_VALID_BINARY_RESULT}
+
+            api_main.execute_prediction = _capture_execute_prediction
+
+            response = api_main.validate_dataset_inference_payload(
+                "fixture-dataset",
+                payload={"total_amount": "  ", "tenure_months": 0, "plan_type": "basic"},
+            )
+
+        assert not hasattr(response, "status_code")
+        assert response["result"] == _S0109_VALID_BINARY_RESULT
+        _assert_no_internal_public_exposure(response)
+
+        assert len(captured_calls) == 1
+        positional_payload = captured_calls[0][0][1]
+        assert positional_payload["total_amount"] == 0.0
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        api_main._inference_releases_root = original_releases_root
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
+
+
+def test_real_route_conditional_blank_field_rejected_before_execution_when_condition_false():
+    """
+    The same blank total_amount, submitted while tenure_months != 0, must be
+    rejected with a stable, structured conditional-missing failure before
+    execute_prediction is ever reached.
+    """
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_snapshot_readiness = _install_snapshot_ready_stub()
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-s0156-conditional-false-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _S0156_RUNTIME_CONTRACT
+        api_main.execute_prediction = (
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("conditional-missing payload should fail before prediction execution")
+            )
+        )
+
+        response = api_main.validate_dataset_inference_payload(
+            "fixture-dataset",
+            payload={"total_amount": "", "tenure_months": 5, "plan_type": "basic"},
+        )
+
+        _assert_invalid_payload_response(
+            response,
+            "total_amount",
+            "CONDITIONAL_BLANK_REJECTED",
+            "conditional_blank_rejected",
+        )
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
+
+
+def test_real_route_unknown_open_categorical_value_is_accepted_and_preserved_unchanged():
+    """
+    An `ignore_and_report` categorical field submitted with a correctly
+    typed but unknown value is accepted (observable only through successful
+    route execution, per this spec's scope -- the bounded
+    UNKNOWN_CATEGORY_ACCEPTED observation is not surfaced publicly) and the
+    submitted value reaches execute_prediction unchanged.
+    """
+    original_resolve_dataset = api_main.resolve_dataset
+    original_load_contract = api_main.load_contract
+    original_execute_prediction = api_main.execute_prediction
+    original_releases_root = api_main._inference_releases_root
+    original_snapshot_readiness = _install_snapshot_ready_stub()
+    captured_calls = []
+    try:
+        api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+            dataset_slug=dataset_slug,
+            active_release="release-s0156-open-categorical-fixture",
+        )
+        api_main.load_contract = lambda _active_release: _S0156_RUNTIME_CONTRACT
+
+        with tempfile.TemporaryDirectory() as releases_root:
+            _s0156_fixture_release(releases_root, "release-s0156-open-categorical-fixture")
+            api_main._inference_releases_root = lambda: Path(releases_root)
+
+            def _capture_execute_prediction(*args, **kwargs):
+                captured_calls.append((args, kwargs))
+                return {"result": _S0109_VALID_BINARY_RESULT}
+
+            api_main.execute_prediction = _capture_execute_prediction
+
+            response = api_main.validate_dataset_inference_payload(
+                "fixture-dataset",
+                payload={"total_amount": 10.0, "tenure_months": 5, "plan_type": "enterprise"},
+            )
+
+        assert not hasattr(response, "status_code")
+        assert response["result"] == _S0109_VALID_BINARY_RESULT
+        _assert_no_internal_public_exposure(response)
+
+        assert len(captured_calls) == 1
+        positional_payload = captured_calls[0][0][1]
+        assert positional_payload["plan_type"] == "enterprise"
+    finally:
+        api_main.resolve_dataset = original_resolve_dataset
+        api_main.load_contract = original_load_contract
+        api_main.execute_prediction = original_execute_prediction
+        api_main._inference_releases_root = original_releases_root
+        _restore_snapshot_ready_stub(original_snapshot_readiness)
+
+
 def test_public_route_never_surfaces_runtime_input_contract_inconsistent_diagnostic():
     """
     Project Spec S0152, acceptance criteria 12/17: when the runtime raises

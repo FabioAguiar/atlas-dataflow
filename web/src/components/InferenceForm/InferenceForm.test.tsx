@@ -1003,6 +1003,179 @@ describe("InferenceForm injectable execution boundary (Project Spec S0143)", () 
   });
 });
 
+// Project Spec S0156: typed select serialization must follow explicit
+// public-contract metadata (select_value_type), never the selected option's
+// text or the field name -- and a contract-declared conditional blank field
+// must reach the backend with its declared blank representation instead of
+// being silently omitted.
+describe("InferenceForm typed select serialization and conditional blank policy (Project Spec S0156)", () => {
+  const stringSelectContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      {
+        name: "plan_type",
+        label: "Plan Type",
+        input_type: "select",
+        optional: false,
+        display_order: 1,
+        select_value_type: "string",
+        options: [
+          { value: "basic", label: "Basic" },
+          { value: "pro", label: "Pro" },
+        ],
+      },
+    ],
+  };
+
+  const integerSelectContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      {
+        name: "account_id_flag",
+        label: "Account Id Flag",
+        input_type: "select",
+        optional: false,
+        display_order: 1,
+        select_value_type: "integer",
+        options: [
+          { value: 0, label: "0" },
+          { value: 1, label: "1" },
+        ],
+      },
+    ],
+  };
+
+  const conditionalBlankNumericContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      {
+        name: "total_amount",
+        label: "Total Amount",
+        input_type: "number",
+        optional: false,
+        display_order: 1,
+        conditional_blank_policy: { accepted_representation: "blank_string_after_trim" },
+      },
+    ],
+  };
+
+  it("submits an integer categorical select as a JSON integer", async () => {
+    const executeInference = vi.fn(
+      async (
+        _slug: string,
+        _payload: Record<string, string | number | boolean>,
+      ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={integerSelectContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Account Id Flag/), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenLastCalledWith(slug, { account_id_flag: 1 });
+    expect(typeof executeInference.mock.calls[0][1].account_id_flag).toBe("number");
+  });
+
+  it("submits a string categorical select as a JSON string", async () => {
+    const executeInference = vi.fn(
+      async (
+        _slug: string,
+        _payload: Record<string, string | number | boolean>,
+      ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={stringSelectContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Plan Type/), { target: { value: "pro" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenLastCalledWith(slug, { plan_type: "pro" });
+    expect(typeof executeInference.mock.calls[0][1].plan_type).toBe("string");
+  });
+
+  it("submits the declared blank representation for a conditional blank field left empty, instead of omitting it", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={conditionalBlankNumericContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenLastCalledWith(slug, { total_amount: "" });
+  });
+
+  it("submits a provided numeric value unchanged for a conditional blank field, ignoring the blank-policy exception", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={conditionalBlankNumericContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Total Amount/), { target: { value: "42.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenLastCalledWith(slug, { total_amount: 42.5 });
+  });
+
+  it("Project Spec S0152 regression: an ordinary optional empty numeric field with no conditional policy is still omitted entirely", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenLastCalledWith(slug, {});
+  });
+});
+
 // Project Spec S0147: normalizeInferenceValidationIssues is the sole
 // boundary that may turn an unknown backend `errors` value into a safe,
 // bounded InferenceValidationIssue list -- exercised directly here (pure

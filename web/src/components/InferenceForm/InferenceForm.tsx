@@ -12,8 +12,19 @@ import {
 } from "../ResultCard/types";
 
 export type FeatureOption = {
-  value: string;
+  value: string | number;
   label: string;
+};
+
+/**
+ * Project Spec S0156: presentation-only confirmation that this field has a
+ * contract-declared conditional blank-input policy. Never carries the
+ * condition field/operator/comparison value or the materialized value -- the
+ * backend runtime contract remains the sole evaluator of the cross-field
+ * condition.
+ */
+export type ConditionalBlankPolicy = {
+  accepted_representation: "blank_string_after_trim";
 };
 
 export type Feature = {
@@ -24,6 +35,23 @@ export type Feature = {
   display_order: number;
   description?: string;
   options?: FeatureOption[];
+  /**
+   * Project Spec S0156: present only for input_type "select". A bounded
+   * scalar serialization hint copied from the runtime categorical scalar
+   * type -- string categorical selects submit a JSON string, integer
+   * categorical selects submit a JSON integer. Never inferred from the
+   * selected option's text or the field name.
+   */
+  select_value_type?: "string" | "integer";
+  /**
+   * Project Spec S0156: present only when the runtime contract declares a
+   * conditional blank-input normalization policy for this field. When
+   * present and the field is left blank, the form submits the declared
+   * blank representation instead of omitting the key, so the backend can
+   * evaluate the condition. Ordinary required number/select behavior and
+   * S0152 optional-omission behavior are unchanged when absent.
+   */
+  conditional_blank_policy?: ConditionalBlankPolicy;
 };
 
 export type ContractPayload = {
@@ -562,6 +590,14 @@ function FieldInput({
     </label>
   );
 
+  // Project Spec S0156: a contract-declared conditional blank policy means
+  // the backend must be allowed to evaluate the cross-field condition on a
+  // blank submission -- native HTML5 required-field validation would block
+  // form submission entirely before that value ever reaches handleSubmit,
+  // so it is relaxed for exactly this case. The visual required marker
+  // above is unaffected: the field remains logically required.
+  const nativeRequired = !feature.optional && !feature.conditional_blank_policy;
+
   const control = isCheckbox ? (
     <input
       className="public-inference-form__control public-inference-form__control--checkbox"
@@ -575,7 +611,7 @@ function FieldInput({
       className="public-inference-form__control"
       id={`field-${feature.name}`}
       name={feature.name}
-      required={!feature.optional}
+      required={nativeRequired}
       aria-describedby={describedBy}
     >
       {feature.options.map((option) => (
@@ -590,7 +626,7 @@ function FieldInput({
       type={feature.input_type === "number" ? "number" : "text"}
       id={`field-${feature.name}`}
       name={feature.name}
-      required={!feature.optional}
+      required={nativeRequired}
       aria-describedby={describedBy}
       min={isNumber ? numericDomain?.min : undefined}
       max={isNumber ? numericDomain?.max : undefined}
@@ -704,11 +740,32 @@ export default function InferenceForm({
         const raw = el ? el.value : "";
         if (raw !== "") {
           payload[feature.name] = Number(raw);
+        } else if (feature.conditional_blank_policy) {
+          // Project Spec S0156: a contract-declared conditional blank field
+          // must reach backend validation with its declared blank
+          // representation instead of being silently omitted -- the
+          // backend evaluates the cross-field condition, never the browser.
+          payload[feature.name] = "";
         }
+        // else: S0152 behavior unchanged -- an ordinary optional empty
+        // numeric input with no conditional policy is omitted entirely.
       } else {
-        const el = form.elements.namedItem(feature.name) as HTMLInputElement | null;
+        // "select" (rendered as a native <select> when options are
+        // available, or an unguided text input otherwise).
+        const el = form.elements.namedItem(feature.name) as
+          | HTMLInputElement
+          | HTMLSelectElement
+          | null;
         if (el && el.value !== "") {
-          payload[feature.name] = el.value;
+          // Project Spec S0156: serialize strictly from the contract's
+          // select_value_type hint, never from the selected text/label or
+          // the field name.
+          payload[feature.name] =
+            feature.input_type === "select" && feature.select_value_type === "integer"
+              ? Number(el.value)
+              : el.value;
+        } else if (feature.conditional_blank_policy) {
+          payload[feature.name] = "";
         }
       }
     }

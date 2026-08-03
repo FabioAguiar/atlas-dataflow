@@ -125,20 +125,121 @@ def _validate_schema(data, schema):
 
 def _fresh_label(name):
     """Deterministic FRESH label default: replace _ and - with spaces, apply title case."""
-    return name.replace("_", " ").replace("-", " ").title()
+    return str(name).replace("_", " ").replace("-", " ").title()
+
+
+# Project Spec S0156: shared categorical/conditional-policy helpers, reused by
+# pipeline/derive_projections.py and pipeline/validate_contract_consistency.py
+# so the scalar-type/condition-compatibility rules are defined exactly once.
+
+def categorical_scalar_type(domain_constraints):
+    """Resolve the declared scalar type ("string" or "integer") of a
+    categorical feature's domain_constraints. Defaults to "string" when
+    domain_constraints is absent/malformed or only declares the legacy
+    'values' vocabulary, matching current/legacy string-only behavior.
+    """
+    if not isinstance(domain_constraints, dict):
+        return "string"
+    declared = domain_constraints.get("categorical_value_type")
+    if declared in ("string", "integer"):
+        return declared
+    return "string"
+
+
+def categorical_known_values(domain_constraints):
+    """Return the effective known-values list (known_values, falling back to
+    the legacy 'values' vocabulary), or None when neither is declared."""
+    if not isinstance(domain_constraints, dict):
+        return None
+    known_values = domain_constraints.get("known_values")
+    if known_values is not None:
+        return known_values
+    return domain_constraints.get("values")
+
+
+def categorical_validation_behavior(domain_constraints):
+    """Return the effective validation_behavior, defaulting to
+    "reject_unknown" (the existing closed-domain behavior) when absent --
+    Project Spec S0156 requires missing validation_behavior on legacy
+    categorical definitions to preserve existing closed behavior."""
+    if not isinstance(domain_constraints, dict):
+        return "reject_unknown"
+    behavior = domain_constraints.get("validation_behavior")
+    if behavior in ("reject_unknown", "ignore_and_report"):
+        return behavior
+    return "reject_unknown"
+
+
+def condition_value_type_compatible(value, referenced_type, referenced_definition):
+    """Whether an equality_condition.value is compatible with the declared
+    scalar type of the feature it references (Project Spec S0156)."""
+    if referenced_type == "numeric":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if referenced_type == "boolean":
+        return isinstance(value, bool)
+    if referenced_type == "categorical":
+        scalar_type = categorical_scalar_type((referenced_definition or {}).get("domain_constraints"))
+        if scalar_type == "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        return isinstance(value, str)
+    return False
+
+
+def conditional_policy_errors(feature_columns, feature_definitions):
+    """Validate every declared input_policy.conditional_blank_normalization
+    across feature_definitions (Project Spec S0156): the condition field
+    must be another declared feature, must not self-reference, and its
+    comparison value must be compatible with the referenced feature's
+    declared scalar type. Returns a list of human-readable error strings
+    (empty when every declared policy is valid). Never raises.
+    """
+    errors: list[str] = []
+    for name in feature_columns:
+        defn = feature_definitions.get(name, {})
+        input_policy = defn.get("input_policy")
+        if not isinstance(input_policy, dict):
+            continue
+        conditional = input_policy.get("conditional_blank_normalization")
+        if not isinstance(conditional, dict):
+            continue
+        when = conditional.get("when")
+        if not isinstance(when, dict):
+            continue
+        ref_field = when.get("field")
+        ref_value = when.get("value")
+        if ref_field == name:
+            errors.append(
+                f'feature "{name}": conditional_blank_normalization.when.field must not reference itself'
+            )
+            continue
+        if ref_field not in feature_columns:
+            errors.append(
+                f'feature "{name}": conditional_blank_normalization.when.field '
+                f'"{ref_field}" is not a declared feature column'
+            )
+            continue
+        ref_defn = feature_definitions.get(ref_field, {})
+        ref_type = ref_defn.get("type")
+        if not condition_value_type_compatible(ref_value, ref_type, ref_defn):
+            errors.append(
+                f'feature "{name}": conditional_blank_normalization.when.value is '
+                f'incompatible with referenced feature "{ref_field}" declared scalar type'
+            )
+    return errors
 
 
 def _derive_public_options(feature):
     """Derive a safe options projection for a categorical feature, or None.
 
     Returns a list of {value, label} dicts sourced from a non-empty
-    domain_constraints.values, in source declaration order. Returns None
-    (absence, never an empty list) when the feature is not categorical, or
-    has no domain_constraints, or has an empty values list.
+    domain_constraints.values or known_values (Project Spec S0156), in
+    source declaration order. Returns None (absence, never an empty list)
+    when the feature is not categorical, or has no domain_constraints, or
+    has an empty values/known_values list.
     """
     if feature["type"] != "categorical":
         return None
-    values = feature.get("domain_constraints", {}).get("values")
+    values = categorical_known_values(feature.get("domain_constraints"))
     if not values:
         return None
     return [{"value": value, "label": _fresh_label(value)} for value in values]
@@ -163,6 +264,21 @@ def _derive_public_feature(feature, display_order):
     options = _derive_public_options(feature)
     if options is not None:
         public["options"] = options
+    # Project Spec S0156: bounded select serialization hint, categorical
+    # features only -- carries the runtime categorical scalar type forward
+    # so the web experience serializes integer selects correctly.
+    if feature["type"] == "categorical":
+        public["select_value_type"] = categorical_scalar_type(feature.get("domain_constraints"))
+    # Project Spec S0156: presentation-only conditional blank policy metadata.
+    # Never carries the condition field/operator/comparison value or the
+    # materialized value -- the backend remains the sole evaluator.
+    input_policy = feature.get("input_policy")
+    if isinstance(input_policy, dict):
+        conditional = input_policy.get("conditional_blank_normalization")
+        if isinstance(conditional, dict) and conditional.get("accepted_representation"):
+            public["conditional_blank_policy"] = {
+                "accepted_representation": conditional["accepted_representation"]
+            }
     return public
 
 

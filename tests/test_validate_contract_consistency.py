@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from pipeline.validate_contract_consistency import ConsistencyCheckFailed, check
+from pipeline.derive_projections import derive
+from pipeline.validate_contract_consistency import (
+    ConsistencyCheckFailed,
+    check,
+    check_contract_layer_consistency,
+)
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -292,3 +297,191 @@ TELCO_DISCOVERY_EVIDENCE_PATH = (
 )
 def test_real_telco_execution_contract_is_consistent_with_real_discovery_evidence():
     check(TELCO_EXECUTION_CONTRACT_PATH, TELCO_DISCOVERY_EVIDENCE_PATH, repo_root=REPO_ROOT)
+
+
+# ---------------------------------------------------------------------------
+# Cross-contract layer consistency (Project Spec S0156): categorical
+# scalar-type/known-value/validation-behavior/conditional-policy divergence
+# across the execution, runtime, public, and inference-bundle layers of the
+# *same* dataset. Distinct from check() above (execution vs. discovery
+# evidence). Every fixture is dataset-agnostic.
+# ---------------------------------------------------------------------------
+
+
+def _s0156_execution_contract() -> dict:
+    return _valid_contract(
+        feature_columns=["total_amount", "tenure_months", "plan_type", "account_id_flag"],
+        feature_definitions={
+            "total_amount": {
+                "type": "numeric",
+                "input_policy": {
+                    "conditional_blank_normalization": {
+                        "accepted_representation": "blank_string_after_trim",
+                        "when": {"field": "tenure_months", "operator": "equals", "value": 0},
+                        "materialized_value": 0.0,
+                        "otherwise": "reject",
+                        "null_behavior": "reject",
+                    }
+                },
+            },
+            "tenure_months": {"type": "numeric"},
+            "plan_type": {
+                "type": "categorical",
+                "domain_constraints": {
+                    "known_values": ["basic", "pro"],
+                    "categorical_value_type": "string",
+                    "validation_behavior": "ignore_and_report",
+                },
+            },
+            "account_id_flag": {
+                "type": "categorical",
+                "domain_constraints": {
+                    "known_values": [0, 1],
+                    "categorical_value_type": "integer",
+                    "validation_behavior": "reject_unknown",
+                },
+            },
+        },
+    )
+
+
+def _s0156_projected(tmp_path: Path):
+    contract = _s0156_execution_contract()
+    contract_path = _write_json(tmp_path, "contract.json", contract)
+    out_dir = tmp_path / "out"
+    derive(contract_path, out_dir, repo_root=REPO_ROOT)
+    runtime = json.loads((out_dir / "runtime-contract.json").read_text())
+    public = json.loads((out_dir / "public-contract.json").read_text())
+    return contract, runtime, public
+
+
+def test_layer_consistency_passes_for_a_correctly_projected_contract(tmp_path):
+    contract, runtime, public = _s0156_projected(tmp_path)
+    check_contract_layer_consistency(contract, runtime, public)  # must not raise
+
+
+def test_layer_consistency_detects_categorical_scalar_type_mismatch(tmp_path):
+    contract, runtime, public = _s0156_projected(tmp_path)
+    for feature in runtime["features"]:
+        if feature["name"] == "account_id_flag":
+            feature["domain_constraints"]["categorical_value_type"] = "string"
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, public)
+    assert any("scalar type mismatch" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_known_value_divergence(tmp_path):
+    contract, runtime, public = _s0156_projected(tmp_path)
+    for feature in runtime["features"]:
+        if feature["name"] == "plan_type":
+            feature["domain_constraints"]["known_values"] = ["pro", "basic"]
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, public)
+    assert any("known-value" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_validation_behavior_mismatch(tmp_path):
+    contract, runtime, public = _s0156_projected(tmp_path)
+    for feature in runtime["features"]:
+        if feature["name"] == "plan_type":
+            feature["domain_constraints"]["validation_behavior"] = "reject_unknown"
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, public)
+    assert any("validation_behavior mismatch" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_conditional_policy_missing_from_runtime(tmp_path):
+    contract, runtime, public = _s0156_projected(tmp_path)
+    runtime["features"] = [f for f in runtime["features"] if f["name"] != "total_amount"] + [
+        {"name": "total_amount", "type": "numeric", "required": True}
+    ]
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, public)
+    assert any("missing from the runtime projection" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_condition_reference_to_unknown_field(tmp_path):
+    contract, runtime, public = _s0156_projected(tmp_path)
+    contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"]["field"] = "not_a_real_field"
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, public)
+    assert any("unknown field" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_condition_self_reference():
+    contract = _s0156_execution_contract()
+    contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"]["field"] = "total_amount"
+    runtime = {
+        "schema_version": "1.0.0",
+        "features": [
+            {
+                "name": "total_amount",
+                "type": "numeric",
+                "required": True,
+                "input_policy": contract["feature_definitions"]["total_amount"]["input_policy"],
+            },
+        ],
+    }
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, {"schema_version": "1.0.0", "features": []})
+    assert any("references itself" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_condition_comparison_type_mismatch():
+    contract = _s0156_execution_contract()
+    contract["feature_definitions"]["total_amount"]["input_policy"][
+        "conditional_blank_normalization"
+    ]["when"] = {"field": "plan_type", "operator": "equals", "value": 0}
+    runtime = {
+        "schema_version": "1.0.0",
+        "features": [
+            {
+                "name": "total_amount",
+                "type": "numeric",
+                "required": True,
+                "input_policy": contract["feature_definitions"]["total_amount"]["input_policy"],
+            },
+            {"name": "plan_type", "type": "categorical", "required": True},
+        ],
+    }
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, {"schema_version": "1.0.0", "features": []})
+    assert any("incompatible" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_public_select_serialization_hint_mismatch(tmp_path):
+    contract, runtime, public = _s0156_projected(tmp_path)
+    for feature in public["features"]:
+        if feature["name"] == "account_id_flag":
+            feature["select_value_type"] = "string"
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, runtime, public)
+    assert any("select_value_type" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_detects_inference_bundle_claim_without_matching_runtime_contract():
+    contract = _s0156_execution_contract()
+    bundle = {"input_schema": {"input_policy_source": "runtime_contract"}}
+    empty_runtime = {"schema_version": "1.0.0", "features": []}
+    empty_public = {"schema_version": "1.0.0", "features": []}
+    with pytest.raises(ConsistencyCheckFailed) as exc_info:
+        check_contract_layer_consistency(contract, empty_runtime, empty_public, bundle)
+    assert any("inference bundle claims" in e for e in exc_info.value.errors)
+
+
+def test_layer_consistency_rejects_legacy_and_new_categorical_contradiction_at_schema_layer():
+    """Project Spec S0156: the execution schema itself (oneOf values/
+    known_values) is where a contradictory dual categorical declaration is
+    rejected -- confirmed here as a schema-level failure, not a layer-
+    consistency-level one, so this is deliberately a schema assertion."""
+    import jsonschema
+
+    schema = json.loads((REPO_ROOT / "contracts" / "execution-contract.schema.json").read_text())
+    contract = _s0156_execution_contract()
+    contract["feature_definitions"]["plan_type"]["domain_constraints"]["values"] = ["basic", "pro"]
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))

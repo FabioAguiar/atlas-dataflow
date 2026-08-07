@@ -154,6 +154,173 @@ The architecture must respect the following principles:
 
 The architecture is organized into the following main areas.
 
+## Dataset Integration Authoring Architecture
+
+Dataset integration authoring is the governed bridge between reviewed
+scientific evidence and Atlas-owned artifacts. It separates dataset-specific
+semantic authoring from capability-specific generic behavior and from
+downstream release, publisher, registry, and runtime operations.
+
+### External analysis project boundary
+
+An external analysis project may be methodologically dataset-specific and is
+the source of scientific-analysis evidence. It should expose structured,
+evidence-rich outputs under a future external-project standard. Lumen may
+inspect those outputs at authoring time, but the project is not an Atlas
+package, operational handoff, or deployed dependency. After authoring, Atlas
+runtime does not mount, resolve, or require an external analysis project root,
+and generic Atlas core does not infer dataset semantics from that project at
+runtime.
+
+### Lumen semantic-authoring role
+
+Lumen performs semantic interpretation during authoring. It may consult the
+external project artifacts and the current Atlas repository, review the
+scientific conclusions, and translate them into dataset-specific Atlas
+authoring decisions. That translation must produce governed Atlas-native
+artifacts; it must not create an ongoing external filesystem dependency or
+bypass Atlas contracts, integrity gates, release validation, publisher
+boundaries, or public/internal evidence controls.
+
+### Dataset integration authoring notebook
+
+The dataset integration authoring notebook is dataset-specific. The target
+Telco name is
+`notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb`;
+this document establishes the naming and responsibility boundary but does not
+claim that refactor is implemented.
+
+The notebook:
+
+- performs controlled verification of the exact Atlas-owned input, including
+  identity, drift-sensitive observations, target and identifier candidates,
+  missing-value conditions, and assumptions needed for contract correctness;
+- authors dataset-specific semantic intent from reviewed evidence;
+- invokes generic Atlas materializers and services rather than implementing
+  reusable projection, release, or publisher policy in cells;
+- persists durable decisions through governed Atlas-native artifacts and is
+  never the sole durable source of truth;
+- does not own generic release or publisher policy and does not activate a
+  registry entry or release; and
+- does not repeat exploratory scientific analysis, model training, model
+  selection, final-test evaluation, or threshold optimization already owned by
+  an authoritative external analysis, unless a separately governed workflow
+  explicitly requires it.
+
+Atlas-owned input verification is therefore not the same activity as
+re-performing scientific exploratory analysis or modeling. The former protects
+the identity and correctness of the input Atlas will govern; the latter belongs
+to the scientific-analysis workflow.
+
+### Atlas-native authoring artifact suite
+
+The architecture selects one principal coordination index over narrow,
+Atlas-native artifacts with these roles:
+
+- principal authoring manifest/index;
+- source/input verification evidence;
+- dataset semantic intent;
+- preparation/input policy;
+- capability-profile declaration;
+- capability-conditional modeling and prediction evidence;
+- runtime capability/profile references;
+- analytical visual evidence; and
+- internal provenance and integrity references.
+
+Downstream specs implement this suite progressively. Not every named future
+artifact, contract, or schema exists yet, and this architecture must not be
+read as a schema, notebook, candidate, publisher, runtime, or release
+implementation claim.
+
+### Principal authoring manifest invariants
+
+The future principal authoring manifest is a dataset-specific, immutable index
+for one authoring generation. It owns coordination, generation identity,
+artifact-role references, and the selected capability-profile identity and
+version. Each artifact reference uses a safe repository- or package-relative
+path, contract identity/version, and SHA-256 integrity binding.
+
+The manifest does not duplicate complete narrow-artifact payloads, embed model
+bytes, or retain an absolute external project root. Logical producer identity,
+an immutable revision, and a content hash may preserve corroborative provenance
+without retaining an operational path. The manifest is an Atlas authoring
+index, not an external-analysis handoff.
+
+### Capability profiles and artifact applicability
+
+A registered, versioned capability profile is the normal architecture-level
+selector of artifact applicability. It may govern semantic requirements,
+applicable contract families, artifact-role applicability, prediction/runtime
+applicability, and publication capability. It must not contain dataset-specific
+feature semantics, concrete training metrics, model hashes or bytes,
+release-instance content, or external filesystem paths.
+
+Role applicability has three base states:
+
+- **required:** the role must be present at its governed cardinality and pass
+  contract, cross-reference, and integrity validation;
+- **optional:** the role may be absent, but when present it must pass the same
+  complete validation; and
+- **forbidden:** the role must be absent, and its presence is a validation
+  error.
+
+Future contracts may formalize richer cardinality or group rules. They must not
+infer requiredness only from filesystem presence, select it by `dataset_slug`
+or a hardcoded dataset identity, derive it from historical milestone IDs, or
+use empty/dummy placeholder artifacts for non-applicable roles.
+
+Current binary predictive classification is the only currently evidenced
+operational capability. Regression, forecasting, clustering, and no-model
+studies are architecture-extension probes only; they are not current Atlas
+functionality until separately contracted, implemented, and evidenced.
+
+### Generic core and capability-aware publication direction
+
+Dataset-specific semantic authoring records what a particular dataset means.
+Capability-specific generic behavior applies typed contracts and policies to
+that intent. Generic Atlas core must not use dataset identity as the normal
+selector of business behavior or expand through branches such as
+`if dataset_slug == ...`.
+
+Candidate and publisher completeness is intended to become capability-aware in
+future implementation. Universal artifacts remain universal;
+training/model/prediction artifacts are capability-conditional; forbidden
+artifacts are absent rather than represented by placeholders; every present
+artifact remains schema-, cross-reference-, and integrity-validated; and
+public/internal evidence boundaries remain explicit. Existing candidate and
+publisher behavior is not claimed to implement this direction yet.
+
+### Analysis, runtime, and model-delivery separation
+
+Analysis capability, prediction capability, deployment runtime profile, and
+model delivery are related but distinct concerns. A study need not imply a
+prediction runtime, and a prediction capability does not by itself select how
+or where its model is delivered. Governed runtime isolation remains a
+legitimate compatibility mechanism, but no runtime implementation may depend
+on an external analysis path.
+
+Model delivery is intended to converge on Atlas release ownership through
+later work. That convergence and runtime-profile implementation are not yet
+complete; `external-models/` remains a migration-era compatibility mechanism
+until a release-owned replacement is proven and cut over.
+
+### Backward compatibility and accepted authoring decisions
+
+Historical v1 release artifacts remain valid under their v1 contracts. Future
+structurally incompatible capability-aware contracts must use explicit
+contract evolution and versioning rather than weakening or reinterpreting v1.
+The current active Telco release remains unchanged until a separately governed
+replacement migration and cutover succeeds. Architecture documentation alone
+does not activate, migrate, publish, or modify a release or registry.
+
+The accepted current-cycle decisions are the authoring-time-only external
+analysis boundary, Lumen-assisted semantic interpretation, the dataset
+integration authoring notebook boundary, the narrow Atlas-native artifact
+suite, immutable integrity-bound principal manifest, versioned capability
+profiles, and required/optional/forbidden applicability semantics. Their
+schemas and downstream candidate, publisher, runtime, model-delivery, and
+release changes remain work for subsequent implementation specs.
+
 ### Public Web Experience
 
 Layer responsible for navigation and presentation of published experiences.

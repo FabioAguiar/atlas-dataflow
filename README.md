@@ -26,19 +26,31 @@ page loads. It does not deploy anything and does not require secrets.
 
 ## Data Workbench boundary
 
-Atlas is about to add dataset-specific notebooks and reusable data-authoring
-procedures. Before that work begins, this section defines the minimum
-repository-facing boundary for it, so dataset authoring stays disciplined and
-does not blur into the existing `pipeline/`, `contracts/`, `releases/`,
-`publisher/`, `registry/`, `api/`, and `web/` responsibilities.
+Atlas dataset integration authoring converts reviewed, dataset-specific
+analysis into governed Atlas inputs without making the analysis environment a
+runtime dependency. Scientific analysis may occur in a separate external
+project. Lumen inspects that project and the Atlas repository during authoring
+only, then translates reviewed conclusions into dataset-specific Atlas intent.
+Atlas does not mount or resolve the external project after authoring.
 
-- **Notebooks** (`notebooks/`) are the human-facing authoring surface for
-  dataset-specific exploration and decisions (see
-  `notebooks/m22_discovery_entrypoint.ipynb`). A notebook may orchestrate
-  authoring work, but it must not be the only durable record of a dataset
-  decision — decisions that feed training, contracts, releases, or UI
-  data-fill must be externalized into explicit files before those downstream
-  steps consume them.
+- **Dataset integration authoring notebooks** (`notebooks/`) are the
+  human-facing Atlas authoring surface. The target Telco naming convention is
+  `notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb`;
+  its implementation is future work. This dataset-specific notebook verifies
+  the exact Atlas-owned input, records semantic intent, and invokes generic
+  Atlas materializers. Input identity, drift, and authored-assumption checks
+  are distinct from re-performing scientific exploration, model training, or
+  model selection already established by authoritative external analysis.
+- **Durable authoring state** is a governed Atlas-native artifact suite rather
+  than notebook memory or an external filesystem layout. Notebook state alone
+  is never sufficient: generic core consumes validated, integrity-bound Atlas
+  artifacts. Release assembly, publisher validation, registry activation, and
+  runtime remain separate downstream governed stages.
+- **Current support boundary:** binary predictive classification is the only
+  currently evidenced operational capability. Capability-aware authoring and
+  publication are architectural direction implemented progressively by later
+  work; other analytical or prediction families must not be presented as
+  current functionality.
 - **Reusable authoring helpers** are logic that more than one notebook or
   authoring run needs. They belong in a dedicated workbench-owned location,
   separate from notebooks and separate from runtime `api/`/`web/` code — never
@@ -70,10 +82,10 @@ does not blur into the existing `pipeline/`, `contracts/`, `releases/`,
   `.gitignore`. Promotion of any such output requires a later, explicit
   implementation request; this bootstrap does not itself promote any file.
 
-This is a bootstrap boundary only. It does not create a workbench folder
-tree, reusable helper modules, dataset-specific notebooks, or training/
-release/publisher behavior changes — those require their own, later
-implementation requests that explicitly list their concrete edit paths.
+This documentation does not create or refactor a notebook, define schemas, or
+change training, release, publisher, registry, or runtime behavior. See
+[`docs/architecture.md`](docs/architecture.md#dataset-integration-authoring-architecture)
+for the normative authoring, capability, integrity, and compatibility rules.
 
 ### Notebook runtime import contract
 

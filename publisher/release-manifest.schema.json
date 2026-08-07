@@ -338,9 +338,85 @@
           "const": false
         }
       }
+    },
+    "capability_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_profile_id",
+        "capability_profile_version",
+        "capability_profile_integrity",
+        "resolved_artifact_role_inventory",
+        "authoring_lineage"
+      ],
+      "description": "Project Spec S0168. Optional capability identity for a release governed by a capability profile, additive only (new optional property; existing required array unchanged). Absent for a historical release-manifest.v1 instance, which remains valid under its historical contract semantics. Carries only integrity-bound references and a resolved role inventory -- never the complete capability profile or authoring manifest payload.",
+      "properties": {
+        "capability_profile_id": {"$ref": "#/$defs/capability_identifier"},
+        "capability_profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^v[0-9]+$"
+        },
+        "capability_profile_integrity": {
+          "$ref": "#/$defs/integrity_reference",
+          "description": "Hash reference to the governing capability profile document. Never the profile payload itself."
+        },
+        "resolved_artifact_role_inventory": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The resolved applicability (required/optional/forbidden) for every artifact role this release's capability profile governs.",
+          "items": {"$ref": "#/$defs/manifest_role_policy_entry"}
+        },
+        "authoring_lineage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authoring_generation_id", "authoring_manifest_integrity"],
+          "description": "Traceability to the immutable Atlas authoring generation this release was built from. Never embeds the authoring manifest payload.",
+          "properties": {
+            "authoring_generation_id": {"$ref": "#/$defs/identifier"},
+            "authoring_manifest_integrity": {"$ref": "#/$defs/integrity_reference"}
+          }
+        }
+      }
     }
   },
   "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    },
+    "capability_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    },
+    "role_applicability": {
+      "type": "string",
+      "enum": ["required", "optional", "forbidden"]
+    },
+    "integrity_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hash_algorithm", "hash_value"],
+      "properties": {
+        "hash_algorithm": {"type": "string", "const": "sha256"},
+        "hash_value": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "manifest_role_policy_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role_name", "applicability"],
+      "properties": {
+        "role_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "applicability": {"$ref": "#/$defs/role_applicability"}
+      }
+    },
     "artifact_role": {
       "type": "string",
       "enum": [

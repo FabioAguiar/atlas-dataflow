@@ -16,9 +16,12 @@ import json
 import re
 import shutil
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from pipeline.contract_derivation import _load_governed_reference
 
 _REPO_ROOT = Path(__file__).parent.parent
 
@@ -596,6 +599,249 @@ def build_release_candidate_input(
     }
 
 
+# ---------------------------------------------------------------------------
+# Capability-aware release candidate and publisher contract evolution
+# (Project Spec S0168)
+#
+# Bridges the additive, optional `capability_binding` block on
+# release-candidate-input.v1/candidate-layout.v1 (governed capability-profile
+# identity + resolved_role_policy) into candidate assembly, gated by the
+# resolved capability profile's own `support_status`. Absent
+# `capability_binding`, `assemble_release_candidate` below is unaffected and
+# the existing binary predictive-classification path runs exactly as before
+# -- these functions are pure and are never consulted for a historical
+# input. Every other capability (including a syntactically valid but
+# unsupported profile) fails closed with a typed
+# CapabilityReleasePolicyResult rather than fabricating a model, runtime, or
+# predictive artifact. Contains no dataset-slug or dataset-name conditional
+# anywhere: the one capability_profile_id these functions know how to
+# release is an architecture-level capability identity, never a dataset
+# identity.
+# ---------------------------------------------------------------------------
+
+CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID = "binary-predictive-classification"
+_CAPABILITY_SUPPORT_STATUS_OPERATIONAL = "current_supported"
+
+CAPABILITY_REJECTION_PHASE_PROFILE_MISMATCH = "capability_profile_identity_mismatch"
+CAPABILITY_REJECTION_PHASE_ROLE_POLICY_MISMATCH = "role_policy_profile_mismatch"
+CAPABILITY_REJECTION_PHASE_DATASET_MISMATCH = "capability_dataset_identity_mismatch"
+CAPABILITY_REJECTION_PHASE_UNSUPPORTED = "capability_unsupported"
+
+_SHA256_HEX_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+
+
+@dataclass(frozen=True)
+class CapabilityReleasePolicyResult:
+    """Deterministic, typed result of resolving one release candidate's
+    `capability_binding` against its referenced, already-loaded capability
+    profile document.
+
+    `status` is `"accepted"` only when: the capability_binding's declared
+    `capability_profile_id`/`capability_profile_version` agree with the
+    profile document itself; every `resolved_role_policy` entry agrees with
+    the profile's own `artifact_roles` applicability; and the profile's
+    `support_status` is `"current_supported"` and its
+    `capability_profile_id` is the one this module has explicit release
+    assembly logic for. Every other outcome is `"rejected"` with a typed
+    `rejection_phase`/`rejection_reason`. Never raises for a normal
+    validation or unsupported-capability outcome; never reads a file,
+    trains, selects or deserializes a model, runs prediction, or activates
+    a release -- it only compares already-provided dicts.
+    """
+
+    status: str
+    capability_profile_id: str | None
+    capability_profile_version: str | None
+    support_status: str | None
+    rejection_phase: str | None
+    rejection_reason: str | None
+
+
+def resolve_capability_release_policy(
+    capability_binding: dict[str, Any],
+    capability_profile: dict[str, Any],
+) -> CapabilityReleasePolicyResult:
+    """Resolve a release candidate's `capability_binding` block against the
+    already-loaded, hash-verified `capability_profile` document it
+    references (see `pipeline.contract_derivation._load_governed_reference`
+    for how a caller loads and integrity-checks that document)."""
+    declared_id = capability_binding.get("capability_profile_id")
+    declared_version = capability_binding.get("capability_profile_version")
+    resolved_id = capability_profile.get("capability_profile_id")
+    resolved_version = capability_profile.get("capability_profile_version")
+
+    if declared_id != resolved_id or declared_version != resolved_version:
+        return CapabilityReleasePolicyResult(
+            status="rejected",
+            capability_profile_id=declared_id,
+            capability_profile_version=declared_version,
+            support_status=None,
+            rejection_phase=CAPABILITY_REJECTION_PHASE_PROFILE_MISMATCH,
+            rejection_reason=(
+                f"capability_binding {declared_id!r}/{declared_version!r} does not agree "
+                f"with the referenced capability profile {resolved_id!r}/{resolved_version!r}"
+            ),
+        )
+
+    profile_applicability = {
+        entry.get("role_name"): entry.get("applicability")
+        for entry in capability_profile.get("artifact_roles", [])
+        if isinstance(entry, dict)
+    }
+    for policy_entry in capability_binding.get("resolved_role_policy", []):
+        role_name = policy_entry.get("role_name")
+        declared_applicability = policy_entry.get("applicability")
+        if profile_applicability.get(role_name) != declared_applicability:
+            return CapabilityReleasePolicyResult(
+                status="rejected",
+                capability_profile_id=declared_id,
+                capability_profile_version=declared_version,
+                support_status=None,
+                rejection_phase=CAPABILITY_REJECTION_PHASE_ROLE_POLICY_MISMATCH,
+                rejection_reason=(
+                    f"resolved_role_policy for role {role_name!r} declares "
+                    f"{declared_applicability!r}, but the capability profile declares "
+                    f"{profile_applicability.get(role_name)!r}"
+                ),
+            )
+
+    support_status = capability_profile.get("support_status")
+    if (
+        support_status != _CAPABILITY_SUPPORT_STATUS_OPERATIONAL
+        or resolved_id != CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID
+    ):
+        return CapabilityReleasePolicyResult(
+            status="rejected",
+            capability_profile_id=resolved_id,
+            capability_profile_version=resolved_version,
+            support_status=support_status,
+            rejection_phase=CAPABILITY_REJECTION_PHASE_UNSUPPORTED,
+            rejection_reason=(
+                f"capability {resolved_id!r} (support_status={support_status!r}) is not "
+                "currently, operationally supported for release candidate assembly"
+            ),
+        )
+
+    return CapabilityReleasePolicyResult(
+        status="accepted",
+        capability_profile_id=resolved_id,
+        capability_profile_version=resolved_version,
+        support_status=support_status,
+        rejection_phase=None,
+        rejection_reason=None,
+    )
+
+
+@dataclass(frozen=True)
+class LayoutRolePolicyRejection:
+    code: str
+    role_name: str | None
+    message: str
+
+
+@dataclass(frozen=True)
+class LayoutRolePolicyResult:
+    """Deterministic result of validating a candidate's declared artifact
+    roles against a resolved capability role policy (Project Spec S0168,
+    desired changes B/C). Applicability comes only from `role_policy` and
+    presence comes only from `declared_roles` -- this function never reads
+    a dataset slug, Telco identity, filesystem existence, or a milestone
+    id, so candidate applicability can never be derived from any of those."""
+
+    valid: bool
+    rejections: tuple[LayoutRolePolicyRejection, ...]
+
+
+def validate_candidate_layout_role_policy(
+    declared_roles: dict[str, dict[str, Any]],
+    role_policy: list[dict[str, Any]],
+) -> LayoutRolePolicyResult:
+    """Validate a candidate's declared `artifact_roles` mapping
+    (`role_name -> {"path": ..., "sha256": ..., ...}`) against a resolved
+    capability role policy (a list of
+    `{"role_name", "applicability", "present"}` entries).
+
+    Rejects: forbidden-role presence, missing required roles, duplicate
+    role assignment (two role names declaring the same candidate-relative
+    path -- ambiguous ownership), unsafe absolute/parent-traversal role
+    paths, and malformed sha256 integrity references. Accepts optional-role
+    absence. Never trains, selects, or deserializes a model, and never
+    touches the filesystem -- both arguments are already-parsed dicts."""
+    rejections: list[LayoutRolePolicyRejection] = []
+
+    applicability_by_role = {
+        entry.get("role_name"): entry.get("applicability") for entry in role_policy
+    }
+
+    for role_name, applicability in applicability_by_role.items():
+        present = role_name in declared_roles
+        if applicability == "forbidden" and present:
+            rejections.append(
+                LayoutRolePolicyRejection(
+                    "forbidden_role_present",
+                    role_name,
+                    f"role {role_name!r} is forbidden by the resolved capability policy "
+                    "but is declared in artifact_roles",
+                )
+            )
+        elif applicability == "required" and not present:
+            rejections.append(
+                LayoutRolePolicyRejection(
+                    "missing_required_role",
+                    role_name,
+                    f"role {role_name!r} is required by the resolved capability policy "
+                    "but is not declared in artifact_roles",
+                )
+            )
+
+    path_owners: dict[str, list[str]] = {}
+    for role_name, role_def in declared_roles.items():
+        path_value = role_def.get("path") if isinstance(role_def, dict) else None
+        if not isinstance(path_value, str) or not path_value:
+            rejections.append(
+                LayoutRolePolicyRejection(
+                    "malformed_role_path", role_name, f"role {role_name!r} has no path"
+                )
+            )
+            continue
+        path = Path(path_value)
+        if path.is_absolute() or ".." in path.parts:
+            rejections.append(
+                LayoutRolePolicyRejection(
+                    "unsafe_role_path",
+                    role_name,
+                    f"role {role_name!r} path {path_value!r} is absolute or contains "
+                    "parent-directory traversal",
+                )
+            )
+            continue
+        path_owners.setdefault(path_value, []).append(role_name)
+
+        sha256_value = role_def.get("sha256") if isinstance(role_def, dict) else None
+        if sha256_value is not None and not _SHA256_HEX_PATTERN.match(str(sha256_value)):
+            rejections.append(
+                LayoutRolePolicyRejection(
+                    "malformed_integrity_reference",
+                    role_name,
+                    f"role {role_name!r} sha256 {sha256_value!r} is not a valid "
+                    "64-character lowercase hex digest",
+                )
+            )
+
+    for path_value, owners in path_owners.items():
+        if len(owners) > 1:
+            rejections.append(
+                LayoutRolePolicyRejection(
+                    "duplicate_role_assignment",
+                    None,
+                    f"roles {sorted(owners)} declare the same candidate path "
+                    f"{path_value!r} (ambiguous ownership)",
+                )
+            )
+
+    return LayoutRolePolicyResult(valid=not rejections, rejections=tuple(rejections))
+
+
 def _load_candidate_input(path: str) -> tuple[dict[str, Any] | None, str | None]:
     """Load and parse the release-candidate-input JSON."""
     try:
@@ -944,6 +1190,44 @@ def assemble_release_candidate(
             validation_errors=input_errors,
         )
 
+    # Step 1b: Capability-aware gating (Project Spec S0168). Absent
+    # capability_binding, this is a no-op and the existing binary
+    # predictive-classification path below runs unchanged.
+    capability_binding = candidate_input.get("capability_binding")
+    if capability_binding is not None:
+        if capability_binding.get("dataset_slug") != dataset_slug:
+            return _rejection(
+                CAPABILITY_REJECTION_PHASE_DATASET_MISMATCH,
+                "capability_binding.dataset_slug does not match dataset_identity.dataset_slug",
+                dataset_slug=dataset_slug,
+                release_id=release_id,
+                candidate_dir=None,
+            )
+        capability_profile, profile_err = _load_governed_reference(
+            resolved_repo_root,
+            capability_binding["capability_profile_ref"],
+            label="capability profile",
+        )
+        if profile_err:
+            return _rejection(
+                "capability_profile_read",
+                profile_err,
+                dataset_slug=dataset_slug,
+                release_id=release_id,
+                candidate_dir=None,
+            )
+        policy_result = resolve_capability_release_policy(capability_binding, capability_profile)
+        if policy_result.status != "accepted":
+            return _rejection(
+                policy_result.rejection_phase or CAPABILITY_REJECTION_PHASE_UNSUPPORTED,
+                policy_result.rejection_reason or "capability release policy rejected",
+                dataset_slug=dataset_slug,
+                release_id=release_id,
+                candidate_dir=None,
+                capability_profile_id=policy_result.capability_profile_id,
+                capability_profile_version=policy_result.capability_profile_version,
+            )
+
     # Step 2: Construct candidate_dir and assert it is under releases/candidates/.
     candidate_dir = (Path(output_dir) / dataset_slug / release_id).resolve()
     staging_prefix = (resolved_repo_root / _CANDIDATE_STAGING_PREFIX).resolve()
@@ -984,6 +1268,29 @@ def assemble_release_candidate(
     # Step 6: Write release-candidate.json (publisher/release-candidate.schema.json).
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     release_candidate = _build_release_candidate(candidate_input, now)
+
+    if capability_binding is not None:
+        layout_result = validate_candidate_layout_role_policy(
+            release_candidate["artifact_roles"], capability_binding["resolved_role_policy"]
+        )
+        if not layout_result.valid:
+            return _rejection(
+                "candidate_layout_role_policy",
+                "assembled candidate artifact roles violate the resolved capability role policy",
+                dataset_slug=dataset_slug,
+                release_id=release_id,
+                candidate_dir=str(candidate_dir),
+                layout_rejections=[
+                    {"code": r.code, "role_name": r.role_name, "message": r.message}
+                    for r in layout_result.rejections
+                ],
+            )
+        # Pass-through only: never re-derives or embeds the full capability
+        # profile/authoring manifest payload (Project Spec S0168 desired
+        # change A) -- release_candidate carries the same governed
+        # references and resolved role policy the input declared.
+        release_candidate["capability_binding"] = capability_binding
+
     (candidate_dir / "release-candidate.json").write_text(
         json.dumps(release_candidate, indent=2), encoding="utf-8"
     )

@@ -333,6 +333,108 @@ def _load_operational_note(repo_root: Path) -> dict:
         }
 
 
+# ---------------------------------------------------------------------------
+# Capability-conditional validation (Project Spec S0168)
+#
+# Separates universal release invariants (identity, integrity, hash
+# coverage, artifact role uniqueness, relative-path safety, provenance, and
+# schema/contract version validity -- all enforced by validate_candidate
+# below regardless of capability) from capability-conditional invariants:
+# whether a specific artifact role is required, optional, or forbidden for
+# the capability profile governing this release. Absent
+# candidate["capability_binding"], this check is a no-op and the existing
+# binary predictive-classification validation below is completely
+# unaffected -- historical candidates remain valid. Never infers a role's
+# applicability from dataset_slug, an external project root, or a notebook
+# execution: applicability comes only from the candidate's own
+# capability_binding.resolved_role_policy, already resolved before
+# publisher validation runs.
+# ---------------------------------------------------------------------------
+
+_CAPABILITY_DATASET_MISMATCH_CODE = "capability_dataset_identity_mismatch"
+_CAPABILITY_FORBIDDEN_ROLE_CODE = "capability_forbidden_role_present"
+_CAPABILITY_MISSING_REQUIRED_ROLE_CODE = "capability_missing_required_role"
+
+_EMPTY_CAPABILITY_CONDITIONAL_VALIDATION = {
+    "checked": False,
+    "capability_gated": False,
+    "valid": True,
+    "rejection_reasons": [],
+}
+
+
+def validate_capability_conditional_roles(candidate: dict, role_results: dict) -> dict:
+    """Validate a release candidate's capability-conditional artifact-role
+    invariants, separate from the universal invariants enforced by
+    `validate_candidate` below.
+
+    Returns a dict with keys: checked, capability_gated, valid,
+    rejection_reasons. When `candidate` has no `capability_binding`, this
+    returns a pure pass-through (`checked=False, capability_gated=False,
+    valid=True`) that never affects a historical candidate. Never reads a
+    file, executes a notebook, or requires an external project root --
+    both arguments are already-parsed/computed in-memory structures, and
+    applicability is resolved entirely from
+    `capability_binding.resolved_role_policy`, never from dataset_slug.
+    """
+    capability_binding = candidate.get("capability_binding")
+    if not isinstance(capability_binding, dict):
+        return dict(_EMPTY_CAPABILITY_CONDITIONAL_VALIDATION)
+
+    rejection_reasons: list[dict] = []
+
+    dataset_identity = candidate.get("dataset_identity")
+    candidate_dataset_slug = (
+        dataset_identity.get("dataset_slug") if isinstance(dataset_identity, dict) else None
+    )
+    if capability_binding.get("dataset_slug") != candidate_dataset_slug:
+        rejection_reasons.append(_rejection_reason(
+            _CAPABILITY_DATASET_MISMATCH_CODE,
+            "capability_binding.dataset_slug does not match the release candidate's "
+            "dataset_identity.dataset_slug.",
+        ))
+
+    declared_artifact_roles = candidate.get("artifact_roles")
+    declared_role_names = (
+        set(declared_artifact_roles) if isinstance(declared_artifact_roles, dict) else set()
+    )
+
+    for policy_entry in capability_binding.get("resolved_role_policy") or []:
+        if not isinstance(policy_entry, dict):
+            continue
+        role_name = policy_entry.get("role_name")
+        applicability = policy_entry.get("applicability")
+        if not role_name:
+            continue
+        role_result = role_results.get(role_name)
+        is_present = (
+            role_result.get("status") == "present"
+            if isinstance(role_result, dict)
+            else role_name in declared_role_names
+        )
+        if applicability == "forbidden" and is_present:
+            rejection_reasons.append(_rejection_reason(
+                _CAPABILITY_FORBIDDEN_ROLE_CODE,
+                f"Artifact role '{role_name}' is forbidden by the resolved capability "
+                "policy but is present in the candidate.",
+                role_name,
+            ))
+        elif applicability == "required" and not is_present:
+            rejection_reasons.append(_rejection_reason(
+                _CAPABILITY_MISSING_REQUIRED_ROLE_CODE,
+                f"Artifact role '{role_name}' is required by the resolved capability "
+                "policy but is not present in the candidate.",
+                role_name,
+            ))
+
+    return {
+        "checked": True,
+        "capability_gated": True,
+        "valid": not rejection_reasons,
+        "rejection_reasons": rejection_reasons,
+    }
+
+
 def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | None = None) -> dict:
     """
     Validate a loaded release candidate dict.
@@ -693,6 +795,9 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
     )
     rejection_reasons.extend(cross_artifact_consistency["rejection_reasons"])
 
+    capability_conditional_validation = validate_capability_conditional_roles(candidate, role_results)
+    rejection_reasons.extend(capability_conditional_validation["rejection_reasons"])
+
     return {
         "valid": len(rejection_reasons) == 0 and len(errors) == 0,
         "errors": errors,
@@ -700,6 +805,7 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
         "identifier_consistency": identifier_consistency,
         "schema_compatibility": schema_compatibility,
         "cross_artifact_consistency": cross_artifact_consistency["result"],
+        "capability_conditional_validation": capability_conditional_validation,
         "rejection_reasons": rejection_reasons,
         "candidate_slug": dataset_slug,
         "release_id": release_id,
@@ -916,6 +1022,7 @@ def _empty_validation_result(errors: list[dict], candidate_dir: Path) -> dict:
             "evidence_link_checks": [],
             "valid": False,
         },
+        "capability_conditional_validation": dict(_EMPTY_CAPABILITY_CONDITIONAL_VALIDATION),
         "rejection_reasons": [
             _rejection_reason(
                 "missing_required_artifact",
@@ -964,6 +1071,9 @@ def _build_validation_result(validation: dict) -> dict:
     identifier_consistency: dict = validation.get("identifier_consistency", {})
     schema_compatibility: dict = validation.get("schema_compatibility", {})
     cross_artifact_consistency: dict = validation.get("cross_artifact_consistency", {})
+    capability_conditional_validation: dict = validation.get(
+        "capability_conditional_validation", dict(_EMPTY_CAPABILITY_CONDITIONAL_VALIDATION)
+    )
 
     dataset_slug: str = validation.get("candidate_slug", "")
     release_id: str = validation.get("release_id", "")
@@ -1019,6 +1129,7 @@ def _build_validation_result(validation: dict) -> dict:
         "identifier_consistency": identifier_consistency,
         "schema_compatibility": schema_compatibility,
         "cross_artifact_consistency": cross_artifact_consistency,
+        "capability_conditional_validation": capability_conditional_validation,
         "rejection": rejection_obj,
         "promotion_gate": promotion_gate,
         "evidence_safety": {

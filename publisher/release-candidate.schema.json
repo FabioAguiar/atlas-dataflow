@@ -228,6 +228,52 @@
         }
       }
     },
+    "capability_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "authoring_generation_id",
+        "authoring_manifest_ref",
+        "capability_profile_id",
+        "capability_profile_version",
+        "capability_profile_ref",
+        "resolved_role_policy"
+      ],
+      "description": "Project Spec S0168. Optional capability-aware identity for this release candidate, additive only (new optional property; existing required array unchanged). Absent for a candidate governed by the historical fixed artifact_roles shape above, which remains valid. Never duplicates the full capability profile or authoring manifest payload -- only governed (path + sha256) references and a resolved role policy. Applicability must be resolved from the referenced capability profile, never inferred from dataset identity, filesystem existence, or a milestone id.",
+      "properties": {
+        "dataset_slug": {
+          "$ref": "#/$defs/dataset_slug",
+          "description": "Must match dataset_identity.dataset_slug."
+        },
+        "authoring_generation_id": {"$ref": "#/$defs/identifier"},
+        "authoring_manifest_ref": {
+          "allOf": [
+            {"$ref": "#/$defs/governed_reference"},
+            {
+              "properties": {
+                "contract_version": {
+                  "type": "string",
+                  "const": "dataset-integration-authoring-manifest.v1"
+                }
+              }
+            }
+          ]
+        },
+        "capability_profile_id": {"$ref": "#/$defs/capability_identifier"},
+        "capability_profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^v[0-9]+$"
+        },
+        "capability_profile_ref": {"$ref": "#/$defs/governed_reference"},
+        "resolved_role_policy": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/role_policy_entry"}
+        }
+      }
+    },
     "state_boundaries": {
       "type": "object",
       "additionalProperties": false,
@@ -278,6 +324,75 @@
     }
   },
   "$defs": {
+    "dataset_slug": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    },
+    "capability_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    },
+    "role_applicability": {
+      "type": "string",
+      "enum": ["required", "optional", "forbidden"]
+    },
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safe_relative_governed_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\\\)(?![A-Za-z]:)[A-Za-z0-9][A-Za-z0-9._/-]*[^/]$",
+      "description": "Repository-relative governed reference path. Absolute paths, parent traversal, repeated separators, and Windows paths are invalid."
+    },
+    "governed_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/safe_relative_governed_path"},
+        "sha256": {"$ref": "#/$defs/sha256_hex"}
+      }
+    },
+    "role_policy_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role_name", "applicability", "present"],
+      "description": "One artifact role's resolved applicability under a capability profile, and whether it is present in this release candidate. A forbidden role must never be present; a required role must be present.",
+      "properties": {
+        "role_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "applicability": {"$ref": "#/$defs/role_applicability"},
+        "present": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"applicability": {"const": "forbidden"}},
+            "required": ["applicability"]
+          },
+          "then": {"properties": {"present": {"const": false}}}
+        },
+        {
+          "if": {
+            "properties": {"applicability": {"const": "required"}},
+            "required": ["applicability"]
+          },
+          "then": {"properties": {"present": {"const": true}}}
+        }
+      ]
+    },
     "artifact_role": {
       "type": "object",
       "additionalProperties": false,

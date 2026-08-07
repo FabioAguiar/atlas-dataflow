@@ -545,6 +545,63 @@
           "minLength": 1
         }
       }
+    },
+    "capability_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_slug",
+        "authoring_generation_id",
+        "authoring_manifest_ref",
+        "capability_profile_id",
+        "capability_profile_version",
+        "capability_profile_ref",
+        "resolved_role_policy"
+      ],
+      "description": "Project Spec S0168. Optional capability-aware package identity for this release-candidate input, evolved purely additively (new optional property, same contract_version const, existing required array unchanged). Absent for historical release-candidate-input.v1 instances, which remain valid and are interpreted exactly as before. When present, resolved_role_policy is the explicit, capability-profile-derived applicability (required/optional/forbidden) for artifact roles governed by this release; it must not require a forbidden role to appear and must not use a placeholder artifact to stand in for an inapplicable role. Applicability must be resolved from the referenced capability profile, never inferred from dataset_slug, Telco identity, filesystem existence, or a milestone id.",
+      "properties": {
+        "dataset_slug": {
+          "$ref": "#/$defs/dataset_slug",
+          "description": "Must match dataset_identity.dataset_slug."
+        },
+        "authoring_generation_id": {
+          "$ref": "#/$defs/identifier",
+          "description": "Identifies the immutable Atlas authoring generation this release is built from (pipeline/dataset-integration-authoring-manifest.schema.json#/properties/authoring_generation/properties/authoring_generation_id)."
+        },
+        "authoring_manifest_ref": {
+          "allOf": [
+            { "$ref": "#/$defs/governed_reference" },
+            {
+              "properties": {
+                "contract_version": {
+                  "type": "string",
+                  "const": "dataset-integration-authoring-manifest.v1"
+                }
+              }
+            }
+          ],
+          "description": "Governed reference (path + sha256) to the dataset-integration authoring manifest. Never embeds the manifest payload."
+        },
+        "capability_profile_id": {
+          "$ref": "#/$defs/capability_identifier",
+          "description": "Architecture-level capability family identifier (pipeline/capability-profile.schema.json#/properties/capability_profile_id). Must never be a dataset slug or dataset-specific identity."
+        },
+        "capability_profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^v[0-9]+$"
+        },
+        "capability_profile_ref": {
+          "$ref": "#/$defs/governed_reference",
+          "description": "Governed reference (path + sha256) to the concrete capability profile document. Never embeds the profile payload."
+        },
+        "resolved_role_policy": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Explicit, capability-profile-derived applicability (required/optional/forbidden) for artifact roles governed by this release, and whether each is present in this candidate.",
+          "items": { "$ref": "#/$defs/role_policy_entry" }
+        }
+      }
     }
   },
   "$defs": {
@@ -796,6 +853,60 @@
           "const": "internal_only"
         }
       }
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    },
+    "capability_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    },
+    "role_applicability": {
+      "type": "string",
+      "enum": ["required", "optional", "forbidden"]
+    },
+    "governed_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/safe_relative_file_path" },
+        "sha256": { "$ref": "#/$defs/sha256_hex" }
+      }
+    },
+    "role_policy_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role_name", "applicability", "present"],
+      "description": "One artifact role's resolved applicability under a capability profile, and whether it is present in this release candidate input. A forbidden role must never be present; a required role must be present.",
+      "properties": {
+        "role_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "applicability": { "$ref": "#/$defs/role_applicability" },
+        "present": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "applicability": { "const": "forbidden" } },
+            "required": ["applicability"]
+          },
+          "then": { "properties": { "present": { "const": false } } }
+        },
+        {
+          "if": {
+            "properties": { "applicability": { "const": "required" } },
+            "required": ["applicability"]
+          },
+          "then": { "properties": { "present": { "const": true } } }
+        }
+      ]
     },
     "role_mapping": {
       "type": "object",

@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/dataset-integration-authoring-manifest.schema.json",
+  "title": "Atlas DataFlow Dataset Integration Authoring Manifest",
+  "description": "Project Spec S0166. The principal, immutable-per-authoring-generation index for one dataset-specific Atlas authoring generation. Owns coordination metadata only -- dataset identity, authoring-generation identity, the selected capability-profile identity/version, a role-keyed inventory of safe relative artifact references with contract/version identity and SHA-256 integrity, compact provenance, and boundary confirmations. It must never embed complete discovery evidence, a complete semantic-intent payload, a complete preparation recipe, training metrics, model-selection payload, model bytes, an inference-bundle payload, visual payloads, or an absolute external project root; it references those narrow artifacts instead of duplicating them. This manifest is not an external_analysis_handoff replacement and must never contain an operational importer instruction -- external corroboration is represented only as logical producer identity in the provenance section, never as an external filesystem root.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "dataset_identity",
+    "authoring_generation",
+    "capability_profile_selection",
+    "artifact_references",
+    "provenance",
+    "boundary_confirmations",
+    "generated_at"
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    },
+    "capability_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    },
+    "role_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "safe_relative_reference": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\\\)(?![A-Za-z]:)(?!.*(?:^|/)(?:\\.env|logs|runtime/logs|runtime/tmp|runtime/cache|runtime/data)(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9]$",
+      "description": "Portable, repository/package-relative reference. Rejects absolute POSIX paths, Windows drive paths, UNC/backslash paths, parent traversal, empty and dot-only paths, and repeated separators."
+    },
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Lowercase 64-character hex-encoded SHA-256 digest."
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "dataset-integration-authoring-manifest.v1",
+      "description": "Schema version for this authoring manifest document."
+    },
+    "artifact_type": {
+      "type": "string",
+      "const": "dataset_integration_authoring_manifest",
+      "description": "Explicit artifact type identifying this document as the principal dataset-integration authoring manifest."
+    },
+    "dataset_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_slug"],
+      "description": "This manifest is dataset-specific: it governs exactly one dataset.",
+      "properties": {
+        "dataset_slug": {"$ref": "#/$defs/identifier"},
+        "dataset_logical_name": {"type": "string", "minLength": 1}
+      }
+    },
+    "authoring_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authoring_generation_id", "immutable", "generated_at"],
+      "description": "Explicit, immutable authoring-generation identity this manifest represents. A new authoring decision requires a new authoring_generation_id and a new manifest instance, never an in-place mutation of this one.",
+      "properties": {
+        "authoring_generation_id": {"$ref": "#/$defs/identifier"},
+        "immutable": {"type": "boolean", "const": true},
+        "generated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "capability_profile_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_profile_id", "capability_profile_version"],
+      "description": "Typed identity/version selection of the capability profile governing this authoring generation's role applicability and semantic requirements. Never a dataset slug, filesystem check, or placeholder.",
+      "properties": {
+        "capability_profile_id": {"$ref": "#/$defs/capability_identifier"},
+        "capability_profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^v[0-9]+$"
+        },
+        "capability_profile_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "description": "Optional safe relative reference to the concrete capability-profile document, for integrity-bound resolution alongside the typed id/version selection above.",
+          "properties": {
+            "path": {"$ref": "#/$defs/safe_relative_reference"},
+            "sha256": {"$ref": "#/$defs/sha256_hex"}
+          }
+        }
+      }
+    },
+    "artifact_references": {
+      "type": "array",
+      "description": "Role-keyed inventory of narrow artifact references this authoring generation coordinates. Each entry references, rather than duplicates, its narrow artifact payload. Role applicability (required/optional/forbidden) is resolved from the selected capability profile, not stored redundantly here.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "path", "sha256", "contract_version"],
+        "properties": {
+          "role": {
+            "$ref": "#/$defs/role_identifier",
+            "description": "Stable artifact role identifier. Every reference must declare a role identity; a reference without one is rejected."
+          },
+          "path": {
+            "$ref": "#/$defs/safe_relative_reference",
+            "description": "Safe relative reference to the concrete narrow artifact. Absolute filesystem paths and path traversal escaping the repository/package boundary are rejected."
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256_hex",
+            "description": "Lowercase SHA-256 of the referenced artifact's bytes."
+          },
+          "contract_version": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Contract/schema version identifier of the referenced artifact, e.g. 'dataset-discovery-evidence.v1'."
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "array",
+      "description": "Compact provenance records for this authoring generation's artifacts, per S0163's decision to keep provenance a section of the principal manifest rather than a separate top-level artifact. Uses logical producer/artifact identity; never an external filesystem root. A missing external producer revision is representable explicitly via producer_revision_known=false rather than a fabricated value.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "logical_producer_project_id",
+          "artifact_role",
+          "artifact_type",
+          "artifact_version",
+          "relative_path",
+          "sha256",
+          "producer_revision_known",
+          "producer_revision",
+          "input_references"
+        ],
+        "allOf": [
+          {
+            "if": {"properties": {"producer_revision_known": {"const": true}}, "required": ["producer_revision_known"]},
+            "then": {"properties": {"producer_revision": {"type": "string", "minLength": 1}}}
+          },
+          {
+            "if": {"properties": {"producer_revision_known": {"const": false}}, "required": ["producer_revision_known"]},
+            "then": {"properties": {"producer_revision": {"type": "null"}}}
+          }
+        ],
+        "properties": {
+          "logical_producer_project_id": {
+            "$ref": "#/$defs/identifier",
+            "description": "Logical producer/project identity, e.g. 'atlas-dataflow' or an external scientific-analysis project's stable logical id. Never an external filesystem root."
+          },
+          "artifact_role": {"$ref": "#/$defs/role_identifier"},
+          "artifact_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relative_path": {"$ref": "#/$defs/safe_relative_reference"},
+          "sha256": {"$ref": "#/$defs/sha256_hex"},
+          "producer_revision_known": {
+            "type": "boolean",
+            "description": "True when an immutable producer revision (e.g. a source repository revision) is genuinely known. False means the revision is explicitly unknown, not fabricated."
+          },
+          "producer_revision": {
+            "description": "Immutable producer revision string when producer_revision_known is true; null when producer_revision_known is false.",
+            "type": ["string", "null"],
+            "minLength": 1
+          },
+          "input_references": {
+            "type": "array",
+            "description": "Role identifiers of other artifact_references entries that this provenance record was derived from, if any.",
+            "items": {"$ref": "#/$defs/role_identifier"}
+          },
+          "generation_timestamp": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Optional generation timestamp for this artifact, present only when meaningful beyond its content hash."
+          }
+        }
+      }
+    },
+    "boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complete_discovery_evidence_embedded",
+        "complete_semantic_intent_embedded",
+        "complete_preparation_recipe_embedded",
+        "training_metrics_embedded",
+        "model_selection_payload_embedded",
+        "model_bytes_embedded",
+        "inference_bundle_payload_embedded",
+        "visual_payloads_embedded",
+        "absolute_external_project_root_present",
+        "external_analysis_handoff_replacement",
+        "operational_importer_instruction_present"
+      ],
+      "description": "Explicit confirmation that this manifest does not perform any forbidden embedding or role substitution. All flags are required and fixed.",
+      "properties": {
+        "complete_discovery_evidence_embedded": {"type": "boolean", "const": false},
+        "complete_semantic_intent_embedded": {"type": "boolean", "const": false},
+        "complete_preparation_recipe_embedded": {"type": "boolean", "const": false},
+        "training_metrics_embedded": {"type": "boolean", "const": false},
+        "model_selection_payload_embedded": {"type": "boolean", "const": false},
+        "model_bytes_embedded": {"type": "boolean", "const": false},
+        "inference_bundle_payload_embedded": {"type": "boolean", "const": false},
+        "visual_payloads_embedded": {"type": "boolean", "const": false},
+        "absolute_external_project_root_present": {"type": "boolean", "const": false},
+        "external_analysis_handoff_replacement": {"type": "boolean", "const": false},
+        "operational_importer_instruction_present": {"type": "boolean", "const": false}
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this manifest was generated."
+    }
+  }
+}

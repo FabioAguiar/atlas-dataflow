@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/dataset-semantic-intent.schema.json",
+  "title": "Atlas DataFlow Dataset Semantic Intent",
+  "description": "Project Spec S0166. Governed, dataset-specific authored meaning for one dataset, reviewed by a human authoring the dataset's Atlas integration. Owns field role decisions, identifier semantics, feature inclusion/exclusion intent, missing-value and categorical/domain intent, target/result semantics when the governing capability profile allows them, and human-reviewed public-meaning/safe-projection intent. Must never own observed source measurements (owned by pipeline/dataset-discovery-evidence.schema.json), scientific EDA conclusions (owned by external scientific-analysis evidence), or training outcomes (owned by narrow modeling artifacts). When the governing capability profile forbids target semantics, this artifact must omit target_semantics entirely rather than populate a dummy or null value merely to satisfy a universal schema; this schema's own optionality never claims a targetless/no-model capability is currently operational -- that claim is made, if ever, only by a capability profile's own support_status.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "dataset_identity",
+    "authoring_generation_id",
+    "governing_capability_profile",
+    "field_role_decisions",
+    "semantic_boundary_confirmations",
+    "generated_at"
+  ],
+  "$defs": {
+    "dataset_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    },
+    "capability_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "dataset-semantic-intent.v1",
+      "description": "Schema version for this dataset semantic-intent document."
+    },
+    "artifact_type": {
+      "type": "string",
+      "const": "dataset_semantic_intent",
+      "description": "Explicit artifact type identifying this document as governed dataset semantic intent."
+    },
+    "dataset_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_slug"],
+      "description": "Dataset-specific identity this semantic intent governs. Every semantic decision in this document is scoped to exactly this dataset.",
+      "properties": {
+        "dataset_slug": {
+          "$ref": "#/$defs/dataset_identifier",
+          "description": "Stable dataset slug this semantic intent belongs to."
+        },
+        "dataset_logical_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional human-readable dataset name."
+        }
+      }
+    },
+    "authoring_generation_id": {
+      "$ref": "#/$defs/dataset_identifier",
+      "description": "Identifier of the immutable authoring generation this semantic intent belongs to. Must agree with the referencing dataset-integration authoring manifest's authoring_generation.authoring_generation_id."
+    },
+    "governing_capability_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_profile_id", "capability_profile_version"],
+      "description": "Typed identity/version of the capability profile that determines whether target_semantics is required, optional, or forbidden for this document. Must agree with the referencing authoring manifest's selected capability profile.",
+      "properties": {
+        "capability_profile_id": {"$ref": "#/$defs/capability_identifier"},
+        "capability_profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^v[0-9]+$"
+        }
+      }
+    },
+    "field_role_decisions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Authored, reviewed role decision for each field this semantic intent covers. Observed facts (types, null rates, cardinality) must come from discovery evidence, not from this array.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field_name", "role", "include_in_features"],
+        "properties": {
+          "field_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Field/column name this decision covers."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["identifier", "feature", "target", "ignored", "derived"],
+            "description": "Authored semantic role for this field. 'identifier' fields are never features. 'target' is only valid when governing_capability_profile permits target semantics."
+          },
+          "include_in_features": {
+            "type": "boolean",
+            "description": "Explicit feature inclusion/exclusion intent for this field. Must be false when role is 'identifier', 'target', or 'ignored'."
+          },
+          "exclusion_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required rationale when include_in_features is false and role is not 'identifier'."
+          },
+          "missing_value_intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["policy"],
+            "description": "Authored missing-value semantic intent for this field, distinct from discovery evidence's observed null counts.",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": ["no_missing_expected", "impute_fixed_value", "impute_statistical", "treat_as_category", "requires_review"],
+                "description": "Authored policy for how missing values in this field are semantically intended to be treated."
+              },
+              "fixed_value": {
+                "description": "Typed fixed value used only when policy is 'impute_fixed_value'."
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "categorical_domain_intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["accepted_values", "review_status", "closed_for_inference"],
+            "description": "Authored categorical/domain intent for this field, present only when the field has a reviewed closed or open domain.",
+            "properties": {
+              "accepted_values": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1
+              },
+              "review_status": {
+                "type": "string",
+                "enum": ["approved", "requires_review"]
+              },
+              "closed_for_inference": {
+                "type": "boolean",
+                "description": "True when accepted_values is authored as a provably complete, closed domain rather than an open/inferred sample."
+              },
+              "source_basis": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Traceable rationale for how this domain was reviewed, e.g. a reference to the discovery evidence field observation it was reviewed against."
+              }
+            }
+          }
+        }
+      }
+    },
+    "target_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_field_name", "task_type", "positive_class"],
+      "description": "Authored target/result semantics. Must be entirely omitted -- not present as a null or empty placeholder -- when governing_capability_profile forbids target semantics.",
+      "properties": {
+        "target_field_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_type": {
+          "type": "string",
+          "enum": ["binary_classification"],
+          "description": "Currently only 'binary_classification' is an evidenced, governed task type. A new task_type value requires a new schema version, never an ad hoc string."
+        },
+        "positive_class": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class_id"],
+          "properties": {
+            "class_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "event_label": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "is_final_training_configuration": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must always be false. Target semantics authored here are not final training configuration without later validation and stage authorization."
+        }
+      }
+    },
+    "authored_public_meaning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["human_reviewed"],
+      "description": "Optional human-reviewed safe public-meaning or projection intent for this dataset, distinct from any generated public contract.",
+      "properties": {
+        "human_reviewed": {
+          "type": "boolean"
+        },
+        "safe_projection_intent": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "authoring_rationale_refs": {
+      "type": "array",
+      "description": "Optional traceability references to authoring rationale or governed scientific-evidence artifacts this semantic intent was reviewed against. Must not embed raw scientific-evidence payloads.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reference_kind", "reference_id"],
+        "properties": {
+          "reference_kind": {
+            "type": "string",
+            "enum": ["source_verification_evidence", "external_scientific_evidence", "authoring_note"]
+          },
+          "reference_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "semantic_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_source_statistics_embedded",
+        "scientific_conclusions_embedded",
+        "training_outcome_embedded",
+        "release_state_embedded",
+        "model_bytes_embedded"
+      ],
+      "description": "Explicit confirmation that this semantic-intent document does not own observed facts, scientific conclusions, training outcomes, release state, or model bytes. All flags are required and fixed.",
+      "properties": {
+        "observed_source_statistics_embedded": {"type": "boolean", "const": false},
+        "scientific_conclusions_embedded": {"type": "boolean", "const": false},
+        "training_outcome_embedded": {"type": "boolean", "const": false},
+        "release_state_embedded": {"type": "boolean", "const": false},
+        "model_bytes_embedded": {"type": "boolean", "const": false}
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this semantic-intent document was generated."
+    }
+  }
+}

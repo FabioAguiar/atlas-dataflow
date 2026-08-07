@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/capability-profile.schema.json",
+  "title": "Atlas DataFlow Capability Profile",
+  "description": "Project Spec S0166. Versioned, architecture-level source of dataset-integration authoring artifact-role applicability for one analytical capability family. A capability profile is never dataset-specific: it must never be selected by dataset_slug, hardcoded dataset identity, filesystem existence, or a historical milestone id, and it must never contain dataset-specific feature names, concrete model hashes, model bytes, release-instance metadata, absolute external paths, or training-result values. `support_status` distinguishes a capability that Atlas currently, operationally supports end-to-end from a future architecture probe or a capability that requires further contract evolution before it can be called supported -- only `current_supported` may be treated as operational by any downstream consumer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "capability_profile_id",
+    "capability_profile_version",
+    "support_status",
+    "semantic_requirements",
+    "artifact_roles",
+    "prediction_runtime",
+    "publication",
+    "capability_boundary_confirmations",
+    "generated_at"
+  ],
+  "$defs": {
+    "capability_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    },
+    "role_applicability": {
+      "type": "string",
+      "enum": ["required", "optional", "forbidden"]
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "capability-profile.v1",
+      "description": "Schema version for this capability profile document."
+    },
+    "artifact_type": {
+      "type": "string",
+      "const": "capability_profile",
+      "description": "Explicit artifact type identifying this document as a capability profile."
+    },
+    "capability_profile_id": {
+      "$ref": "#/$defs/capability_identifier",
+      "description": "Stable architecture-level capability family identifier, e.g. 'binary-predictive-classification'. Must never be a dataset slug, dataset name, or Telco-specific identity."
+    },
+    "capability_profile_version": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^v[0-9]+$",
+      "description": "Profile version. Incremented whenever role applicability, semantic requirements, or capability policy change for this capability_profile_id."
+    },
+    "support_status": {
+      "type": "string",
+      "enum": ["current_supported", "future_architecture_probe", "requires_future_contract_evolution"],
+      "description": "Whether this capability is currently, operationally supported by Atlas end-to-end ('current_supported'), a documented architecture probe with no current implementation ('future_architecture_probe'), or a capability that needs further contract evolution before it can be supported ('requires_future_contract_evolution'). Only one profile may currently be marked 'current_supported': the binary predictive-classification profile. Regression, forecasting, clustering, and no-model/analysis-only capabilities must never be marked 'current_supported'."
+    },
+    "semantic_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_semantics_applicability"],
+      "description": "Declares whether this capability's governed dataset-semantic-intent artifact may, must, or must not carry target/result semantics.",
+      "properties": {
+        "target_semantics_applicability": {
+          "$ref": "#/$defs/role_applicability",
+          "description": "'required' when a dataset-semantic-intent artifact governed by this profile must declare target semantics; 'forbidden' when it must omit target semantics entirely rather than populate dummy/null values; 'optional' when either is acceptable."
+        },
+        "split_semantics_applicability": {
+          "$ref": "#/$defs/role_applicability",
+          "description": "Optional. Whether a governed split/validation policy is required, optional, or forbidden for this capability."
+        }
+      }
+    },
+    "artifact_roles": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The complete, explicit set of artifact roles this capability profile governs, and whether each is required, optional, or forbidden. A role absent from this array is neither authorized nor forbidden by this profile.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role_name", "applicability"],
+        "properties": {
+          "role_name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "Generic architecture-level artifact role name, e.g. 'discovery_evidence', 'model_artifact'. Must never be a dataset-specific feature name."
+          },
+          "applicability": {
+            "$ref": "#/$defs/role_applicability"
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional non-authoritative rationale for this role's applicability under this capability."
+          }
+        }
+      }
+    },
+    "prediction_runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicable", "mode"],
+      "description": "Typed declaration of whether this capability delivers runtime prediction, and how.",
+      "properties": {
+        "applicable": {
+          "type": "boolean",
+          "description": "True when this capability delivers a runtime prediction/inference path."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["single_model_binary_classification", "none"],
+          "description": "The current, evidenced runtime prediction mode for this capability, or 'none' when prediction_runtime.applicable is false. New modes require a new capability profile version, never a dataset-specific branch."
+        }
+      }
+    },
+    "publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["public_prediction_capability_applicability"],
+      "description": "Typed declaration of this capability's publication/public-surface applicability.",
+      "properties": {
+        "public_prediction_capability_applicability": {
+          "$ref": "#/$defs/role_applicability",
+          "description": "Whether a public prediction capability is required, optional, or forbidden for a release governed by this profile."
+        }
+      }
+    },
+    "capability_policy_refs": {
+      "type": "array",
+      "description": "Optional list of capability-specific policy references or typed policy values, distinct from dataset-specific semantic intent.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["policy_id", "policy_version"],
+        "properties": {
+          "policy_id": {
+            "$ref": "#/$defs/capability_identifier"
+          },
+          "policy_version": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^v[0-9]+$"
+          },
+          "policy_value": {
+            "description": "Optional typed policy value scoped to policy_id. Must not embed dataset-specific feature names, model bytes, or absolute paths."
+          }
+        }
+      }
+    },
+    "capability_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset_specific_selector_used",
+        "dataset_specific_feature_names_present",
+        "concrete_model_hashes_present",
+        "model_bytes_embedded",
+        "release_instance_metadata_embedded",
+        "absolute_external_path_present",
+        "training_result_values_embedded"
+      ],
+      "description": "Explicit confirmation that this capability profile does not perform forbidden dataset-specific or release-instance coupling. All flags are required and fixed.",
+      "properties": {
+        "dataset_specific_selector_used": {"type": "boolean", "const": false},
+        "dataset_specific_feature_names_present": {"type": "boolean", "const": false},
+        "concrete_model_hashes_present": {"type": "boolean", "const": false},
+        "model_bytes_embedded": {"type": "boolean", "const": false},
+        "release_instance_metadata_embedded": {"type": "boolean", "const": false},
+        "absolute_external_path_present": {"type": "boolean", "const": false},
+        "training_result_values_embedded": {"type": "boolean", "const": false}
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this capability profile document was generated/registered."
+    }
+  }
+}

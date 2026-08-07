@@ -18,6 +18,18 @@
     "discovery_boundary_confirmations",
     "evidence_policy"
   ],
+  "$defs": {
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Lowercase 64-character hex-encoded SHA-256 digest."
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    }
+  },
   "properties": {
     "schema_version": {
       "type": "string",
@@ -55,6 +67,19 @@
           "minLength": 1,
           "description": "Reduced source path reference. Must not contain private absolute path details or raw content."
         }
+      }
+    },
+    "source_fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "description": "Optional portable content fingerprint of the exact input consulted, independent of source_path. Absent in schema_version dataset-discovery-evidence.v1 evidence generated before this field existed; a new capability profile must never make this universally mandatory.",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "sha256"
+        },
+        "value": {"$ref": "#/$defs/sha256_hex"}
       }
     },
     "field_observations": {
@@ -121,9 +146,17 @@
         "minLength": 1
       }
     },
+    "candidate_identifier_fields": {
+      "type": "array",
+      "description": "Optional field names observed as candidate identifier fields (e.g. near-unique cardinality). Non-authoritative -- requires human review before finalization. Absent in evidence generated before this field existed.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "candidate_target_columns": {
       "type": "array",
-      "description": "Candidate target column identifications. Each entry must be flagged non-authoritative. No automatic selection is performed.",
+      "description": "Candidate target column identifications. Each entry must be flagged non-authoritative. No automatic selection is performed. Applicability of a target is capability-profile-driven downstream; this array may legitimately be empty for a capability that forbids target semantics, and this schema never makes it universally mandatory.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -143,9 +176,57 @@
             "type": "string",
             "minLength": 1,
             "description": "Short non-authoritative reason for the candidate classification."
+          },
+          "observed_shape": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observed_cardinality"],
+            "description": "Optional observed shape of this candidate target column, independent of any authored target semantics.",
+            "properties": {
+              "observed_cardinality": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "observed_value_sample": {
+                "type": "array",
+                "items": {},
+                "description": "Small, non-authoritative sample of observed distinct values."
+              }
+            }
           }
         }
       }
+    },
+    "drift_assertions": {
+      "type": "array",
+      "description": "Optional drift-sensitive assertions this evidence generation observed relative to a prior generation for the same logical source, e.g. cardinality or null-rate stability. Absent in evidence generated before this field existed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field_name", "assertion_type", "held"],
+        "properties": {
+          "field_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assertion_type": {
+            "type": "string",
+            "enum": ["cardinality_stable", "type_stable", "null_rate_bounded", "value_domain_stable"]
+          },
+          "held": {
+            "type": "boolean",
+            "description": "Whether this drift assertion held for this generation."
+          },
+          "details": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "authoring_generation_ref": {
+      "$ref": "#/$defs/identifier",
+      "description": "Optional traceability reference to the dataset-integration authoring generation that consumed this evidence, if any. Never authoritative for this evidence's own observations."
     },
     "generation_settings": {
       "type": "object",

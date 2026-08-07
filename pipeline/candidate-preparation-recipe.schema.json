@@ -18,6 +18,13 @@
     "preparation_boundary_confirmations",
     "evidence_policy"
   ],
+  "$defs": {
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Lowercase 64-character hex-encoded SHA-256 digest."
+    }
+  },
   "properties": {
     "schema_version": {
       "type": "string",
@@ -67,6 +74,27 @@
           "type": "string",
           "minLength": 1,
           "description": "Schema version of the consumed discovery evidence artifact."
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "Optional integrity reference: SHA-256 of the consumed discovery evidence artifact's bytes. Absent in recipes generated before this field existed."
+        }
+      }
+    },
+    "no_transform_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applies", "reason"],
+      "description": "Optional explicit, typed no-transform policy. When applies is true, this recipe intentionally declares no transformations (transformations must be empty) rather than leaving an empty transformations array with ambiguous semantics. Absent in recipes generated before this field existed, which continue to be interpreted the prior way (transformations is authoritative on its own).",
+      "properties": {
+        "applies": {
+          "type": "boolean",
+          "description": "True when this dataset/capability combination is explicitly governed by a no-transform policy."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Explicit, reviewable rationale for the no-transform policy. Must not be a placeholder."
         }
       }
     },

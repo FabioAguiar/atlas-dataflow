@@ -339,6 +339,7 @@
         }
       }
     },
+    "model_delivery": {"$ref": "#/$defs/model_delivery_manifest"},
     "capability_identity": {
       "type": "object",
       "additionalProperties": false,
@@ -381,6 +382,16 @@
     }
   },
   "$defs": {
+    "model_delivery_manifest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "artifact_id", "artifact_format", "path", "sha256", "inference_bundle_id", "provenance"],
+      "properties": {
+        "role": {"type": "string", "const": "model_artifact"}, "artifact_id": {"$ref": "#/$defs/identifier"},
+        "artifact_format": {"type": "string", "minLength": 1}, "path": {"$ref": "#/$defs/safe_relative_reference"},
+        "sha256": {"$ref": "#/$defs/sha256"}, "inference_bundle_id": {"$ref": "#/$defs/identifier"},
+        "provenance": {"type": "object", "additionalProperties": false, "required": ["source_reference"], "properties": {"source_reference": {"type": "string", "minLength": 1}, "source_revision": {"type": "string", "minLength": 1}}}
+      }
+    },
     "identifier": {
       "type": "string",
       "minLength": 1,

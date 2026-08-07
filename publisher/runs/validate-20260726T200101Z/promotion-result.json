@@ -15,10 +15,12 @@
     "all_preconditions_met": true
   },
   "registry_update_record": {
-    "update_applied": false,
-    "new_active_release_id": null,
-    "previous_active_release_id": null,
-    "previous_release_preserved": true
+    "update_applied": true,
+    "new_active_release_id": "release-20260726t200101z",
+    "previous_active_release_id": "release-20260721t231025z",
+    "previous_release_preserved": true,
+    "promoted_at": "2026-08-07T23:12:31Z",
+    "registry_action": "updated"
   },
   "evidence_safety": {
     "reduced_evidence_only": true,

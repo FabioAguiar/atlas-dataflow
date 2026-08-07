@@ -788,6 +788,46 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
             model_role_result["status"] = "contradictory"
             model_role_result["reason"] = reason
 
+        model_delivery = candidate.get("model_delivery")
+        if isinstance(candidate.get("capability_binding"), dict):
+            if not isinstance(model_delivery, dict):
+                reason = _rejection_reason(
+                    "model_delivery_metadata_missing",
+                    "Capability-aware predictive candidate lacks governed model delivery metadata.",
+                    _MODEL_ARTIFACT_ROLE,
+                )
+                rejection_reasons.append(reason)
+            else:
+                checks = (
+                    (
+                        model_delivery.get("path"),
+                        model_role_result.get("artifact_reference"),
+                        "model_delivery_path_mismatch",
+                    ),
+                    (
+                        model_delivery.get("sha256"),
+                        model_role_actual_sha256,
+                        "model_delivery_hash_mismatch",
+                    ),
+                    (
+                        model_delivery.get("inference_bundle_id"),
+                        (predictive_bundle_data or {})
+                        .get("bundle_identity", {})
+                        .get("bundle_id"),
+                        "model_bundle_identity_mismatch",
+                    ),
+                )
+                for declared, actual, code in checks:
+                    if declared != actual:
+                        reason = _rejection_reason(
+                            code,
+                            "Governed model delivery metadata is inconsistent with the "
+                            "candidate bundle or model bytes.",
+                            _MODEL_ARTIFACT_ROLE,
+                        )
+                        rejection_reasons.append(reason)
+                        model_role_result["status"] = "contradictory"
+
     cross_artifact_consistency = _validate_cross_artifact_consistency(
         candidate,
         json_artifacts,

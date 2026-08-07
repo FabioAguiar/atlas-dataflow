@@ -1084,6 +1084,49 @@ def _resolve_repo_relative(path_value: str, repo_root: Path) -> Path:
     return repo_root / path
 
 
+def _safe_release_relative_path(path_value: str, candidate_root: Path) -> Path:
+    """Resolve a portable release path and prove candidate-root containment."""
+    path = Path(path_value)
+    if path.is_absolute() or not path.parts or ".." in path.parts or "\\" in path_value:
+        raise ValueError("model destination must be a safe release-relative path")
+    resolved = (candidate_root / path).resolve()
+    if not resolved.is_relative_to(candidate_root.resolve()):
+        raise ValueError("model destination escapes the candidate root")
+    return resolved
+
+
+def deliver_model_artifact(
+    delivery: dict[str, Any], source_path: str | Path, candidate_root: str | Path
+) -> dict[str, Any]:
+    """Copy a governed model as opaque bytes after source/destination integrity checks."""
+    source = Path(source_path)
+    root = Path(candidate_root)
+    if not source.is_file():
+        raise ValueError("model source must be an existing regular file")
+    expected = delivery.get("expected_sha256")
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    if not isinstance(expected, str) or not _SHA256_HEX_PATTERN.fullmatch(expected):
+        raise ValueError("model delivery expected_sha256 must be lowercase SHA-256")
+    if source_sha256 != expected:
+        raise ValueError("model source SHA-256 does not match governed metadata")
+    destination = _safe_release_relative_path(delivery.get("destination_path", ""), root)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    destination_sha256 = hashlib.sha256(destination.read_bytes()).hexdigest()
+    if destination_sha256 != source_sha256 or destination_sha256 != expected:
+        raise ValueError("delivered model SHA-256 does not match source and governed metadata")
+    return {
+        "role": delivery["role"],
+        "artifact_id": delivery["artifact_id"],
+        "artifact_format": delivery["artifact_format"],
+        "loader_family": delivery["loader_family"],
+        "path": delivery["destination_path"],
+        "sha256": destination_sha256,
+        "inference_bundle_id": delivery["inference_bundle_id"],
+        "provenance": delivery["provenance"],
+    }
+
+
 def _required_public_artifacts(candidate_input: dict[str, Any]) -> list[tuple[dict[str, Any], str]]:
     artifact_inputs = candidate_input["artifact_inputs"]
     artifacts: list[tuple[dict[str, Any], str]] = []
@@ -1165,6 +1208,7 @@ def assemble_release_candidate(
     *,
     repo_root: Path | str | None = None,
     source_input_label: str = "release-candidate-input",
+    model_source_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Assemble a publisher-compatible candidate from an in-memory
     `release-candidate-input.v1` dict.
@@ -1258,6 +1302,12 @@ def assemble_release_candidate(
     # Step 5: Copy each publisher-visible governed artifact to the candidate directory.
     assembled = []
     for artifact, output_path in _required_public_artifacts(candidate_input):
+        if (
+            capability_binding is not None
+            and candidate_input.get("model_delivery")
+            and artifact.get("role") == "model_artifact"
+        ):
+            continue
         dst = candidate_dir / output_path
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(_resolve_repo_relative(artifact["path"], resolved_repo_root), dst)
@@ -1270,6 +1320,33 @@ def assemble_release_candidate(
     release_candidate = _build_release_candidate(candidate_input, now)
 
     if capability_binding is not None:
+        delivery = candidate_input.get("model_delivery")
+        if not isinstance(delivery, dict):
+            return _rejection(
+                "model_delivery_missing",
+                "capability-aware predictive candidate requires model_delivery",
+            )
+        try:
+            delivered = deliver_model_artifact(
+                delivery,
+                model_source_path or _resolve_repo_relative(
+                    candidate_input["artifact_inputs"]["model_artifact"]["path"], resolved_repo_root
+                ),
+                candidate_dir,
+            )
+        except ValueError as exc:
+            return _rejection(
+                "model_delivery",
+                str(exc),
+                dataset_slug=dataset_slug,
+                release_id=release_id,
+                candidate_dir=str(candidate_dir),
+            )
+        release_candidate["artifact_roles"]["model_artifact"].update(
+            {"path": delivered["path"], "sha256": delivered["sha256"]}
+        )
+        release_candidate["model_delivery"] = delivered
+        assembled.append(delivered["path"])
         layout_result = validate_candidate_layout_role_policy(
             release_candidate["artifact_roles"], capability_binding["resolved_role_policy"]
         )

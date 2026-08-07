@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/external-inference/external-inference-request.schema.json",
+  "title": "external_inference_request.v1",
+  "description": "Strict, versioned internal request contract for the isolated external-inference service. Data-only: bounded Atlas-controlled bundle/runtime identity plus an already-validated, normalized feature payload. Never a filesystem path, loader/module name, serialized object, dependency override, or hash bypass.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "bundle_identity", "expected_runtime", "feature_payload"],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "external_inference_request.v1"
+    },
+    "bundle_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle_id", "dataset_slug"],
+      "properties": {
+        "bundle_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataset_slug": {
+          "type": "string",
+          "const": "telco-customer-churn"
+        }
+      }
+    },
+    "expected_runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python_major_minor", "joblib", "pandas", "scikit_learn"],
+      "properties": {
+        "python_major_minor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "joblib": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pandas": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scikit_learn": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "feature_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gender",
+        "SeniorCitizen",
+        "Partner",
+        "Dependents",
+        "tenure",
+        "PhoneService",
+        "MultipleLines",
+        "InternetService",
+        "OnlineSecurity",
+        "OnlineBackup",
+        "DeviceProtection",
+        "TechSupport",
+        "StreamingTV",
+        "StreamingMovies",
+        "Contract",
+        "PaperlessBilling",
+        "PaymentMethod",
+        "MonthlyCharges",
+        "TotalCharges"
+      ],
+      "properties": {
+        "gender": { "type": "string", "minLength": 1 },
+        "SeniorCitizen": { "type": "integer" },
+        "Partner": { "type": "string", "minLength": 1 },
+        "Dependents": { "type": "string", "minLength": 1 },
+        "tenure": { "type": "integer" },
+        "PhoneService": { "type": "string", "minLength": 1 },
+        "MultipleLines": { "type": "string", "minLength": 1 },
+        "InternetService": { "type": "string", "minLength": 1 },
+        "OnlineSecurity": { "type": "string", "minLength": 1 },
+        "OnlineBackup": { "type": "string", "minLength": 1 },
+        "DeviceProtection": { "type": "string", "minLength": 1 },
+        "TechSupport": { "type": "string", "minLength": 1 },
+        "StreamingTV": { "type": "string", "minLength": 1 },
+        "StreamingMovies": { "type": "string", "minLength": 1 },
+        "Contract": { "type": "string", "minLength": 1 },
+        "PaperlessBilling": { "type": "string", "minLength": 1 },
+        "PaymentMethod": { "type": "string", "minLength": 1 },
+        "MonthlyCharges": { "type": "number" },
+        "TotalCharges": { "type": "number" }
+      }
+    }
+  }
+}

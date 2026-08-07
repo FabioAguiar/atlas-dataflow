@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "atlas-dataflow-external-inference"
+version = "0.1.0"
+requires-python = "==3.11.15"
+dependencies = [
+    # Exact reproduction of the external Telco producer's declared fitted
+    # environment (S0158/G0004 external_producer_declared_runtime, verified
+    # again against the source metadata by S0159/G0002 and S0160/G0001) --
+    # deliberately NOT the shared api service's python:3.12-slim/>=3.12 pin;
+    # isolating this exact runtime is the entire reason this service exists.
+    "joblib==1.5.3",
+    "pandas==3.0.3",
+    "scikit-learn==1.9.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "jsonschema>=4.20.0",
+]

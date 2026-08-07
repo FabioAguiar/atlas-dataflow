@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/external-inference/external-inference-result.schema.json",
+  "title": "external_inference_result.v1",
+  "description": "Strict, versioned internal result contract returned by the isolated external-inference service. Carries status, the closed S0159 runtime-compatibility vocabulary, an existing Atlas RUNTIME_DIAGNOSTIC_CODES member or null, and a bounded binary-classification result or null. Never raw estimator objects, numpy/pandas objects, warnings, tracebacks, or dependency version details.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "status", "runtime_compatibility_status", "diagnostic_code", "result"],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "external_inference_result.v1"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "failed"]
+    },
+    "runtime_compatibility_status": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "enum": [
+            "compatible",
+            "incompatible",
+            "invalid_expected_runtime",
+            "invalid_observed_runtime",
+            "stale_bundle_reference"
+          ]
+        }
+      ],
+      "description": "Null only when the request was rejected before the load-safe gate could evaluate compatibility (e.g. structural request-schema validation failure)."
+    },
+    "diagnostic_code": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "enum": [
+            "INFERENCE_BUNDLE_UNAVAILABLE",
+            "MODEL_ARTIFACT_UNAVAILABLE",
+            "MODEL_ARTIFACT_HASH_MISMATCH",
+            "RUNTIME_DEPENDENCY_UNAVAILABLE",
+            "MODEL_DESERIALIZATION_FAILED",
+            "PREDICTION_EXECUTION_FAILED",
+            "RESULT_VALIDATION_FAILED",
+            "RUNTIME_INPUT_CONTRACT_INCONSISTENT"
+          ]
+        }
+      ]
+    },
+    "result": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/binary_classification_result" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": { "result": { "const": null } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "ok" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "result": { "$ref": "#/$defs/binary_classification_result" },
+          "diagnostic_code": { "const": null },
+          "runtime_compatibility_status": { "const": "compatible" }
+        },
+        "required": ["result"]
+      }
+    }
+  ],
+  "$defs": {
+    "binary_classification_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "problem_type",
+        "predicted_class",
+        "positive_class",
+        "positive_class_probability",
+        "class_probabilities",
+        "decision",
+        "interpretation",
+        "model_descriptor"
+      ],
+      "properties": {
+        "schema_version": { "const": "binary-classification-result.v1" },
+        "problem_type": { "const": "binary_classification" },
+        "predicted_class": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class_id"],
+          "properties": { "class_id": { "type": "string", "minLength": 1 } }
+        },
+        "positive_class": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class_id", "event_label"],
+          "properties": {
+            "class_id": { "type": "string", "minLength": 1 },
+            "event_label": { "type": "string", "minLength": 1 }
+          }
+        },
+        "positive_class_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "class_probabilities": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_id", "probability"],
+            "properties": {
+              "class_id": { "type": "string", "minLength": 1 },
+              "probability": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threshold", "predicted_positive"],
+          "properties": {
+            "threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+            "predicted_positive": { "type": "boolean" }
+          }
+        },
+        "interpretation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["preset", "band_id", "bands"],
+          "properties": {
+            "preset": { "const": "risk" },
+            "band_id": { "type": "string", "enum": ["low", "medium", "high"] },
+            "bands": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["band_id", "lower_bound", "upper_bound"],
+                "properties": {
+                  "band_id": { "type": "string", "enum": ["low", "medium", "high"] },
+                  "lower_bound": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "upper_bound": { "type": "number", "minimum": 0, "maximum": 1 }
+                }
+              }
+            }
+          }
+        },
+        "model_descriptor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "display_name"],
+          "properties": {
+            "model_family": {
+              "type": "string",
+              "enum": ["logistic_regression", "gradient_boosting", "random_forest"]
+            },
+            "display_name": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

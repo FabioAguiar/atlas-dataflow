@@ -50,6 +50,10 @@ from runtime.inference import (  # noqa: E402
     project_result_contract,
     validate_binary_classification_result,
 )
+from external_inference_client import (  # noqa: E402
+    EXTERNAL_INFERENCE_LOADER_STRATEGY,
+    execute_external_inference,
+)
 from public_contract_loader import (  # noqa: E402
     PublicContractUnavailableError,
     load_public_contract,
@@ -635,6 +639,39 @@ def _inference_failure_response(
     return public_error_response(INFERENCE_FAILURE)
 
 
+def _execute_via_external_inference_service(
+    dataset_slug: str,
+    normalized_payload: dict,
+    *,
+    include_runtime_diagnostic: bool,
+):
+    """S0161: delegates to the isolated external-inference service.
+
+    Reuses the exact same failure-response shaping as the local
+    joblib_sklearn_predict path (_inference_failure_response), so a caller
+    of _execute_governed_inference cannot tell which loader strategy served
+    a given release from the response shape alone.
+    """
+
+    try:
+        result = execute_external_inference(normalized_payload)
+    except InferenceRuntimeError as exc:
+        return _inference_failure_response(
+            diagnostic_code=exc.diagnostic_code,
+            include_runtime_diagnostic=include_runtime_diagnostic,
+        )
+    except Exception:
+        return _inference_failure_response(
+            diagnostic_code=None,
+            include_runtime_diagnostic=include_runtime_diagnostic,
+        )
+
+    return {
+        "dataset_slug": dataset_slug,
+        "result": result,
+    }
+
+
 def _execute_governed_inference(
     dataset_slug: str,
     active_release: str,
@@ -686,6 +723,23 @@ def _execute_governed_inference(
     if resolved_manifest is None:
         return public_error_response(INFERENCE_FAILURE)
     release_dir, manifest = resolved_manifest
+
+    # S0161: a release manifest may declare the isolated external-inference
+    # service as its loader strategy instead of the local
+    # joblib_sklearn_predict strategy. This is Atlas-controlled data read
+    # from the release manifest, never caller-supplied -- no current release
+    # manifest declares it, so this path stays dormant for every existing
+    # dataset while remaining a real, wired, testable boundary. See
+    # api/external_inference_client.py, the sole HTTP client to the isolated
+    # service.
+    runtime_execution = manifest.get("runtime_execution")
+    loader_strategy = runtime_execution.get("loader_strategy") if isinstance(runtime_execution, dict) else None
+    if loader_strategy == EXTERNAL_INFERENCE_LOADER_STRATEGY:
+        return _execute_via_external_inference_service(
+            dataset_slug,
+            dict(validation_report.normalized_payload),
+            include_runtime_diagnostic=include_runtime_diagnostic,
+        )
 
     try:
         prediction_result = execute_prediction(

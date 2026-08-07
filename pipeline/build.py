@@ -2,16 +2,33 @@
 Build pipeline entrypoint for atlas-dataflow (M13-02).
 
 Validates the source contract input before candidate artifact generation begins.
-Scope: input validation and rejection only. Does not perform contract derivation,
-candidate assembly, publisher calls, or registry mutation.
+Scope: input validation, capability-aware source-boundary resolution, and
+generic contract-derivation invocation only. Does not execute notebooks, load
+or deserialize a model, train or select a model, assemble a release
+candidate, invoke publisher behavior, or mutate registry state.
+
+Project Spec S0167: when a validated source-contract-input instance carries
+the additive capability-aware fields (authoring_manifest_ref plus
+capability_profile_id/version/ref -- see
+pipeline/source-contract-input.schema.json), this entrypoint resolves those
+repository-local governed artifacts and invokes
+pipeline.contract_derivation.project_capability_aware_source_contract, which
+reuses the Project Spec S0166 authoring boundary
+(pipeline.authoring_contracts.validate_authoring_contracts) and fails closed
+for a capability profile that is not currently, operationally supported.
+An instance using only the original v1 fields is unaffected: it is
+schema-validated exactly as before and never reaches capability resolution.
 """
 
 import json
 import sys
 from pathlib import Path
 
+from pipeline.contract_derivation import project_capability_aware_source_contract
+
 
 SCHEMA_PATH = Path(__file__).parent / "source-contract-input.schema.json"
+REPO_ROOT = Path(__file__).parent.parent
 
 
 def _load_json(path: str) -> tuple:
@@ -57,6 +74,41 @@ def _acceptance(data: dict, input_path: str) -> dict:
     }
 
 
+def _is_capability_aware(data: dict) -> bool:
+    """True when the already schema-valid source input carries the
+    additive capability-aware fields (Project Spec S0167). The schema's own
+    `dependentRequired` guarantees authoring_manifest_ref,
+    authoring_generation_id, capability_profile_id, capability_profile_version,
+    and capability_profile_ref are present together or entirely absent
+    once schema validation has already passed, so checking for one is
+    sufficient here."""
+    return "authoring_manifest_ref" in data
+
+
+def _capability_rejection(result, input_path: str) -> dict:
+    return {
+        "status": "rejected",
+        "reason": result.rejection_reason,
+        "rejection_phase": result.rejection_phase,
+        "dataset_slug": result.dataset_slug,
+        "capability_profile_id": result.capability_profile_id,
+        "capability_profile_version": result.capability_profile_version,
+        "capability_support_status": result.capability_support_status,
+        "input_path": input_path,
+    }
+
+
+def _capability_acceptance(result, input_path: str) -> dict:
+    return {
+        "status": "accepted",
+        "dataset_slug": result.dataset_slug,
+        "capability_profile_id": result.capability_profile_id,
+        "capability_profile_version": result.capability_profile_version,
+        "capability_support_status": result.capability_support_status,
+        "input_path": input_path,
+    }
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(json.dumps(_rejection(
@@ -90,6 +142,14 @@ def main() -> int:
         reason = errors[0] if len(errors) == 1 else f"{len(errors)} validation errors"
         print(json.dumps(_rejection(reason, input_path, missing, invalid), indent=2))
         return 1
+
+    if _is_capability_aware(data):
+        result = project_capability_aware_source_contract(data, repo_root=REPO_ROOT)
+        if result.status != "accepted":
+            print(json.dumps(_capability_rejection(result, input_path), indent=2))
+            return 1
+        print(json.dumps(_capability_acceptance(result, input_path), indent=2))
+        return 0
 
     print(json.dumps(_acceptance(data, input_path), indent=2))
     return 0

@@ -50,15 +50,32 @@ unresolved/rejected and named explicitly in the companion
 `execution_contract_materialization_evidence.v1`'s
 `categorical_domain_materialization` section rather than silently
 approved or silently dropped.
+
+This module also exposes `project_capability_aware_source_contract`
+(Project Spec S0167): a capability-aware bridge from a
+`source-contract-input.v1` instance carrying the additive
+`authoring_manifest_ref`/`capability_profile_*` fields into this same
+runtime->public projection, gated by the Project Spec S0166 authoring
+boundary (`pipeline/authoring_contracts.validate_authoring_contracts`) and
+the resolved capability profile's `support_status`. It never derives new
+capability-specific projection behavior itself -- for the currently
+supported `binary-predictive-classification` capability it reuses the
+runtime->public projection above unchanged, and for every other capability
+(including a syntactically valid but unsupported profile) it fails closed
+with a typed `CapabilityProjectionResult` rather than fabricating a
+contract. Contains no dataset-slug or dataset-name conditional anywhere.
 """
 
 import argparse
+import hashlib
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pipeline.authoring_contracts import validate_authoring_contracts
 from pipeline.discovery_evidence import build_binary_result_semantics_intent
 
 
@@ -1093,6 +1110,331 @@ def materialize_execution_contract(
         "execution_contract": execution_contract,
         "execution_contract_materialization_evidence": evidence,
     }
+
+
+# ---------------------------------------------------------------------------
+# Capability-aware source-contract projection (Project Spec S0167)
+#
+# Bridges a capability-aware pipeline/source-contract-input.schema.json
+# instance (authoring_manifest_ref + capability_profile_id/version/ref +
+# authoring_generation_id, all additive/optional -- see that schema) into
+# the existing, unchanged runtime->public projection above, gated by the
+# Project Spec S0166 authoring boundary (pipeline/authoring_contracts.py)
+# and the resolved capability profile's own support_status/artifact-role
+# applicability. Never derives execution/runtime/public contract semantics
+# for a capability this module has no explicit, evidenced projection code
+# for -- an unsupported (or merely representable-but-unimplemented)
+# capability profile fails closed with a typed CapabilityProjectionResult,
+# never a fabricated contract. Contains no dataset-slug or dataset-name
+# conditional anywhere: the one capability_profile_id this module currently
+# knows how to project is an architecture-level capability identity, never
+# a dataset identity.
+# ---------------------------------------------------------------------------
+
+CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID = "binary-predictive-classification"
+_CAPABILITY_SUPPORT_STATUS_OPERATIONAL = "current_supported"
+
+# Rejection phases, mirroring this module's existing _rejection()/
+# rejection_phase convention used by the runtime->public CLI flow above.
+CAPABILITY_REJECTION_PHASE_MANIFEST_READ = "authoring_manifest_read"
+CAPABILITY_REJECTION_PHASE_PROFILE_READ = "capability_profile_read"
+CAPABILITY_REJECTION_PHASE_INTEGRITY = "governed_reference_integrity"
+CAPABILITY_REJECTION_PHASE_BOUNDARY = "authoring_boundary_validation"
+CAPABILITY_REJECTION_PHASE_IDENTITY = "capability_profile_identity_mismatch"
+CAPABILITY_REJECTION_PHASE_UNSUPPORTED = "capability_unsupported"
+CAPABILITY_REJECTION_PHASE_PROJECTION = "runtime_public_projection"
+
+
+@dataclass(frozen=True)
+class CapabilityProjectionResult:
+    """Deterministic, typed result of one capability-aware source-contract
+    projection attempt (Project Spec S0167).
+
+    `status` is `"accepted"` only when: the authoring manifest and
+    capability profile governed references hash-verify and parse; the
+    S0166 authoring boundary (`validate_authoring_contracts`) passes; the
+    source-contract-input's own declared capability identity agrees with
+    the validated boundary's resolved identity; the resolved capability
+    profile's `support_status` is `"current_supported"` AND its
+    `capability_profile_id` is one this module has explicit projection
+    code for; and the existing runtime->public projection succeeds against
+    the schema-valid runtime contract at `source_contract_ref`. Every other
+    outcome is `"rejected"` with a typed `rejection_phase`/`rejection_reason`
+    -- this function never raises for a normal validation, integrity, or
+    unsupported-capability outcome.
+    """
+
+    status: str
+    dataset_slug: str | None
+    capability_profile_id: str | None
+    capability_profile_version: str | None
+    capability_support_status: str | None
+    authoring_boundary_valid: bool | None
+    rejection_phase: str | None
+    rejection_reason: str | None
+    runtime_contract: dict[str, Any] | None
+    public_contract: dict[str, Any] | None
+
+
+def _sha256_of_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _resolve_repo_relative(repo_root: Path, relative_path: str) -> Path | None:
+    """Resolve relative_path beneath repo_root, following symlinks, and
+    return None if the resolved location escapes repo_root (path or
+    symlink-based escape). Mirrors
+    pipeline.authoring_contracts._resolve_within_root -- checked
+    independently here even though the schema's own safe-relative-reference
+    pattern already constrains these paths, matching that module's
+    defense-in-depth convention."""
+    candidate = (repo_root / relative_path).resolve()
+    try:
+        candidate.relative_to(repo_root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _load_governed_reference(
+    repo_root: Path, ref: dict[str, Any], *, label: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Load and hash-verify a `{"path", "sha256"}` governed reference
+    relative to repo_root. Returns `(document, error_message)` -- exactly
+    one is non-None. Never reads outside repo_root."""
+    resolved = _resolve_repo_relative(repo_root, ref["path"])
+    if resolved is None:
+        return None, f"{label} path escapes repository root: {ref['path']!r}"
+    if not resolved.is_file():
+        return None, f"{label} not found at referenced path: {ref['path']!r}"
+    raw = resolved.read_bytes()
+    observed_sha256 = _sha256_of_bytes(raw)
+    if observed_sha256 != ref["sha256"]:
+        return None, (
+            f"{label} SHA-256 mismatch: declared={ref['sha256']} "
+            f"observed={observed_sha256} path={ref['path']!r}"
+        )
+    try:
+        return json.loads(raw.decode("utf-8")), None
+    except json.JSONDecodeError as exc:
+        return None, f"{label} is not valid JSON: {exc}"
+
+
+def resolve_manifest_role_reference(
+    manifest: dict[str, Any], role_name: str
+) -> dict[str, Any] | None:
+    """Return the `artifact_references[]` entry for `role_name` from an
+    already schema-valid dataset-integration authoring manifest, or None
+    when the role is absent. This is how semantic intent, source
+    verification, preparation policy, and modeled/runtime evidence are
+    reached by governed reference rather than duplicated as separate
+    source-contract-input fields (Project Spec S0167 desired-change A)."""
+    for entry in manifest.get("artifact_references", []):
+        if entry.get("role") == role_name:
+            return entry
+    return None
+
+
+def project_capability_aware_source_contract(
+    source_input: dict[str, Any],
+    *,
+    repo_root: str | Path,
+) -> CapabilityProjectionResult:
+    """Project a capability-aware `source-contract-input.v1` instance (the
+    additive `authoring_manifest_ref`/`capability_profile_*` fields,
+    Project Spec S0167) into execution/runtime/public contract semantics,
+    gated by the resolved capability profile.
+
+    Reuses `pipeline.authoring_contracts.validate_authoring_contracts`
+    (Project Spec S0166) as the sole authoring-boundary validator -- this
+    function never re-implements manifest/profile/semantic-intent
+    cross-checks. For the currently supported binary predictive-
+    classification capability, reuses the existing, unchanged
+    `_derive_public_contract`/`_validate_schema`/`_check_safety`
+    runtime->public projection above once capability gating passes -- this
+    function only gates that existing path, it never changes its behavior.
+
+    Never fabricates target semantics, thresholds, risk bands, public
+    inference fields, or placeholder model evidence for an unsupported or
+    not-yet-implemented capability. Contains no dataset-slug or
+    dataset-name conditional. Caller must supply a `source_input` that
+    already declares all five capability-aware fields together (the
+    schema's own `dependentRequired` enforces this before this function is
+    ever reached).
+    """
+    resolved_repo_root = Path(repo_root).expanduser().resolve()
+    dataset_slug = source_input.get("dataset_slug")
+
+    def _rejected(phase: str, reason: str, **overrides: Any) -> CapabilityProjectionResult:
+        fields: dict[str, Any] = {
+            "status": "rejected",
+            "dataset_slug": dataset_slug,
+            "capability_profile_id": source_input.get("capability_profile_id"),
+            "capability_profile_version": source_input.get("capability_profile_version"),
+            "capability_support_status": None,
+            "authoring_boundary_valid": None,
+            "rejection_phase": phase,
+            "rejection_reason": reason,
+            "runtime_contract": None,
+            "public_contract": None,
+        }
+        fields.update(overrides)
+        return CapabilityProjectionResult(**fields)
+
+    manifest, manifest_err = _load_governed_reference(
+        resolved_repo_root, source_input["authoring_manifest_ref"], label="authoring manifest"
+    )
+    if manifest_err:
+        return _rejected(CAPABILITY_REJECTION_PHASE_MANIFEST_READ, manifest_err)
+
+    profile, profile_err = _load_governed_reference(
+        resolved_repo_root, source_input["capability_profile_ref"], label="capability profile"
+    )
+    if profile_err:
+        return _rejected(CAPABILITY_REJECTION_PHASE_PROFILE_READ, profile_err)
+
+    semantic_intent = None
+    semantic_intent_entry = resolve_manifest_role_reference(manifest, "semantic_intent")
+    if semantic_intent_entry is not None:
+        semantic_intent, semantic_err = _load_governed_reference(
+            resolved_repo_root,
+            {"path": semantic_intent_entry["path"], "sha256": semantic_intent_entry["sha256"]},
+            label="semantic intent",
+        )
+        if semantic_err:
+            return _rejected(CAPABILITY_REJECTION_PHASE_INTEGRITY, semantic_err)
+
+    boundary_result = validate_authoring_contracts(
+        manifest,
+        profile,
+        semantic_intent=semantic_intent,
+        artifact_root=resolved_repo_root,
+        expected_dataset_slug=dataset_slug,
+    )
+    if not boundary_result.valid:
+        reason = "; ".join(
+            f"{failure.code}: {failure.message}" for failure in boundary_result.failures
+        ) or "authoring boundary invalid"
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_BOUNDARY,
+            reason,
+            authoring_boundary_valid=False,
+        )
+
+    # Defense in depth: the source-contract-input's own direct capability
+    # identity/version must agree with what the already cross-validated
+    # manifest/profile pair actually declares -- never trusted implicitly
+    # just because boundary_result.valid is True.
+    declared_id = source_input.get("capability_profile_id")
+    declared_version = source_input.get("capability_profile_version")
+    if (
+        declared_id != boundary_result.capability_profile_id
+        or declared_version != boundary_result.capability_profile_version
+    ):
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_IDENTITY,
+            (
+                f"source-contract-input capability_profile {declared_id!r}/{declared_version!r} "
+                "does not agree with the validated authoring boundary's resolved capability "
+                f"{boundary_result.capability_profile_id!r}/{boundary_result.capability_profile_version!r}"
+            ),
+            authoring_boundary_valid=True,
+        )
+
+    support_status = profile.get("support_status")
+    resolved_profile_id = profile.get("capability_profile_id")
+
+    if (
+        support_status != _CAPABILITY_SUPPORT_STATUS_OPERATIONAL
+        or resolved_profile_id != CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID
+    ):
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_UNSUPPORTED,
+            (
+                f"capability {resolved_profile_id!r} (support_status={support_status!r}) is not "
+                "currently, operationally supported for contract projection"
+            ),
+            capability_support_status=support_status,
+            authoring_boundary_valid=True,
+        )
+
+    # Currently supported: binary predictive classification. Reuse the
+    # existing, unchanged runtime->public projection unconditionally --
+    # the same source_contract_ref mechanism source-contract-input.v1
+    # already used, now reached only after capability gating.
+    source_contract_ref = source_input.get("source_contract_ref")
+    runtime_ref_path = (
+        _resolve_repo_relative(resolved_repo_root, source_contract_ref)
+        if source_contract_ref
+        else None
+    )
+    if runtime_ref_path is None or not runtime_ref_path.is_file():
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_PROJECTION,
+            f"runtime contract not found at source_contract_ref: {source_contract_ref!r}",
+            capability_support_status=support_status,
+            authoring_boundary_valid=True,
+        )
+
+    runtime_contract, parse_err = _load_json(str(runtime_ref_path))
+    if parse_err:
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_PROJECTION,
+            f"could not parse runtime contract: {parse_err}",
+            capability_support_status=support_status,
+            authoring_boundary_valid=True,
+        )
+
+    runtime_schema = json.loads(RUNTIME_SCHEMA_PATH.read_text(encoding="utf-8"))
+    runtime_errors = _validate_schema(runtime_contract, runtime_schema)
+    if runtime_errors:
+        first = runtime_errors[0]
+        reason = (
+            first if len(runtime_errors) == 1 else f"{len(runtime_errors)} validation errors: {first}"
+        )
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_PROJECTION,
+            f"runtime contract fails schema validation: {reason}",
+            capability_support_status=support_status,
+            authoring_boundary_valid=True,
+        )
+
+    public_contract = _derive_public_contract(runtime_contract)
+    public_schema = json.loads(PUBLIC_SCHEMA_PATH.read_text(encoding="utf-8"))
+    public_errors = _validate_schema(public_contract, public_schema)
+    if public_errors:
+        first = public_errors[0]
+        reason = (
+            first if len(public_errors) == 1 else f"{len(public_errors)} validation errors: {first}"
+        )
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_PROJECTION,
+            f"derived public contract fails schema validation (pipeline bug): {reason}",
+            capability_support_status=support_status,
+            authoring_boundary_valid=True,
+        )
+
+    safety_violations = _check_safety(public_contract)
+    if safety_violations:
+        return _rejected(
+            CAPABILITY_REJECTION_PHASE_PROJECTION,
+            f"public contract safety check failed: {'; '.join(safety_violations)}",
+            capability_support_status=support_status,
+            authoring_boundary_valid=True,
+        )
+
+    return CapabilityProjectionResult(
+        status="accepted",
+        dataset_slug=dataset_slug,
+        capability_profile_id=resolved_profile_id,
+        capability_profile_version=profile.get("capability_profile_version"),
+        capability_support_status=support_status,
+        authoring_boundary_valid=True,
+        rejection_phase=None,
+        rejection_reason=None,
+        runtime_contract=runtime_contract,
+        public_contract=public_contract,
+    )
 
 
 def main():

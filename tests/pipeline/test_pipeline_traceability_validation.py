@@ -498,7 +498,7 @@ def _telco_shaped_modeling_intent(**overrides) -> dict:
     kwargs = dict(
         dataset_slug="telco-customer-churn",
         dataset_source_ref="data/raw/telco-customer-churn.csv",
-        authoring_notebook_ref="notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb",
+        authoring_notebook_ref="notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb",
         columns=["customerID", "SeniorCitizen", "TotalCharges", "tenure", "Churn"],
         target_column="Churn",
         task_type="binary_classification",

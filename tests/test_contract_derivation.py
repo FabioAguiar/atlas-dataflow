@@ -319,7 +319,7 @@ def _telco_like_modeling_intent(**overrides):
         },
         "authoring_source": {
             "authoring_notebook_ref": (
-                "notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb"
+                "notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb"
             ),
             "reduced_discovery_evidence_ref": None,
         },
@@ -391,7 +391,7 @@ def test_draft_projection_records_dataset_identity() -> None:
 def test_draft_projection_records_authoring_notebook_traceability() -> None:
     draft = project_execution_contract_draft(_telco_like_modeling_intent())
     assert draft["authoring_traceability"]["authoring_notebook_ref"] == (
-        "notebooks/datasets/telco-customer-churn/01_dataset_authoring.ipynb"
+        "notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb"
     )
     assert draft["authoring_traceability"]["source_modeling_intent_contract_version"] == (
         "dataset_modeling_intent.v1"

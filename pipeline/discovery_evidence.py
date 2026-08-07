@@ -53,6 +53,14 @@ _CATEGORICAL_MAX_CARDINALITY = 20
 _NULL_LIKE_TOKENS = {"na", "n/a", "nan", "null", "none"}
 _REDUCED_SAMPLE_BOUND = 5
 
+# Canonical dataset-integration authoring entrypoint selected by S0162/S0169.
+# This is traceability metadata only: discovery remains dataset-agnostic and
+# never imports or executes the notebook.
+CANONICAL_DATASET_INTEGRATION_AUTHORING_NOTEBOOK = (
+    "notebooks/datasets/telco-customer-churn/"
+    "01_dataset_integration_authoring.ipynb"
+)
+
 AUTHORING_HELPER_EVIDENCE_POLICY: dict[str, bool] = {
     "raw_rows_persisted": False,
     "secrets_persisted": False,
@@ -67,6 +75,15 @@ _REPOSITORY_ROOT_MARKERS = (
     "README.md",
     "pipeline/discovery_evidence.py",
 )
+
+
+def canonical_dataset_integration_authoring_notebook_ref() -> str:
+    """Return the current Telco authoring entrypoint as a portable repo ref.
+
+    Keeping this path in discovery traceability does not make the generic
+    discovery or projection pipeline branch on a dataset name.
+    """
+    return CANONICAL_DATASET_INTEGRATION_AUTHORING_NOTEBOOK
 
 
 def _utc_now_iso() -> str:

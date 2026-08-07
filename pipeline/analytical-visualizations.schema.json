@@ -1,302 +1,241 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/analytical-visualizations.schema.json",
-  "title": "Atlas DataFlow Analytical Visualizations Artifact",
-  "description": "Reduced, deterministic analytical visualizations artifact emitted by a governed training run at pipeline/training-runs/{dataset_slug}/{run_id}/analytical-visualizations.json, and later copied into a release candidate at visualizations/visualizations.json. Contains exactly one target_distribution chart (from the full prepared-dataset population) and exactly one feature_importance chart (from the selected fitted model, aggregated back to governed source features). Never embeds raw rows, model bytes, serialized estimator state, raw transformed matrices, secrets, or notebook state.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "artifact_kind",
-    "created_at",
-    "training_run_identity",
-    "charts",
-    "target_distribution_method",
-    "feature_importance_method",
-    "evidence_policy"
+  "title": "Atlas DataFlow Analytical Visual Evidence",
+  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation.",
+  "oneOf": [
+    { "$ref": "#/$defs/legacy_v1" },
+    { "$ref": "#/$defs/governed_v2" }
   ],
-  "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "analytical-visualizations.v1"
-    },
-    "artifact_kind": {
-      "type": "string",
-      "const": "analytical_visualizations"
-    },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "training_run_identity": {
-      "$ref": "#/$defs/training_run_identity"
-    },
-    "charts": {
-      "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
-      "items": {
-        "$ref": "#/$defs/chart"
-      },
-      "allOf": [
-        {
-          "contains": {
-            "properties": {
-              "id": {
-                "const": "target_distribution"
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "minContains": 1,
-          "maxContains": 1
-        },
-        {
-          "contains": {
-            "properties": {
-              "id": {
-                "const": "feature_importance"
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "minContains": 1,
-          "maxContains": 1
-        }
-      ]
-    },
-    "target_distribution_method": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "population_kind",
-        "row_count",
-        "target_column"
-      ],
-      "properties": {
-        "population_kind": {
-          "type": "string",
-          "const": "prepared_dataset"
-        },
-        "row_count": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "target_column": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "feature_importance_method": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "model_family",
-        "source",
-        "total_source_feature_count",
-        "omitted_source_feature_count",
-        "public_row_limit"
-      ],
-      "properties": {
-        "model_family": {
-          "type": "string",
-          "enum": [
-            "gradient_boosting",
-            "random_forest",
-            "logistic_regression"
-          ]
-        },
-        "source": {
-          "type": "string",
-          "minLength": 1
-        },
-        "total_source_feature_count": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "omitted_source_feature_count": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "public_row_limit": {
-          "type": "integer",
-          "const": 10
-        }
-      }
-    },
-    "evidence_policy": {
-      "$ref": "#/$defs/evidence_policy"
-    }
-  },
   "$defs": {
-    "training_run_identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "dataset_slug",
-        "run_id",
-        "output_directory"
-      ],
-      "properties": {
-        "dataset_slug": {
-          "type": "string",
-          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-        },
-        "run_id": {
-          "type": "string",
-          "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
-        },
-        "output_directory": {
-          "type": "string",
-          "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
-        }
-      }
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
     },
-    "chart_data_point": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "value"
-      ],
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "value": {
-          "type": "number",
-          "minimum": 0
-        }
-      }
+    "role_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*$"
     },
-    "chart": {
+    "safe_relative_reference": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!file://)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*(?:^|/)\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9]$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "legacy_v1": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "id",
-        "title",
-        "type",
-        "x_label",
-        "y_label",
-        "data"
-      ],
+      "required": ["schema_version", "artifact_kind", "created_at", "training_run_identity", "charts", "target_distribution_method", "feature_importance_method", "evidence_policy"],
       "properties": {
-        "id": {
-          "type": "string",
-          "enum": [
-            "target_distribution",
-            "feature_importance"
+        "schema_version": { "const": "analytical-visualizations.v1" },
+        "artifact_kind": { "const": "analytical_visualizations" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "training_run_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug", "run_id", "output_directory"],
+          "properties": {
+            "dataset_slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+            "run_id": { "type": "string", "pattern": "^train-[0-9]{8}T[0-9]{6}Z$" },
+            "output_directory": { "type": "string", "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$" }
+          }
+        },
+        "charts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/legacy_chart" },
+          "allOf": [
+            { "contains": { "properties": { "id": { "const": "target_distribution" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "feature_importance" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 }
           ]
         },
-        "title": {
-          "type": "string",
-          "minLength": 1
+        "target_distribution_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["population_kind", "row_count", "target_column"],
+          "properties": {
+            "population_kind": { "const": "prepared_dataset" },
+            "row_count": { "type": "integer", "minimum": 1 },
+            "target_column": { "type": "string", "minLength": 1 }
+          }
         },
-        "type": {
-          "type": "string",
-          "const": "bar"
+        "feature_importance_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "source", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
+          "properties": {
+            "model_family": { "enum": ["gradient_boosting", "random_forest", "logistic_regression"] },
+            "source": { "type": "string", "minLength": 1 },
+            "total_source_feature_count": { "type": "integer", "minimum": 1 },
+            "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
+            "public_row_limit": { "const": 10 }
+          }
         },
-        "x_label": {
-          "type": "string",
-          "minLength": 1
-        },
-        "y_label": {
-          "type": "string",
-          "minLength": 1
-        },
+        "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
+      }
+    },
+    "legacy_chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "type", "x_label", "y_label", "data"],
+      "properties": {
+        "id": { "enum": ["target_distribution", "feature_importance"] },
+        "title": { "type": "string", "minLength": 1 },
+        "type": { "const": "bar" },
+        "x_label": { "type": "string", "minLength": 1 },
+        "y_label": { "type": "string", "minLength": 1 },
         "data": {
           "type": "array",
           "minItems": 1,
           "items": {
-            "$ref": "#/$defs/chart_data_point"
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "value": { "type": "number", "minimum": 0 }
+            }
           }
         }
       },
       "allOf": [
         {
-          "if": {
-            "properties": {
-              "id": {
-                "const": "feature_importance"
-              }
-            },
-            "required": [
-              "id"
-            ]
-          },
-          "then": {
-            "properties": {
-              "data": {
-                "maxItems": 10
-              }
-            }
-          }
+          "if": { "properties": { "id": { "const": "feature_importance" } }, "required": ["id"] },
+          "then": { "properties": { "data": { "maxItems": 10 } } }
         }
       ]
     },
-    "evidence_policy": {
+    "legacy_evidence_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "raw_logs_prohibited",
-        "raw_runtime_prohibited",
-        "raw_api_payloads_prohibited",
-        "secrets_prohibited",
-        "raw_dataset_embedded",
-        "model_bytes_embedded",
-        "serialized_estimator_state_embedded",
-        "raw_transformed_matrices_embedded",
-        "notebook_state_embedded",
-        "reduced_and_sanitized"
-      ],
+      "required": ["raw_logs_prohibited", "raw_runtime_prohibited", "raw_api_payloads_prohibited", "secrets_prohibited", "raw_dataset_embedded", "model_bytes_embedded", "serialized_estimator_state_embedded", "raw_transformed_matrices_embedded", "notebook_state_embedded", "reduced_and_sanitized"],
       "properties": {
-        "raw_logs_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "raw_runtime_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "raw_api_payloads_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "secrets_prohibited": {
-          "type": "boolean",
-          "const": true
-        },
-        "raw_dataset_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "model_bytes_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "serialized_estimator_state_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "raw_transformed_matrices_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "notebook_state_embedded": {
-          "type": "boolean",
-          "const": false
-        },
-        "reduced_and_sanitized": {
-          "type": "boolean",
-          "const": true
-        }
+        "raw_logs_prohibited": { "const": true },
+        "raw_runtime_prohibited": { "const": true },
+        "raw_api_payloads_prohibited": { "const": true },
+        "secrets_prohibited": { "const": true },
+        "raw_dataset_embedded": { "const": false },
+        "model_bytes_embedded": { "const": false },
+        "serialized_estimator_state_embedded": { "const": false },
+        "raw_transformed_matrices_embedded": { "const": false },
+        "notebook_state_embedded": { "const": false },
+        "reduced_and_sanitized": { "const": true }
       }
+    },
+    "governed_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_type", "dataset_identity", "authoring_generation", "capability_profile", "visual_collection_id", "visuals", "provenance", "boundary_confirmations", "generated_at"],
+      "properties": {
+        "schema_version": { "const": "analytical-visual-evidence.v2" },
+        "artifact_type": { "const": "analytical_visual_evidence" },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": { "$ref": "#/$defs/identifier" },
+            "dataset_logical_name": { "type": "string", "minLength": 1 }
+          }
+        },
+        "authoring_generation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["authoring_generation_id", "immutable"],
+          "properties": {
+            "authoring_generation_id": { "$ref": "#/$defs/identifier" },
+            "immutable": { "const": true }
+          }
+        },
+        "capability_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability_profile_id", "capability_profile_version"],
+          "properties": {
+            "capability_profile_id": { "type": "string", "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$" },
+            "capability_profile_version": { "type": "string", "pattern": "^v[0-9]+$" },
+            "relative_path": { "$ref": "#/$defs/safe_relative_reference" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          },
+          "dependentRequired": { "relative_path": ["sha256"], "sha256": ["relative_path"] }
+        },
+        "visual_collection_id": { "$ref": "#/$defs/identifier" },
+        "visuals": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/governed_visual" } },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "boundary_confirmations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["public_suitability_authorizes_publication", "release_activation_performed", "absolute_external_project_root_present", "visual_assets_embedded", "notebook_execution_required"],
+          "properties": {
+            "public_suitability_authorizes_publication": { "const": false },
+            "release_activation_performed": { "const": false },
+            "absolute_external_project_root_present": { "const": false },
+            "visual_assets_embedded": { "const": false },
+            "notebook_execution_required": { "const": false }
+          }
+        },
+        "generated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "governed_visual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visual_id", "logical_role", "chart_kind", "title", "caption", "source_evidence", "method", "relative_asset_path", "sha256", "public_suitability", "public_suitability_reason", "provenance"],
+      "properties": {
+        "visual_id": { "$ref": "#/$defs/identifier" },
+        "logical_role": { "$ref": "#/$defs/role_identifier" },
+        "chart_kind": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_-]*$" },
+        "title": { "type": "string", "minLength": 1 },
+        "caption": { "type": "string", "minLength": 1 },
+        "source_evidence": { "$ref": "#/$defs/source_evidence" },
+        "method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary"],
+          "properties": {
+            "summary": { "type": "string", "minLength": 1 },
+            "aggregation": { "type": ["string", "null"], "minLength": 1 }
+          }
+        },
+        "relative_asset_path": { "$ref": "#/$defs/safe_relative_reference" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "public_suitability": { "type": "boolean" },
+        "public_suitability_reason": { "type": "string", "minLength": 1 },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "source_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_artifact_role", "source_evidence_id", "source_fields"],
+      "properties": {
+        "source_artifact_role": { "$ref": "#/$defs/role_identifier" },
+        "source_artifact_path": { "$ref": "#/$defs/safe_relative_reference" },
+        "source_artifact_sha256": { "$ref": "#/$defs/sha256" },
+        "source_evidence_id": { "$ref": "#/$defs/identifier" },
+        "source_fields": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      },
+      "dependentRequired": { "source_artifact_path": ["source_artifact_sha256"], "source_artifact_sha256": ["source_artifact_path"] }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_producer_project_id", "producer_revision_known", "producer_revision"],
+      "properties": {
+        "logical_producer_project_id": { "$ref": "#/$defs/identifier" },
+        "producer_revision_known": { "type": "boolean" },
+        "producer_revision": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "producer_revision_known": { "const": true } }, "required": ["producer_revision_known"] }, "then": { "properties": { "producer_revision": { "type": "string", "minLength": 1 } } } },
+        { "if": { "properties": { "producer_revision_known": { "const": false } }, "required": ["producer_revision_known"] }, "then": { "properties": { "producer_revision": { "type": "null" } } } }
+      ]
     }
   }
 }

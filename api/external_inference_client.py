@@ -1,10 +1,8 @@
 """Sole private HTTP client from the Atlas api service to the isolated
 external-inference service (http://external-inference:8100).
 
-Constructs requests only from Atlas-controlled bundle/runtime identity
-(module-level constants below, mirroring the sealed S0158/G0004, S0159/G0002
-and S0160/G0001 values -- this image never mounts external-models/, so these
-values are embedded here rather than read from that directory) plus an
+Constructs requests from Atlas-controlled logical bundle identity and the
+governed isolated runtime profile in the inference bundle, plus an
 already-validated, normalized feature payload supplied by the caller. Uses
 only the standard library for HTTP: api/pyproject.toml is the shared API
 dependency manifest and must not be edited to accommodate the external
@@ -36,23 +34,6 @@ _REQUEST_CONTRACT_VERSION = "external_inference_request.v1"
 _DEFAULT_BASE_URL = "http://external-inference:8100"
 _DEFAULT_TIMEOUT_SECONDS = 5.0
 
-# Mirrors external-models/telco-customer-churn/manifest.json's
-# bundle_identity/expected_runtime -- duplicated deliberately, since the api
-# image never mounts or copies external-models/ (only the isolated service's
-# own image does). Both are independently traceable to the same sealed
-# S0158/G0004 + S0159/G0002 + S0160/G0001 values.
-_BUNDLE_IDENTITY = {
-    "bundle_id": "telco-customer-churn-external-inference-bundle",
-    "dataset_slug": "telco-customer-churn",
-}
-_EXPECTED_RUNTIME = {
-    "python_major_minor": "3.11",
-    "joblib": "1.5.3",
-    "pandas": "3.0.3",
-    "scikit_learn": "1.9.0",
-}
-
-
 class ExternalInferenceClientError(InferenceRuntimeError):
     """Raised when the isolated external-inference service call fails.
 
@@ -61,12 +42,47 @@ class ExternalInferenceClientError(InferenceRuntimeError):
     package/version/path/traceback detail.
     """
 
+    def __init__(self, message: str, *, diagnostic_code: str | None, category: str | None = None) -> None:
+        super().__init__(message, diagnostic_code=diagnostic_code)
+        self.category = category
 
-def _build_request_payload(feature_payload: Mapping[str, Any]) -> dict:
+
+def _build_request_payload(
+    feature_payload: Mapping[str, Any],
+    *,
+    bundle_identity: Mapping[str, Any],
+    runtime_profile: Mapping[str, Any],
+) -> dict:
+    required_runtime = runtime_profile.get("required_consumer_runtime")
+    dependencies = required_runtime.get("dependencies") if isinstance(required_runtime, Mapping) else None
+    if (
+        not isinstance(bundle_identity.get("bundle_id"), str)
+        or not isinstance(bundle_identity.get("dataset_slug"), str)
+        or not isinstance(required_runtime, Mapping)
+        or not isinstance(dependencies, Mapping)
+    ):
+        raise ExternalInferenceClientError(
+            "Isolated runtime profile is invalid.",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+            category="runtime_profile_invalid",
+        )
+
+    expected_runtime = {
+        "python_major_minor": required_runtime.get("python_major_minor"),
+        "joblib": dependencies.get("joblib"),
+        "pandas": dependencies.get("pandas"),
+        "scikit_learn": dependencies.get("scikit_learn"),
+    }
+    if "python_patch" in required_runtime:
+        expected_runtime["python_patch"] = required_runtime["python_patch"]
+
     return {
         "contract_version": _REQUEST_CONTRACT_VERSION,
-        "bundle_identity": dict(_BUNDLE_IDENTITY),
-        "expected_runtime": dict(_EXPECTED_RUNTIME),
+        "bundle_identity": {
+            "bundle_id": bundle_identity["bundle_id"],
+            "dataset_slug": bundle_identity["dataset_slug"],
+        },
+        "expected_runtime": expected_runtime,
         "feature_payload": dict(feature_payload),
     }
 
@@ -74,6 +90,8 @@ def _build_request_payload(feature_payload: Mapping[str, Any]) -> dict:
 def execute_external_inference(
     feature_payload: Mapping[str, Any],
     *,
+    bundle_identity: Mapping[str, Any],
+    runtime_profile: Mapping[str, Any],
     base_url: str | None = None,
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> dict:
@@ -85,7 +103,11 @@ def execute_external_inference(
     the isolated service itself.
     """
 
-    request_body = _build_request_payload(feature_payload)
+    request_body = _build_request_payload(
+        feature_payload,
+        bundle_identity=bundle_identity,
+        runtime_profile=runtime_profile,
+    )
     url = f"{(base_url or _DEFAULT_BASE_URL).rstrip('/')}/predict"
 
     http_request = urllib.request.Request(
@@ -102,6 +124,7 @@ def execute_external_inference(
         raise ExternalInferenceClientError(
             "External inference service is unavailable.",
             diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+            category="isolated_runtime_unavailable_or_failed",
         ) from exc
 
     try:
@@ -138,6 +161,7 @@ def _interpret_response(parsed: Any) -> dict:
         raise ExternalInferenceClientError(
             "External inference execution failed.",
             diagnostic_code=diagnostic_code,
+            category="isolated_runtime_unavailable_or_failed",
         )
     if status != "ok":
         raise ExternalInferenceClientError(

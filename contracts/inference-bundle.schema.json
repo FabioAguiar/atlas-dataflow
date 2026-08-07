@@ -216,6 +216,14 @@
         "model_family"
       ],
       "properties": {
+        "execution_strategy": {
+          "type": "string",
+          "enum": [
+            "in_process",
+            "isolated_service"
+          ],
+          "description": "Governed dispatch strategy. Omission preserves the historical in-process behavior for inference_bundle.v1 artifacts."
+        },
         "serialization_format": {
           "type": "string",
           "enum": [
@@ -247,8 +255,37 @@
         "runtime_adapter_version": {
           "type": "string",
           "minLength": 1
+        },
+        "runtime_profile": {
+          "$ref": "#/$defs/isolated_runtime_profile"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "execution_strategy": { "const": "isolated_service" }
+            },
+            "required": ["execution_strategy"]
+          },
+          "then": {
+            "required": ["runtime_profile"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "execution_strategy": { "const": "in_process" }
+            },
+            "required": ["execution_strategy"]
+          },
+          "then": {
+            "properties": {
+              "runtime_profile": false
+            }
+          }
+        }
+      ]
     },
     "input_schema": {
       "type": "object",
@@ -510,6 +547,104 @@
     }
   },
   "$defs": {
+    "isolated_runtime_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile_id",
+        "profile_version",
+        "producer_runtime",
+        "required_consumer_runtime",
+        "compatibility_policy",
+        "artifact_format",
+        "loader_family",
+        "trusted_source_required",
+        "artifact_integrity",
+        "load_safe",
+        "service_dispatch"
+      ],
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+        },
+        "profile_version": {
+          "type": "string",
+          "pattern": "^v[0-9]+$"
+        },
+        "producer_runtime": { "$ref": "#/$defs/runtime_identity" },
+        "required_consumer_runtime": { "$ref": "#/$defs/runtime_identity" },
+        "compatibility_policy": {
+          "type": "string",
+          "const": "exact"
+        },
+        "artifact_format": {
+          "type": "string",
+          "const": "joblib"
+        },
+        "loader_family": {
+          "type": "string",
+          "const": "joblib_sklearn_predict"
+        },
+        "trusted_source_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "artifact_integrity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_sha256"],
+          "properties": {
+            "model_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "model_state_fingerprint": { "$ref": "#/$defs/sha256_hex" }
+          }
+        },
+        "load_safe": {
+          "type": "boolean",
+          "const": true
+        },
+        "service_dispatch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["service_id", "request_contract_version"],
+          "properties": {
+            "service_id": {
+              "type": "string",
+              "const": "external-inference"
+            },
+            "request_contract_version": {
+              "type": "string",
+              "const": "external_inference_request.v1"
+            }
+          }
+        }
+      }
+    },
+    "runtime_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python_major_minor", "dependencies"],
+      "properties": {
+        "python_major_minor": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "python_patch": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["joblib", "pandas", "scikit_learn"],
+          "properties": {
+            "joblib": { "type": "string", "minLength": 1 },
+            "pandas": { "type": "string", "minLength": 1 },
+            "scikit_learn": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "dataset_slug": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"

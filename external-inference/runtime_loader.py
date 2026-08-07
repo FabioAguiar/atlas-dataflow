@@ -1,12 +1,10 @@
 """Load-safe gate and trusted execution for the isolated external-inference service.
 
-Implements the S0159/G0002 fourteen-step load-safe gate order for the single
-bounded external Telco Customer Churn model selected by S0158/G0004 and
-named/wired by S0160/G0001. This module never accepts a caller-selected
-filesystem path, loader/module name, dependency override, or hash bypass --
-the on-disk manifest under the hardcoded MODEL_ROOT is the only source of
-truth for model identity and expected runtime, cross-checked against sealed
-S0158/S0160 reference values.
+Implements the load-safe gate for a governed logical bundle identity. This
+module never accepts an absolute caller-selected filesystem path, executable
+loader/module name, dependency override, or hash bypass. Bundle-relative
+resolution remains confined beneath MODEL_ROOT and deserialization happens
+only after profile, trust, integrity, and exact-compatibility gates pass.
 
 Deliberately self-contained: this image does not share code with the Atlas
 api image (different Python runtime, different dependency pins), so the
@@ -25,16 +23,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 MODEL_ROOT = Path("/app/external-models")
-BUNDLE_DIRECTORY_NAME = "telco-customer-churn"
 MANIFEST_FILENAME = "manifest.json"
 
 MANIFEST_CONTRACT_VERSION = "external_inference_model_manifest.v1"
 REQUEST_CONTRACT_VERSION = "external_inference_request.v1"
-
-# S0158/G0004 + S0160/G0001 sealed identity -- an independent, hardcoded
-# cross-check that never trusts the on-disk manifest alone.
-SEALED_MODEL_BYTE_SHA256 = "48da4c7aa56d5d08090e808f551f555740d18e791af39c4c3f373467ec296b8c"
-SEALED_MODEL_STATE_FINGERPRINT = "c9328311e2ed5953b5aab1abc17b439ff7e90c7c8e4f15b6a31598d05dc771e6"
 
 RUNTIME_COMPATIBILITY_STATUSES = frozenset(
     {
@@ -108,7 +100,7 @@ _NEGATIVE_CLASS_ID = "No"
 _DECISION_THRESHOLD = 0.2577809673219062
 _MODEL_DESCRIPTOR = {
     "model_family": "gradient_boosting",
-    "display_name": "External Telco Gradient Boosting (HistGradientBoostingClassifier)",
+    "display_name": "Governed isolated gradient boosting classifier",
 }
 _PROBABILITY_SUM_TOLERANCE = 1e-6
 
@@ -207,10 +199,12 @@ class LoadSafeGateError(Exception):
         *,
         diagnostic_code: str | None = None,
         runtime_compatibility_status: str | None = None,
+        category: str | None = None,
     ) -> None:
         super().__init__(message)
         self.diagnostic_code = diagnostic_code
         self.runtime_compatibility_status = runtime_compatibility_status
+        self.category = category
 
 
 def _sha256_file(path: Path) -> str:
@@ -224,8 +218,84 @@ def _sha256_file(path: Path) -> str:
 # --- Step 1-2: resolve bundle identity, validate trusted source declaration ---
 
 
-def load_manifest(model_root: Path | None = None) -> dict:
-    manifest_path = (model_root if model_root is not None else MODEL_ROOT) / BUNDLE_DIRECTORY_NAME / MANIFEST_FILENAME
+def _resolve_bundle_root(request: Mapping[str, Any] | None, model_root: Path) -> Path:
+    identity = request.get("bundle_identity") if isinstance(request, Mapping) else None
+    logical_name = identity.get("dataset_slug") if isinstance(identity, Mapping) else None
+    if request is None:
+        candidates = sorted(path.parent for path in model_root.glob(f"*/{MANIFEST_FILENAME}") if path.is_file())
+        if len(candidates) == 1:
+            return candidates[0].resolve(strict=False)
+    if not isinstance(logical_name, str) or not logical_name or any(
+        part in logical_name for part in ("/", "\\", "..")
+    ):
+        raise LoadSafeGateError(
+            "Runtime profile identity is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            category="runtime_profile_invalid",
+        )
+    root = model_root.resolve(strict=False)
+    bundle_root = (root / logical_name).resolve(strict=False)
+    try:
+        bundle_root.relative_to(root)
+    except ValueError as exc:
+        raise LoadSafeGateError(
+            "Runtime profile identity is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            category="runtime_profile_invalid",
+        ) from exc
+    return bundle_root
+
+
+def validate_governed_runtime_profile(
+    profile: Mapping[str, Any], manifest: Mapping[str, Any]
+) -> None:
+    """Validate governed profile policy before artifact bytes are loaded."""
+
+    required_runtime = profile.get("required_consumer_runtime")
+    dependencies = required_runtime.get("dependencies") if isinstance(required_runtime, Mapping) else None
+    integrity = profile.get("artifact_integrity")
+    if (
+        not isinstance(profile.get("profile_id"), str)
+        or not isinstance(profile.get("profile_version"), str)
+        or not isinstance(required_runtime, Mapping)
+        or not isinstance(dependencies, Mapping)
+        or profile.get("compatibility_policy") != "exact"
+        or profile.get("artifact_format") != "joblib"
+        or profile.get("loader_family") != "joblib_sklearn_predict"
+    ):
+        raise LoadSafeGateError(
+            "Runtime profile is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            category="runtime_profile_invalid",
+        )
+    if profile.get("trusted_source_required") is not True or not isinstance(
+        manifest.get("trusted_source"), Mapping
+    ):
+        raise LoadSafeGateError(
+            "Artifact trust policy failed.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            category="untrusted_artifact",
+        )
+    if not isinstance(integrity, Mapping) or integrity.get("model_sha256") != (
+        manifest.get("model_artifact") or {}
+    ).get("byte_sha256"):
+        raise LoadSafeGateError(
+            "Artifact integrity declaration does not match.",
+            diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
+            category="artifact_integrity_mismatch",
+        )
+    if profile.get("load_safe") is not True:
+        raise LoadSafeGateError(
+            "Artifact is not declared load-safe.",
+            diagnostic_code=DIAGNOSTIC_MODEL_DESERIALIZATION_FAILED,
+            category="load_not_safe",
+        )
+
+
+def load_manifest(model_root: Path | None = None, *, request: Mapping[str, Any] | None = None) -> dict:
+    resolved_root = model_root if model_root is not None else MODEL_ROOT
+    bundle_root = _resolve_bundle_root(request, resolved_root)
+    manifest_path = bundle_root / MANIFEST_FILENAME
     try:
         raw = manifest_path.read_text(encoding="utf-8")
         manifest = json.loads(raw)
@@ -263,6 +333,7 @@ def load_manifest(model_root: Path | None = None) -> dict:
             diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
         )
 
+    manifest["_resolved_bundle_root"] = bundle_root
     return manifest
 
 
@@ -286,7 +357,14 @@ def resolve_model_path(manifest: Mapping[str, Any], model_root: Path | None = No
             diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE,
         )
 
-    bundle_root = (model_root / BUNDLE_DIRECTORY_NAME).resolve(strict=False)
+    declared_bundle_root = manifest.get("_resolved_bundle_root")
+    if not isinstance(declared_bundle_root, Path):
+        raise LoadSafeGateError(
+            "Runtime profile identity is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            category="runtime_profile_invalid",
+        )
+    bundle_root = declared_bundle_root.resolve(strict=False)
     unresolved_candidate = bundle_root / raw_reference
     if unresolved_candidate.is_symlink():
         raise LoadSafeGateError(
@@ -339,11 +417,6 @@ def verify_model_artifact_hash(manifest: Mapping[str, Any], model_path: Path) ->
             "External model manifest hash declaration is invalid.",
             diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
         )
-    if expected_hash != SEALED_MODEL_BYTE_SHA256:
-        raise LoadSafeGateError(
-            "External model manifest hash declaration does not match the sealed reference.",
-            diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
-        )
     actual_hash = _sha256_file(model_path)
     if actual_hash != expected_hash:
         raise LoadSafeGateError(
@@ -360,10 +433,11 @@ def verify_model_state_fingerprint(manifest: Mapping[str, Any]) -> None:
     fingerprint = model_artifact.get("model_state_fingerprint")
     if fingerprint is None:
         return
-    if fingerprint != SEALED_MODEL_STATE_FINGERPRINT:
+    if not isinstance(fingerprint, str) or len(fingerprint) != 64:
         raise LoadSafeGateError(
-            "External model manifest state fingerprint does not match the sealed reference.",
+            "External model manifest state fingerprint is invalid.",
             diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
+            category="artifact_integrity_mismatch",
         )
 
 
@@ -493,7 +567,7 @@ def run_preflight_gate(request: Mapping[str, Any] | None, model_root: Path | Non
     to "compatible".
     """
 
-    manifest = load_manifest(model_root)
+    manifest = load_manifest(model_root, request=request)
     model_path = resolve_model_path(manifest, model_root)
     if request is not None:
         validate_request_contract_version(request)
@@ -510,12 +584,18 @@ def run_preflight_gate(request: Mapping[str, Any] | None, model_root: Path | Non
     )
 
     if compatibility["status"] != "compatible":
+        category = (
+            "runtime_profile_mismatch"
+            if compatibility["status"] in {"stale_bundle_reference", "incompatible"}
+            else "runtime_profile_invalid"
+        )
         raise LoadSafeGateError(
             "External inference runtime compatibility gate failed.",
             diagnostic_code=RUNTIME_COMPATIBILITY_DIAGNOSTIC_MAPPING.get(
                 compatibility["status"], DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE
             ),
             runtime_compatibility_status=compatibility["status"],
+            category=category,
         )
 
     return {

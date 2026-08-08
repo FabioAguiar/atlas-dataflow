@@ -299,10 +299,22 @@ or where its model is delivered. Governed runtime isolation remains a
 legitimate compatibility mechanism, but no runtime implementation may depend
 on an external analysis path.
 
-Model delivery is intended to converge on Atlas release ownership through
-later work. That convergence and runtime-profile implementation are not yet
-complete; `external-models/` remains a migration-era compatibility mechanism
-until a release-owned replacement is proven and cut over.
+Executable model delivery is owned by the immutable Atlas release lifecycle.
+The governed active release identifies its predictive bundle and
+release-relative model artifact, and runtime loading must resolve and verify
+those artifacts beneath the releases root. The legacy `external-models/`
+lifecycle, which duplicated model delivery outside a release, has been retired
+and is no longer an operational or compatibility mechanism.
+
+`external-inference/` is distinct from that retired storage lifecycle. It
+remains the current internal inference service and runtime/dependency boundary
+for governed bundles that select isolated-service dispatch. The API delegates
+to it using release and bundle identity, and the service resolves the model
+from the governed release rather than from a parallel model tree. This
+isolation remains necessary when a bundle requires a runtime or dependency
+profile that cannot safely execute in the main API process; it is not a model
+store, a parallel release lifecycle, or a component made obsolete by retiring
+`external-models/`.
 
 ### Backward compatibility and accepted authoring decisions
 

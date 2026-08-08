@@ -15,8 +15,6 @@
 !publisher/release-candidate.operational-note.json
 !external-inference/
 !external-inference/**
-!external-models/
-!external-models/**
 
 # Ignore generated/cache files even inside included directories.
 **/__pycache__/

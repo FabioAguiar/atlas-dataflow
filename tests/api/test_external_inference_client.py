@@ -17,6 +17,24 @@ if str(API_DIR) not in sys.path:
 import external_inference_client as client  # noqa: E402
 from runtime.inference import InferenceRuntimeError  # noqa: E402
 
+_RELEASE_ID = "release-20260726t200101z"
+_BUNDLE_IDENTITY = {"bundle_id": "bundle-test", "dataset_slug": "telco-customer-churn"}
+_RUNTIME_PROFILE = {
+    "required_consumer_runtime": {
+        "python_major_minor": "3.11",
+        "dependencies": {"joblib": "1.5.3", "pandas": "3.0.3", "scikit_learn": "1.9.0"},
+    }
+}
+
+
+def _execute(feature_payload):
+    return client.execute_external_inference(
+        feature_payload,
+        release_id=_RELEASE_ID,
+        bundle_identity=_BUNDLE_IDENTITY,
+        runtime_profile=_RUNTIME_PROFILE,
+    )
+
 
 def _valid_result() -> dict:
     return {
@@ -100,15 +118,15 @@ def test_request_is_constructed_only_from_atlas_controlled_identity(monkeypatch)
     # already-validated feature payload it's given), but the constructed
     # wire request must never surface anything beyond the fixed contract
     # fields -- proven below.
-    result = client.execute_external_inference(feature_payload)
+    result = _execute(feature_payload)
 
     assert result == _valid_result()
     assert captured["url"] == "http://external-inference:8100/predict"
     body = captured["body"]
-    assert set(body.keys()) == {"contract_version", "bundle_identity", "expected_runtime", "feature_payload"}
+    assert set(body.keys()) == {"contract_version", "release_identity", "bundle_identity", "expected_runtime", "feature_payload"}
     assert body["contract_version"] == "external_inference_request.v1"
-    assert body["bundle_identity"] == client._BUNDLE_IDENTITY
-    assert body["expected_runtime"] == client._EXPECTED_RUNTIME
+    assert body["release_identity"] == {"release_id": _RELEASE_ID}
+    assert body["bundle_identity"] == _BUNDLE_IDENTITY
     assert body["feature_payload"] == feature_payload
     assert captured["timeout"] == client._DEFAULT_TIMEOUT_SECONDS
 
@@ -117,7 +135,7 @@ def test_connection_failure_maps_to_runtime_dependency_unavailable(monkeypatch):
     _install_urlopen(monkeypatch, raises=urllib.error.URLError("connection refused"))
 
     try:
-        client.execute_external_inference({})
+        _execute({})
         raise AssertionError("expected ExternalInferenceClientError")
     except client.ExternalInferenceClientError as exc:
         assert exc.diagnostic_code == client.DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE
@@ -128,7 +146,7 @@ def test_timeout_maps_to_runtime_dependency_unavailable(monkeypatch):
     _install_urlopen(monkeypatch, raises=TimeoutError("timed out"))
 
     try:
-        client.execute_external_inference({})
+        _execute({})
         raise AssertionError("expected ExternalInferenceClientError")
     except client.ExternalInferenceClientError as exc:
         assert exc.diagnostic_code == client.DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE
@@ -138,7 +156,7 @@ def test_malformed_json_response_maps_to_result_validation_failed(monkeypatch):
     _install_urlopen(monkeypatch, response_body=b"not json")
 
     try:
-        client.execute_external_inference({})
+        _execute({})
         raise AssertionError("expected ExternalInferenceClientError")
     except client.ExternalInferenceClientError as exc:
         assert exc.diagnostic_code == client.DIAGNOSTIC_RESULT_VALIDATION_FAILED
@@ -159,7 +177,7 @@ def test_failed_status_forwards_the_isolated_services_own_diagnostic_code(monkey
     )
 
     try:
-        client.execute_external_inference({})
+        _execute({})
         raise AssertionError("expected ExternalInferenceClientError")
     except client.ExternalInferenceClientError as exc:
         assert exc.diagnostic_code == "RUNTIME_DEPENDENCY_UNAVAILABLE"
@@ -180,7 +198,7 @@ def test_unrecognized_diagnostic_code_is_rejected(monkeypatch):
     )
 
     try:
-        client.execute_external_inference({})
+        _execute({})
         raise AssertionError("expected ExternalInferenceClientError")
     except client.ExternalInferenceClientError as exc:
         assert exc.diagnostic_code == client.DIAGNOSTIC_RESULT_VALIDATION_FAILED
@@ -201,7 +219,7 @@ def test_ok_status_with_invalid_result_shape_is_rejected(monkeypatch):
     )
 
     try:
-        client.execute_external_inference({})
+        _execute({})
         raise AssertionError("expected InferenceRuntimeError")
     except InferenceRuntimeError as exc:
         # runtime.inference.validate_binary_classification_result raises its
@@ -225,7 +243,7 @@ def test_ok_status_without_compatible_runtime_status_is_rejected(monkeypatch):
     )
 
     try:
-        client.execute_external_inference({})
+        _execute({})
         raise AssertionError("expected ExternalInferenceClientError")
     except client.ExternalInferenceClientError as exc:
         assert exc.diagnostic_code == client.DIAGNOSTIC_RESULT_VALIDATION_FAILED
@@ -236,8 +254,8 @@ def test_api_main_delegates_to_the_external_client_for_the_isolated_loader_strat
 
     calls = []
 
-    def _fake_execute(feature_payload):
-        calls.append(feature_payload)
+    def _fake_execute(feature_payload, **kwargs):
+        calls.append((feature_payload, kwargs))
         return _valid_result()
 
     monkeypatch.setattr(api_main, "execute_external_inference", _fake_execute)
@@ -260,9 +278,15 @@ def test_api_main_delegates_to_the_external_client_for_the_isolated_loader_strat
         ),
     )
 
-    response = api_main._execute_governed_inference(
-        "telco-customer-churn", "release-controlled", {"MonthlyCharges": 10.0}
+    response = api_main._execute_via_external_inference_service(
+        "telco-customer-churn",
+        "release-controlled",
+        {"MonthlyCharges": 10.0},
+        bundle_identity=_BUNDLE_IDENTITY,
+        runtime_profile=_RUNTIME_PROFILE,
+        include_runtime_diagnostic=False,
     )
 
     assert response == {"dataset_slug": "telco-customer-churn", "result": _valid_result()}
-    assert calls == [{"MonthlyCharges": 10.0}]
+    assert calls[0][0] == {"MonthlyCharges": 10.0}
+    assert calls[0][1]["release_id"] == "release-controlled"

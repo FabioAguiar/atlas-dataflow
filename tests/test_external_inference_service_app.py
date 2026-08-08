@@ -88,38 +88,38 @@ def _feature_payload() -> dict:
 
 
 def _write_fixture_bundle(tmp_path: Path, monkeypatch) -> None:
-    bundle_dir = tmp_path / rl.BUNDLE_DIRECTORY_NAME
-    models_dir = bundle_dir / "models"
+    release_id = "release-test"
+    release_dir = tmp_path / release_id
+    models_dir = release_dir / "models"
+    predictions_dir = release_dir / "predictions"
     models_dir.mkdir(parents=True, exist_ok=True)
+    predictions_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = models_dir / "model.joblib"
+    model_path = models_dir / "model.pkl"
     joblib.dump(_train_fixture_pipeline(), model_path)
     byte_sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
 
-    manifest = {
-        "artifact_type": "external_inference_model_manifest",
-        "contract_version": rl.MANIFEST_CONTRACT_VERSION,
-        "dataset_slug": "telco-customer-churn",
-        "bundle_identity": {"bundle_id": _BUNDLE_ID, "dataset_slug": "telco-customer-churn"},
-        "model_artifact": {
-            "relative_path": "models/model.joblib",
-            "byte_sha256": byte_sha256,
-            "model_state_fingerprint": "f" * 64,
-        },
-        "expected_runtime": {
-            "python_major_minor": "3.11",
-            "python_patch": "15",
-            "joblib": "1.5.3",
-            "pandas": "3.0.3",
-            "scikit_learn": "1.9.0",
-        },
-        "trusted_source": {"producer_repository": "dataset-study-telco-customer-churn"},
+    bundle = {
+        "contract_version": "inference_bundle.v1",
+        "bundle_identity": {"bundle_id": _BUNDLE_ID},
+        "dataset_context": {"dataset_slug": "telco-customer-churn"},
+        "model_artifact": {"path": "models/model.pkl", "sha256": byte_sha256},
     }
-    (bundle_dir / rl.MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
+    bundle_path = predictions_dir / "bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    bundle_sha256 = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": "release-manifest.v1",
+        "release_identity": {"release_id": release_id},
+        "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+        "artifacts": [
+            {"role": "predictive_bundle", "reference": "predictions/bundle.json", "hash_algorithm": "sha256", "hash_value": bundle_sha256},
+            {"role": "model_artifact", "reference": "models/model.pkl", "hash_algorithm": "sha256", "hash_value": byte_sha256},
+        ],
+    }
+    (release_dir / rl.MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
 
-    monkeypatch.setattr(rl, "MODEL_ROOT", tmp_path)
-    monkeypatch.setattr(rl, "SEALED_MODEL_BYTE_SHA256", byte_sha256)
-    monkeypatch.setattr(rl, "SEALED_MODEL_STATE_FINGERPRINT", "f" * 64)
+    monkeypatch.setattr(rl, "RELEASES_ROOT", tmp_path)
     monkeypatch.setattr(
         rl,
         "observe_isolated_runtime",
@@ -136,6 +136,7 @@ def _write_fixture_bundle(tmp_path: Path, monkeypatch) -> None:
 def _request_body(**overrides) -> dict:
     body = {
         "contract_version": "external_inference_request.v1",
+        "release_identity": {"release_id": "release-test"},
         "bundle_identity": {"bundle_id": _BUNDLE_ID, "dataset_slug": "telco-customer-churn"},
         "expected_runtime": {"python_major_minor": "3.11", "joblib": "1.5.3", "pandas": "3.0.3", "scikit_learn": "1.9.0"},
         "feature_payload": _feature_payload(),

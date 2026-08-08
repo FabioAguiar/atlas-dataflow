@@ -1,10 +1,10 @@
 """Load-safe gate and trusted execution for the isolated external-inference service.
 
-Implements the load-safe gate for a governed logical bundle identity. This
+Implements the load-safe gate for a governed release identity. This
 module never accepts an absolute caller-selected filesystem path, executable
 loader/module name, dependency override, or hash bypass. Bundle-relative
 resolution remains confined beneath MODEL_ROOT and deserialization happens
-only after profile, trust, integrity, and exact-compatibility gates pass.
+only after release, bundle, trust, integrity, and exact-compatibility gates pass.
 
 Deliberately self-contained: this image does not share code with the Atlas
 api image (different Python runtime, different dependency pins), so the
@@ -22,11 +22,18 @@ import warnings
 from pathlib import Path
 from typing import Any, Mapping
 
-MODEL_ROOT = Path("/app/external-models")
+RELEASES_ROOT = Path("/app/releases")
+MODEL_ROOT = RELEASES_ROOT  # Compatibility alias for callers of the public helpers.
 MANIFEST_FILENAME = "manifest.json"
 
 MANIFEST_CONTRACT_VERSION = "external_inference_model_manifest.v1"
 REQUEST_CONTRACT_VERSION = "external_inference_request.v1"
+PACKAGED_RUNTIME = {
+    "python_major_minor": "3.11",
+    "joblib": "1.5.3",
+    "pandas": "3.0.3",
+    "scikit_learn": "1.9.0",
+}
 
 RUNTIME_COMPATIBILITY_STATUSES = frozenset(
     {
@@ -605,6 +612,174 @@ def run_preflight_gate(request: Mapping[str, Any] | None, model_root: Path | Non
         "observed_runtime": observed_runtime,
         "compatibility": compatibility,
     }
+
+
+# S0176 release-governed resolver. These definitions intentionally replace
+# the legacy bundle-root preflight above while retaining its compatibility,
+# loading, prediction, and bounded-result helpers.
+
+def _confined_path(root: Path, parent: Path, reference: str, *, diagnostic_code: str) -> Path:
+    if (
+        not isinstance(reference, str)
+        or not reference
+        or "\\" in reference
+        or Path(reference).is_absolute()
+        or any(part in {"", ".", ".."} for part in reference.split("/"))
+    ):
+        raise LoadSafeGateError("Governed artifact reference is unsafe.", diagnostic_code=diagnostic_code)
+    resolved_root = root.resolve(strict=True)
+    candidate = parent.joinpath(*reference.split("/"))
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(resolved_root)
+    except (OSError, ValueError) as exc:
+        raise LoadSafeGateError("Governed artifact reference is unavailable.", diagnostic_code=diagnostic_code) from exc
+    # Reject symlinks at every component, even when their eventual target is
+    # still inside the root. Release packaging is immutable and direct.
+    current = resolved_root
+    try:
+        relative = candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise LoadSafeGateError("Governed artifact reference escapes the releases root.", diagnostic_code=diagnostic_code) from exc
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise LoadSafeGateError("Governed artifact reference must not use symlinks.", diagnostic_code=diagnostic_code)
+    return resolved
+
+
+def _release_id_from_request(request: Mapping[str, Any]) -> str:
+    identity = request.get("release_identity")
+    release_id = identity.get("release_id") if isinstance(identity, Mapping) else None
+    if (
+        not isinstance(release_id, str)
+        or not release_id.startswith("release-")
+        or release_id in {"release-", ".", ".."}
+        or "/" in release_id
+        or "\\" in release_id
+        or ".." in release_id
+        or Path(release_id).is_absolute()
+        or not all(character.isalnum() or character in "._-" for character in release_id)
+    ):
+        raise LoadSafeGateError(
+            "Release identity is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+            category="runtime_profile_invalid",
+        )
+    return release_id
+
+
+def _artifact_declaration(manifest: Mapping[str, Any], role: str) -> Mapping[str, Any]:
+    artifacts = manifest.get("artifacts")
+    matches = [item for item in artifacts if isinstance(item, Mapping) and item.get("role") == role] if isinstance(artifacts, list) else []
+    if len(matches) != 1:
+        raise LoadSafeGateError("Release artifact declaration is invalid.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    declaration = matches[0]
+    if declaration.get("hash_algorithm") != "sha256" or not isinstance(declaration.get("hash_value"), str) or len(declaration["hash_value"]) != 64:
+        raise LoadSafeGateError("Release artifact hash declaration is invalid.", diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH)
+    return declaration
+
+
+def _load_json(path: Path, *, diagnostic_code: str) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise LoadSafeGateError("Governed JSON artifact is unavailable.", diagnostic_code=diagnostic_code) from exc
+    if not isinstance(value, dict):
+        raise LoadSafeGateError("Governed JSON artifact is invalid.", diagnostic_code=diagnostic_code)
+    return value
+
+
+def _verify_declared_hash(path: Path, declaration: Mapping[str, Any], *, diagnostic_code: str) -> None:
+    if _sha256_file(path) != declaration.get("hash_value"):
+        raise LoadSafeGateError("Governed artifact hash does not match.", diagnostic_code=diagnostic_code)
+
+
+def load_governed_release(request: Mapping[str, Any], releases_root: Path | None = None) -> dict:
+    root = (releases_root or RELEASES_ROOT).resolve(strict=True)
+    release_id = _release_id_from_request(request)
+    release_dir = _confined_path(root, root, release_id, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    if not release_dir.is_dir():
+        raise LoadSafeGateError("Requested release is unavailable.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    manifest_path = _confined_path(root, release_dir, MANIFEST_FILENAME, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    manifest = _load_json(manifest_path, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    request_bundle = request.get("bundle_identity")
+    release_identity = manifest.get("release_identity")
+    dataset_identity = manifest.get("dataset_identity")
+    if not isinstance(request_bundle, Mapping) or not isinstance(release_identity, Mapping) or not isinstance(dataset_identity, Mapping):
+        raise LoadSafeGateError("Release identity declarations are invalid.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    if release_identity.get("release_id") != release_id or dataset_identity.get("dataset_slug") != request_bundle.get("dataset_slug"):
+        raise LoadSafeGateError("Requested release identity does not match its manifest.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+
+    bundle_decl = _artifact_declaration(manifest, "predictive_bundle")
+    model_decl = _artifact_declaration(manifest, "model_artifact")
+    bundle_path = _confined_path(root, release_dir, bundle_decl.get("reference"), diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    model_path = _confined_path(root, release_dir, model_decl.get("reference"), diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE)
+    if not bundle_path.is_file() or not model_path.is_file():
+        raise LoadSafeGateError("Governed release artifact is unavailable.", diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE)
+    _verify_declared_hash(bundle_path, bundle_decl, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    bundle = _load_json(bundle_path, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    bundle_identity = bundle.get("bundle_identity")
+    dataset_context = bundle.get("dataset_context")
+    bundle_model = bundle.get("model_artifact")
+    if (
+        not isinstance(bundle_identity, Mapping)
+        or not isinstance(dataset_context, Mapping)
+        or not isinstance(bundle_model, Mapping)
+        or bundle_identity.get("bundle_id") != request_bundle.get("bundle_id")
+        or dataset_context.get("dataset_slug") != request_bundle.get("dataset_slug")
+        or bundle_model.get("path") != model_decl.get("reference")
+        or bundle_model.get("sha256") != model_decl.get("hash_value")
+    ):
+        raise LoadSafeGateError("Predictive bundle identity is stale or inconsistent.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE, runtime_compatibility_status="stale_bundle_reference")
+    _verify_declared_hash(model_path, model_decl, diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH)
+    return {"manifest": manifest, "bundle": bundle, "model_path": model_path}
+
+
+def check_releases_root_ready(releases_root: Path | None = None) -> None:
+    root = (releases_root or RELEASES_ROOT).resolve(strict=True)
+    if not root.is_dir():
+        raise LoadSafeGateError("Releases root is unavailable.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    manifests = [path for path in root.glob(f"*/{MANIFEST_FILENAME}") if path.is_file() and not path.is_symlink()]
+    if not manifests:
+        raise LoadSafeGateError("No governed releases are packaged.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    compatibility = evaluate_load_safe_compatibility(
+        request=None,
+        manifest_bundle_identity={},
+        expected_runtime=PACKAGED_RUNTIME,
+        observed_runtime=observe_isolated_runtime(),
+    )
+    if compatibility["status"] != "compatible":
+        raise LoadSafeGateError(
+            "Packaged runtime is incompatible.",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
+            runtime_compatibility_status=compatibility["status"],
+        )
+
+
+def run_preflight_gate(request: Mapping[str, Any], model_root: Path | None = None) -> dict:
+    """Validate release topology, hashes and exact runtime before deserialization."""
+    validate_request_contract_version(request)
+    governed = load_governed_release(request, model_root)
+    expected_runtime = request.get("expected_runtime")
+    if not isinstance(expected_runtime, Mapping):
+        raise LoadSafeGateError("Expected runtime is invalid.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    observed_runtime = observe_isolated_runtime()
+    compatibility = evaluate_load_safe_compatibility(
+        request=None,
+        manifest_bundle_identity=request["bundle_identity"],
+        expected_runtime=expected_runtime,
+        observed_runtime=observed_runtime,
+    )
+    if compatibility["status"] != "compatible":
+        raise LoadSafeGateError(
+            "External inference runtime compatibility gate failed.",
+            diagnostic_code=RUNTIME_COMPATIBILITY_DIAGNOSTIC_MAPPING.get(compatibility["status"], DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE),
+            runtime_compatibility_status=compatibility["status"],
+            category="runtime_profile_mismatch",
+        )
+    governed.update({"expected_runtime": dict(expected_runtime), "observed_runtime": observed_runtime, "compatibility": compatibility})
+    return governed
 
 
 # --- Steps 11-13: block-before-import, allowlisted loader, warning capture ---

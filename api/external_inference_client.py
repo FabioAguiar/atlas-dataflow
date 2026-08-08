@@ -50,13 +50,16 @@ class ExternalInferenceClientError(InferenceRuntimeError):
 def _build_request_payload(
     feature_payload: Mapping[str, Any],
     *,
+    release_id: str,
     bundle_identity: Mapping[str, Any],
     runtime_profile: Mapping[str, Any],
 ) -> dict:
     required_runtime = runtime_profile.get("required_consumer_runtime")
     dependencies = required_runtime.get("dependencies") if isinstance(required_runtime, Mapping) else None
     if (
-        not isinstance(bundle_identity.get("bundle_id"), str)
+        not isinstance(release_id, str)
+        or not release_id
+        or not isinstance(bundle_identity.get("bundle_id"), str)
         or not isinstance(bundle_identity.get("dataset_slug"), str)
         or not isinstance(required_runtime, Mapping)
         or not isinstance(dependencies, Mapping)
@@ -78,6 +81,7 @@ def _build_request_payload(
 
     return {
         "contract_version": _REQUEST_CONTRACT_VERSION,
+        "release_identity": {"release_id": release_id},
         "bundle_identity": {
             "bundle_id": bundle_identity["bundle_id"],
             "dataset_slug": bundle_identity["dataset_slug"],
@@ -90,6 +94,7 @@ def _build_request_payload(
 def execute_external_inference(
     feature_payload: Mapping[str, Any],
     *,
+    release_id: str,
     bundle_identity: Mapping[str, Any],
     runtime_profile: Mapping[str, Any],
     base_url: str | None = None,
@@ -105,6 +110,7 @@ def execute_external_inference(
 
     request_body = _build_request_payload(
         feature_payload,
+        release_id=release_id,
         bundle_identity=bundle_identity,
         runtime_profile=runtime_profile,
     )

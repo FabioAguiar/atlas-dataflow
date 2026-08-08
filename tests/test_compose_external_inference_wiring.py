@@ -56,10 +56,10 @@ def test_neither_api_nor_web_depends_on_external_inference():
             assert "external-inference" not in names, f"{path.name}:{service_name}"
 
 
-def test_private_compose_mounts_the_bounded_read_only_external_models_root():
+def test_private_compose_has_no_legacy_model_mount():
     service = _load(PRIVATE_COMPOSE_PATH)["services"]["external-inference"]
     volumes = service.get("volumes") or []
-    assert "./external-models:/app/external-models:ro" in volumes
+    assert not any("external-models" in str(volume) for volume in volumes)
 
 
 def test_production_compose_has_no_external_models_mount():
@@ -75,13 +75,11 @@ def test_external_inference_build_uses_the_repository_root_context_and_its_own_d
         assert build["dockerfile"] == "external-inference/Dockerfile"
 
 
-def test_dockerignore_admits_external_inference_and_external_models_without_removing_existing_allowlist():
+def test_dockerignore_admits_external_inference_and_releases_without_removing_existing_allowlist():
     text = DOCKERIGNORE_PATH.read_text(encoding="utf-8")
     for expected_allow_entry in (
         "!external-inference/",
         "!external-inference/**",
-        "!external-models/",
-        "!external-models/**",
         "!api/",
         "!api/**",
         "!registry/",

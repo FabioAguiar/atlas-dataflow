@@ -43,8 +43,6 @@ services:
       EXTERNAL_INFERENCE_PORT: ${EXTERNAL_INFERENCE_PORT:-8100}
     expose:
       - "8100"
-    volumes:
-      - ./external-models:/app/external-models:ro
     healthcheck:
       test:
         [

@@ -47,7 +47,7 @@ def _result_envelope(
 def live() -> dict:
     """Proves only process/event-loop responsiveness.
 
-    Never imports or invokes runtime_loader, never touches external-models/.
+    Never imports or invokes release/model loading.
     """
 
     return {"status": "ok"}
@@ -55,10 +55,10 @@ def live() -> dict:
 
 @app.get("/ready")
 def ready() -> dict:
-    """Runs the load-safe gate's steps 1-10 only. Never calls joblib.load."""
+    """Checks packaged release topology and runtime. Never calls joblib.load."""
 
     try:
-        preflight = rl.run_preflight_gate(request=None)
+        rl.check_releases_root_ready()
     except rl.LoadSafeGateError as exc:
         return {
             "status": "not_ready",
@@ -68,7 +68,7 @@ def ready() -> dict:
 
     return {
         "status": "ready",
-        "runtime_compatibility_status": preflight["compatibility"]["status"],
+        "runtime_compatibility_status": "compatible",
         "diagnostic_code": None,
     }
 

@@ -640,6 +640,7 @@ def _inference_failure_response(
 
 def _execute_via_external_inference_service(
     dataset_slug: str,
+    active_release: str,
     normalized_payload: dict,
     *,
     bundle_identity: dict,
@@ -657,6 +658,7 @@ def _execute_via_external_inference_service(
     try:
         result = execute_external_inference(
             normalized_payload,
+            release_id=active_release,
             bundle_identity=bundle_identity,
             runtime_profile=runtime_profile,
         )
@@ -833,6 +835,7 @@ def _execute_governed_inference(
             )
         return _execute_via_external_inference_service(
             dataset_slug,
+            active_release,
             dict(validation_report.normalized_payload),
             bundle_identity={
                 "bundle_id": bundle_identity.get("bundle_id"),

@@ -5,11 +5,22 @@
   "description": "Strict, versioned internal request contract for the isolated external-inference service. Data-only: bounded Atlas-controlled bundle/runtime identity plus an already-validated, normalized feature payload. Never a filesystem path, loader/module name, serialized object, dependency override, or hash bypass.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract_version", "bundle_identity", "expected_runtime", "feature_payload"],
+  "required": ["contract_version", "release_identity", "bundle_identity", "expected_runtime", "feature_payload"],
   "properties": {
     "contract_version": {
       "type": "string",
       "const": "external_inference_request.v1"
+    },
+    "release_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_id"],
+      "properties": {
+        "release_id": {
+          "type": "string",
+          "pattern": "^release-[A-Za-z0-9][A-Za-z0-9._-]*$"
+        }
+      }
     },
     "bundle_identity": {
       "type": "object",

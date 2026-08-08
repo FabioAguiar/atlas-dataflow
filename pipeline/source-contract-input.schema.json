@@ -71,12 +71,6 @@
       "pattern": "^[^/]",
       "description": "Optional reference to a notebook that is the primary derivation source for this study. Include only when the study type produces derivation from a notebook. Informs pipeline/candidate-layout.schema.json#/properties/source_run traceability. Must be a safe, reviewable reference — absolute paths (starting with '/') are prohibited, and paths containing runtime-generated content or private directories must not be used."
     },
-    "external_analysis_handoff_ref": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\\\)(?![A-Za-z]:)(?!.*(?:^|/)(?:\\.env|logs|runtime/logs|runtime/tmp|runtime/cache|runtime/data)(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9]$",
-      "description": "Optional, bounded, portable reference to a previously validated external-analysis handoff (Project Spec S0155; see pipeline/external-analysis-handoff.schema.json). Rejects absolute POSIX paths, Windows drive paths, UNC/backslash paths, parent traversal, and empty or dot-only paths. Does not replace or change the meaning of source_contract_ref, source_data_ref, or source_notebook_ref, and is not consumed by pipeline/build.py or pipeline/contract_derivation.py as of this field's introduction."
-    },
     "authoring_generation_id": {
       "$ref": "#/$defs/identifier",
       "description": "Project Spec S0167. Optional identifier of the single, immutable Atlas authoring generation (pipeline/dataset-integration-authoring-manifest.schema.json#/properties/authoring_generation/properties/authoring_generation_id) this source-contract input is capability-aware over. Present only together with authoring_manifest_ref, capability_profile_id, capability_profile_version, and capability_profile_ref (all five or none)."

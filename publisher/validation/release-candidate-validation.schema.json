@@ -444,18 +444,9 @@
                 "maxItems": 0
               }
             }
-          },
-          "promotion_gate": {
-            "properties": {
-              "promotion_allowed": {
-                "const": true
-              },
-              "registry_update_allowed": {
-                "const": true
-              }
-            }
           }
-        }
+        },
+        "description": "Project Spec S0180: an accepted (structurally valid) candidate no longer forces promotion_gate.promotion_allowed/registry_update_allowed to true here -- a validated_external_fitted_model candidate with unresolved operational readiness may be accepted with promotion_gate: {promotion_allowed: false, registry_update_allowed: false}. The historical internal-training case still produces {true, true} at the producer level (publisher/validate.py); this schema only stops forcing it. The promotion_gate def's own allOf (promotion_allowed: false implies registry_update_allowed: false) still applies unconditionally."
       }
     },
     {

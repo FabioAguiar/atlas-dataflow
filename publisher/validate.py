@@ -850,6 +850,48 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
         "candidate_slug": dataset_slug,
         "release_id": release_id,
         "release_version": release_version,
+        "predictive_bundle_promotion_readiness": _predictive_bundle_promotion_readiness(
+            json_artifacts.get("predictive_bundle")
+        ),
+    }
+
+
+# Project Spec S0180: fail-closed promotion-eligibility signal extracted from
+# the already-parsed predictive_bundle artifact (contracts/inference-bundle.schema.json,
+# unmodified). Absent or malformed fields resolve to None, which
+# _build_validation_result treats as "not the validated_external_fitted_model
+# provenance" -- i.e. unchanged historical internal-training behavior --
+# never as an implicit promotion grant.
+def _predictive_bundle_promotion_readiness(predictive_bundle_data: dict | None) -> dict:
+    if not isinstance(predictive_bundle_data, dict):
+        return {
+            "model_provenance_origin": None,
+            "operational_validity": None,
+            "operational_threshold_status": None,
+            "operational_prediction_available": None,
+        }
+    provenance = predictive_bundle_data.get("model_provenance_origin")
+    external_evidence = predictive_bundle_data.get("external_model_evidence")
+    readiness = external_evidence.get("readiness") if isinstance(external_evidence, dict) else None
+    operational_validity = readiness.get("operational_validity") if isinstance(readiness, dict) else None
+    operational_threshold = readiness.get("operational_threshold") if isinstance(readiness, dict) else None
+    operational_threshold_status = (
+        operational_threshold.get("status") if isinstance(operational_threshold, dict) else None
+    )
+    operational_prediction_available = (
+        readiness.get("operational_prediction_available") if isinstance(readiness, dict) else None
+    )
+    return {
+        "model_provenance_origin": provenance if isinstance(provenance, str) else None,
+        "operational_validity": (
+            operational_validity if isinstance(operational_validity, str) else None
+        ),
+        "operational_threshold_status": (
+            operational_threshold_status if isinstance(operational_threshold_status, str) else None
+        ),
+        "operational_prediction_available": (
+            operational_prediction_available if isinstance(operational_prediction_available, bool) else None
+        ),
     }
 
 
@@ -1135,10 +1177,34 @@ def _build_validation_result(validation: dict) -> dict:
         if role not in schema_compatibility:
             schema_compatibility[role] = {"checked": False, "compatible": False}
 
+    predictive_bundle_promotion_readiness: dict = validation.get(
+        "predictive_bundle_promotion_readiness"
+    ) or {}
+
     if all_pass:
         validation_outcome = "accepted"
         rejection_obj: dict = {"rejected": False, "reasons": []}
-        promotion_gate: dict = {"promotion_allowed": True, "registry_update_allowed": True}
+        # Project Spec S0180: structural acceptance (validation_outcome) and
+        # operational promotion eligibility are distinct contracts. A
+        # structurally accepted candidate whose predictive bundle declares
+        # model_provenance_origin: validated_external_fitted_model derives
+        # promotion_gate fail-closed from the bundle's own operational
+        # readiness -- never from validation_outcome alone. Every other
+        # provenance (absent, or atlas_internal_training) keeps the
+        # unchanged historical behavior: structural acceptance implies
+        # promotion_allowed.
+        if predictive_bundle_promotion_readiness.get("model_provenance_origin") == "validated_external_fitted_model":
+            operationally_ready = (
+                predictive_bundle_promotion_readiness.get("operational_validity") == "confirmed"
+                and predictive_bundle_promotion_readiness.get("operational_threshold_status") == "resolved"
+                and predictive_bundle_promotion_readiness.get("operational_prediction_available") is True
+            )
+            promotion_gate: dict = {
+                "promotion_allowed": operationally_ready,
+                "registry_update_allowed": operationally_ready,
+            }
+        else:
+            promotion_gate = {"promotion_allowed": True, "registry_update_allowed": True}
     else:
         validation_outcome = "rejected"
         rejection_obj = {"rejected": True, "reasons": rejection_reasons}
@@ -1416,8 +1482,13 @@ def materialize_telco_validation_run(
     manifest_path: str | None = None
     manifest_generated = False
     manifest_error: str | None = None
-    promotion_gate = validation_result.get("promotion_gate") or {}
-    if promotion_gate.get("promotion_allowed") is True:
+    # Project Spec S0180: manifest generation follows the generic structural
+    # rule (validation_outcome accepted -> manifest may be generated), not
+    # promotion eligibility -- a structurally accepted candidate can have
+    # promotion_gate.promotion_allowed: false (e.g. an external fitted-model
+    # candidate with unresolved operational readiness) and still get a
+    # manifest.
+    if validation_result.get("validation_outcome") == "accepted":
         from publisher import manifest as manifest_module  # local import: avoid a package-level cross-module dependency
 
         try:

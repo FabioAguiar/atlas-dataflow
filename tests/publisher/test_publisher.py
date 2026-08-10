@@ -11,6 +11,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from pipeline import assemble_candidate, generate_inference_bundle  # noqa: E402
 from publisher import evidence, manifest, promote, validate  # noqa: E402
 from registry import update as registry_update  # noqa: E402
 
@@ -212,7 +213,12 @@ def _artifact_payload(role: str) -> dict:
     return payload
 
 
-def _write_candidate(tmp_repo: Path, missing_role: str | None = None) -> Path:
+def _write_candidate(
+    tmp_repo: Path,
+    missing_role: str | None = None,
+    *,
+    role_payload_overrides: dict[str, dict] | None = None,
+) -> Path:
     candidate_dir = _candidate_dir(tmp_repo)
     candidate_dir.mkdir(parents=True, exist_ok=True)
 
@@ -232,8 +238,13 @@ def _write_candidate(tmp_repo: Path, missing_role: str | None = None) -> Path:
         if role == "model_artifact":
             artifact_path.write_bytes(MODEL_ARTIFACT_BYTES)
         else:
+            payload = (
+                role_payload_overrides[role]
+                if role_payload_overrides and role in role_payload_overrides
+                else _artifact_payload(role)
+            )
             artifact_path.write_text(
-                json.dumps(_artifact_payload(role), indent=2),
+                json.dumps(payload, indent=2),
                 encoding="utf-8",
             )
 
@@ -773,14 +784,17 @@ def test_manifest_generates_all_required_roles_with_hashes(tmp_path):
     assert not (tmp_repo / "registry" / "datasets.json.previous").exists()
 
 
-def test_manifest_halted_by_failed_promotion_gate(tmp_path):
+def test_manifest_halted_by_rejected_validation_outcome(tmp_path):
+    # Project Spec S0180: manifest generation now gates on validation_outcome
+    # (structural acceptance), not promotion_gate.promotion_allowed --
+    # renamed from test_manifest_halted_by_failed_promotion_gate to match.
     tmp_repo = tmp_path / "repo"
     _copy_publisher_contracts(tmp_repo)
     candidate_dir = _write_candidate(tmp_repo, missing_role="metrics")
     validate.run(str(candidate_dir), repo_root=tmp_repo)
     run_dir = _latest_run_dir(tmp_repo)
 
-    with pytest.raises(RuntimeError, match="promotion_gate.promotion_allowed"):
+    with pytest.raises(RuntimeError, match="validation_outcome"):
         manifest.run(str(run_dir), repo_root=tmp_repo)
 
     assert not (run_dir / "manifest.json").exists()
@@ -815,10 +829,472 @@ def test_manifest_verify_detects_hash_mismatch(tmp_path):
     (candidate_dir / _role_path("metrics")).write_text(
         json.dumps({"tampered": True}), encoding="utf-8"
     )
-
     valid, errors = manifest.verify(manifest_path, candidate_dir)
     assert valid is False
     assert any(e["code"] == "MANIFEST_HASH_MISMATCH" for e in errors)
+
+
+# --- S0180: structural acceptance vs. operational promotion eligibility ---
+#
+# publisher/validate.py's promotion_gate now derives fail-closed from an
+# accepted candidate's own predictive_bundle.model_provenance_origin /
+# external_model_evidence.readiness (contracts/inference-bundle.schema.json,
+# unmodified) instead of always granting promotion whenever structural
+# validation passes. Every fixture here is synthetic/temporary -- no real
+# Telco model or bytes are loaded.
+
+
+def _external_predictive_bundle_payload(
+    *,
+    operational_validity: str = "unconfirmed",
+    threshold_status: str = "unresolved",
+    threshold_value: float | None = None,
+    prediction_available: bool = False,
+) -> dict:
+    payload = _artifact_payload("predictive_bundle")
+    payload["model_provenance_origin"] = "validated_external_fitted_model"
+    payload["external_model_evidence"] = {
+        "origin": "validated_external_fitted_model",
+        "readiness": {
+            "operational_validity": operational_validity,
+            "operational_threshold": {"status": threshold_status, "value": threshold_value},
+            "operational_prediction_available": prediction_available,
+        },
+    }
+    return payload
+
+
+def test_external_provenance_accepted_candidate_has_fail_closed_promotion_gate_when_unresolved(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+    )
+
+    result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert result["validation_outcome"] == "accepted"
+    assert result["promotion_gate"] == {
+        "promotion_allowed": False,
+        "registry_update_allowed": False,
+    }
+
+
+def test_external_provenance_accepted_candidate_promotion_allowed_when_operationally_ready(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(
+                operational_validity="confirmed",
+                threshold_status="resolved",
+                threshold_value=0.5,
+                prediction_available=True,
+            )
+        },
+    )
+
+    result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert result["validation_outcome"] == "accepted"
+    assert result["promotion_gate"] == {
+        "promotion_allowed": True,
+        "registry_update_allowed": True,
+    }
+
+
+def test_external_provenance_rejected_candidate_keeps_promotion_gate_false(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        missing_role="metrics",
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(
+                operational_validity="confirmed",
+                threshold_status="resolved",
+                threshold_value=0.5,
+                prediction_available=True,
+            )
+        },
+    )
+
+    result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert result["validation_outcome"] == "rejected"
+    assert result["promotion_gate"] == {
+        "promotion_allowed": False,
+        "registry_update_allowed": False,
+    }
+
+
+def test_manifest_generates_for_accepted_external_candidate_with_promotion_disallowed(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+    )
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    result = manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert result["schema_version"] == "release-manifest.v1"
+    assert (run_dir / "manifest.json").is_file()
+    assert result["safety_boundaries"]["registry_updated"] is False
+    assert result["safety_boundaries"]["release_promoted"] is False
+
+
+# --- S0180: release-candidate-input external fitted-model provenance
+# discrimination (pipeline/assemble_candidate.py) ---
+#
+# _resolve_training_provenance discriminates internal-vs-external purely
+# from the training_parameter_record artifact's own declared schema_version
+# -- never a dataset-slug conditional -- and is backward-compatible: any
+# value other than the real S0157 external constant (including generic
+# fixture placeholders used by other, unrelated tests) falls back to the
+# historical M24/training-parameter-record.v1 behavior unchanged.
+
+EXTERNAL_PROVENANCE_DATASET_SLUG = "external-fitted-example"
+
+
+def _write_training_provenance_fixture(
+    tmp_repo: Path,
+    *,
+    record_schema_version: str,
+    metrics_schema_version: str,
+) -> dict:
+    record_path = tmp_repo / "pipeline" / "external-evidence" / "training-parameter-record.json"
+    metrics_path = tmp_repo / "pipeline" / "external-evidence" / "training-metrics.json"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(
+        json.dumps({"schema_version": record_schema_version}), encoding="utf-8"
+    )
+    metrics_path.write_text(
+        json.dumps({"schema_version": metrics_schema_version}), encoding="utf-8"
+    )
+    return {
+        "training_parameter_record": str(record_path.relative_to(tmp_repo)),
+        "training_metrics": str(metrics_path.relative_to(tmp_repo)),
+    }
+
+
+def test_resolve_training_provenance_defaults_to_internal_for_any_non_external_value(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    references = _write_training_provenance_fixture(
+        tmp_repo,
+        # A generic placeholder value, matching what several pre-existing
+        # unrelated test fixtures declare for this role (never the real
+        # training-parameter-record.v1 constant either) -- must still
+        # resolve to the historical internal defaults, not raise.
+        record_schema_version="training_parameter_record.v1",
+        metrics_schema_version="training_metrics.v1",
+    )
+
+    source_stage, is_external, record_override, metrics_override = (
+        assemble_candidate._resolve_training_provenance(references, tmp_repo)
+    )
+
+    assert source_stage == "M24"
+    assert is_external is False
+    assert record_override is None
+    assert metrics_override is None
+
+
+def test_resolve_training_provenance_detects_real_external_profile(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    references = _write_training_provenance_fixture(
+        tmp_repo,
+        record_schema_version="training-parameter-record.external-fitted-model.v1",
+        metrics_schema_version="training-metrics.external-fitted-model.v1",
+    )
+
+    source_stage, is_external, record_override, metrics_override = (
+        assemble_candidate._resolve_training_provenance(references, tmp_repo)
+    )
+
+    assert source_stage == "manual_governed_input"
+    assert is_external is True
+    assert record_override == "training-parameter-record.external-fitted-model.v1"
+    assert metrics_override == "training-metrics.external-fitted-model.v1"
+
+
+def test_resolve_training_provenance_rejects_disagreeing_external_metrics_profile(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    references = _write_training_provenance_fixture(
+        tmp_repo,
+        record_schema_version="training-parameter-record.external-fitted-model.v1",
+        # Metrics still declares the internal profile -- inconsistent with
+        # the record's external declaration.
+        metrics_schema_version="training-metrics.v1",
+    )
+
+    with pytest.raises(ValueError, match="training_metrics contract_version"):
+        assemble_candidate._resolve_training_provenance(references, tmp_repo)
+
+
+# --- S0180: generalized governed inference-bundle materialization
+# (pipeline/generate_inference_bundle.py) ---
+
+EXTERNAL_BUNDLE_MODEL_ARTIFACT_BYTES = b"pytest-external-fixture-model-bytes-not-a-real-model"
+EXTERNAL_BUNDLE_MODEL_ARTIFACT_SHA256 = hashlib.sha256(EXTERNAL_BUNDLE_MODEL_ARTIFACT_BYTES).hexdigest()
+EXTERNAL_BUNDLE_MODEL_STATE_FINGERPRINT = hashlib.sha256(
+    b"pytest-external-model-state-fingerprint"
+).hexdigest()
+
+
+def _write_external_bundle_fixtures(tmp_repo: Path) -> dict:
+    for relative in (
+        "pipeline/training-parameter-record.schema.json",
+        "pipeline/training-metrics.schema.json",
+        "pipeline/model-selection-evidence.schema.json",
+    ):
+        src = REPO_ROOT / relative
+        dst = tmp_repo / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    training_record_path = tmp_repo / "pipeline" / "external-evidence" / "training-parameter-record.json"
+    training_metrics_path = tmp_repo / "pipeline" / "external-evidence" / "training-metrics.json"
+    model_selection_path = tmp_repo / "pipeline" / "external-evidence" / "model-selection-evidence.json"
+    model_artifact_path = tmp_repo / "pipeline" / "external-evidence" / "model.bin"
+    execution_contract_path = tmp_repo / "contracts" / EXTERNAL_PROVENANCE_DATASET_SLUG / "execution-contract.json"
+    runtime_contract_path = tmp_repo / "contracts" / EXTERNAL_PROVENANCE_DATASET_SLUG / "runtime-contract.json"
+    public_contract_path = tmp_repo / "contracts" / EXTERNAL_PROVENANCE_DATASET_SLUG / "public-contract.json"
+    prepared_dataset_path = tmp_repo / "pipeline" / "prepared" / EXTERNAL_PROVENANCE_DATASET_SLUG / "prepared-dataset.json"
+
+    for path in (
+        training_record_path,
+        training_metrics_path,
+        model_selection_path,
+        model_artifact_path,
+        execution_contract_path,
+        runtime_contract_path,
+        public_contract_path,
+        prepared_dataset_path,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    training_record_path.write_text(json.dumps({
+        "schema_version": "training-parameter-record.external-fitted-model.v1",
+        "record_kind": "training_parameter_record",
+        "origin": "validated_external_fitted_model",
+        "producer": "pytest-external-producer",
+        "handoff_lineage_reference": "external-handoff/pytest-lineage-001",
+        "dataset_identity": {"dataset_slug": EXTERNAL_PROVENANCE_DATASET_SLUG},
+        "selected_model_id": "candidate-001",
+        "model_family": "hist_gradient_boosting",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        "hyperparameters": {"max_depth": 3},
+        "feature_order": ["feature_a"],
+        "preprocessing_evidence_reference": "external-handoff/pytest-preprocessing-evidence",
+        "serializer_metadata_reference": "external-handoff/pytest-serializer-metadata",
+        "model_artifact_reference": {
+            "path": "pipeline/external-evidence/model.bin",
+            "sha256": EXTERNAL_BUNDLE_MODEL_ARTIFACT_SHA256,
+        },
+        "model_state_fingerprint": EXTERNAL_BUNDLE_MODEL_STATE_FINGERPRINT,
+        "atlas_fit_confirmation": {
+            "atlas_fit": False,
+            "atlas_tuned": False,
+            "atlas_recalibrated": False,
+            "atlas_altered": False,
+        },
+        "raw_partition_confirmation": {"raw_partitions_embedded": False},
+    }), encoding="utf-8")
+
+    training_metrics_path.write_text(json.dumps({
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "artifact_kind": "training_metrics",
+        "created_at": "2026-08-10T00:00:00Z",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": EXTERNAL_PROVENANCE_DATASET_SLUG,
+        },
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "used_for_fitting": True,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            "metrics": [{"name": "roc_auc", "value": 0.9}],
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "used_for_fitting": False,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": True,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            "metrics": [{"name": "roc_auc", "value": 0.88}],
+        },
+    }), encoding="utf-8")
+
+    model_selection_path.write_text(json.dumps({
+        "schema_version": "model-selection-evidence.external-fitted-model.v1",
+        "artifact_kind": "model_selection_evidence",
+        "created_at": "2026-08-10T00:00:00Z",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "producer": "pytest-external-producer",
+            "handoff_lineage_reference": "external-handoff/pytest-lineage-001",
+        },
+        "dataset_identity": {"dataset_slug": EXTERNAL_PROVENANCE_DATASET_SLUG},
+        "selection_protocol": {"protocol_id": "cross_validation_with_practical_tie_break"},
+        "selection_policy": {"primary_metric": "roc_auc", "ranking_direction": "higher_is_better"},
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "metric_summaries": [{"name": "roc_auc", "mean": 0.9, "standard_deviation": 0.01}],
+        },
+        "validation_metrics": {
+            "partition_role": "validation",
+            "metrics": [{"name": "roc_auc", "value": 0.88}],
+        },
+        "practical_tie": {"tolerance": 0.01, "tie_detected": False, "tie_break_criteria": []},
+        "candidates": [
+            {
+                "candidate_id": "candidate-001",
+                "model_family": "hist_gradient_boosting",
+                "estimator_identity": {
+                    "library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"
+                },
+            }
+        ],
+        "selected_candidate": {"candidate_id": "candidate-001"},
+        "selection_rationale": "Highest validation roc_auc.",
+        "sealed_test_confirmation": {
+            "test_partition_role": "test",
+            "used_for_model_selection": False,
+            "sealed_before_selection": True,
+        },
+        "path_references": {
+            "model_selection_evidence_reference": "external-handoff/pytest-model-selection-evidence",
+        },
+        "hashes": {"algorithm": "sha256", "model_state_fingerprint": EXTERNAL_BUNDLE_MODEL_STATE_FINGERPRINT},
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }), encoding="utf-8")
+
+    model_artifact_path.write_bytes(EXTERNAL_BUNDLE_MODEL_ARTIFACT_BYTES)
+
+    execution_contract_path.write_text(json.dumps({
+        "contract_version": "execution_contract.v1",
+        "dataset_id": EXTERNAL_PROVENANCE_DATASET_SLUG,
+        "model_source_mode": "validated_external_fitted_model",
+        "feature_columns": ["feature_a"],
+        "missing_value_policy": {"feature_a": "mean"},
+        "categorical_encoding_policy": "onehot",
+        "numeric_handling": "standardize",
+        "allowed_transformations": ["passthrough"],
+    }), encoding="utf-8")
+    runtime_contract_path.write_text(json.dumps({"contract_version": "runtime_contract.v1"}), encoding="utf-8")
+    public_contract_path.write_text(json.dumps({"contract_version": "public_contract.v1"}), encoding="utf-8")
+    prepared_dataset_path.write_text(json.dumps({"prepared": True}), encoding="utf-8")
+
+    return {
+        "training_parameter_record_path": str(training_record_path.relative_to(tmp_repo)),
+        "training_metrics_path": str(training_metrics_path.relative_to(tmp_repo)),
+        "model_selection_evidence_path": str(model_selection_path.relative_to(tmp_repo)),
+        "model_artifact_path": str(model_artifact_path.relative_to(tmp_repo)),
+        "execution_contract_path": str(execution_contract_path.relative_to(tmp_repo)),
+        "runtime_contract_path": str(runtime_contract_path.relative_to(tmp_repo)),
+        "public_contract_path": str(public_contract_path.relative_to(tmp_repo)),
+        "prepared_dataset_path": str(prepared_dataset_path.relative_to(tmp_repo)),
+    }
+
+
+def test_generate_inference_bundle_external_branch_blocks_on_runtime_execution_model_family_gap(tmp_path):
+    # Project Spec S0180 finding: the only external model family carried by
+    # the current S0157 evidence profiles (hist_gradient_boosting) is not in
+    # contracts/inference-bundle.schema.json's runtime_execution.model_family
+    # enum (logistic_regression/gradient_boosting/random_forest only). That
+    # schema is read-only for S0180, so a real external submission
+    # deterministically blocks here today -- fail-closed, not a crash and
+    # not a fabricated model family -- rather than silently accepting an
+    # invalid bundle.
+    tmp_repo = tmp_path / "repo"
+    tmp_repo.mkdir()
+    paths = _write_external_bundle_fixtures(tmp_repo)
+
+    materialization_result = {
+        "status": "materialized",
+        "dataset_identity": {"dataset_slug": EXTERNAL_PROVENANCE_DATASET_SLUG},
+        "model_source_mode": "validated_external_fitted_model",
+        "evidence_references": {
+            "training_parameter_record_path": paths["training_parameter_record_path"],
+            "training_metrics_path": paths["training_metrics_path"],
+            "model_selection_evidence_path": paths["model_selection_evidence_path"],
+        },
+        "model_artifact_path": paths["model_artifact_path"],
+        "educational_threshold": {"value": 0.5, "scenario": "pytest-scenario"},
+        "operational_readiness": {
+            "educational_final_model_complete": True,
+            "educational_inference_demo_ready": True,
+            "operational_validity": "unconfirmed",
+            "operational_threshold": {"status": "unresolved", "value": None},
+            "operational_prediction_available": False,
+        },
+        "final_test_completion": {"used_for_threshold_selection": False, "evaluation_count": 1},
+    }
+
+    result = generate_inference_bundle.materialize_governed_inference_bundle(
+        external_fitted_model_materialization_result=materialization_result,
+        execution_contract_path=str(tmp_repo / paths["execution_contract_path"]),
+        runtime_contract_path=str(tmp_repo / paths["runtime_contract_path"]),
+        public_contract_path=str(tmp_repo / paths["public_contract_path"]),
+        dataset_context_path=str(tmp_repo / paths["prepared_dataset_path"]),
+        prepared_dataset_path=str(tmp_repo / paths["prepared_dataset_path"]),
+        output_path=str(tmp_repo / "predictions" / "bundle.json"),
+        prediction_type="number",
+        release_id="release-20260810-001",
+        repo_root=tmp_repo,
+        dataset_slug=EXTERNAL_PROVENANCE_DATASET_SLUG,
+        # Explicit release-relative refs: the tmp_repo fixture root differs
+        # from generate_inference_bundle's own module-relative _repo_root(),
+        # which _reference_for_path falls back to when no explicit ref is
+        # given (identical requirement for the pre-existing internal path).
+        execution_contract_ref=paths["execution_contract_path"],
+        runtime_contract_ref=paths["runtime_contract_path"],
+        public_contract_ref=paths["public_contract_path"],
+        dataset_context_ref=paths["prepared_dataset_path"],
+        prepared_dataset_ref=paths["prepared_dataset_path"],
+    )
+
+    assert result["status"] == "blocked"
+    assert any(
+        "runtime_execution.model_family" in reason and "hist_gradient_boosting" in reason
+        for reason in result["blocking_reasons"]
+    )
+    assert not (tmp_repo / "predictions" / "bundle.json").exists()
+
+
+def test_generate_inference_bundle_requires_exactly_one_materialization_family():
+    result = generate_inference_bundle.materialize_governed_inference_bundle(
+        execution_contract_path="unused",
+        runtime_contract_path="unused",
+        public_contract_path="unused",
+        dataset_context_path="unused",
+        output_path="unused",
+        prediction_type="number",
+    )
+    assert result["status"] == "blocked"
+    assert "exactly one of" in result["blocking_reasons"][0]
 
 
 # --- S0099: manifest role reference safety ---

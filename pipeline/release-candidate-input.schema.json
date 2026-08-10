@@ -246,14 +246,18 @@
                   "const": "training_parameter_record"
                 },
                 "source_stage": {
-                  "const": "M24"
+                  "enum": ["M24", "manual_governed_input"]
                 },
                 "contract_version": {
-                  "const": "training-parameter-record.v1"
+                  "enum": [
+                    "training-parameter-record.v1",
+                    "training-parameter-record.external-fitted-model.v1"
+                  ]
                 }
               }
             }
-          ]
+          ],
+          "description": "Project Spec S0180: source_stage/contract_version are M24/training-parameter-record.v1 for internal training, or manual_governed_input/training-parameter-record.external-fitted-model.v1 for a validated external fitted model (Project Spec S0157). Discriminated by the referenced artifact's own declared schema_version, never by dataset_slug."
         },
         "model_artifact": {
           "allOf": [
@@ -266,7 +270,7 @@
                   "const": "model_artifact"
                 },
                 "source_stage": {
-                  "const": "M24"
+                  "enum": ["M24", "manual_governed_input"]
                 },
                 "contract_version": {
                   "const": "model_artifact_reference"
@@ -274,7 +278,7 @@
               }
             }
           ],
-          "description": "Serialized model artifact reference and hash. The artifact bytes are not embedded."
+          "description": "Serialized model artifact reference and hash. The artifact bytes are not embedded. Project Spec S0180: source_stage is manual_governed_input, not M24, when this role's model artifact originates from a validated external fitted model rather than an Atlas training run."
         },
         "training_metrics": {
           "allOf": [
@@ -287,14 +291,18 @@
                   "const": "training_metrics"
                 },
                 "source_stage": {
-                  "const": "M24"
+                  "enum": ["M24", "manual_governed_input"]
                 },
                 "contract_version": {
-                  "const": "training-metrics.v1"
+                  "enum": [
+                    "training-metrics.v1",
+                    "training-metrics.external-fitted-model.v1"
+                  ]
                 }
               }
             }
-          ]
+          ],
+          "description": "Project Spec S0180: source_stage/contract_version are M24/training-metrics.v1 for internal training, or manual_governed_input/training-metrics.external-fitted-model.v1 for a validated external fitted model (Project Spec S0157)."
         },
         "model_card": {
           "allOf": [
@@ -846,10 +854,12 @@
             "discovery_evidence",
             "preparation_evidence",
             "training_evidence",
+            "external_model_evidence",
             "model_selection_evidence",
             "inference_bundle_evidence",
             "candidate_assembly_evidence"
-          ]
+          ],
+          "description": "Project Spec S0180: external_model_evidence is the internal evidence role for a validated external fitted model, used instead of training_evidence -- never both for the same candidate input."
         },
         "path": {
           "$ref": "#/$defs/safe_relative_file_path"
@@ -864,7 +874,8 @@
             "M23",
             "M24",
             "M25",
-            "M26"
+            "M26",
+            "manual_governed_input"
           ]
         },
         "evidence_classification": {

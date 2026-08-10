@@ -448,16 +448,41 @@ def _read_declared_contract_version(resolved_path: Path) -> str:
     )
 
 
-def _build_artifact_input(role: str, path_value: str, repo_root: Path) -> dict[str, Any]:
+# Project Spec S0180: generic external fitted-model provenance discrimination
+# for the training_parameter_record/training_metrics/model_artifact roles.
+# The training_parameter_record's own declared schema_version is the single
+# source of truth for whether a submission is internal (M24) or external
+# (S0157 validated_external_fitted_model, manual_governed_input) -- never a
+# dataset-slug conditional.
+_TRAINING_PARAMETER_RECORD_INTERNAL_VERSION = "training-parameter-record.v1"
+_TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION = "training-parameter-record.external-fitted-model.v1"
+_TRAINING_METRICS_INTERNAL_VERSION = "training-metrics.v1"
+_TRAINING_METRICS_EXTERNAL_VERSION = "training-metrics.external-fitted-model.v1"
+_EXTERNAL_MODEL_SOURCE_STAGE = "manual_governed_input"
+
+
+def _build_artifact_input(
+    role: str,
+    path_value: str,
+    repo_root: Path,
+    *,
+    source_stage: str | None = None,
+    contract_version: str | None = None,
+) -> dict[str, Any]:
     governance = _ARTIFACT_INPUT_ROLE_GOVERNANCE[role]
     resolved = repo_root / path_value
-    contract_version = governance["contract_version"] or _read_declared_contract_version(resolved)
+    resolved_contract_version = (
+        contract_version
+        or governance["contract_version"]
+        or _read_declared_contract_version(resolved)
+    )
+    resolved_source_stage = source_stage or governance["source_stage"]
     return {
         "role": role,
         "required": True,
-        "source_stage": governance["source_stage"],
+        "source_stage": resolved_source_stage,
         "path": path_value,
-        "contract_version": contract_version,
+        "contract_version": resolved_contract_version,
         "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
         "hash_policy": "sha256_required",
         "public_projection": governance["public_projection"],
@@ -469,6 +494,44 @@ def _build_artifact_input(role: str, path_value: str, repo_root: Path) -> dict[s
         },
         "availability_status": "real_dataflow_artifact",
     }
+
+
+def _resolve_training_provenance(
+    artifact_references: dict[str, str], repo_root: Path
+) -> tuple[str, bool, str | None, str | None]:
+    """Resolve the (source_stage, is_external, record_version_override,
+    metrics_version_override) provenance tuple for this candidate input.
+
+    Backward-compatible by construction (Project Spec S0180 acceptance
+    criterion 44): the external path activates only when the referenced
+    training_parameter_record artifact's own declared schema_version is
+    exactly the real S0157 external profile constant
+    (training-parameter-record.external-fitted-model.v1). Every other value
+    -- the real internal training-parameter-record.v1 constant, or any other
+    string a caller's artifact happens to declare -- is treated as the
+    historical internal path and returns (None, None) overrides, so
+    _build_artifact_input falls through to its pre-existing fixed
+    governance values exactly as before S0180 (which never inspected this
+    file's content for this role at all). Only once external is confirmed
+    does training_metrics get cross-checked and required to agree; a
+    mismatch raises ValueError, the same failure convention this function's
+    caller already uses.
+    """
+    training_record_path = repo_root / artifact_references["training_parameter_record"]
+    record_version = _read_declared_contract_version(training_record_path)
+
+    if record_version != _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION:
+        return "M24", False, None, None
+
+    training_metrics_path = repo_root / artifact_references["training_metrics"]
+    metrics_version = _read_declared_contract_version(training_metrics_path)
+    if metrics_version != _TRAINING_METRICS_EXTERNAL_VERSION:
+        raise ValueError(
+            "training_metrics contract_version does not agree with training_parameter_record "
+            f"provenance: expected {_TRAINING_METRICS_EXTERNAL_VERSION!r}, got {metrics_version!r}"
+        )
+
+    return _EXTERNAL_MODEL_SOURCE_STAGE, True, record_version, metrics_version
 
 
 def build_release_candidate_input(
@@ -505,6 +568,10 @@ def build_release_candidate_input(
             f"satisfied ({readiness['blocking_reasons']})"
         )
 
+    training_provenance_stage, is_external_provenance, record_version, metrics_version = (
+        _resolve_training_provenance(artifact_references, resolved_repo_root)
+    )
+
     discovery_evidence_input = _build_artifact_input(
         "discovery_evidence", artifact_references["discovery_evidence"], resolved_repo_root
     )
@@ -512,6 +579,8 @@ def build_release_candidate_input(
         "training_parameter_record",
         artifact_references["training_parameter_record"],
         resolved_repo_root,
+        source_stage=training_provenance_stage,
+        contract_version=record_version,
     )
 
     artifact_inputs = {
@@ -537,10 +606,17 @@ def build_release_candidate_input(
         ),
         "training_parameter_record": training_parameter_record_input,
         "model_artifact": _build_artifact_input(
-            "model_artifact", artifact_references["model_artifact"], resolved_repo_root
+            "model_artifact",
+            artifact_references["model_artifact"],
+            resolved_repo_root,
+            source_stage=training_provenance_stage,
         ),
         "training_metrics": _build_artifact_input(
-            "training_metrics", artifact_references["training_metrics"], resolved_repo_root
+            "training_metrics",
+            artifact_references["training_metrics"],
+            resolved_repo_root,
+            source_stage=training_provenance_stage,
+            contract_version=metrics_version,
         ),
         "model_card": _build_artifact_input(
             "model_card", artifact_references["model_card"], resolved_repo_root
@@ -564,10 +640,10 @@ def build_release_candidate_input(
                 "public_projection": "internal_only",
             },
             {
-                "role": "training_evidence",
+                "role": "external_model_evidence" if is_external_provenance else "training_evidence",
                 "path": training_parameter_record_input["path"],
                 "sha256": training_parameter_record_input["sha256"],
-                "source_stage": "M24",
+                "source_stage": training_provenance_stage,
                 "evidence_classification": "internal_evidence",
                 "public_projection": "internal_only",
             },

@@ -650,6 +650,33 @@ def _validate_bundle_schema(bundle: dict[str, Any], schema_path: Path) -> None:
         )
 
 
+# Project Spec S0180: reused to structurally validate an external fitted-model
+# evidence artifact (training-parameter-record.schema.json,
+# training-metrics.schema.json, model-selection-evidence.schema.json) before
+# any of its fields are trusted. Never used to validate model bytes -- these
+# schemas describe reduced JSON evidence only.
+def _validate_against_schema(instance: dict[str, Any], schema_path: Path, label: str) -> None:
+    schema = _load_json_file(schema_path, f"{label}_schema_path")
+    try:
+        import jsonschema
+    except ImportError as exc:
+        raise BundleGenerationError(
+            "schema_validation_unavailable",
+            "jsonschema is required to validate external fitted-model evidence.",
+            field="jsonschema",
+        ) from exc
+    validator = jsonschema.Draft202012Validator(schema)
+    errors = sorted(validator.iter_errors(instance), key=lambda error: list(error.path))
+    if errors:
+        first = errors[0]
+        path = ".".join(str(part) for part in first.path) or "<root>"
+        raise BundleGenerationError(
+            "external_evidence_schema_invalid",
+            f"{label}.{path}: {first.message}",
+            field=f"{label}.{path}",
+        )
+
+
 def _build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     execution_contract_path = Path(args.execution_contract)
     runtime_contract_path = Path(args.runtime_contract)
@@ -838,6 +865,411 @@ def _build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     return bundle
 
 
+# Governed external fitted-model bundle materialization (Project Spec
+# S0180, Desired Change B). Consumes an already-verified
+# "external fitted-model materialization result" describing a validated
+# external fitted model (Project Spec S0157 profiles) and projects it into
+# the same inference_bundle.v1 shape the internal-training path produces,
+# using model_provenance_origin/external_model_evidence instead of
+# training_evidence. This module never imports, deserializes, fits, or
+# predicts with the referenced model -- only its bytes are hashed. The
+# governed external evidence contract itself (Project Spec S0180 Desired
+# Change A: a dedicated pipeline.materialize_external_fitted_model module
+# and schema) is a separate, not-yet-authorized repository change; this
+# function only defines and validates the minimal input shape it needs as a
+# plain caller-supplied dict, informed by the existing S0157 schemas.
+EXTERNAL_MODEL_SOURCE_MODE = "validated_external_fitted_model"
+_EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION = "training-parameter-record.external-fitted-model.v1"
+_EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION = "training-metrics.external-fitted-model.v1"
+_EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION = "model-selection-evidence.external-fitted-model.v1"
+
+
+def _external_dataset_slug(materialization_result: dict[str, Any]) -> str:
+    identity = _require_mapping(materialization_result, "dataset_identity")
+    slug = _require_string(identity, "dataset_slug")
+    if not DATASET_SLUG_RE.fullmatch(slug):
+        raise BundleGenerationError(
+            "invalid_dataset_identity",
+            "dataset_identity.dataset_slug is not valid.",
+            field="dataset_identity.dataset_slug",
+        )
+    return slug
+
+
+def _build_external_bundle(
+    materialization_result: dict[str, Any],
+    args: argparse.Namespace,
+    resolved_repo_root: Path,
+) -> dict[str, Any]:
+    if materialization_result.get("model_source_mode") != EXTERNAL_MODEL_SOURCE_MODE:
+        raise BundleGenerationError(
+            "invalid_model_source_mode",
+            "external_fitted_model_materialization_result.model_source_mode must be "
+            f"{EXTERNAL_MODEL_SOURCE_MODE!r}.",
+            field="model_source_mode",
+        )
+
+    dataset_slug = _external_dataset_slug(materialization_result)
+
+    evidence_refs = _require_mapping(materialization_result, "evidence_references")
+    training_record_ref_path = _require_string(evidence_refs, "training_parameter_record_path")
+    training_metrics_ref_path = _require_string(evidence_refs, "training_metrics_path")
+    model_selection_ref_path = evidence_refs.get("model_selection_evidence_path")
+
+    training_record_path = resolved_repo_root / training_record_ref_path
+    training_metrics_path = resolved_repo_root / training_metrics_ref_path
+    training_record = _load_json_file(
+        training_record_path, "evidence_references.training_parameter_record_path"
+    )
+    training_metrics = _load_json_file(
+        training_metrics_path, "evidence_references.training_metrics_path"
+    )
+
+    _validate_against_schema(
+        training_record,
+        resolved_repo_root / "pipeline" / "training-parameter-record.schema.json",
+        "evidence_references.training_parameter_record_path",
+    )
+    _validate_against_schema(
+        training_metrics,
+        resolved_repo_root / "pipeline" / "training-metrics.schema.json",
+        "evidence_references.training_metrics_path",
+    )
+    if training_record.get("schema_version") != _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "invalid_external_evidence_profile",
+            "training_parameter_record must declare "
+            f"{_EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION!r}.",
+            field="evidence_references.training_parameter_record_path",
+        )
+    if training_metrics.get("schema_version") != _EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "invalid_external_evidence_profile",
+            f"training_metrics must declare {_EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION!r}.",
+            field="evidence_references.training_metrics_path",
+        )
+
+    model_selection: dict[str, Any] | None = None
+    if model_selection_ref_path:
+        model_selection_path = resolved_repo_root / model_selection_ref_path
+        model_selection = _load_json_file(
+            model_selection_path, "evidence_references.model_selection_evidence_path"
+        )
+        _validate_against_schema(
+            model_selection,
+            resolved_repo_root / "pipeline" / "model-selection-evidence.schema.json",
+            "evidence_references.model_selection_evidence_path",
+        )
+        if model_selection.get("schema_version") != _EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION:
+            raise BundleGenerationError(
+                "invalid_external_evidence_profile",
+                "model_selection_evidence must declare "
+                f"{_EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION!r}.",
+                field="evidence_references.model_selection_evidence_path",
+            )
+
+    # contracts/inference-bundle.schema.json's external_model_evidence.evidence_references
+    # requires model_selection_evidence_reference unconditionally (unlike the
+    # internal training_evidence.model_selection_evidence, which is nullable)
+    # -- so an external submission without selection evidence can never
+    # become a schema-valid bundle and must block deterministically here
+    # rather than emit a bundle guaranteed to fail schema validation with a
+    # less specific error.
+    if model_selection is None:
+        raise BundleGenerationError(
+            "missing_required_field",
+            "external fitted-model bundles require evidence_references.model_selection_evidence_path; "
+            "contracts/inference-bundle.schema.json's external_model_evidence shape does not allow "
+            "omitting model_selection_evidence_reference.",
+            field="evidence_references.model_selection_evidence_path",
+        )
+
+    record_dataset_slug = _require_mapping(training_record, "dataset_identity").get("dataset_slug")
+    if record_dataset_slug != dataset_slug:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "training_parameter_record dataset_identity does not match the "
+            "materialization result dataset identity.",
+            field="dataset_identity.dataset_slug",
+        )
+    metrics_dataset_slug = _require_mapping(training_metrics, "evidence_identity").get("dataset_slug")
+    if metrics_dataset_slug != dataset_slug:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "training_metrics evidence_identity does not match the materialization "
+            "result dataset identity.",
+            field="dataset_identity.dataset_slug",
+        )
+
+    model_state_fingerprint = _require_sha(
+        training_record.get("model_state_fingerprint"), "training_parameter_record.model_state_fingerprint"
+    )
+    selection_fingerprint = _require_mapping(model_selection, "hashes").get("model_state_fingerprint")
+    if selection_fingerprint != model_state_fingerprint:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "model_selection_evidence model_state_fingerprint does not match "
+            "training_parameter_record.model_state_fingerprint.",
+            field="model_state_fingerprint",
+        )
+
+    model_family = _require_string(training_record, "model_family")
+    estimator_identity_source = _require_mapping(training_record, "estimator_identity")
+
+    model_artifact_ref_path = _require_string(materialization_result, "model_artifact_path")
+    model_artifact_path = resolved_repo_root / model_artifact_ref_path
+    record_model_artifact_ref = _require_mapping(training_record, "model_artifact_reference")
+    expected_source_sha256 = _require_sha(
+        record_model_artifact_ref.get("sha256"), "model_artifact_reference.sha256"
+    )
+    actual_source_sha256 = _sha256_file(model_artifact_path)
+    if actual_source_sha256 != expected_source_sha256:
+        raise BundleGenerationError(
+            "invalid_hash",
+            "model artifact bytes do not match the governed training_parameter_record "
+            "model_artifact_reference.sha256.",
+            field="model_artifact_path",
+        )
+
+    educational_threshold_source = _require_mapping(materialization_result, "educational_threshold")
+    operational_readiness = _require_mapping(materialization_result, "operational_readiness")
+    final_test_completion_source = _require_mapping(materialization_result, "final_test_completion")
+
+    execution_contract_path = Path(args.execution_contract)
+    runtime_contract_path = Path(args.runtime_contract)
+    public_contract_path = Path(args.public_contract)
+    prepared_dataset_path = Path(args.prepared_dataset)
+    dataset_context_path = Path(args.dataset_context) if args.dataset_context else prepared_dataset_path
+    schema_path = Path(args.inference_bundle_schema)
+
+    execution_contract = _load_json_file(execution_contract_path, "execution_contract_path")
+    runtime_contract = _load_json_file(runtime_contract_path, "runtime_contract_path")
+    public_contract = _load_json_file(public_contract_path, "public_contract_path")
+
+    if execution_contract.get("contract_version") != "execution_contract.v1":
+        raise BundleGenerationError(
+            "invalid_contract_version",
+            "execution contract must declare contract_version execution_contract.v1.",
+            field="execution_contract.contract_version",
+        )
+    if execution_contract.get("model_source_mode") != EXTERNAL_MODEL_SOURCE_MODE:
+        raise BundleGenerationError(
+            "invalid_model_source_mode",
+            f"execution contract model_source_mode must be {EXTERNAL_MODEL_SOURCE_MODE!r} "
+            "for an external fitted-model bundle.",
+            field="execution_contract.model_source_mode",
+        )
+
+    contract_dataset_id = execution_contract.get("dataset_id")
+    if isinstance(contract_dataset_id, str) and _slugify_dataset_id(contract_dataset_id) != dataset_slug:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "execution contract dataset_id does not match the materialization result "
+            "dataset identity.",
+            field="dataset_id",
+        )
+
+    if not args.release_id:
+        raise BundleGenerationError(
+            "missing_required_field",
+            "release_id must be provided by --release-id for an external fitted-model bundle "
+            "(external training metrics carry no release_id fallback).",
+            field="release_id",
+        )
+    release_id = _resolve_release_id(args, {})
+    release_package_reference = _validate_release_relative(
+        args.release_package_reference, "release_package_reference"
+    )
+    model_package_reference = _validate_release_relative(
+        args.model_package_reference, "model_package_reference", file_path=True
+    )
+
+    generated_at = _utc_now_iso()
+    bundle_id = f"{dataset_slug}-inference-bundle-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+
+    execution_contract_ref = _versioned_ref(
+        execution_contract_path, args.execution_contract_ref, execution_contract, "execution_contract_ref"
+    )
+    runtime_contract_ref = _versioned_ref(
+        runtime_contract_path, args.runtime_contract_ref, runtime_contract, "runtime_contract_ref"
+    )
+    public_contract_ref = _versioned_ref(
+        public_contract_path, args.public_contract_ref, public_contract, "public_contract_ref"
+    )
+    training_parameter_record_ref = _versioned_ref(
+        training_record_path, training_record_ref_path, training_record, "training_parameter_record_reference"
+    )
+    training_metrics_ref = _versioned_ref(
+        training_metrics_path, training_metrics_ref_path, training_metrics, "training_metrics_reference"
+    )
+    model_selection_evidence_reference = _versioned_ref(
+        resolved_repo_root / model_selection_ref_path,
+        model_selection_ref_path,
+        model_selection,
+        "model_selection_evidence_reference",
+    )
+
+    feature_order = training_record.get("feature_order")
+    if (
+        not isinstance(feature_order, list)
+        or not feature_order
+        or any(not isinstance(feature, str) or not FEATURE_RE.fullmatch(feature) for feature in feature_order)
+    ):
+        raise BundleGenerationError(
+            "invalid_feature_order",
+            "training_parameter_record.feature_order must be a non-empty array of valid "
+            "runtime feature identifiers.",
+            field="feature_order",
+        )
+    if len(set(feature_order)) != len(feature_order):
+        raise BundleGenerationError(
+            "invalid_feature_order",
+            "feature_order must not contain duplicates.",
+            field="feature_order",
+        )
+    contract_features = execution_contract.get("feature_columns")
+    if isinstance(contract_features, list) and contract_features != feature_order:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "execution contract feature_columns do not match "
+            "training_parameter_record.feature_order.",
+            field="feature_columns",
+        )
+
+    preprocessing = _resolve_preprocessing(execution_contract)
+    output_schema = _resolve_output_schema(args)
+
+    external_model_evidence = {
+        "origin": EXTERNAL_MODEL_SOURCE_MODE,
+        "evidence_references": {
+            "model_selection_evidence_reference": model_selection_evidence_reference,
+            "training_parameter_record_reference": training_parameter_record_ref,
+            "training_metrics_reference": training_metrics_ref,
+        },
+        "model_family": model_family,
+        "estimator_identity": {
+            "library": _require_string(estimator_identity_source, "library"),
+            "class_name": _require_string(estimator_identity_source, "class_name"),
+        },
+        "model_state_fingerprint": model_state_fingerprint,
+        "educational_threshold": {
+            "value": educational_threshold_source.get("value"),
+            "label": "educational",
+            "selection_partition": "validation",
+            "scenario": _require_string(educational_threshold_source, "scenario"),
+        },
+        "final_test_completion": {
+            "used_for_threshold_selection": bool(
+                final_test_completion_source.get("used_for_threshold_selection", False)
+            ),
+            "evaluation_count": final_test_completion_source.get("evaluation_count"),
+        },
+        "readiness": {
+            "educational_final_model_complete": bool(
+                operational_readiness.get("educational_final_model_complete")
+            ),
+            "educational_inference_demo_ready": bool(
+                operational_readiness.get("educational_inference_demo_ready")
+            ),
+            "operational_modeling_ready": False,
+            "operational_validity": operational_readiness.get("operational_validity"),
+            "operational_threshold": operational_readiness.get("operational_threshold"),
+            "operational_prediction_available": bool(
+                operational_readiness.get("operational_prediction_available")
+            ),
+        },
+    }
+
+    bundle: dict[str, Any] = {
+        "contract_version": INFERENCE_BUNDLE_VERSION,
+        "bundle_identity": {
+            "bundle_id": bundle_id,
+            "artifact_kind": "inference_bundle",
+            "created_at": generated_at,
+        },
+        "dataset_context": {
+            "dataset_slug": dataset_slug,
+            "dataset_context_reference": _artifact_ref(
+                dataset_context_path, args.dataset_context_ref, "dataset_context_ref"
+            ),
+        },
+        "release_context": {
+            "release_id": release_id,
+            "release_package_reference": release_package_reference,
+        },
+        "contract_references": {
+            "execution_contract": execution_contract_ref,
+            "runtime_contract": runtime_contract_ref,
+            "public_contract": public_contract_ref,
+        },
+        "prepared_dataset": {
+            "prepared_dataset_reference": _artifact_ref(
+                prepared_dataset_path, args.prepared_dataset_ref, "prepared_dataset_ref"
+            ),
+            "prepared_dataset_sha256": _sha256_file(prepared_dataset_path),
+        },
+        "model_artifact": {
+            "path": model_package_reference,
+            "sha256": actual_source_sha256,
+            "source_training_parameter_record_path": training_parameter_record_ref["path"],
+        },
+        "runtime_execution": {
+            "serialization_format": SUPPORTED_SERIALIZATION_FORMAT,
+            "loader_strategy": SUPPORTED_LOADER_STRATEGY,
+            "prediction_interface": SUPPORTED_PREDICTION_INTERFACE,
+            "model_family": model_family,
+        },
+        "input_schema": {
+            "runtime_contract_reference": "contract_references.runtime_contract",
+            "payload_shape": "runtime_contract_features_object",
+        },
+        "feature_order": feature_order,
+        "preprocessing": preprocessing,
+        "output_schema": output_schema,
+        "compatibility_constraints": {
+            "requires_contract_versions": {
+                "execution_contract": "execution_contract.v1",
+                "runtime_contract": runtime_contract_ref["contract_version"],
+                "public_contract": public_contract_ref["contract_version"],
+            },
+            "requires_hash_match": True,
+            "requires_feature_order_match": True,
+            "requires_release_relative_paths": True,
+            "requires_supported_loader": True,
+            "requires_supported_serialization": True,
+        },
+        "boundary_confirmations": {
+            "release_relative_paths_only": True,
+            "absolute_paths_embedded": False,
+            "parent_traversal_embedded": False,
+            "notebook_state_embedded": False,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "runtime_payload_validation_duplicated": False,
+            "training_internals_required_at_runtime": False,
+        },
+        "model_provenance_origin": EXTERNAL_MODEL_SOURCE_MODE,
+        "external_model_evidence": external_model_evidence,
+    }
+
+    if args.description:
+        bundle["bundle_identity"]["description"] = args.description
+    if args.candidate_id:
+        bundle["release_context"]["candidate_id"] = args.candidate_id
+    if args.minimum_runtime_adapter_version:
+        bundle["compatibility_constraints"]["minimum_runtime_adapter_version"] = (
+            args.minimum_runtime_adapter_version
+        )
+
+    # Never weakened: this is the same schema-validation call the internal
+    # path uses (contracts/inference-bundle.schema.json, byte-identical for
+    # S0180). It is the authoritative pass/fail signal for this bundle, not
+    # a formality -- see materialize_governed_inference_bundle's docstring
+    # for the known current gap this can legitimately fail on.
+    _validate_bundle_schema(bundle, schema_path)
+    return bundle
+
+
 def _write_bundle(bundle: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -887,12 +1319,13 @@ def _derive_provisional_release_id(run_id: str) -> str:
 
 def materialize_governed_inference_bundle(
     *,
-    training_run_materialization_result: dict[str, Any],
+    training_run_materialization_result: dict[str, Any] | None = None,
+    external_fitted_model_materialization_result: dict[str, Any] | None = None,
     execution_contract_path: str | Path,
     runtime_contract_path: str | Path,
     public_contract_path: str | Path,
     dataset_context_path: str | Path,
-    prepared_data_metadata_path: str | Path,
+    prepared_data_metadata_path: str | Path | None = None,
     output_path: str | Path,
     prediction_type: str,
     repo_root: str | Path | None = None,
@@ -905,20 +1338,132 @@ def materialize_governed_inference_bundle(
     dataset_context_ref: str | None = None,
     inference_bundle_schema_path: str | Path | None = None,
     model_package_reference: str | None = None,
+    prepared_dataset_path: str | Path | None = None,
+    prepared_dataset_ref: str | None = None,
+    release_id: str | None = None,
 ) -> dict[str, Any]:
-    """Materialize ``inference_bundle.v1`` from a governed training run.
+    """Materialize ``inference_bundle.v1`` from exactly one governed
+    materialization family (Project Spec S0180): the historical/internal
+    ``training_run_materialization_result``, or the new
+    ``external_fitted_model_materialization_result``. Exactly one of the two
+    must be provided; providing both or neither returns a ``status:
+    "blocked"`` result rather than guessing.
 
-    Only proceeds when ``training_run_materialization_result["status"] ==
-    "trained"`` (the same governed
-    ``materialize_training_run_from_prepared_metadata`` result the calling
-    notebook already computed) and when the prepared-data-metadata.v1
-    artifact's own ``prepared_candidate`` is produced and training-ready.
+    The internal-training branch is unchanged from the original M25-02/S0033
+    behavior: only proceeds when ``training_run_materialization_result["status"]
+    == "trained"`` and the prepared-data-metadata.v1 artifact's own
+    ``prepared_candidate`` is produced and training-ready.
+
+    The external branch never imports, deserializes, fits, or predicts with
+    the referenced model artifact -- it only hashes bytes -- and requires
+    ``external_fitted_model_materialization_result["model_source_mode"] ==
+    "validated_external_fitted_model"`` plus schema-valid S0157 evidence
+    references (``pipeline/training-parameter-record.schema.json``,
+    ``pipeline/training-metrics.schema.json``,
+    ``pipeline/model-selection-evidence.schema.json``, all read-only and
+    unmodified by S0180). It never weakens
+    ``contracts/inference-bundle.schema.json`` (also unmodified): the
+    produced bundle must independently pass that schema's validation before
+    this function returns it, exactly like the internal path. As of S0180,
+    the only external model family carried by the S0157 evidence profiles is
+    ``hist_gradient_boosting``, which is not in
+    ``contracts/inference-bundle.schema.json``'s ``runtime_execution.model_family``
+    enum (``logistic_regression``/``gradient_boosting``/``random_forest``
+    only) -- so a real external submission today deterministically returns
+    ``status: "blocked"`` at that final schema check, disclosing the exact
+    schema path/message rather than silently accepting or fabricating a
+    different model family. This is a genuine, pre-existing schema gap this
+    spec does not have edit authorization to close
+    (``contracts/inference-bundle.schema.json`` is read-only for S0180); a
+    later, separately authorized change to that schema's enum is required
+    before any external bundle can be produced successfully.
+
     Any other state returns a ``status: "blocked"`` result with
     ``blocking_reasons`` instead of generating a bundle. Never accepts
     hidden notebook memory -- only explicit path references and the
-    already-computed governed result object.
+    already-computed governed result object(s).
     """
     resolved_repo_root = Path(repo_root or _repo_root()).expanduser().resolve()
+
+    provided_families = [
+        value
+        for value in (training_run_materialization_result, external_fitted_model_materialization_result)
+        if value is not None
+    ]
+    if len(provided_families) != 1:
+        return {
+            "status": "blocked",
+            "blocking_reasons": [
+                "exactly one of training_run_materialization_result or "
+                "external_fitted_model_materialization_result must be provided.",
+            ],
+        }
+
+    if external_fitted_model_materialization_result is not None:
+        if not isinstance(external_fitted_model_materialization_result, dict) or (
+            external_fitted_model_materialization_result.get("status") != "materialized"
+        ):
+            status = (
+                external_fitted_model_materialization_result.get("status")
+                if isinstance(external_fitted_model_materialization_result, dict)
+                else "malformed_external_fitted_model_materialization_result"
+            )
+            return {
+                "status": "blocked",
+                "blocking_reasons": [
+                    "external_fitted_model_materialization_result.status is not "
+                    f"'materialized': {status}.",
+                ],
+            }
+
+        namespace = argparse.Namespace(
+            execution_contract=str(Path(execution_contract_path)),
+            runtime_contract=str(Path(runtime_contract_path)),
+            public_contract=str(Path(public_contract_path)),
+            prepared_dataset=str(Path(prepared_dataset_path)) if prepared_dataset_path else None,
+            output=str(Path(output_path)),
+            release_package_reference=GOVERNED_INFERENCE_BUNDLE_RELEASE_PACKAGE_REFERENCE,
+            model_package_reference=model_package_reference or DEFAULT_MODEL_PACKAGE_REFERENCE,
+            prediction_type=prediction_type,
+            release_id=release_id,
+            dataset_slug=dataset_slug,
+            dataset_context=str(Path(dataset_context_path)),
+            candidate_id=None,
+            description=None,
+            runtime_adapter_version=None,
+            minimum_runtime_adapter_version=None,
+            class_label=list(class_labels) if class_labels else None,
+            probability_output=probability_output,
+            execution_contract_ref=execution_contract_ref,
+            runtime_contract_ref=runtime_contract_ref,
+            public_contract_ref=public_contract_ref,
+            dataset_context_ref=dataset_context_ref,
+            prepared_dataset_ref=prepared_dataset_ref,
+            inference_bundle_schema=(
+                str(Path(inference_bundle_schema_path))
+                if inference_bundle_schema_path
+                else str(_repo_root() / INFERENCE_BUNDLE_SCHEMA)
+            ),
+        )
+
+        try:
+            bundle = _build_external_bundle(
+                external_fitted_model_materialization_result, namespace, resolved_repo_root
+            )
+            _write_bundle(bundle, Path(output_path))
+        except BundleGenerationError as exc:
+            return {
+                "status": "blocked",
+                "blocking_reasons": [str(exc)],
+                "error": exc.to_dict()["error"],
+            }
+
+        return {
+            "status": "generated",
+            "output_path": str(output_path),
+            "bundle_id": bundle["bundle_identity"]["bundle_id"],
+            "model_provenance_origin": EXTERNAL_MODEL_SOURCE_MODE,
+        }
 
     if (
         not isinstance(training_run_materialization_result, dict)
@@ -945,6 +1490,13 @@ def materialize_governed_inference_bundle(
             ],
         }
 
+    if not prepared_data_metadata_path:
+        return {
+            "status": "blocked",
+            "blocking_reasons": [
+                "prepared_data_metadata_path is required for training_run_materialization_result.",
+            ],
+        }
     metadata_path = Path(prepared_data_metadata_path)
     metadata = _load_json_file(metadata_path, "prepared_data_metadata_path")
     blocking_reasons, prepared_reference = _prepared_dataset_metadata_blocking_reasons(metadata)

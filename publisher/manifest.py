@@ -2,10 +2,12 @@
 Publisher release manifest generator.
 
 Reads a validation result from publisher/runs/{run_id}/validation-result.json,
-gates on promotion_gate.promotion_allowed: true, calculates SHA-256 hashes for
-all 10 required artifact role files in the validated release candidate, assembles
-a release manifest conforming to publisher/release-manifest.schema.json, and
-writes it to publisher/runs/{run_id}/manifest.json (same run directory).
+gates on validation_outcome: accepted (Project Spec S0180 -- structural
+acceptance, independent of operational promotion eligibility), calculates
+SHA-256 hashes for all 10 required artifact role files in the validated
+release candidate, assembles a release manifest conforming to
+publisher/release-manifest.schema.json, and writes it to
+publisher/runs/{run_id}/manifest.json (same run directory).
 
 Does NOT read or modify registry/datasets.json.
 Does NOT modify any candidate artifact.
@@ -56,20 +58,25 @@ def _load_operational_note(repo_root: Path) -> tuple:
 
 
 def _check_promotion_gate(validation_result: dict) -> tuple:
-    """Return (allowed, errors). Halts if promotion_gate.promotion_allowed is absent or not true."""
+    """Return (allowed, errors). Halts if validation_outcome is not 'accepted'
+    (Project Spec S0180: structural acceptance, not operational promotion
+    eligibility, gates manifest generation -- a structurally accepted
+    candidate may still have promotion_gate.promotion_allowed: false, e.g. an
+    external fitted-model candidate with unresolved operational readiness,
+    and manifest generation must still succeed for it)."""
+    outcome = validation_result.get("validation_outcome")
+    if outcome != "accepted":
+        return False, [_err(
+            "VALIDATION_NOT_ACCEPTED",
+            "validation_outcome",
+            "Manifest generation halted: validation_outcome is not 'accepted'.",
+        )]
     pg = validation_result.get("promotion_gate")
     if not isinstance(pg, dict):
         return False, [_err(
             "PROMOTION_GATE_MISSING",
             "promotion_gate",
             "Validation result is missing the 'promotion_gate' field.",
-        )]
-    allowed = pg.get("promotion_allowed")
-    if allowed is not True:
-        return False, [_err(
-            "PROMOTION_NOT_ALLOWED",
-            "promotion_gate.promotion_allowed",
-            "Manifest generation halted: promotion_gate.promotion_allowed is not true.",
         )]
     return True, []
 

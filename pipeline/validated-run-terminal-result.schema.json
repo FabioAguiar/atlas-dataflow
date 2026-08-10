@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/validated-run-terminal-result.schema.json",
+  "title": "Atlas DataFlow Validated-Run Terminal Result",
+  "description": "Project Spec S0181: durable, schema-backed terminal artifact recording orchestration completion/block/failure for a dataset-integration validated run, structural validation outcome, manifest outcome, operational readiness, promotion eligibility, and blocking/failure reasons. Never embeds raw model bytes, secrets, notebook state, or registry mutation. Structural validation acceptance and promotion eligibility are always kept distinct: an accepted structural validation never forces promotion_eligibility true on its own.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_kind",
+    "run_identity",
+    "status",
+    "model_source_mode",
+    "durable_references",
+    "structural_validation",
+    "manifest_outcome",
+    "operational_readiness",
+    "promotion_eligibility",
+    "reasons",
+    "boundary_confirmations"
+  ],
+  "properties": {
+    "schema_version": { "const": "validated-run-terminal-result.v1" },
+    "artifact_kind": { "const": "validated_run_terminal_result" },
+    "run_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "dataset_slug", "created_at"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1 },
+        "dataset_slug": { "$ref": "#/$defs/dataset_slug" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "status": { "type": "string", "enum": ["completed", "blocked", "failed"] },
+    "model_source_mode": {
+      "type": "string",
+      "enum": ["atlas_internal_training", "validated_external_fitted_model"]
+    },
+    "durable_references": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Explicit references to already-materialized durable artifacts, verified by hash before this terminal result is written. Never embeds the referenced artifacts' own payloads.",
+      "properties": {
+        "materialization_result": { "$ref": "#/$defs/nullable_artifact_reference" },
+        "inference_bundle": { "$ref": "#/$defs/nullable_artifact_reference" },
+        "release_candidate": { "$ref": "#/$defs/nullable_artifact_reference" },
+        "publisher_validation_result": { "$ref": "#/$defs/nullable_artifact_reference" },
+        "manifest": { "$ref": "#/$defs/nullable_artifact_reference" },
+        "operational_readiness_source": { "$ref": "#/$defs/nullable_artifact_reference" }
+      },
+      "required": [
+        "materialization_result",
+        "inference_bundle",
+        "release_candidate",
+        "publisher_validation_result",
+        "manifest",
+        "operational_readiness_source"
+      ]
+    },
+    "structural_validation": {
+      "description": "Present when a publisher structural validation result is available for this run; null otherwise. Distinct from promotion_eligibility.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["checked", "validation_outcome"],
+          "properties": {
+            "checked": { "type": "boolean", "const": true },
+            "validation_outcome": { "type": "string", "enum": ["accepted", "rejected"] }
+          }
+        }
+      ]
+    },
+    "manifest_outcome": {
+      "description": "Present when a manifest outcome is available for this run; null otherwise. Never implies a promotion was performed.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["manifest_generated"],
+          "properties": {
+            "manifest_generated": { "type": "boolean" },
+            "manifest_path": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "operational_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operational_validity", "operational_threshold", "operational_prediction_available"],
+      "description": "Fail-closed operational readiness summary. Absent/unknown values never resolve to an implicit promotion grant.",
+      "properties": {
+        "operational_validity": { "type": "string", "enum": ["confirmed", "unconfirmed", "not_applicable"] },
+        "operational_threshold": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "type": "string", "enum": ["resolved", "unresolved", "not_applicable"] },
+            "value": { "type": ["number", "null"] }
+          }
+        },
+        "operational_prediction_available": { "type": "boolean" }
+      }
+    },
+    "promotion_eligibility": {
+      "type": "boolean",
+      "description": "Fail-closed. True only when structural_validation.validation_outcome is accepted and (for an external fitted-model run) operational_validity is confirmed, operational_threshold.status is resolved, and operational_prediction_available is true."
+    },
+    "reasons": {
+      "type": "array",
+      "description": "Blocking/failure reason codes. Required non-empty when status is not completed; empty for a completed run.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "message": { "type": "string", "minLength": 1 },
+          "field": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publisher_promotion_invoked",
+        "registry_state_written",
+        "educational_threshold_reinterpreted_as_operational"
+      ],
+      "properties": {
+        "publisher_promotion_invoked": { "type": "boolean", "const": false },
+        "registry_state_written": { "type": "boolean", "const": false },
+        "educational_threshold_reinterpreted_as_operational": { "type": "boolean", "const": false }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "completed" } }, "required": ["status"] },
+      "then": { "properties": { "reasons": { "maxItems": 0 } } },
+      "else": { "properties": { "reasons": { "minItems": 1 }, "promotion_eligibility": { "const": false } } }
+    },
+    {
+      "description": "promotion_eligibility = true requires structural acceptance.",
+      "if": { "properties": { "promotion_eligibility": { "const": true } }, "required": ["promotion_eligibility"] },
+      "then": {
+        "properties": {
+          "structural_validation": {
+            "type": "object",
+            "properties": { "validation_outcome": { "const": "accepted" } },
+            "required": ["validation_outcome"]
+          }
+        },
+        "required": ["structural_validation"]
+      }
+    },
+    {
+      "description": "promotion_eligibility = true for a validated_external_fitted_model run requires all four operational-readiness conditions.",
+      "if": {
+        "properties": {
+          "promotion_eligibility": { "const": true },
+          "model_source_mode": { "const": "validated_external_fitted_model" }
+        },
+        "required": ["promotion_eligibility", "model_source_mode"]
+      },
+      "then": {
+        "properties": {
+          "operational_readiness": {
+            "type": "object",
+            "properties": {
+              "operational_validity": { "const": "confirmed" },
+              "operational_threshold": {
+                "type": "object",
+                "properties": { "status": { "const": "resolved" } },
+                "required": ["status"]
+              },
+              "operational_prediction_available": { "const": true }
+            },
+            "required": ["operational_validity", "operational_threshold", "operational_prediction_available"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "dataset_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "sha256_hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "safe_relative_file_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\\\)(?![A-Za-z]:)[A-Za-z0-9][A-Za-z0-9._/-]*[^/]$"
+    },
+    "nullable_artifact_reference": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": { "$ref": "#/$defs/safe_relative_file_path" },
+            "sha256": { "$ref": "#/$defs/sha256_hex" }
+          }
+        }
+      ]
+    }
+  }
+}

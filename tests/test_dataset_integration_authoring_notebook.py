@@ -163,6 +163,30 @@ def test_notebook_materializes_and_validates_authoring_contracts():
     assert "validate_authoring_contracts" in code
 
 
+def test_notebook_uses_preparation_recipe_role_and_filename_not_preparation_policy():
+    code = _source("code")
+    assert '"role": "preparation_recipe"' in code
+    assert "preparation-recipe.json" in code
+    assert '"role": "preparation_policy"' not in code
+    assert "preparation-policy.json" not in code
+
+
+def test_notebook_manifest_does_not_predeclare_model_artifact_before_materialization():
+    code = _source("code")
+    manifest_source = code[code.index("manifest = {"):code.index("manifest_ref =")]
+    assert "model_artifact" not in manifest_source
+
+
+def test_notebook_authoring_validation_precedes_external_fitted_model_materialization():
+    code = _source("code")
+    assert code.index("validate_authoring_contracts(") < code.index("materialize_external_fitted_model(")
+
+
+def test_notebook_keeps_authoring_validation_assert():
+    code = _source("code")
+    assert "assert authoring_validation.valid, authoring_validation.failures" in code
+
+
 def test_notebook_constructs_the_capability_aware_boundary_with_canonical_ref():
     code = _source("code")
     for field in (

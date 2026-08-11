@@ -38,6 +38,7 @@ from publisher.validate import validate_capability_conditional_roles  # noqa: E4
 REPO_ROOT = Path(__file__).parent.parent.parent
 RELEASE_CANDIDATE_INPUT_SCHEMA_PATH = REPO_ROOT / "pipeline" / "release-candidate-input.schema.json"
 CANDIDATE_LAYOUT_SCHEMA_PATH = REPO_ROOT / "pipeline" / "candidate-layout.schema.json"
+REAL_BINARY_PROFILE_PATH = REPO_ROOT / "pipeline" / "capabilities" / "binary-predictive-classification.v1.json"
 
 DATASET_SLUG = "sample-binary-classification-dataset"
 AUTHORING_GENERATION_ID = "authoring-gen-0001"
@@ -548,3 +549,57 @@ def test_assemble_release_candidate_ignores_absent_capability_binding():
     assert "capability_binding" not in candidate_input
     errors = assemble_candidate._validate_candidate_input(candidate_input)
     assert errors == []
+
+
+# --- S0185: release-side model_artifact strictness is unaffected by the ---
+# --- additive authoring-boundary override on the real committed profile ---
+
+
+def _load_real_binary_profile() -> dict:
+    return json.loads(REAL_BINARY_PROFILE_PATH.read_text(encoding="utf-8"))
+
+
+def test_real_binary_profile_still_declares_global_model_artifact_required():
+    """The real profile's release-facing `applicability` for model_artifact
+    stays 'required' even though it now additively declares an
+    authoring-boundary override -- release capability policy consumes only
+    `applicability`, never the authoring-boundary field."""
+    profile = _load_real_binary_profile()
+    model_artifact_entry = next(entry for entry in profile["artifact_roles"] if entry["role_name"] == "model_artifact")
+    assert model_artifact_entry["applicability"] == "required"
+    assert model_artifact_entry.get("authoring_boundary_applicability") == "optional"
+
+
+def test_real_binary_profile_release_layout_policy_still_rejects_missing_model_artifact():
+    """validate_candidate_layout_role_policy (pipeline/assemble_candidate.py,
+    untouched by S0185) resolves role requirements from `applicability`
+    only, so a release-candidate layout missing model_artifact is still
+    rejected under the real committed profile."""
+    profile = _load_real_binary_profile()
+    declared_roles = {
+        "discovery_evidence": {"path": "discovery_evidence.json"},
+        "semantic_intent": {"path": "semantic_intent.json"},
+        "preparation_recipe": {"path": "preparation_recipe.json"},
+        # model_artifact intentionally absent: this is a release-side
+        # layout check, not the S0185 authoring-boundary override.
+    }
+
+    result = validate_candidate_layout_role_policy(declared_roles, profile["artifact_roles"])
+
+    assert not result.valid
+    assert any(r.code == "missing_required_role" and r.role_name == "model_artifact" for r in result.rejections)
+
+
+def test_real_binary_profile_release_layout_policy_accepts_model_artifact_present():
+    profile = _load_real_binary_profile()
+    declared_roles = {
+        "discovery_evidence": {"path": "discovery_evidence.json"},
+        "semantic_intent": {"path": "semantic_intent.json"},
+        "preparation_recipe": {"path": "preparation_recipe.json"},
+        "model_artifact": {"path": "model_artifact.json"},
+    }
+
+    result = validate_candidate_layout_role_policy(declared_roles, profile["artifact_roles"])
+
+    assert result.valid
+    assert result.rejections == ()

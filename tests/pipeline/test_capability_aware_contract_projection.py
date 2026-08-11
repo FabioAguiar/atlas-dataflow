@@ -57,7 +57,15 @@ def _write_json(path: Path, doc: dict) -> bytes:
     return data
 
 
-def _binary_classification_profile() -> dict:
+def _binary_classification_profile(*, model_artifact_authoring_boundary_applicability: str | None = None) -> dict:
+    """`model_artifact_authoring_boundary_applicability` additively sets
+    the model_artifact role's authoring_boundary_applicability override
+    (S0185) when supplied; the default (None) omits the field entirely so
+    every pre-existing test in this module keeps its exact legacy
+    behavior."""
+    model_artifact_role = {"role_name": "model_artifact", "applicability": "required"}
+    if model_artifact_authoring_boundary_applicability is not None:
+        model_artifact_role["authoring_boundary_applicability"] = model_artifact_authoring_boundary_applicability
     return {
         "schema_version": "capability-profile.v1",
         "artifact_type": "capability_profile",
@@ -69,7 +77,7 @@ def _binary_classification_profile() -> dict:
             {"role_name": "discovery_evidence", "applicability": "required"},
             {"role_name": "semantic_intent", "applicability": "required"},
             {"role_name": "preparation_recipe", "applicability": "required"},
-            {"role_name": "model_artifact", "applicability": "required"},
+            model_artifact_role,
             {"role_name": "visual_evidence", "applicability": "optional"},
             {"role_name": "no_model_analysis_summary", "applicability": "forbidden"},
         ],
@@ -371,6 +379,27 @@ class TestMissingRequiredRole:
         assert "model_artifact" in result.rejection_reason
         assert result.runtime_contract is None
         assert result.public_contract is None
+
+
+class TestAuthoringBoundaryApplicabilityOverrideReachesProjection:
+    """Project Spec S0185: a valid pre-materialization authoring manifest
+    without model_artifact must be able to pass the authoring boundary and
+    reach the existing capability-aware projector, when the profile
+    additively declares model_artifact.authoring_boundary_applicability ==
+    optional. Never weakens capability identity/hash verification."""
+
+    def test_pre_materialization_manifest_without_model_artifact_reaches_projection(self, tmp_path):
+        profile = _binary_classification_profile(model_artifact_authoring_boundary_applicability="optional")
+        roles = {role_name: data for role_name, data in BINARY_CLASSIFICATION_ROLES.items() if role_name != "model_artifact"}
+        source_input = _build_repo(tmp_path, profile, roles)
+
+        result = project_capability_aware_source_contract(source_input, repo_root=tmp_path)
+
+        assert result.status == "accepted"
+        assert result.rejection_phase is None
+        assert result.authoring_boundary_valid is True
+        assert result.runtime_contract == RUNTIME_CONTRACT
+        assert result.capability_profile_id == CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID
 
 
 class TestOptionalRoleAbsence:

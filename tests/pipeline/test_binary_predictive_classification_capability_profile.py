@@ -152,6 +152,28 @@ class TestRoleApplicability:
         role_names = [entry["role_name"] for entry in profile["artifact_roles"]]
         assert len(role_names) == len(set(role_names))
 
+    def _authoring_boundary_applicability(self, profile, role_name):
+        matches = [
+            entry.get("authoring_boundary_applicability")
+            for entry in profile["artifact_roles"]
+            if entry["role_name"] == role_name
+        ]
+        assert len(matches) == 1, f"expected exactly one entry for role {role_name!r}, got {matches}"
+        return matches[0]
+
+    def test_model_artifact_authoring_boundary_applicability_optional(self):
+        assert self._authoring_boundary_applicability(_load_profile(), "model_artifact") == "optional"
+
+    def test_model_artifact_global_applicability_remains_required_despite_override(self):
+        assert self._applicability(_load_profile(), "model_artifact") == "required"
+
+    def test_only_model_artifact_declares_an_authoring_boundary_override(self):
+        profile = _load_profile()
+        overridden = {
+            entry["role_name"] for entry in profile["artifact_roles"] if "authoring_boundary_applicability" in entry
+        }
+        assert overridden == {"model_artifact"}
+
 
 class TestBoundaryConfirmationsAllFalse:
     def test_all_capability_boundary_confirmations_are_false(self):
@@ -292,13 +314,17 @@ class TestAuthoringBoundaryCompatibility:
             "generated_at": "2026-08-11T00:00:00+00:00",
         }
 
-    def test_real_profile_passes_authoring_boundary_validation_with_synthetic_fixtures(self, tmp_path):
+    def test_real_profile_passes_pre_materialization_authoring_validation_without_model_artifact(self, tmp_path):
+        """S0185: the real profile's model_artifact.authoring_boundary_applicability
+        override means a pre-materialization manifest -- discovery evidence,
+        semantic intent, and preparation recipe present, model_artifact absent
+        -- must validate successfully at the authoring boundary. No model is
+        ever deserialized to prove this."""
         profile = _load_profile()
         roles = {
             "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
             "semantic_intent": SEMANTIC_INTENT_BYTES,
             "preparation_recipe": PREPARATION_RECIPE_BYTES,
-            "model_artifact": MODEL_ARTIFACT_BYTES,
         }
         manifest = self._manifest_for(profile, roles=roles)
         semantic_intent = self._semantic_intent_for(profile)
@@ -322,7 +348,55 @@ class TestAuthoringBoundaryCompatibility:
         assert result.capability_profile_id == "binary-predictive-classification"
         assert result.capability_profile_version == "v1"
 
-    def test_real_profile_rejects_missing_required_role(self, tmp_path):
+    def test_real_profile_also_accepts_model_artifact_present_at_authoring_boundary(self, tmp_path):
+        """An 'optional' authoring-boundary override means presence or
+        absence is both valid -- this is the one test in this module that
+        exercises downstream/global semantics with synthetic model bytes,
+        never a requirement for pre-materialization validation."""
+        profile = _load_profile()
+        roles = {
+            "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
+            "semantic_intent": SEMANTIC_INTENT_BYTES,
+            "preparation_recipe": PREPARATION_RECIPE_BYTES,
+            "model_artifact": MODEL_ARTIFACT_BYTES,
+        }
+        manifest = self._manifest_for(profile, roles=roles)
+        semantic_intent = self._semantic_intent_for(profile)
+
+        for role_name, data in roles.items():
+            artifact_path = tmp_path / "pipeline" / "evidence" / DATASET_SLUG / f"{role_name}.json"
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_bytes(data)
+
+        result = validate_authoring_contracts(
+            manifest,
+            profile,
+            semantic_intent=semantic_intent,
+            artifact_root=tmp_path,
+            expected_dataset_slug=DATASET_SLUG,
+        )
+
+        assert result.valid is True, result.failures
+
+    def test_real_profile_rejects_missing_preparation_recipe(self, tmp_path):
+        """preparation_recipe carries no authoring-boundary override, so it
+        remains required at the authoring boundary exactly as before."""
+        profile = _load_profile()
+        roles = {
+            "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
+            "semantic_intent": SEMANTIC_INTENT_BYTES,
+        }
+        manifest = self._manifest_for(profile, roles=roles)
+
+        result = validate_authoring_contracts(manifest, profile)
+
+        assert result.valid is False
+        assert any(
+            failure.code == "required_role_missing" and failure.role == "preparation_recipe"
+            for failure in result.failures
+        )
+
+    def test_real_profile_does_not_require_model_artifact_at_authoring_boundary(self, tmp_path):
         profile = _load_profile()
         roles = {
             "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
@@ -333,11 +407,7 @@ class TestAuthoringBoundaryCompatibility:
 
         result = validate_authoring_contracts(manifest, profile)
 
-        assert result.valid is False
-        assert any(
-            failure.code == "required_role_missing" and failure.role == "model_artifact"
-            for failure in result.failures
-        )
+        assert not any(failure.role == "model_artifact" for failure in result.failures)
 
     def test_real_profile_rejects_forbidden_role_present(self, tmp_path):
         profile = _load_profile()
@@ -345,7 +415,6 @@ class TestAuthoringBoundaryCompatibility:
             "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
             "semantic_intent": SEMANTIC_INTENT_BYTES,
             "preparation_recipe": PREPARATION_RECIPE_BYTES,
-            "model_artifact": MODEL_ARTIFACT_BYTES,
             "no_model_analysis_summary": b"forbidden-role-payload",
         }
         manifest = self._manifest_for(profile, roles=roles)

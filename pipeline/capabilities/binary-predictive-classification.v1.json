@@ -11,7 +11,7 @@
     {"role_name": "discovery_evidence", "applicability": "required"},
     {"role_name": "semantic_intent", "applicability": "required"},
     {"role_name": "preparation_recipe", "applicability": "required"},
-    {"role_name": "model_artifact", "applicability": "required"},
+    {"role_name": "model_artifact", "applicability": "required", "authoring_boundary_applicability": "optional"},
     {"role_name": "visual_evidence", "applicability": "optional"},
     {"role_name": "no_model_analysis_summary", "applicability": "forbidden"}
   ],

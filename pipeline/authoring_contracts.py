@@ -432,8 +432,13 @@ def validate_authoring_contracts(
             )
 
     # --- Role applicability: required presence / forbidden absence ---------
+    # Resolved at the authoring boundary: a role's authoring_boundary_applicability
+    # override, when declared, takes precedence over its global/downstream
+    # applicability; a role that omits the override falls back to applicability
+    # unchanged, preserving legacy behavior for every existing profile.
     role_applicability: dict[str, str] = {
-        role_entry["role_name"]: role_entry["applicability"] for role_entry in profile_instance["artifact_roles"]
+        role_entry["role_name"]: role_entry.get("authoring_boundary_applicability") or role_entry["applicability"]
+        for role_entry in profile_instance["artifact_roles"]
     }
     for role_name, applicability in role_applicability.items():
         present = role_name in observed_roles

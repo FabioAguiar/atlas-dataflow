@@ -9,6 +9,7 @@ the contracts are capability-driven, not dataset-name-driven.
 """
 
 import hashlib
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ import jsonschema
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from pipeline import authoring_contracts
 from pipeline.authoring_contracts import (
     AuthoringContractValidationResult,
     validate_authoring_contracts,
@@ -214,6 +216,19 @@ BINARY_CLASSIFICATION_ROLES = {
     "preparation_recipe": PREPARATION_RECIPE_BYTES,
     "model_artifact": MODEL_ARTIFACT_BYTES,
 }
+
+
+def _binary_classification_profile_with_authoring_override() -> dict:
+    """The same binary-classification profile, with model_artifact's
+    authoring-boundary applicability additively overridden to 'optional'
+    -- mirrors S0185's real pipeline/capabilities/binary-predictive-
+    classification.v1.json reconciliation without touching the shared
+    fixture other tests rely on for legacy behavior."""
+    profile = _binary_classification_profile()
+    for role_entry in profile["artifact_roles"]:
+        if role_entry["role_name"] == "model_artifact":
+            role_entry["authoring_boundary_applicability"] = "optional"
+    return profile
 
 
 class TestSchemasAreValidJsonSchema:
@@ -456,3 +471,72 @@ class TestNoUnsupportedCapabilityLabeledOperational:
     def test_capability_profile_ids_never_encode_dataset_identity(self):
         for profile in (_binary_classification_profile(), _no_model_analysis_profile()):
             assert DATASET_SLUG not in profile["capability_profile_id"]
+
+
+class TestAuthoringBoundaryApplicabilityOverride:
+    """Project Spec S0185: proves validate_authoring_contracts resolves each
+    role's authoring-boundary applicability from an additive
+    authoring_boundary_applicability override when declared, and falls back
+    to the existing global applicability field unchanged otherwise."""
+
+    def test_legacy_profile_without_override_keeps_old_behavior(self):
+        profile = _binary_classification_profile()
+        assert not any("authoring_boundary_applicability" in entry for entry in profile["artifact_roles"])
+        roles = dict(BINARY_CLASSIFICATION_ROLES)
+        del roles["model_artifact"]
+        manifest = _manifest_for(profile, roles=roles)
+
+        result = validate_authoring_contracts(manifest, profile)
+
+        assert result.valid is False
+        assert any(
+            failure.code == "required_role_missing" and failure.role == "model_artifact"
+            for failure in result.failures
+        )
+
+    def test_authoring_boundary_optional_override_allows_role_absence(self):
+        profile = _binary_classification_profile_with_authoring_override()
+        roles = dict(BINARY_CLASSIFICATION_ROLES)
+        del roles["model_artifact"]
+        manifest = _manifest_for(profile, roles=roles)
+
+        result = validate_authoring_contracts(manifest, profile)
+
+        assert result.valid is True
+        assert result.failures == ()
+
+    def test_required_preparation_recipe_remains_required_under_override(self):
+        profile = _binary_classification_profile_with_authoring_override()
+        roles = dict(BINARY_CLASSIFICATION_ROLES)
+        del roles["model_artifact"]
+        del roles["preparation_recipe"]
+        manifest = _manifest_for(profile, roles=roles)
+
+        result = validate_authoring_contracts(manifest, profile)
+
+        assert result.valid is False
+        assert any(
+            failure.code == "required_role_missing" and failure.role == "preparation_recipe"
+            for failure in result.failures
+        )
+
+    def test_forbidden_authoring_role_remains_rejected_under_override(self):
+        profile = _binary_classification_profile_with_authoring_override()
+        roles = dict(BINARY_CLASSIFICATION_ROLES)
+        del roles["model_artifact"]
+        roles["no_model_analysis_summary"] = b"forbidden-role-payload"
+        manifest = _manifest_for(profile, roles=roles)
+
+        result = validate_authoring_contracts(manifest, profile)
+
+        assert result.valid is False
+        assert any(
+            failure.code == "forbidden_role_present" and failure.role == "no_model_analysis_summary"
+            for failure in result.failures
+        )
+
+    def test_role_applicability_resolution_contains_no_dataset_or_telco_condition(self):
+        source = inspect.getsource(authoring_contracts.validate_authoring_contracts)
+        assert "telco" not in source.lower()
+        assert "dataset_slug ==" not in source
+        assert 'dataset_slug == "' not in source

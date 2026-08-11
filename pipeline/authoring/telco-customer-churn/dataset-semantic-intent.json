@@ -1,0 +1,235 @@
+{
+  "artifact_type": "dataset_semantic_intent",
+  "authored_public_meaning": {
+    "human_reviewed": true,
+    "safe_projection_intent": "Estimate customer churn propensity from reviewed service and account fields."
+  },
+  "authoring_generation_id": "telco-authoring-v1",
+  "authoring_rationale_refs": [
+    {
+      "reference_id": "atlas-current-source-observation",
+      "reference_kind": "source_verification_evidence"
+    },
+    {
+      "reference_id": "artifacts/models/telco-customer-churn/final-model-manifest.json",
+      "reference_kind": "external_scientific_evidence"
+    },
+    {
+      "reference_id": "artifacts/models/telco-customer-churn/final-test-evidence.json",
+      "reference_kind": "external_scientific_evidence"
+    },
+    {
+      "reference_id": "artifacts/model-selection/telco-customer-churn/model-selection-manifest.json",
+      "reference_kind": "external_scientific_evidence"
+    },
+    {
+      "reference_id": "artifacts/model-selection/telco-customer-churn/candidate-results.json",
+      "reference_kind": "external_scientific_evidence"
+    },
+    {
+      "reference_id": "artifacts/model-selection/telco-customer-churn/threshold-analysis.json",
+      "reference_kind": "external_scientific_evidence"
+    },
+    {
+      "reference_id": "artifacts/models/telco-customer-churn/final-model-handoff.json",
+      "reference_kind": "external_scientific_evidence"
+    },
+    {
+      "reference_id": "artifacts/readiness/telco-customer-churn/readiness-and-limitations.json",
+      "reference_kind": "external_scientific_evidence"
+    }
+  ],
+  "dataset_identity": {
+    "dataset_logical_name": "Telco Customer Churn",
+    "dataset_slug": "telco-customer-churn"
+  },
+  "field_role_decisions": [
+    {
+      "field_name": "customerID",
+      "include_in_features": false,
+      "role": "identifier"
+    },
+    {
+      "field_name": "gender",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "SeniorCitizen",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "Partner",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "Dependents",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "tenure",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "PhoneService",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "MultipleLines",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "InternetService",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "OnlineSecurity",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "OnlineBackup",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "DeviceProtection",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "TechSupport",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "StreamingTV",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "StreamingMovies",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "Contract",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "PaperlessBilling",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "PaymentMethod",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "MonthlyCharges",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "policy": "no_missing_expected"
+      },
+      "role": "feature"
+    },
+    {
+      "field_name": "TotalCharges",
+      "include_in_features": true,
+      "missing_value_intent": {
+        "fixed_value": 0.0,
+        "policy": "impute_fixed_value",
+        "rationale": "Blank TotalCharges occurs with zero tenure."
+      },
+      "role": "feature"
+    },
+    {
+      "exclusion_reason": "Binary result field.",
+      "field_name": "Churn",
+      "include_in_features": false,
+      "role": "target"
+    }
+  ],
+  "generated_at": "2026-08-11T00:00:00+00:00",
+  "governing_capability_profile": {
+    "capability_profile_id": "binary-predictive-classification",
+    "capability_profile_version": "v1"
+  },
+  "schema_version": "dataset-semantic-intent.v1",
+  "semantic_boundary_confirmations": {
+    "model_bytes_embedded": false,
+    "observed_source_statistics_embedded": false,
+    "release_state_embedded": false,
+    "scientific_conclusions_embedded": false,
+    "training_outcome_embedded": false
+  },
+  "target_semantics": {
+    "is_final_training_configuration": false,
+    "positive_class": {
+      "class_id": "Yes",
+      "event_label": "customer churned"
+    },
+    "target_field_name": "Churn",
+    "task_type": "binary_classification"
+  }
+}

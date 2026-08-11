@@ -89,6 +89,10 @@
           "applicability": {
             "$ref": "#/$defs/role_applicability"
           },
+          "authoring_boundary_applicability": {
+            "$ref": "#/$defs/role_applicability",
+            "description": "Optional authoring-boundary override of `applicability`, using the same required|optional|forbidden vocabulary. Consumed only by pre-materialization authoring-boundary validation; the global/downstream `applicability` field remains the canonical release-policy value and is unaffected by this override. A role that omits this field falls back to `applicability` for authoring-boundary validation, preserving legacy behavior exactly."
+          },
           "notes": {
             "type": "string",
             "minLength": 1,

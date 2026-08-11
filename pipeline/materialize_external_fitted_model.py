@@ -197,6 +197,73 @@ def _require_mapping(data: Any, field: str) -> dict[str, Any]:
     return data
 
 
+def _resolve_and_check_selected_candidate(
+    model_selection: dict[str, Any], training_record: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve ``model_selection.selected_candidate`` against exactly one
+    entry in ``model_selection.candidates`` and require it to be consistent
+    with ``training_record``'s selected model id/family/estimator identity.
+
+    Generic for the external-fitted-model profile: no dataset-slug or
+    model-specific branching. Raises ``MaterializationBlocked`` on any
+    mismatch; callers must invoke this before any destination directory or
+    model/evidence bytes are written.
+    """
+    candidates = model_selection.get("candidates")
+    if not isinstance(candidates, list):
+        raise MaterializationBlocked(
+            "missing_required_field",
+            "model_selection_evidence.candidates must be an array.",
+            "model_selection_evidence.candidates",
+        )
+    selected_candidate_ref = _require_mapping(
+        model_selection.get("selected_candidate"), "model_selection_evidence.selected_candidate"
+    )
+    selected_candidate_id = selected_candidate_ref.get("candidate_id")
+    if not isinstance(selected_candidate_id, str) or not selected_candidate_id:
+        raise MaterializationBlocked(
+            "missing_required_field",
+            "model_selection_evidence.selected_candidate.candidate_id must be a non-empty string.",
+            "model_selection_evidence.selected_candidate.candidate_id",
+        )
+    matching_candidates = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict) and candidate.get("candidate_id") == selected_candidate_id
+    ]
+    if len(matching_candidates) != 1:
+        raise MaterializationBlocked(
+            "selected_candidate_not_uniquely_resolved",
+            "model_selection_evidence.selected_candidate.candidate_id must match exactly one "
+            "entry in model_selection_evidence.candidates.",
+            "model_selection_evidence.selected_candidate.candidate_id",
+        )
+    selected_candidate_entry = matching_candidates[0]
+
+    if selected_candidate_id != training_record.get("selected_model_id"):
+        raise MaterializationBlocked(
+            "selected_candidate_identity_mismatch",
+            "model_selection_evidence.selected_candidate.candidate_id does not match "
+            "training_parameter_record.selected_model_id.",
+            "model_selection_evidence.selected_candidate.candidate_id",
+        )
+    if selected_candidate_entry.get("model_family") != training_record.get("model_family"):
+        raise MaterializationBlocked(
+            "selected_candidate_family_mismatch",
+            "The selected candidate's model_family does not match "
+            "training_parameter_record.model_family.",
+            "model_selection_evidence.candidates[].model_family",
+        )
+    if selected_candidate_entry.get("estimator_identity") != training_record.get("estimator_identity"):
+        raise MaterializationBlocked(
+            "selected_candidate_estimator_mismatch",
+            "The selected candidate's estimator_identity does not match "
+            "training_parameter_record.estimator_identity.",
+            "model_selection_evidence.candidates[].estimator_identity",
+        )
+    return selected_candidate_entry
+
+
 def materialize_external_fitted_model(
     *,
     dataset_slug: str,
@@ -408,6 +475,11 @@ def materialize_external_fitted_model(
                 "training_parameter_record.model_state_fingerprint.",
                 "expected_model_state_fingerprint",
             )
+
+        # -- Resolve and cross-check the selected model-selection candidate. --
+        # Must happen after schema validation but before any destination
+        # directory/model/evidence bytes are written.
+        _resolve_and_check_selected_candidate(model_selection, training_record)
 
         record_model_ref = _require_mapping(
             training_record.get("model_artifact_reference"),

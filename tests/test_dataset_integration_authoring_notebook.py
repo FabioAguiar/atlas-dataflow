@@ -319,6 +319,75 @@ def test_notebook_tests_are_static_and_need_no_external_files_or_model_bytes():
     assert all(cell.get("outputs") == [] for cell in notebook["cells"] if cell["cell_type"] == "code")
 
 
+# --- Project Spec S0186: canonical tie-break projection ---------------------
+
+
+def test_notebook_does_not_assign_raw_criteria_applied_to_tie_break_criteria():
+    code = _source("code")
+    assert '"tie_break_criteria": selection_choice["criteria_applied"]' not in code
+    assert '"tie_break_criteria": canonical_tie_break_criteria' in code
+
+
+def test_notebook_maps_producer_brier_score_criterion_to_canonical_criterion():
+    code = _source("code")
+    assert '"lower_validation_brier_score": "brier_score"' in code
+    assert "CANONICAL_TIE_BREAK_CRITERION_MAP" in code
+
+
+def test_notebook_tie_break_projection_produces_order_and_observed_values():
+    code = _source("code")
+    assert '"order": order,' in code
+    assert '"observed_values": [' in code
+    assert '{"candidate_id": first_candidate_id, "value": first_value}' in code
+    assert '{"candidate_id": second_candidate_id, "value": second_value}' in code
+
+
+def test_notebook_resolves_tie_break_candidate_identities_from_verified_candidate_evidence():
+    code = _source("code")
+    assert "def project_tie_break_criteria(criteria_applied, candidates):" in code
+    assert "def _resolve_candidate_id_by_validation_metric(value, metric_name, candidates):" in code
+    assert (
+        'project_tie_break_criteria(\n        selection_choice["criteria_applied"], '
+        'model_selection_candidates["candidates"]\n    )'
+    ) in code
+
+
+def test_notebook_retains_all_four_scientific_selection_candidates():
+    code = _source("code")
+    assert (
+        '"candidates": [{"candidate_id": c["model_id"], "model_family": c["model_id"], '
+        '"estimator_identity": {"library": "scikit-learn", "class_name": c["family"]}} '
+        'for c in model_selection_candidates["candidates"]]'
+    ) in code
+    # No HGB-only filter applied before this list comprehension consumes the
+    # full verified candidates array.
+    assert "if c[\"model_id\"] == \"hist_gradient_boosting\"" not in code
+
+
+def test_notebook_blocks_unsupported_or_ambiguous_tie_break_projection():
+    code = _source("code")
+    assert "class TieBreakProjectionBlocked(Exception):" in code
+    for reason_code in (
+        "unsupported_tie_break_criterion",
+        "ambiguous_tie_break_candidate_match",
+        "tie_break_winner_not_declared_candidate",
+        "tie_break_winner_inconsistent_with_canonical_observation",
+    ):
+        assert reason_code in code
+    assert "except TieBreakProjectionBlocked as exc:" in code
+    assert "tie_break_projection_blocked_reason = {" in code
+    assert "if tie_break_projection_blocked_reason is None:" in code
+
+
+def test_notebook_invokes_materializer_only_after_staging_evidence_is_built():
+    code = _source("code")
+    staged_index = code.index('staged_selection_path = _write_staged_json("model-selection-evidence.json"')
+    materializer_call_index = code.index("external_materialization_result = materialize_external_fitted_model(")
+    assert staged_index < materializer_call_index
+    projection_index = code.index("canonical_tie_break_criteria = project_tie_break_criteria(")
+    assert projection_index < staged_index < materializer_call_index
+
+
 def test_notebook_never_requires_real_telco_checkout_or_model_bytes_to_be_parsed():
     # The notebook is valid, parseable Python source in every code cell --
     # this test itself never executes the notebook or touches the external

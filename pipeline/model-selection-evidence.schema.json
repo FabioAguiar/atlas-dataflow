@@ -418,33 +418,83 @@
       }
     },
     "external_candidate": {
+      "description": "Project Spec S0186: bounded external scientific selection-candidate vocabulary. Exactly one of these four scikit-learn family/class pairs -- never a free-form model_family or class_name, and never a cross-paired combination.",
+      "oneOf": [
+        { "$ref": "#/$defs/external_candidate_logistic_regression" },
+        { "$ref": "#/$defs/external_candidate_decision_tree" },
+        { "$ref": "#/$defs/external_candidate_random_forest" },
+        { "$ref": "#/$defs/external_candidate_hist_gradient_boosting" }
+      ]
+    },
+    "external_candidate_logistic_regression": {
       "type": "object",
       "additionalProperties": false,
       "required": ["candidate_id", "model_family", "estimator_identity"],
       "properties": {
         "candidate_id": { "type": "string", "minLength": 1 },
-        "model_family": { "$ref": "#/$defs/external_model_family" },
-        "estimator_identity": { "$ref": "#/$defs/estimator_identity" }
+        "model_family": { "type": "string", "const": "logistic_regression" },
+        "estimator_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library", "class_name"],
+          "properties": {
+            "library": { "type": "string", "const": "scikit-learn" },
+            "class_name": { "type": "string", "const": "LogisticRegression" }
+          }
+        }
       }
     },
-    "external_model_family": {
-      "type": "string",
-      "enum": ["hist_gradient_boosting"],
-      "description": "Project Spec S0157: bounded external-evidence model family vocabulary. Deliberately disjoint from pipeline.training's SUPPORTED_MODEL_FAMILIES."
-    },
-    "estimator_identity": {
+    "external_candidate_decision_tree": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["library", "class_name"],
-      "description": "Bounded structured estimator identity. Never an arbitrary module import path or callable string.",
+      "required": ["candidate_id", "model_family", "estimator_identity"],
       "properties": {
-        "library": {
-          "type": "string",
-          "enum": ["scikit-learn"]
-        },
-        "class_name": {
-          "type": "string",
-          "enum": ["HistGradientBoostingClassifier"]
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "model_family": { "type": "string", "const": "decision_tree" },
+        "estimator_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library", "class_name"],
+          "properties": {
+            "library": { "type": "string", "const": "scikit-learn" },
+            "class_name": { "type": "string", "const": "DecisionTreeClassifier" }
+          }
+        }
+      }
+    },
+    "external_candidate_random_forest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "model_family", "estimator_identity"],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "model_family": { "type": "string", "const": "random_forest" },
+        "estimator_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library", "class_name"],
+          "properties": {
+            "library": { "type": "string", "const": "scikit-learn" },
+            "class_name": { "type": "string", "const": "RandomForestClassifier" }
+          }
+        }
+      }
+    },
+    "external_candidate_hist_gradient_boosting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "model_family", "estimator_identity"],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "model_family": { "type": "string", "const": "hist_gradient_boosting" },
+        "estimator_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library", "class_name"],
+          "properties": {
+            "library": { "type": "string", "const": "scikit-learn" },
+            "class_name": { "type": "string", "const": "HistGradientBoostingClassifier" }
+          }
         }
       }
     },

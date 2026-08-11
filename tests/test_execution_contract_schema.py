@@ -1141,6 +1141,130 @@ def test_internal_model_selection_evidence_v1_still_valid_unmodified():
     jsonschema.validate(doc, schema)
 
 
+# --- Project Spec S0186: bounded external selection-candidate vocabulary --
+
+
+def _multi_family_external_candidates() -> list[dict]:
+    return [
+        {
+            "candidate_id": "logistic_regression",
+            "model_family": "logistic_regression",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "LogisticRegression"},
+        },
+        {
+            "candidate_id": "decision_tree",
+            "model_family": "decision_tree",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "DecisionTreeClassifier"},
+        },
+        {
+            "candidate_id": "random_forest",
+            "model_family": "random_forest",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "RandomForestClassifier"},
+        },
+        {
+            "candidate_id": "hist_gradient_boosting",
+            "model_family": "hist_gradient_boosting",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        },
+    ]
+
+
+def _multi_family_external_model_selection_evidence() -> dict:
+    evidence = _external_model_selection_evidence()
+    evidence["candidates"] = _multi_family_external_candidates()
+    evidence["selected_candidate"] = {"candidate_id": "hist_gradient_boosting"}
+    evidence["practical_tie"]["tie_break_criteria"][0]["observed_values"] = [
+        {"candidate_id": "hist_gradient_boosting", "value": 0.13320337544392163},
+        {"candidate_id": "logistic_regression", "value": 0.13389814952096538},
+    ]
+    return evidence
+
+
+def test_external_model_selection_evidence_four_bounded_family_pairs_coexist_and_validate():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _multi_family_external_model_selection_evidence()
+    jsonschema.validate(evidence, schema)
+    _assert_selected_candidate_is_declared(evidence)
+    assert {c["model_family"] for c in evidence["candidates"]} == {
+        "logistic_regression",
+        "decision_tree",
+        "random_forest",
+        "hist_gradient_boosting",
+    }
+
+
+def test_external_model_selection_evidence_selected_candidate_may_be_hist_gradient_boosting_among_four():
+    evidence = _multi_family_external_model_selection_evidence()
+    assert evidence["selected_candidate"]["candidate_id"] == "hist_gradient_boosting"
+    _assert_selected_candidate_is_declared(evidence)
+
+
+def test_external_model_selection_evidence_canonical_brier_score_tie_break_with_observed_values_validates():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _multi_family_external_model_selection_evidence()
+    jsonschema.validate(evidence, schema)
+    criterion = evidence["practical_tie"]["tie_break_criteria"][0]
+    assert criterion["criterion"] == "brier_score"
+    assert criterion["order"] == 1
+    assert {ov["candidate_id"] for ov in criterion["observed_values"]} == {
+        "hist_gradient_boosting",
+        "logistic_regression",
+    }
+
+
+@pytest.mark.parametrize(
+    "model_family,class_name",
+    [
+        ("logistic_regression", "DecisionTreeClassifier"),
+        ("decision_tree", "RandomForestClassifier"),
+        ("random_forest", "LogisticRegression"),
+        ("hist_gradient_boosting", "LogisticRegression"),
+    ],
+)
+def test_external_model_selection_evidence_cross_paired_family_class_rejected(model_family, class_name):
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _multi_family_external_model_selection_evidence()
+    evidence["candidates"][0] = {
+        "candidate_id": "cross_paired",
+        "model_family": model_family,
+        "estimator_identity": {"library": "scikit-learn", "class_name": class_name},
+    }
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
+def test_external_model_selection_evidence_arbitrary_family_rejected():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _multi_family_external_model_selection_evidence()
+    evidence["candidates"][0] = {
+        "candidate_id": "svm_candidate",
+        "model_family": "support_vector_machine",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "SVC"},
+    }
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
+def test_external_model_selection_evidence_arbitrary_estimator_class_rejected():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _multi_family_external_model_selection_evidence()
+    evidence["candidates"][0] = {
+        "candidate_id": "xgb_candidate",
+        "model_family": "hist_gradient_boosting",
+        "estimator_identity": {"library": "xgboost", "class_name": "XGBClassifier"},
+    }
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
+def test_external_model_selection_evidence_producer_criterion_lower_validation_brier_score_rejected():
+    schema = _load_json(MODEL_SELECTION_EVIDENCE_SCHEMA_PATH)
+    evidence = _multi_family_external_model_selection_evidence()
+    evidence["practical_tie"]["tie_break_criteria"][0]["criterion"] = "lower_validation_brier_score"
+    validator = jsonschema.Draft202012Validator(schema)
+    assert list(validator.iter_errors(evidence))
+
+
 # --- pipeline/training-metrics.schema.json: partition-role profile --------
 
 

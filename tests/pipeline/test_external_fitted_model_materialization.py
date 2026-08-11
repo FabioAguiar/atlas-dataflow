@@ -174,6 +174,46 @@ def _model_selection_evidence(*, dataset_slug: str = DATASET_SLUG, model_state_f
     }
 
 
+def _multi_family_candidates(*, selected_family_candidate_id: str = "candidate-001") -> list[dict]:
+    """All four Project Spec S0186 bounded scientific selection-candidate
+    family/class pairs, keeping the fixture's HGB candidate_id matched to
+    the training-record fixture's selected_model_id."""
+    return [
+        {
+            "candidate_id": "candidate-000",
+            "model_family": "logistic_regression",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "LogisticRegression"},
+        },
+        {
+            "candidate_id": "candidate-002",
+            "model_family": "decision_tree",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "DecisionTreeClassifier"},
+        },
+        {
+            "candidate_id": "candidate-003",
+            "model_family": "random_forest",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "RandomForestClassifier"},
+        },
+        {
+            "candidate_id": selected_family_candidate_id,
+            "model_family": "hist_gradient_boosting",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        },
+    ]
+
+
+def _model_selection_evidence_multi_family(
+    *,
+    dataset_slug: str = DATASET_SLUG,
+    model_state_fingerprint: str = MODEL_STATE_FINGERPRINT,
+    selected_candidate_id: str = "candidate-001",
+) -> dict:
+    evidence = _model_selection_evidence(dataset_slug=dataset_slug, model_state_fingerprint=model_state_fingerprint)
+    evidence["candidates"] = _multi_family_candidates()
+    evidence["selected_candidate"] = {"candidate_id": selected_candidate_id}
+    return evidence
+
+
 def _operational_readiness_fail_closed() -> dict:
     return {
         "educational_final_model_complete": True,
@@ -404,6 +444,138 @@ def test_model_state_fingerprint_mismatch_blocks(tmp_path: Path) -> None:
 
     assert result["status"] == "blocked"
     assert result["blocking_reasons"][0]["code"] == "model_state_fingerprint_mismatch"
+
+
+# --- Project Spec S0186: selected-candidate consistency ---------------------
+
+
+def test_multi_family_selection_evidence_materializes_when_selected_candidate_matches(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    multi_family_selection = _model_selection_evidence_multi_family(dataset_slug=fixture.dataset_slug)
+    selection_bytes = _write_json(fixture.source_selection_path, multi_family_selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "materialized"
+    schema = json.loads(MATERIALIZATION_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(result)
+
+
+def test_selected_candidate_id_mismatch_blocks_before_destination_writes(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    # candidate-003 (random_forest) exists in candidates[] but does not match
+    # the training-record fixture's selected_model_id ("candidate-001").
+    mismatched_selection = _model_selection_evidence_multi_family(
+        dataset_slug=fixture.dataset_slug, selected_candidate_id="candidate-003"
+    )
+    selection_bytes = _write_json(fixture.source_selection_path, mismatched_selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "selected_candidate_identity_mismatch"
+    assert not (repo_root / kwargs["output_model_artifact_path"]).exists()
+    assert not (repo_root / kwargs["output_training_parameter_record_path"]).exists()
+    assert not (repo_root / kwargs["output_training_metrics_path"]).exists()
+    assert not (repo_root / kwargs["output_model_selection_evidence_path"]).exists()
+
+
+def test_selected_candidate_family_mismatch_blocks_before_destination_writes(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    # The selected candidate_id ("candidate-001") matches the training
+    # record's selected_model_id, but this fixture reassigns that same
+    # candidate_id to the logistic_regression family/class pair -- a
+    # schema-valid pairing that disagrees with the training record's
+    # hist_gradient_boosting family.
+    tampered_candidates = _multi_family_candidates(selected_family_candidate_id="candidate-004")
+    tampered_candidates.append(
+        {
+            "candidate_id": "candidate-001",
+            "model_family": "logistic_regression",
+            "estimator_identity": {"library": "scikit-learn", "class_name": "LogisticRegression"},
+        }
+    )
+    tampered_selection = _model_selection_evidence_multi_family(dataset_slug=fixture.dataset_slug)
+    tampered_selection["candidates"] = tampered_candidates
+    selection_bytes = _write_json(fixture.source_selection_path, tampered_selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "selected_candidate_family_mismatch"
+    assert not (repo_root / kwargs["output_model_artifact_path"]).exists()
+    assert not (repo_root / kwargs["output_training_parameter_record_path"]).exists()
+
+
+def test_undeclared_selected_candidate_blocks_before_destination_writes(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    undeclared_selection = _model_selection_evidence_multi_family(
+        dataset_slug=fixture.dataset_slug, selected_candidate_id="candidate-999-not-declared"
+    )
+    selection_bytes = _write_json(fixture.source_selection_path, undeclared_selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "selected_candidate_not_uniquely_resolved"
+    assert not (repo_root / kwargs["output_model_artifact_path"]).exists()
+
+
+def test_no_training_call_or_model_deserialization_during_multi_family_materialization(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    multi_family_selection = _model_selection_evidence_multi_family(dataset_slug=fixture.dataset_slug)
+    selection_bytes = _write_json(fixture.source_selection_path, multi_family_selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "materialized"
+    assert all(value is False for value in result["boundary_confirmations"].values())
+
+
+def test_resolve_and_check_selected_candidate_estimator_mismatch_blocks() -> None:
+    """Direct unit test of the extracted consistency-check helper: under the
+    Project Spec S0186 bounded vocabulary, model_family and estimator_identity
+    are 1:1 paired per candidate, so a schema-valid end-to-end fixture cannot
+    isolate an estimator-only mismatch (a family mismatch would always fire
+    first). This exercises the estimator_identity comparison directly on
+    already-loaded evidence dicts, independent of schema pairing."""
+    training_record = _training_parameter_record(model_artifact_sha256="a" * 64)
+    model_selection = _model_selection_evidence()
+    model_selection["candidates"][0]["estimator_identity"] = {
+        "library": "scikit-learn",
+        "class_name": "SomeOtherClassifier",
+    }
+
+    with pytest.raises(materialize_external_fitted_model.MaterializationBlocked) as exc_info:
+        materialize_external_fitted_model._resolve_and_check_selected_candidate(model_selection, training_record)
+
+    assert exc_info.value.code == "selected_candidate_estimator_mismatch"
+
+
+def test_resolve_and_check_selected_candidate_accepts_consistent_evidence() -> None:
+    training_record = _training_parameter_record(model_artifact_sha256="a" * 64)
+    model_selection = _model_selection_evidence()
+
+    resolved = materialize_external_fitted_model._resolve_and_check_selected_candidate(
+        model_selection, training_record
+    )
+
+    assert resolved["candidate_id"] == "candidate-001"
 
 
 # --- missing required evidence -----------------------------------------------

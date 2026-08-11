@@ -240,6 +240,15 @@
     "promotion_allowed": false,
     "registry_update_allowed": false
   },
+  "operational_readiness_evaluation": {
+    "source": "bundle_only",
+    "decision_reference": null,
+    "sha256": null,
+    "operational_validity": "unconfirmed",
+    "operational_threshold_status": "unresolved",
+    "operational_prediction_available": false,
+    "decision_valid": false
+  },
   "evidence_safety": {
     "reduced_evidence_only": true,
     "raw_logs_persisted": false,

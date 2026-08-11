@@ -8,7 +8,7 @@
   "release_identity": {
     "release_id": "release-20260811-001",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-08-11T20:15:01Z"
+    "created_at": "2026-08-11T21:39:07Z"
   },
   "artifacts": [
     {
@@ -27,7 +27,7 @@
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "831e184bf4833f10c42951b6132f4ca0b15d3c0b97f0d4d6d998b62cd84dfec3"
+      "hash_value": "6ae9ef5aeb8d920816cbf2c3f1f4365307adbad273c1bdfe42cf162b190ec308"
     },
     {
       "role": "model_artifact",
@@ -45,7 +45,7 @@
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "afc7f4e05a1f173808f48f38e066712bf38b3547fd41d8a3bd351fd019f9faf2"
+      "hash_value": "c5e45305004c7503d7a64df7885a8c259f1ffb97ebb4b369b069ef0af8c418b0"
     },
     {
       "role": "public_context",
@@ -57,13 +57,13 @@
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "9c357104cc5d5d6598fb55b5ac0a3f90e20ac03aca70d2666d50b7c4ae9b3fc5"
+      "hash_value": "876996ea4c304353dd150be1f81c9e6b0144a5ae44b133afe7f929ca2c81131e"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "06ffcda39dc035c5fc5d8d243dc5cf009a199de4affcdf0e148781a859624365"
+      "hash_value": "70341ccd6e2e1adc67310481ad7e71e9a9b1c64c07e3034143ac26b1ba441f80"
     }
   ],
   "required_hash_coverage": {

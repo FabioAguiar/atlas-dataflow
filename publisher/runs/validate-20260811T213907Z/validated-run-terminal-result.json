@@ -1,0 +1,60 @@
+{
+  "artifact_kind": "validated_run_terminal_result",
+  "boundary_confirmations": {
+    "educational_threshold_reinterpreted_as_operational": false,
+    "publisher_promotion_invoked": false,
+    "registry_state_written": false
+  },
+  "durable_references": {
+    "inference_bundle": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T213907Z/inference-bundle.json",
+      "sha256": "6ae9ef5aeb8d920816cbf2c3f1f4365307adbad273c1bdfe42cf162b190ec308"
+    },
+    "manifest": {
+      "path": "publisher/runs/validate-20260811T213907Z/manifest.json",
+      "sha256": "2be8cfef979322b3855ff8306cac7da80c4cab2ec50595bb59fab055ca5f422f"
+    },
+    "materialization_result": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T213907Z/materialization-result.json",
+      "sha256": "0a47d2454a5936433432649c403036cce4c3596723bad4878e08d2ef29203680"
+    },
+    "operational_readiness_source": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T213907Z/materialization-result.json",
+      "sha256": "0a47d2454a5936433432649c403036cce4c3596723bad4878e08d2ef29203680"
+    },
+    "publisher_validation_result": {
+      "path": "publisher/runs/validate-20260811T213907Z/validation-result.json",
+      "sha256": "cabcddb35c8b8c7a1e8c8d07e02314789b0cc062691ef29d3e8238d415e216e0"
+    },
+    "release_candidate": {
+      "path": "releases/candidates/telco-customer-churn/release-20260811-001/release-candidate.json",
+      "sha256": "70341ccd6e2e1adc67310481ad7e71e9a9b1c64c07e3034143ac26b1ba441f80"
+    }
+  },
+  "manifest_outcome": {
+    "manifest_generated": true,
+    "manifest_path": "publisher/runs/validate-20260811T213907Z/manifest.json"
+  },
+  "model_source_mode": "validated_external_fitted_model",
+  "operational_readiness": {
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "unresolved",
+      "value": null
+    },
+    "operational_validity": "unconfirmed"
+  },
+  "promotion_eligibility": false,
+  "reasons": [],
+  "run_identity": {
+    "created_at": "2026-08-11T21:39:07+00:00",
+    "dataset_slug": "telco-customer-churn",
+    "run_id": "telco-customer-churn-external-materialization-20260811T213907Z"
+  },
+  "schema_version": "validated-run-terminal-result.v1",
+  "status": "completed",
+  "structural_validation": {
+    "checked": true,
+    "validation_outcome": "accepted"
+  }
+}

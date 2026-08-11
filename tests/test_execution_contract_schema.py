@@ -966,6 +966,23 @@ def test_execution_contract_rejects_free_form_model_source_mode():
     assert list(validator.iter_errors(contract))
 
 
+@pytest.mark.skipif(
+    not TELCO_EXECUTION_CONTRACT_PATH.exists(),
+    reason="Telco execution contract not yet materialized on disk",
+)
+def test_real_telco_execution_contract_explicitly_declares_validated_external_fitted_model():
+    """Project Spec S0187: the checked-in Telco execution contract must
+    explicitly declare the already-governed external model source -- not
+    rely on schema omission -- since the canonical notebook's external
+    inference-bundle boundary (pipeline.generate_inference_bundle) and its
+    own precondition check both require this explicit declaration before
+    calling the external bundle producer."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _load_json(TELCO_EXECUTION_CONTRACT_PATH)
+    jsonschema.validate(contract, schema)
+    assert contract["model_source_mode"] == "validated_external_fitted_model"
+
+
 def test_execution_contract_hist_gradient_boosting_family_declaration_is_valid():
     schema = _load_json(SCHEMA_PATH)
     contract = _valid_contract()

@@ -1,0 +1,42 @@
+{
+  "artifact_kind": "validated_run_terminal_result",
+  "boundary_confirmations": {
+    "educational_threshold_reinterpreted_as_operational": false,
+    "publisher_promotion_invoked": false,
+    "registry_state_written": false
+  },
+  "durable_references": {
+    "inference_bundle": null,
+    "manifest": null,
+    "materialization_result": null,
+    "operational_readiness_source": null,
+    "publisher_validation_result": null,
+    "release_candidate": null
+  },
+  "manifest_outcome": null,
+  "model_source_mode": "validated_external_fitted_model",
+  "operational_readiness": {
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "not_applicable",
+      "value": null
+    },
+    "operational_validity": "not_applicable"
+  },
+  "promotion_eligibility": false,
+  "reasons": [
+    {
+      "code": "terminal_result_schema_invalid",
+      "field": "reasons.0.field",
+      "message": "reasons.0.field: ['model_card', 'public_context', 'visualizations'] is not of type 'string', 'null'"
+    }
+  ],
+  "run_identity": {
+    "created_at": "2026-08-11T19:00:06+00:00",
+    "dataset_slug": "telco-customer-churn",
+    "run_id": "telco-customer-churn-external-materialization-20260811T190006Z"
+  },
+  "schema_version": "validated-run-terminal-result.v1",
+  "status": "blocked",
+  "structural_validation": null
+}

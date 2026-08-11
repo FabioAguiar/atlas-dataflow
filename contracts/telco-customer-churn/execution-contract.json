@@ -257,5 +257,6 @@
         }
       ]
     }
-  }
+  },
+  "model_source_mode": "validated_external_fitted_model"
 }

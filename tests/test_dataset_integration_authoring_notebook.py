@@ -463,6 +463,62 @@ def test_notebook_invokes_materializer_only_after_staging_evidence_is_built():
     assert projection_index < staged_index < materializer_call_index
 
 
+# --- Project Spec S0187: execution-contract source-mode precondition -------
+
+
+def test_notebook_checks_execution_contract_source_mode_before_bundle_generation():
+    code = _source("code")
+    precondition_index = code.index(
+        "execution_contract_precondition_full = json.loads(\n"
+        "        (repo_root / execution_contract_relative_path).read_text(encoding=\"utf-8\")\n"
+        "    )"
+    )
+    bundle_call_index = code.index(
+        "generate_inference_bundle.materialize_governed_inference_bundle("
+    )
+    assert precondition_index < bundle_call_index
+    assert 'execution_contract_precondition_full.get("contract_version") != "execution_contract.v1"' in code
+    assert (
+        'execution_contract_precondition_full.get("model_source_mode") != '
+        '"validated_external_fitted_model"'
+    ) in code
+
+
+def test_notebook_records_block_and_skips_bundle_generation_on_precondition_failure():
+    code = _source("code")
+    assert 'record_block(\n            "execution_contract_version_invalid",' in code
+    assert 'record_block(\n            "execution_contract_model_source_mode_invalid",' in code
+    # The bundle-generation block is reguarded by its own `if not
+    # run_state["blocked"]:` after the precondition check, so a block
+    # recorded there skips the producer call entirely.
+    precondition_block_index = code.index('if not run_state["blocked"]:\n    execution_contract_precondition_full')
+    reguard_index = code.index(
+        'if not run_state["blocked"]:\n    inference_bundle_output_relative_path'
+    )
+    assert precondition_block_index < reguard_index
+
+
+def test_notebook_precondition_does_not_mutate_execution_contract():
+    code = _source("code")
+    precondition_section_start = code.index("execution_contract_precondition_full = json.loads(")
+    bundle_call_index = code.index(
+        "generate_inference_bundle.materialize_governed_inference_bundle("
+    )
+    precondition_section = code[precondition_section_start:bundle_call_index]
+    assert "write_governed_json" not in precondition_section
+    assert ".write_text(" not in precondition_section
+
+
+def test_notebook_precondition_uses_repository_rooted_relative_path_not_hardcoded_absolute():
+    code = _source("code")
+    precondition_section_start = code.index("execution_contract_precondition_full = json.loads(")
+    precondition_section_end = code.index("record_block(\n            \"execution_contract_model_source_mode_invalid\"")
+    precondition_section = code[precondition_section_start:precondition_section_end]
+    assert "repo_root / execution_contract_relative_path" in precondition_section
+    assert "/home/" not in precondition_section
+    assert "/workspace/" not in precondition_section
+
+
 def test_notebook_never_requires_real_telco_checkout_or_model_bytes_to_be_parsed():
     # The notebook is valid, parseable Python source in every code cell --
     # this test itself never executes the notebook or touches the external

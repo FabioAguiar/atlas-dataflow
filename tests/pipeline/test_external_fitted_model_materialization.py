@@ -499,17 +499,10 @@ def _minimal_execution_contract(*, dataset_id: str = DATASET_SLUG) -> dict:
     }
 
 
-def test_materialization_result_reaches_known_inference_bundle_model_family_gap(tmp_path: Path) -> None:
-    """Proves field-shape compatibility with the already-applied S0180
-    bundle consumer (`materialize_governed_inference_bundle`'s external
-    branch): the materializer's own result is accepted deep enough into
-    `_build_external_bundle` to reach the final, pre-existing
-    `contracts/inference-bundle.schema.json` check, which deterministically
-    blocks on the known, out-of-scope hist_gradient_boosting model-family
-    gap (S0181 Context) rather than on any structural incompatibility this
-    spec is responsible for. This does not require or claim a real Telco
-    bundle becomes schema-valid.
-    """
+def test_materialization_result_generates_schema_valid_external_inference_bundle(tmp_path: Path) -> None:
+    """The actual S0181 materialization result is accepted by S0180's
+    external bundle branch without changing its governed provenance or
+    fail-closed operational-readiness evidence."""
     repo_root = _isolated_repo_root(tmp_path)
     fixture = _SourceFixture(tmp_path)
     materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
@@ -546,8 +539,8 @@ def test_materialization_result_reaches_known_inference_bundle_model_family_gap(
         # generate_inference_bundle._reference_for_path falls back to the
         # real, physical repository root (not the `repo_root` argument) when
         # no explicit *_ref is supplied -- supply explicit release-relative
-        # refs so this isolated-tmp-path test reaches the model-family
-        # schema check instead of blocking earlier on that unrelated quirk.
+        # refs so this isolated-tmp-path test does not block earlier on that
+        # unrelated quirk.
         execution_contract_ref="contracts/sample/execution-contract.json",
         runtime_contract_ref="contracts/sample/runtime-contract.json",
         public_contract_ref="contracts/sample/public-contract.json",
@@ -555,12 +548,50 @@ def test_materialization_result_reaches_known_inference_bundle_model_family_gap(
         prepared_dataset_ref="contracts/sample/prepared-dataset.json",
     )
 
-    assert bundle_result["status"] == "blocked"
-    assert any(
-        "model_family" in reason or "hist_gradient_boosting" in reason
-        for reason in bundle_result["blocking_reasons"]
-    )
-    assert not output_path.exists()
+    assert bundle_result["status"] == "generated"
+    assert bundle_result["model_provenance_origin"] == "validated_external_fitted_model"
+    assert output_path.is_file()
+
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+    schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(bundle)
+
+    assert bundle["model_provenance_origin"] == "validated_external_fitted_model"
+    assert bundle["external_model_evidence"]["origin"] == "validated_external_fitted_model"
+    assert bundle["external_model_evidence"]["model_family"] == "hist_gradient_boosting"
+    assert bundle["runtime_execution"]["model_family"] == "hist_gradient_boosting"
+    assert "training_evidence" not in bundle
+    assert bundle["external_model_evidence"]["readiness"]["operational_validity"] == "unconfirmed"
+    assert bundle["external_model_evidence"]["readiness"]["operational_threshold"] == {
+        "status": "unresolved",
+        "value": None,
+    }
+    assert bundle["external_model_evidence"]["readiness"]["operational_prediction_available"] is False
+
+
+@pytest.mark.parametrize(
+    "model_family",
+    ["logistic_regression", "gradient_boosting", "random_forest", "hist_gradient_boosting"],
+)
+def test_inference_bundle_model_family_enums_preserve_supported_values(model_family: str) -> None:
+    schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    runtime_enum = schema["properties"]["runtime_execution"]["properties"]["model_family"]["enum"]
+    descriptor_enum = schema["$defs"]["binary_result_semantics"]["properties"]["model_descriptor"][
+        "properties"
+    ]["model_family"]["enum"]
+
+    assert model_family in runtime_enum
+    assert model_family in descriptor_enum
+
+
+def test_inference_bundle_model_family_enums_reject_unsupported_value() -> None:
+    schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    unsupported = "unsupported_model_family"
+
+    assert unsupported not in schema["properties"]["runtime_execution"]["properties"]["model_family"]["enum"]
+    assert unsupported not in schema["$defs"]["binary_result_semantics"]["properties"]["model_descriptor"][
+        "properties"
+    ]["model_family"]["enum"]
 
 
 def test_materialization_result_field_shape_matches_bundle_consumer_requirements(tmp_path: Path) -> None:

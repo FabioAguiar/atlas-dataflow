@@ -249,7 +249,8 @@
           "enum": [
             "logistic_regression",
             "gradient_boosting",
-            "random_forest"
+            "random_forest",
+            "hist_gradient_boosting"
           ]
         },
         "runtime_adapter_version": {
@@ -832,7 +833,12 @@
           "properties": {
             "model_family": {
               "type": "string",
-              "enum": ["logistic_regression", "gradient_boosting", "random_forest"]
+              "enum": [
+                "logistic_regression",
+                "gradient_boosting",
+                "random_forest",
+                "hist_gradient_boosting"
+              ]
             },
             "display_name": {
               "type": "string",

@@ -1219,15 +1219,7 @@ def _write_external_bundle_fixtures(tmp_repo: Path) -> dict:
     }
 
 
-def test_generate_inference_bundle_external_branch_blocks_on_runtime_execution_model_family_gap(tmp_path):
-    # Project Spec S0180 finding: the only external model family carried by
-    # the current S0157 evidence profiles (hist_gradient_boosting) is not in
-    # contracts/inference-bundle.schema.json's runtime_execution.model_family
-    # enum (logistic_regression/gradient_boosting/random_forest only). That
-    # schema is read-only for S0180, so a real external submission
-    # deterministically blocks here today -- fail-closed, not a crash and
-    # not a fabricated model family -- rather than silently accepting an
-    # invalid bundle.
+def test_generate_inference_bundle_external_branch_succeeds_with_hist_gradient_boosting(tmp_path):
     tmp_repo = tmp_path / "repo"
     tmp_repo.mkdir()
     paths = _write_external_bundle_fixtures(tmp_repo)
@@ -1276,12 +1268,22 @@ def test_generate_inference_bundle_external_branch_blocks_on_runtime_execution_m
         prepared_dataset_ref=paths["prepared_dataset_path"],
     )
 
-    assert result["status"] == "blocked"
-    assert any(
-        "runtime_execution.model_family" in reason and "hist_gradient_boosting" in reason
-        for reason in result["blocking_reasons"]
-    )
-    assert not (tmp_repo / "predictions" / "bundle.json").exists()
+    assert result["status"] == "generated"
+    assert result["model_provenance_origin"] == "validated_external_fitted_model"
+
+    bundle_path = tmp_repo / "predictions" / "bundle.json"
+    assert bundle_path.is_file()
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    assert bundle["model_provenance_origin"] == "validated_external_fitted_model"
+    assert bundle["external_model_evidence"]["model_family"] == "hist_gradient_boosting"
+    assert bundle["runtime_execution"]["model_family"] == "hist_gradient_boosting"
+    assert "training_evidence" not in bundle
+    assert bundle["external_model_evidence"]["readiness"]["operational_validity"] == "unconfirmed"
+    assert bundle["external_model_evidence"]["readiness"]["operational_threshold"] == {
+        "status": "unresolved",
+        "value": None,
+    }
+    assert bundle["external_model_evidence"]["readiness"]["operational_prediction_available"] is False
 
 
 def test_generate_inference_bundle_requires_exactly_one_materialization_family():

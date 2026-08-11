@@ -1,0 +1,40 @@
+{
+  "dataset_slug": "telco-customer-churn",
+  "deterministic": true,
+  "ordered_input_columns": [
+    "customerID",
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges",
+    "Churn"
+  ],
+  "schema_version": "candidate-preparation-recipe.v1",
+  "source_data_ref": "data/raw/telco-customer-churn.csv",
+  "transformations": [
+    {
+      "field": "TotalCharges",
+      "operation": "conditional_blank_to_zero",
+      "otherwise": "reject_blank",
+      "when": {
+        "equals": "0",
+        "field": "tenure"
+      }
+    }
+  ]
+}

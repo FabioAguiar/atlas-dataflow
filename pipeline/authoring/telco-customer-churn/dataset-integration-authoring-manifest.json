@@ -14,8 +14,8 @@
     },
     {
       "contract_version": "candidate-preparation-recipe.v1",
-      "path": "pipeline/authoring/telco-customer-churn/preparation-policy.json",
-      "role": "preparation_policy",
+      "path": "pipeline/authoring/telco-customer-churn/preparation-recipe.json",
+      "role": "preparation_recipe",
       "sha256": "584dc9bf38ac83bfc3735f5093f09c6461c2c753b763906f7e0761dc09eff1a9"
     }
   ],
@@ -42,7 +42,7 @@
     "capability_profile_id": "binary-predictive-classification",
     "capability_profile_ref": {
       "path": "pipeline/capabilities/binary-predictive-classification.v1.json",
-      "sha256": "72793b597a5ca2c9a5b612c5654910f48578bb1bd82e6aca10be06bca29043b1"
+      "sha256": "c1ddf80bbc5a975d8ec57533427d7b75aa7d4596d6d71d6132f148b16f334f0b"
     },
     "capability_profile_version": "v1"
   },

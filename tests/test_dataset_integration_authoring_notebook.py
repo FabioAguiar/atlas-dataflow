@@ -317,11 +317,59 @@ def test_notebook_orchestrates_release_candidate_assembly_from_compatible_roles(
     assert "assemble_candidate.build_release_candidate_input(" in code
     assert "assemble_candidate.assemble_release_candidate(" in code
     assert "publisher.validate.materialize_telco_validation_run" not in code
-    assert '"model_card": ""' in code
-    assert '"public_context": ""' in code
+    # Project Spec S0188: model_card is materialized via the generic external
+    # candidate-support materializer and public_context references the
+    # governed dataset-context document directly -- neither is left as an
+    # unresolved "" placeholder anymore. visualizations remains legitimately
+    # unresolved (no governed model-specific evidence exists).
+    assert '"model_card": model_card_relative_path' in code
+    assert '"public_context": dataset_context_relative_path' in code
     assert '"visualizations": ""' in code
-    assert "model-card.json" not in code
+    assert "model-card.json" in code
     assert "candidate_handoff_readiness[\"is_release_candidate_input_ready\"]" in code
+
+
+def test_notebook_materializes_external_model_card_via_generic_support_materializer():
+    code = _source("code")
+    assert (
+        "from pipeline.materialize_external_candidate_support import "
+        "materialize_external_candidate_support" in code
+    )
+    assert "materialize_external_candidate_support" in _called_names()
+    assert 'external_candidate_support_result["status"] == "materialized"' in code
+    assert (
+        "model_card_relative_path = external_candidate_support_result[\"model_card_path\"]"
+        in code
+    )
+    materializer_call_index = code.index("materialize_external_candidate_support(\n")
+    candidate_references_index = code.index("candidate_artifact_references = {")
+    assert materializer_call_index < candidate_references_index
+
+
+def test_notebook_candidate_block_reasons_use_scalar_field_per_missing_role():
+    code = _source("code")
+    # Project Spec S0188: one record_block() call per unready role, each
+    # with a scalar string field -- never the whole not_ready_roles list
+    # passed as a single field value (that collapses the terminal
+    # validated-run artifact to terminal_result_schema_invalid).
+    assert 'candidate_handoff_readiness["not_ready_roles"],' not in code
+    assert "for unready_role in candidate_handoff_readiness[\"not_ready_roles\"]:" in code
+    assert (
+        'record_block(\n                "candidate_role_unavailable",'
+    ) in code
+    block_section_start = code.index("for unready_role in candidate_handoff_readiness")
+    block_section = code[block_section_start:block_section_start + 900]
+    assert "unready_role,\n            )" in block_section
+
+
+def test_notebook_does_not_borrow_historical_model_card_or_visualizations():
+    code = _source("code")
+    candidate_section_start = code.index("candidate_artifact_references = {")
+    candidate_section_end = code.index("candidate_handoff_readiness = assemble_candidate")
+    candidate_section = code[candidate_section_start:candidate_section_end]
+    assert "pipeline/training-runs" not in candidate_section
+    assert "releases/candidates" not in candidate_section
+    assert "releases/release-" not in candidate_section
 
 
 def test_notebook_orchestrates_publisher_structural_validation_and_conditional_manifest():

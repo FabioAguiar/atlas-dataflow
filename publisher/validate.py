@@ -38,6 +38,14 @@ _REQUIRED_ROLES = (
     "candidate_metadata",
 )
 
+# Project Spec S0188: the historical/internal 10-role shape (unchanged) and
+# the validated-external-fitted-model 9-role shape (visualizations omitted).
+_REQUIRED_ROLES_INTERNAL = _REQUIRED_ROLES
+_REQUIRED_ROLES_EXTERNAL_NO_VISUALIZATIONS = tuple(
+    role for role in _REQUIRED_ROLES if role != "visualizations"
+)
+_VALIDATED_EXTERNAL_FITTED_MODEL_PROVENANCE = "validated_external_fitted_model"
+
 _SCHEMA_COMPAT_ROLES = frozenset({
     "contracts",
     "public_contract",
@@ -435,6 +443,31 @@ def validate_capability_conditional_roles(candidate: dict, role_results: dict) -
     }
 
 
+def _early_predictive_bundle_provenance(artifact_roles_decl: dict | None, candidate_dir: Path) -> str | None:
+    """Read `model_provenance_origin` from the candidate's declared
+    predictive_bundle artifact, before the main required-roles presence
+    loop runs (Project Spec S0188). This is the same governed provenance
+    declaration already used for operational-readiness derivation
+    (`_predictive_bundle_promotion_readiness` below) -- never a
+    dataset-slug conditional. Fails closed to `None` (treated as
+    internal/historical -- the strictest, unchanged default) on any
+    missing role, unsafe path, or unreadable/malformed content.
+    """
+    role_def = artifact_roles_decl.get("predictive_bundle") if isinstance(artifact_roles_decl, dict) else None
+    if not isinstance(role_def, dict):
+        return None
+    path_value = role_def.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        return None
+    if _unsafe_candidate_reference(path_value, candidate_dir):
+        return None
+    data = _load_json_if_possible(candidate_dir / path_value)
+    if not isinstance(data, dict):
+        return None
+    origin = data.get("model_provenance_origin")
+    return origin if isinstance(origin, str) else None
+
+
 def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | None = None) -> dict:
     """
     Validate a loaded release candidate dict.
@@ -500,10 +533,29 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
         if isinstance(completeness, dict):
             hash_policy = completeness.get("hash_policy", "")
 
+    # Project Spec S0188: derive external-vs-internal provenance from the
+    # candidate's actual predictive bundle contents (never dataset identity)
+    # before the required-roles loop runs, so a validated external
+    # fitted-model candidate that legitimately omits visualizations is
+    # never rejected for a structurally-absent-but-legitimate role.
+    predictive_bundle_provenance = _early_predictive_bundle_provenance(artifact_roles_decl, candidate_dir)
+    visualizations_declared = isinstance(artifact_roles_decl, dict) and isinstance(
+        artifact_roles_decl.get(_VISUALIZATIONS_ROLE), dict
+    )
+    is_external_no_visualizations_candidate = (
+        predictive_bundle_provenance == _VALIDATED_EXTERNAL_FITTED_MODEL_PROVENANCE
+        and not visualizations_declared
+    )
+    effective_required_roles = (
+        _REQUIRED_ROLES_EXTERNAL_NO_VISUALIZATIONS
+        if is_external_no_visualizations_candidate
+        else _REQUIRED_ROLES_INTERNAL
+    )
+
     # --- Artifact role presence ---
     role_results: dict[str, dict] = {}
     model_role_actual_sha256: str | None = None
-    for role in _REQUIRED_ROLES:
+    for role in effective_required_roles:
         role_def = (
             artifact_roles_decl.get(role)
             if isinstance(artifact_roles_decl, dict)
@@ -842,6 +894,7 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
         "valid": len(rejection_reasons) == 0 and len(errors) == 0,
         "errors": errors,
         "role_results": role_results,
+        "effective_required_roles": effective_required_roles,
         "identifier_consistency": identifier_consistency,
         "schema_compatibility": schema_compatibility,
         "cross_artifact_consistency": cross_artifact_consistency["result"],
@@ -1160,9 +1213,12 @@ def _build_validation_result(validation: dict) -> dict:
     dataset_slug: str = validation.get("candidate_slug", "")
     release_id: str = validation.get("release_id", "")
     release_version: str = validation.get("release_version", "")
+    effective_required_roles: tuple[str, ...] = validation.get(
+        "effective_required_roles", _REQUIRED_ROLES_INTERNAL
+    )
 
     required_artifact_role_results: dict = {}
-    for role in _REQUIRED_ROLES:
+    for role in effective_required_roles:
         if role in role_results:
             required_artifact_role_results[role] = role_results[role]
         else:
@@ -1227,7 +1283,7 @@ def _build_validation_result(validation: dict) -> dict:
         "source_candidate": {
             "schema_version": "release-candidate.v1",
             "candidate_kind": "release_candidate",
-            "required_artifact_roles_observed": list(_REQUIRED_ROLES),
+            "required_artifact_roles_observed": list(effective_required_roles),
             "candidate_reference": f"release-candidate-v1:{dataset_slug}/{release_id}",
         },
         "validation_outcome": validation_outcome,

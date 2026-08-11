@@ -107,6 +107,7 @@
         "manifest_input",
         "candidate_metadata"
       ],
+      "description": "Project Spec S0188: visualizations is an optional key here -- present (as an artifact_role_result) for the historical/internal 10-role shape or for an external candidate that supplies it, and absent for the validated external fitted-model 9-role shape with no governed visualization artifact.",
       "properties": {
         "contracts": {
           "$ref": "#/$defs/artifact_role_result"
@@ -127,6 +128,9 @@
           "$ref": "#/$defs/artifact_role_result"
         },
         "public_context": {
+          "$ref": "#/$defs/artifact_role_result"
+        },
+        "visualizations": {
           "$ref": "#/$defs/artifact_role_result"
         },
         "manifest_input": {
@@ -189,6 +193,7 @@
         "model_card",
         "candidate_metadata"
       ],
+      "description": "Project Spec S0188: visualizations is an optional key -- present when the role was evaluated (checked), and its absence must remain schema-valid for the external no-visualizations case.",
       "properties": {
         "contracts": {
           "$ref": "#/$defs/schema_compatibility_result"
@@ -203,6 +208,9 @@
           "$ref": "#/$defs/schema_compatibility_result"
         },
         "model_card": {
+          "$ref": "#/$defs/schema_compatibility_result"
+        },
+        "visualizations": {
           "$ref": "#/$defs/schema_compatibility_result"
         },
         "candidate_metadata": {
@@ -497,6 +505,7 @@
         "metrics",
         "model_card",
         "public_context",
+        "visualizations",
         "manifest_input",
         "candidate_metadata"
       ]
@@ -504,11 +513,12 @@
     "required_artifact_role_list": {
       "type": "array",
       "minItems": 9,
-      "maxItems": 9,
+      "maxItems": 10,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/required_artifact_role"
       },
+      "description": "Project Spec S0188: exactly 10 roles (including visualizations) for the historical/internal shape, or exactly 9 roles (visualizations omitted) for a validated external fitted-model candidate with no governed visualization artifact.",
       "allOf": [
         {
           "contains": {
@@ -646,6 +656,7 @@
                       "missing_metrics",
                       "missing_model_card",
                       "missing_public_context",
+                      "missing_visualizations",
                       "missing_manifest_input",
                       "missing_candidate_metadata",
                       "missing_required_artifact"
@@ -760,6 +771,7 @@
             "missing_metrics",
             "missing_model_card",
             "missing_public_context",
+            "missing_visualizations",
             "missing_manifest_input",
             "missing_candidate_metadata",
             "missing_required_artifact",
@@ -767,6 +779,7 @@
             "contradictory_candidate_artifact",
             "unsafe_candidate_artifact",
             "unsafe_model_reference",
+            "unsafe_visualizations_reference",
             "model_bundle_path_mismatch",
             "model_bundle_hash_mismatch",
             "dataset_identifier_mismatch",
@@ -785,6 +798,7 @@
             "manifest_input_schema_incompatible",
             "metrics_schema_incompatible",
             "model_card_schema_incompatible",
+            "visualizations_schema_incompatible",
             "candidate_metadata_schema_incompatible",
             "raw_logs_requested",
             "raw_runtime_requested",

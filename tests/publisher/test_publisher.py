@@ -218,12 +218,25 @@ def _write_candidate(
     missing_role: str | None = None,
     *,
     role_payload_overrides: dict[str, dict] | None = None,
+    omit_role: str | None = None,
 ) -> Path:
+    """Write a synthetic release candidate.
+
+    `missing_role` declares the role in `artifact_roles` (and in
+    `completeness_validation.required_artifact_roles`) but writes no file for
+    it -- simulates a *missing* required artifact. `omit_role` (Project Spec
+    S0188) structurally omits the role from `artifact_roles` and from
+    `required_artifact_roles` entirely, and writes no file -- simulates a
+    role that a validated external fitted-model candidate legitimately never
+    declared, distinct from a declared-but-missing role.
+    """
     candidate_dir = _candidate_dir(tmp_repo)
     candidate_dir.mkdir(parents=True, exist_ok=True)
 
     artifact_roles = {}
     for role in REQUIRED_ROLES:
+        if role == omit_role:
+            continue
         role_path = _role_path(role)
         artifact_roles[role] = {
             "role": role,
@@ -271,7 +284,7 @@ def _write_candidate(
             "assembled_at": "2026-06-19T00:00:00Z",
             "intended_publisher_action": "validate_candidate",
             "completeness_validation": {
-                "required_artifact_roles": list(REQUIRED_ROLES),
+                "required_artifact_roles": [role for role in REQUIRED_ROLES if role != omit_role],
                 "hash_policy": "publisher_calculates_hashes",
                 "manifest_policy": "publisher_generates_manifest",
             },
@@ -950,6 +963,132 @@ def test_manifest_generates_for_accepted_external_candidate_with_promotion_disal
     assert (run_dir / "manifest.json").is_file()
     assert result["safety_boundaries"]["registry_updated"] is False
     assert result["safety_boundaries"]["release_promoted"] is False
+
+
+# --- S0188: visualization-optional release boundary for a validated
+# external fitted-model candidate. omit_role="visualizations" simulates the
+# real assemble_candidate.py output shape for this case: the role is
+# structurally absent from artifact_roles, not merely declared-but-missing.
+
+
+def test_external_provenance_candidate_without_visualizations_is_structurally_accepted(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        omit_role="visualizations",
+        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+    )
+
+    result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert result["validation_outcome"] == "accepted"
+    assert "visualizations" not in result["required_artifact_role_results"]
+    assert len(result["required_artifact_role_results"]) == 9
+
+
+def test_internal_candidate_without_visualizations_role_is_rejected(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo, omit_role="visualizations")
+
+    result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert result["validation_outcome"] == "rejected"
+    assert any(r["code"] == "missing_visualizations" for r in result["rejection"]["reasons"])
+
+
+def test_external_provenance_candidate_with_present_visualizations_still_validates_it(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(),
+            "visualizations": {"not": "schema-valid"},
+        },
+    )
+
+    result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+
+    assert result["validation_outcome"] == "rejected"
+    assert any(r["code"] == "visualizations_schema_incompatible" for r in result["rejection"]["reasons"])
+
+
+def test_manifest_for_external_no_visualizations_candidate_emits_nine_artifacts(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        omit_role="visualizations",
+        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+    )
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    result = manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert len(result["artifacts"]) == 9
+    assert "visualizations" not in {a["role"] for a in result["artifacts"]}
+    assert "visualizations" not in result["required_hash_coverage"]["required_artifact_roles"]
+
+
+def test_manifest_for_internal_candidate_still_contains_ten_artifacts_including_visualizations(tmp_path):
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
+    run_dir = _latest_run_dir(tmp_repo)
+
+    result = manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    assert len(result["artifacts"]) == 10
+    assert "visualizations" in {a["role"] for a in result["artifacts"]}
+
+
+def test_validation_result_and_manifest_schemas_validate_both_role_count_shapes(tmp_path):
+    jsonschema = pytest.importorskip("jsonschema")
+    validation_schema = json.loads(
+        (REPO_ROOT / "publisher" / "validation" / "release-candidate-validation.schema.json").read_text()
+    )
+    manifest_schema = json.loads((REPO_ROOT / "publisher" / "release-manifest.schema.json").read_text())
+
+    def _without_pre_existing_unrelated_drift(validation_result: dict) -> dict:
+        # capability_conditional_validation (Project Spec S0168) is a real
+        # top-level key validate.py always emits, but it predates and is
+        # unrelated to S0188's 9-vs-10-role concern and was never wired into
+        # this schema (additionalProperties: false rejects it regardless of
+        # role count) -- out of scope here; strip it so this test isolates
+        # the S0188 role-count shape this schema is responsible for.
+        return {k: v for k, v in validation_result.items() if k != "capability_conditional_validation"}
+
+    # Internal (10-role) shape.
+    tmp_repo_internal = tmp_path / "internal"
+    _copy_publisher_contracts(tmp_repo_internal)
+    _write_registry(tmp_repo_internal)
+    _write_candidate(tmp_repo_internal)
+    internal_validation = validate.run(str(_candidate_dir(tmp_repo_internal)), repo_root=tmp_repo_internal)
+    jsonschema.validate(_without_pre_existing_unrelated_drift(internal_validation), validation_schema)
+    internal_run_dir = _latest_run_dir(tmp_repo_internal)
+    internal_manifest = manifest.run(str(internal_run_dir), repo_root=tmp_repo_internal)
+    jsonschema.validate(internal_manifest, manifest_schema)
+
+    # External no-visualizations (9-role) shape.
+    tmp_repo_external = tmp_path / "external"
+    _copy_publisher_contracts(tmp_repo_external)
+    _write_registry(tmp_repo_external)
+    _write_candidate(
+        tmp_repo_external,
+        omit_role="visualizations",
+        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+    )
+    external_validation = validate.run(str(_candidate_dir(tmp_repo_external)), repo_root=tmp_repo_external)
+    jsonschema.validate(_without_pre_existing_unrelated_drift(external_validation), validation_schema)
+    external_run_dir = _latest_run_dir(tmp_repo_external)
+    external_manifest = manifest.run(str(external_run_dir), repo_root=tmp_repo_external)
+    jsonschema.validate(external_manifest, manifest_schema)
 
 
 # --- S0180: release-candidate-input external fitted-model provenance

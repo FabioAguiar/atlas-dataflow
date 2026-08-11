@@ -104,11 +104,31 @@
         "training_metrics",
         "model_card",
         "public_context",
-        "visualizations",
         "inference_bundle",
         "internal_evidence_references"
       ],
-      "description": "Governed artifact roles consumed before candidate assembly. Required roles must reference real dataflow outputs with hashes or an explicit hash policy. The visualizations role is required (Project Spec S0128): a release-bound analytical visualizations artifact reference, not an optional one.",
+      "description": "Governed artifact roles consumed before candidate assembly. Required roles must reference real dataflow outputs with hashes or an explicit hash policy. The visualizations role is required for the historical/internal path (Project Spec S0128) but may be legitimately absent for a validated external fitted-model candidate whose training_parameter_record declares the S0157 external profile (Project Spec S0188) -- see the allOf conditional below.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "training_parameter_record": {
+                "properties": {
+                  "contract_version": {
+                    "const": "training-parameter-record.external-fitted-model.v1"
+                  }
+                },
+                "required": ["contract_version"]
+              }
+            },
+            "required": ["training_parameter_record"]
+          },
+          "then": {},
+          "else": {
+            "required": ["visualizations"]
+          }
+        }
+      ],
       "properties": {
         "discovery_evidence": {
           "allOf": [
@@ -315,11 +335,12 @@
                   "const": "model_card"
                 },
                 "source_stage": {
-                  "const": "M24"
+                  "enum": ["M24", "manual_governed_input"]
                 }
               }
             }
-          ]
+          ],
+          "description": "Project Spec S0188: source_stage is M24 for internal training, or manual_governed_input for a validated external fitted model (Project Spec S0157), mirroring training_parameter_record/model_artifact/training_metrics. Discriminated by the referenced training_parameter_record's own declared schema_version, never by dataset_slug."
         },
         "public_context": {
           "allOf": [

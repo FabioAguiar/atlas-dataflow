@@ -104,10 +104,10 @@
         "metrics",
         "model_card",
         "public_context",
-        "visualizations",
         "manifest_input",
         "candidate_metadata"
       ],
+      "description": "Project Spec S0188: visualizations remains a currently mandatory role for the historical/internal path, but may be structurally absent for a validated external fitted-model candidate whose governed evidence provides no visualization artifact. This structural relaxation alone does not make an internal candidate's missing visualizations acceptable -- that semantic requirement is enforced by assembly/publisher validation based on governed provenance, not this schema.",
       "properties": {
         "contracts": {
           "$ref": "#/$defs/artifact_role",
@@ -184,7 +184,7 @@
           "properties": {
             "required_artifact_roles": {
               "type": "array",
-              "minItems": 10,
+              "minItems": 9,
               "maxItems": 10,
               "uniqueItems": true,
               "items": {
@@ -201,7 +201,19 @@
                   "manifest_input",
                   "candidate_metadata"
                 ]
-              }
+              },
+              "description": "Project Spec S0188: exactly 10 roles (including visualizations) for the historical/internal shape, or exactly 9 roles (visualizations omitted) for a validated external fitted-model candidate with no governed visualization artifact. Every non-visualization role remains mandatory in both shapes.",
+              "allOf": [
+                { "contains": { "const": "contracts" } },
+                { "contains": { "const": "public_contract" } },
+                { "contains": { "const": "predictive_bundle" } },
+                { "contains": { "const": "model_artifact" } },
+                { "contains": { "const": "metrics" } },
+                { "contains": { "const": "model_card" } },
+                { "contains": { "const": "public_context" } },
+                { "contains": { "const": "manifest_input" } },
+                { "contains": { "const": "candidate_metadata" } }
+              ]
             },
             "hash_policy": {
               "type": "string",

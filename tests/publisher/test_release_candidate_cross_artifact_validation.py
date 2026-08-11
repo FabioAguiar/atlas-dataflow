@@ -923,6 +923,81 @@ def test_visualizations_unsafe_public_key_is_rejected(tmp_path):
     assert result["schema_compatibility"]["visualizations"]["compatible"] is False
 
 
+# --- S0188: visualization-optional release boundary for a validated
+# external fitted-model candidate ---
+
+
+def test_external_provenance_candidate_structurally_omitting_visualizations_is_accepted(tmp_path):
+    candidate_dir = _candidate_dir(tmp_path)
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+
+    artifact_roles = {}
+    for role in REQUIRED_ROLES:
+        if role == "visualizations":
+            continue
+        role_path = _role_path(role)
+        artifact_roles[role] = {"role": role, "path": role_path, "required": True}
+        if role == "model_artifact":
+            (candidate_dir / role_path).parent.mkdir(parents=True, exist_ok=True)
+            (candidate_dir / role_path).write_bytes(MODEL_ARTIFACT_BYTES)
+            continue
+        overrides = {}
+        if role == "predictive_bundle":
+            overrides = {
+                "model_provenance_origin": "validated_external_fitted_model",
+                "external_model_evidence": {
+                    "origin": "validated_external_fitted_model",
+                    "readiness": {
+                        "operational_validity": "unconfirmed",
+                        "operational_threshold": {"status": "unresolved", "value": None},
+                        "operational_prediction_available": False,
+                    },
+                },
+            }
+        _write_json(candidate_dir / role_path, _artifact_payload(role, **overrides))
+
+    candidate = {
+        "schema_version": "release-candidate.v1",
+        "candidate_kind": "release_candidate",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG, "dataset_title": "Example Dataset"},
+        "release_identity": {
+            "release_id": RELEASE_ID,
+            "release_version": RELEASE_VERSION,
+            "created_at": "2026-06-19T00:00:00Z",
+        },
+        "source_run": {"run_id": "test-run", "producer": "pytest", "created_at": "2026-06-19T00:00:00Z"},
+        "artifact_roles": artifact_roles,
+        "candidate_metadata": {
+            "assembled_by": "pytest",
+            "assembled_at": "2026-06-19T00:00:00Z",
+            "intended_publisher_action": "validate_candidate",
+            "completeness_validation": {
+                "required_artifact_roles": [r for r in REQUIRED_ROLES if r != "visualizations"],
+                "hash_policy": "publisher_calculates_hashes",
+                "manifest_policy": "publisher_generates_manifest",
+            },
+        },
+        "state_boundaries": {
+            "pipeline_run_is_publishable": False,
+            "candidate_is_published_release": False,
+            "promotion_required": True,
+            "registry_update_allowed_in_candidate": False,
+            "public_upload_required": False,
+            "web_administration_required": False,
+            "database_publication_management_required": False,
+            "runtime_consumes_temporary_pipeline_output": False,
+        },
+    }
+    _write_json(candidate_dir / "release-candidate.json", candidate)
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert "visualizations" not in result["role_results"]
+    assert "visualizations" not in result["effective_required_roles"]
+    assert len(result["role_results"]) == 9
+
+
 def test_visualizations_rejection_reasons_are_sanitized(tmp_path):
     candidate_dir = _write_candidate(tmp_path)
     artifact_path = candidate_dir / "artifacts" / "visualizations.json"

@@ -4,8 +4,9 @@ Publisher release manifest generator.
 Reads a validation result from publisher/runs/{run_id}/validation-result.json,
 gates on validation_outcome: accepted (Project Spec S0180 -- structural
 acceptance, independent of operational promotion eligibility), calculates
-SHA-256 hashes for all 10 required artifact role files in the validated
-release candidate, assembles a release manifest conforming to
+SHA-256 hashes for all required artifact role files in the validated
+release candidate (9 or 10, depending on provenance -- Project Spec S0188),
+assembles a release manifest conforming to
 publisher/release-manifest.schema.json, and writes it to
 publisher/runs/{run_id}/manifest.json (same run directory).
 
@@ -19,6 +20,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 _CANDIDATE_FILENAME = "release-candidate.json"
 
@@ -34,6 +36,14 @@ _REQUIRED_ROLES = (
     "manifest_input",
     "candidate_metadata",
 )
+
+# Project Spec S0188: mandatory in every manifest regardless of provenance.
+# visualizations is packaged when the already-validated candidate legitimately
+# declares it (any provenance) and cleanly omitted when it does not -- this
+# module trusts publisher.validate's prior structural acceptance rather than
+# re-deriving provenance itself.
+_ALWAYS_REQUIRED_ROLES = tuple(role for role in _REQUIRED_ROLES if role != "visualizations")
+_OPTIONAL_ROLES = ("visualizations",)
 
 
 def _err(code: str, field: str | None, message: str) -> dict:
@@ -139,14 +149,50 @@ def _unsafe_role_reference(role_path_str: str, candidate_dir: Path) -> bool:
     return not resolved.is_relative_to(candidate_dir.resolve())
 
 
+def _hash_role_artifact(role: str, role_def: Any, candidate_dir: Path) -> tuple:
+    """Return (artifact_entry, errors) for one declared artifact role.
+
+    Returns (None, []) when role_def has no path (caller decides whether
+    that is an error, for a mandatory role, or a legitimate omission, for
+    an optional role -- Project Spec S0188)."""
+    if not isinstance(role_def, dict) or not role_def.get("path"):
+        return None, []
+
+    role_path_str: str = role_def["path"]
+
+    if _unsafe_role_reference(role_path_str, candidate_dir):
+        return None, [_err(
+            "ARTIFACT_ROLE_UNSAFE_REFERENCE",
+            f"artifact_roles.{role}.path",
+            f"Artifact role '{role}' has an unsafe reference.",
+        )]
+
+    artifact_file = candidate_dir / role_path_str
+
+    hash_value, hash_errors = _sha256_file(artifact_file)
+    if hash_errors:
+        return None, hash_errors
+
+    return {
+        "role": role,
+        "reference": role_path_str,
+        "hash_algorithm": "sha256",
+        "hash_value": hash_value,
+    }, []
+
+
 def generate_manifest(candidate_dir: Path) -> tuple:
     """
     Generate a release manifest from a validated candidate directory.
 
-    Returns (manifest, errors). Halts without writing if any artifact file
-    is unreadable during hash calculation, or if any role reference is
-    unsafe (Project Spec S0099 -- enforces the manifest's own long-declared
-    but previously unenforced validation_policy.unsafe_reference_rejects).
+    Returns (manifest, errors). Halts without writing if any mandatory
+    artifact file is missing/unreadable during hash calculation, or if any
+    role reference is unsafe (Project Spec S0099 -- enforces the manifest's
+    own long-declared but previously unenforced
+    validation_policy.unsafe_reference_rejects). Project Spec S0188:
+    `visualizations` is hashed and included when the already-validated
+    candidate declares it, and cleanly omitted -- never an error -- when it
+    does not; every other role remains mandatory.
     """
     candidate_json_path = candidate_dir / _CANDIDATE_FILENAME
     candidate, errors = _load_json_file(candidate_json_path, "candidate_json")
@@ -171,7 +217,7 @@ def generate_manifest(candidate_dir: Path) -> tuple:
     candidate_created_at = release_identity_raw.get("created_at")
 
     artifacts = []
-    for role in _REQUIRED_ROLES:
+    for role in _ALWAYS_REQUIRED_ROLES:
         role_def = artifact_roles.get(role)
         if not isinstance(role_def, dict) or not role_def.get("path"):
             return None, [_err(
@@ -179,28 +225,17 @@ def generate_manifest(candidate_dir: Path) -> tuple:
                 f"artifact_roles.{role}.path",
                 f"Artifact role '{role}' has no path in the candidate.",
             )]
+        entry, entry_errors = _hash_role_artifact(role, role_def, candidate_dir)
+        if entry_errors:
+            return None, entry_errors
+        artifacts.append(entry)
 
-        role_path_str: str = role_def["path"]
-
-        if _unsafe_role_reference(role_path_str, candidate_dir):
-            return None, [_err(
-                "ARTIFACT_ROLE_UNSAFE_REFERENCE",
-                f"artifact_roles.{role}.path",
-                f"Artifact role '{role}' has an unsafe reference.",
-            )]
-
-        artifact_file = candidate_dir / role_path_str
-
-        hash_value, hash_errors = _sha256_file(artifact_file)
-        if hash_errors:
-            return None, hash_errors
-
-        artifacts.append({
-            "role": role,
-            "reference": role_path_str,
-            "hash_algorithm": "sha256",
-            "hash_value": hash_value,
-        })
+    for role in _OPTIONAL_ROLES:
+        entry, entry_errors = _hash_role_artifact(role, artifact_roles.get(role), candidate_dir)
+        if entry_errors:
+            return None, entry_errors
+        if entry is not None:
+            artifacts.append(entry)
 
     dataset_identity: dict = {"dataset_slug": dataset_slug}
     if dataset_title:
@@ -218,7 +253,7 @@ def generate_manifest(candidate_dir: Path) -> tuple:
         "artifacts": artifacts,
         "required_hash_coverage": {
             "hash_algorithm": "sha256",
-            "required_artifact_roles": list(_REQUIRED_ROLES),
+            "required_artifact_roles": [a["role"] for a in artifacts],
             "missing_required_hashes_reject_manifest": True,
         },
         "validation_policy": {

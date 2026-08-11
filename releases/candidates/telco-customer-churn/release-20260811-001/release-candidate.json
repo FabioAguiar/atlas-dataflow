@@ -1,0 +1,104 @@
+{
+  "schema_version": "release-candidate.v1",
+  "candidate_kind": "release_candidate",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "dataset_title": "Telco Customer Churn"
+  },
+  "release_identity": {
+    "release_id": "release-20260811-001",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-08-11T20:15:01Z"
+  },
+  "source_run": {
+    "run_id": "telco-customer-churn-external-materialization-20260811T201500Z",
+    "producer": "pipeline/assemble_candidate.py",
+    "created_at": "2026-08-11T20:15:01Z"
+  },
+  "artifact_roles": {
+    "contracts": {
+      "role": "contracts",
+      "path": "contracts/runtime-contract.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "public_contract": {
+      "role": "public_contract",
+      "path": "contracts/public-contract.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "predictive_bundle": {
+      "role": "predictive_bundle",
+      "path": "predictions/bundle.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "metrics": {
+      "role": "metrics",
+      "path": "metrics/metrics.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "model_card": {
+      "role": "model_card",
+      "path": "model-card.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "public_context": {
+      "role": "public_context",
+      "path": "public-context.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "manifest_input": {
+      "role": "manifest_input",
+      "path": "manifest-input.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "candidate_metadata": {
+      "role": "candidate_metadata",
+      "path": "release-candidate.json",
+      "required": true,
+      "media_type": "application/json"
+    },
+    "model_artifact": {
+      "role": "model_artifact",
+      "path": "models/model.pkl",
+      "required": true,
+      "media_type": "application/octet-stream"
+    }
+  },
+  "candidate_metadata": {
+    "assembled_by": "pipeline/assemble_candidate.py",
+    "assembled_at": "2026-08-11T20:15:01Z",
+    "intended_publisher_action": "validate_candidate",
+    "completeness_validation": {
+      "required_artifact_roles": [
+        "contracts",
+        "public_contract",
+        "predictive_bundle",
+        "metrics",
+        "model_card",
+        "public_context",
+        "manifest_input",
+        "candidate_metadata",
+        "model_artifact"
+      ],
+      "hash_policy": "publisher_calculates_hashes",
+      "manifest_policy": "publisher_generates_manifest"
+    }
+  },
+  "state_boundaries": {
+    "pipeline_run_is_publishable": false,
+    "candidate_is_published_release": false,
+    "promotion_required": true,
+    "registry_update_allowed_in_candidate": false,
+    "public_upload_required": false,
+    "web_administration_required": false,
+    "database_publication_management_required": false,
+    "runtime_consumes_temporary_pipeline_output": false
+  }
+}

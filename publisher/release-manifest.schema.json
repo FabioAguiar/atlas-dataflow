@@ -74,10 +74,11 @@
     },
     "artifacts": {
       "type": "array",
-      "minItems": 10,
+      "minItems": 9,
       "items": {
         "$ref": "#/$defs/artifact_entry"
       },
+      "description": "Project Spec S0188: contains at least the 9 always-mandatory roles below; visualizations is an additional, optional entry present for the historical/internal manifest or for an external manifest whose governed visualizations were available.",
       "allOf": [
         {
           "contains": {
@@ -156,18 +157,6 @@
             "properties": {
               "role": {
                 "const": "public_context"
-              }
-            },
-            "required": [
-              "role"
-            ]
-          }
-        },
-        {
-          "contains": {
-            "properties": {
-              "role": {
-                "const": "visualizations"
               }
             },
             "required": [
@@ -462,12 +451,13 @@
     },
     "required_artifact_role_list": {
       "type": "array",
-      "minItems": 10,
+      "minItems": 9,
       "maxItems": 10,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/required_artifact_role"
       },
+      "description": "Project Spec S0188: exactly 10 roles (including visualizations) for the historical/internal manifest, or exactly 9 roles (visualizations omitted) for an external manifest with unavailable governed visualizations.",
       "allOf": [
         {
           "contains": {
@@ -502,11 +492,6 @@
         {
           "contains": {
             "const": "public_context"
-          }
-        },
-        {
-          "contains": {
-            "const": "visualizations"
           }
         },
         {

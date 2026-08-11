@@ -1,0 +1,82 @@
+{
+  "artifact_kind": "model_card",
+  "created_at": "2026-08-11T20:15:01+00:00",
+  "data_notes": "Reduced, deterministic external candidate-support model card. No raw dataset rows, model bytes, raw logs, raw runtime data, secrets, or notebook state are included.",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn"
+  },
+  "evidence_policy": {
+    "raw_api_payloads_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "external_model_identity": {
+    "estimator_identity": {
+      "class_name": "HistGradientBoostingClassifier",
+      "library": "scikit-learn"
+    },
+    "model_family": "hist_gradient_boosting",
+    "model_state_fingerprint": "c9328311e2ed5953b5aab1abc17b439ff7e90c7c8e4f15b6a31598d05dc771e6"
+  },
+  "hashes": {
+    "algorithm": "sha256"
+  },
+  "input_features": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+  ],
+  "intended_use": "Governed external fitted-model candidate support, materialized for internal review from Atlas-owned governed evidence. Not yet reviewed or approved for public release, profile publication, or production decisioning.",
+  "limitations": [
+    "The model was fitted outside Atlas; Atlas never trained, selected, or tuned it.",
+    "Generated from governed external evidence only; independent validation is required before any downstream use.",
+    "Operational validity: unconfirmed.",
+    "Operational threshold status: unresolved."
+  ],
+  "model_card_boundary_confirmations": {
+    "atlas_training_run_identity_fabricated": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "profile_publication_performed": false,
+    "raw_dataset_embedded": false,
+    "release_publication_performed": false
+  },
+  "model_source_mode": "validated_external_fitted_model",
+  "model_summary": "hist_gradient_boosting model, validated outside Atlas and materialized as governed evidence, for dataset telco-customer-churn to predict Churn.",
+  "path_references": {
+    "model_card_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T201500Z/model-card.json",
+    "model_selection_evidence_reference": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T201500Z/model-selection-evidence.json",
+      "sha256": "ce9d71b65c817b3406227fc9e85790a0976789292187e6ab84cc0f637e915206"
+    },
+    "training_metrics_reference": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T201500Z/training-metrics.json",
+      "sha256": "daa4953cb13a9dfa997b1df10a7dd7e09903c26bb713b52aa8c688059717cad4"
+    },
+    "training_parameter_record_reference": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T201500Z/training-parameter-record.json",
+      "sha256": "6b2e2d190d635d9d99b2edef73e2eb184d8a24f809cfc707e144905f186cbdba"
+    }
+  },
+  "prediction_target": "Churn",
+  "problem_type": "classification",
+  "schema_version": "model-card.v1"
+}

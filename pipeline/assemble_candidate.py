@@ -131,6 +131,42 @@ def _classify_handoff_reference(role: str, path_value: Any, repo_root: Path) -> 
     return _handoff_role_result(role, path_value, ready=True, reason=None)
 
 
+def _detect_external_provenance_from_references(
+    artifact_references: dict[str, Any], repo_root: Path
+) -> bool:
+    """Best-effort external-provenance detection for handoff readiness only.
+
+    Never raises: any missing reference, unsafe path, or read/parse failure
+    resolves to `False` (the safest default -- keeps `visualizations`
+    required unless external provenance is positively confirmed). Uses the
+    same signal `_resolve_training_provenance` later uses at input-build
+    time: the referenced `training_parameter_record` artifact's own
+    declared `contract_version` (Project Spec S0188) -- never dataset_slug,
+    notebook identity, file naming, or path location.
+    """
+    path_value = artifact_references.get("training_parameter_record")
+    if not isinstance(path_value, str) or not path_value.strip():
+        return False
+    path = Path(path_value)
+    if path.is_absolute() or ".." in path.parts:
+        return False
+    resolved = repo_root / path
+    if not resolved.is_file():
+        return False
+    try:
+        content = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(content, dict):
+        return False
+    # Mirrors _read_declared_contract_version's contract_version/schema_version
+    # fallback -- real training-parameter-record artifacts (e.g. the S0157
+    # external profile) declare their version under schema_version, not
+    # contract_version.
+    declared_version = content.get("contract_version") or content.get("schema_version")
+    return declared_version == _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION
+
+
 def build_release_candidate_handoff_readiness(
     artifact_references: dict[str, Any],
     repo_root: Path | str | None = None,
@@ -145,24 +181,54 @@ def build_release_candidate_handoff_readiness(
     (existence, path safety, fixture/placeholder detection) and never
     assembles a release candidate, invokes publisher validation, promotes a
     release, activates a registry entry, or fills API/UI data.
+
+    Project Spec S0188: for a validated external fitted-model handoff (the
+    referenced `training_parameter_record` declares the S0157 external
+    profile), `visualizations` remains classified in `role_results` but is
+    excluded from `not_ready_roles`/`blocking_reasons` when its only reason
+    is a legitimate absence (`missing_reference`) -- a present-but-invalid
+    `visualizations` reference for an external handoff still blocks exactly
+    like every other role. The historical/internal path is unaffected.
     """
     resolved_repo_root = Path(repo_root or _REPO_ROOT).expanduser().resolve()
     if not isinstance(artifact_references, dict):
         artifact_references = {}
 
+    is_external_provenance = _detect_external_provenance_from_references(
+        artifact_references, resolved_repo_root
+    )
+    effective_required_roles = [
+        role
+        for role in _HANDOFF_REQUIRED_ROLES
+        if not (role == "visualizations" and is_external_provenance)
+    ]
+
     role_results = [
         _classify_handoff_reference(role, artifact_references.get(role), resolved_repo_root)
         for role in _HANDOFF_REQUIRED_ROLES
     ]
-    not_ready_roles = [result["role"] for result in role_results if not result["ready"]]
+
+    def _is_blocking(result: dict[str, Any]) -> bool:
+        if result["ready"]:
+            return False
+        if (
+            is_external_provenance
+            and result["role"] == "visualizations"
+            and result["reason"] == "missing_reference"
+        ):
+            return False
+        return True
+
+    not_ready_roles = [result["role"] for result in role_results if _is_blocking(result)]
     blocking_reasons = [
-        f"{result['role']}: {result['reason']}" for result in role_results if not result["ready"]
+        f"{result['role']}: {result['reason']}" for result in role_results if _is_blocking(result)
     ]
 
     return {
         "schema_version": "release-candidate-handoff-readiness.v1",
         "handoff_kind": "release_candidate_data_handoff",
         "required_roles": list(_HANDOFF_REQUIRED_ROLES),
+        "effective_required_roles": effective_required_roles,
         "role_results": role_results,
         "not_ready_roles": not_ready_roles,
         "blocking_reasons": blocking_reasons,
@@ -437,6 +503,30 @@ def derive_deterministic_release_id(training_run_id: str) -> str:
     return f"release-{match.group('timestamp').lower()}"
 
 
+def _is_external_candidate_input(candidate_input: dict[str, Any]) -> bool:
+    """Provenance signal reused everywhere a built `release-candidate-input.v1`
+    document (not raw artifact_references) needs to know whether
+    `visualizations` is legitimately optional (Project Spec S0188). Reads
+    only the document's own already-resolved
+    `artifact_inputs.training_parameter_record.contract_version` -- the same
+    field `_resolve_training_provenance` derives it from at build time --
+    never dataset_slug, notebook identity, file naming, or path location.
+    """
+    artifact_inputs = candidate_input.get("artifact_inputs")
+    if not isinstance(artifact_inputs, dict):
+        return False
+    return (
+        _get_nested(artifact_inputs, "training_parameter_record.contract_version")
+        == _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION
+    )
+
+
+def _required_real_inputs_for(candidate_input: dict[str, Any]) -> list[str]:
+    if _is_external_candidate_input(candidate_input):
+        return [role for role in _REQUIRED_REAL_INPUTS if role != "visualizations"]
+    return list(_REQUIRED_REAL_INPUTS)
+
+
 def _read_declared_contract_version(resolved_path: Path) -> str:
     content = json.loads(resolved_path.read_text(encoding="utf-8"))
     for key in ("contract_version", "schema_version"):
@@ -619,13 +709,13 @@ def build_release_candidate_input(
             contract_version=metrics_version,
         ),
         "model_card": _build_artifact_input(
-            "model_card", artifact_references["model_card"], resolved_repo_root
+            "model_card",
+            artifact_references["model_card"],
+            resolved_repo_root,
+            source_stage=training_provenance_stage,
         ),
         "public_context": _build_artifact_input(
             "public_context", artifact_references["public_context"], resolved_repo_root
-        ),
-        "visualizations": _build_artifact_input(
-            "visualizations", artifact_references["visualizations"], resolved_repo_root
         ),
         "inference_bundle": _build_artifact_input(
             "inference_bundle", artifact_references["inference_bundle"], resolved_repo_root
@@ -649,6 +739,18 @@ def build_release_candidate_input(
             },
         ],
     }
+
+    # Project Spec S0188: visualizations is omitted cleanly (never built as
+    # a placeholder/empty artifact input) when it is legitimately absent for
+    # a validated external fitted-model candidate. build_release_candidate_input
+    # already re-ran handoff readiness above, so an internal/historical
+    # candidate missing visualizations never reaches this point -- it would
+    # have already raised ValueError from the readiness check.
+    visualizations_reference = artifact_references.get("visualizations")
+    if isinstance(visualizations_reference, str) and visualizations_reference.strip():
+        artifact_inputs["visualizations"] = _build_artifact_input(
+            "visualizations", visualizations_reference, resolved_repo_root
+        )
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
@@ -955,7 +1057,26 @@ def _build_release_candidate(
     dataset_identity = candidate_input["dataset_identity"]
     release_identity = candidate_input["release_identity"]
     source_run = candidate_input["source_run"]
-    return {
+    # Project Spec S0188: visualizations is a candidate artifact_roles entry
+    # only when the built release-candidate-input.v1 document actually
+    # carries a visualizations artifact input -- never based on provenance
+    # alone, so a future external candidate that does supply visualizations
+    # still declares the role normally.
+    has_visualizations = isinstance(
+        _get_nested(candidate_input["artifact_inputs"], "visualizations"), dict
+    )
+    required_artifact_roles = [
+        "contracts",
+        "public_contract",
+        "predictive_bundle",
+        "metrics",
+        "model_card",
+        "public_context",
+    ]
+    if has_visualizations:
+        required_artifact_roles.append("visualizations")
+    required_artifact_roles.extend(["manifest_input", "candidate_metadata", "model_artifact"])
+    release_candidate = {
         "schema_version": "release-candidate.v1",
         "candidate_kind": "release_candidate",
         "dataset_identity": {
@@ -1058,18 +1179,7 @@ def _build_release_candidate(
             "assembled_at": now,
             "intended_publisher_action": "validate_candidate",
             "completeness_validation": {
-                "required_artifact_roles": [
-                    "contracts",
-                    "public_contract",
-                    "predictive_bundle",
-                    "metrics",
-                    "model_card",
-                    "public_context",
-                    "visualizations",
-                    "manifest_input",
-                    "candidate_metadata",
-                    "model_artifact",
-                ],
+                "required_artifact_roles": required_artifact_roles,
                 "hash_policy": "publisher_calculates_hashes",
                 "manifest_policy": "publisher_generates_manifest",
             },
@@ -1085,6 +1195,13 @@ def _build_release_candidate(
             "runtime_consumes_temporary_pipeline_output": False,
         },
     }
+    if not has_visualizations:
+        # Project Spec S0188: structurally omit the role entirely (never a
+        # placeholder/required:false entry) for a validated external
+        # fitted-model candidate that legitimately has no visualizations
+        # artifact input.
+        del release_candidate["artifact_roles"]["visualizations"]
+    return release_candidate
 
 
 def _get_nested(data: dict[str, Any], dotted_path: str) -> Any:
@@ -1127,7 +1244,7 @@ def _validate_candidate_input(candidate_input: dict[str, Any]) -> list[str]:
         errors.append("artifact_inputs must be an object")
         return errors
 
-    for input_path in _REQUIRED_REAL_INPUTS:
+    for input_path in _required_real_inputs_for(candidate_input):
         artifact = _get_nested(artifact_inputs, input_path)
         if not isinstance(artifact, dict):
             errors.append(f"artifact_inputs.{input_path} is required")
@@ -1207,14 +1324,22 @@ def _required_public_artifacts(candidate_input: dict[str, Any]) -> list[tuple[di
     artifact_inputs = candidate_input["artifact_inputs"]
     artifacts: list[tuple[dict[str, Any], str]] = []
     for input_path, output_path in _CANDIDATE_ARTIFACT_MAPPINGS:
-        artifacts.append((_get_nested(artifact_inputs, input_path), output_path))
+        artifact = _get_nested(artifact_inputs, input_path)
+        # Project Spec S0188: an artifact input legitimately absent (only
+        # ever true for visualizations on a validated external fitted-model
+        # candidate; _validate_candidate_input already rejected any other
+        # missing required input before this is reached) is skipped rather
+        # than copied as a placeholder.
+        if artifact is None:
+            continue
+        artifacts.append((artifact, output_path))
     return artifacts
 
 
 def _missing_required_artifacts(candidate_input: dict[str, Any], repo_root: Path) -> list[str]:
     missing = []
     artifact_inputs = candidate_input["artifact_inputs"]
-    for input_path in _REQUIRED_REAL_INPUTS:
+    for input_path in _required_real_inputs_for(candidate_input):
         artifact = _get_nested(artifact_inputs, input_path)
         source_path = artifact.get("path")
         try:

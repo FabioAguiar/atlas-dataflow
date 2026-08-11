@@ -217,7 +217,6 @@ def test_notebook_orchestrates_external_fitted_model_materialization():
 def test_external_materialization_never_trains_or_deserializes():
     code = _source("code")
     for forbidden in (
-        "pipeline.training",
         "train_from_paths",
         "joblib.load",
         "pickle.load",
@@ -226,6 +225,12 @@ def test_external_materialization_never_trains_or_deserializes():
         ".predict_proba(",
     ):
         assert forbidden not in code
+    # The notebook is allowed to reuse pipeline.training's governed,
+    # side-effect-free prepared-dataset metadata resolver -- the same one
+    # pipeline/generate_inference_bundle.py already imports for its own
+    # internal-training branch -- but never the real training entrypoint.
+    assert "from pipeline.training import _prepared_dataset_metadata_blocking_reasons" in code
+    assert "pipeline.training.train_from_paths" not in code
 
 
 def test_notebook_orchestrates_governed_inference_bundle_generation():
@@ -234,6 +239,76 @@ def test_notebook_orchestrates_governed_inference_bundle_generation():
     assert "external_fitted_model_materialization_result=external_materialization_result" in code
     assert '"training_evidence"' not in code
     assert 'inference_bundle_result["status"] != "generated"' in code
+
+
+# --- prepared-dataset / inference-bundle blocker fix -------------------------
+
+
+def test_notebook_resolves_prepared_dataset_from_atlas_owned_metadata():
+    code = _source("code")
+    assert "from pipeline.training import _prepared_dataset_metadata_blocking_reasons" in code
+    assert "prepared_dataset_metadata_full_path = repo_root / prepared_data_metadata_relative_path" in code
+    assert (
+        'prepared_dataset_metadata = json.loads(\n'
+        "            prepared_dataset_metadata_full_path.read_text(encoding=\"utf-8\")\n"
+        "        )"
+    ) in code
+    assert "governed_reasons, governed_reference = _prepared_dataset_metadata_blocking_reasons(" in code
+
+
+def test_notebook_verifies_prepared_dataset_existence_and_integrity_before_bundle_call():
+    code = _source("code")
+    # Existence/integrity (including governed content_sha256) is enforced by
+    # the same reused `_prepared_dataset_metadata_blocking_reasons` boundary
+    # -- the notebook must not skip or duplicate that check, and must fail
+    # closed (via the existing record_block mechanism) rather than continue
+    # with an unresolved/invalid prepared dataset.
+    assert "prepared_dataset_blocking_reasons.extend(governed_reasons)" in code
+    assert 'record_block("prepared_dataset_unresolved", reason)' in code
+    resolution_index = code.index(
+        "_prepared_dataset_metadata_blocking_reasons(\n            prepared_dataset_metadata"
+    )
+    bundle_call_index = code.index("materialize_governed_inference_bundle(")
+    assert resolution_index < bundle_call_index
+
+
+def test_notebook_checks_prepared_dataset_metadata_dataset_identity():
+    code = _source("code")
+    assert (
+        '(prepared_dataset_metadata.get("dataset_identity") or {}).get(\n'
+        '            "dataset_slug"\n'
+        "        )"
+    ) in code
+    assert "if metadata_dataset_slug != dataset_slug:" in code
+
+
+def test_notebook_passes_resolved_prepared_dataset_path_and_ref_to_bundle_call():
+    code = _source("code")
+    assert "prepared_dataset_path=prepared_dataset_path," in code
+    assert "prepared_dataset_ref=prepared_dataset_ref," in code
+    resolution_index = code.index("prepared_dataset_path = None\nprepared_dataset_ref = None")
+    bundle_call_index = code.index("materialize_governed_inference_bundle(")
+    assert resolution_index < bundle_call_index
+
+
+def test_notebook_does_not_use_raw_dataset_as_prepared_dataset():
+    code = _source("code")
+    bundle_section_start = code.index("prepared_dataset_path = None\nprepared_dataset_ref = None")
+    bundle_call_end = code.index("materialize_governed_inference_bundle(")
+    bundle_section = code[bundle_section_start:bundle_call_end]
+    assert "dataset_relative_path" not in bundle_section
+    assert "data/raw" not in bundle_section
+
+
+def test_notebook_never_persists_absolute_prepared_dataset_path():
+    code = _source("code")
+    # The resolved reference used for the durable bundle artifact is always
+    # the governed repository-relative string returned by
+    # _prepared_dataset_metadata_blocking_reasons -- never str(repo_root) or
+    # any other absolute-path construction.
+    assert "prepared_dataset_ref = governed_reference" in code
+    assert "str(repo_root / governed_reference)" not in code
+    assert "str(prepared_dataset_path)" not in code
 
 
 def test_notebook_orchestrates_release_candidate_assembly_from_compatible_roles():

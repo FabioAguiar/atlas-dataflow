@@ -1038,6 +1038,14 @@ def _build_external_bundle(
     execution_contract_path = Path(args.execution_contract)
     runtime_contract_path = Path(args.runtime_contract)
     public_contract_path = Path(args.public_contract)
+    if not args.prepared_dataset:
+        raise BundleGenerationError(
+            "missing_required_field",
+            "prepared_dataset_path is required for an external fitted-model bundle "
+            "(contracts/inference-bundle.schema.json requires prepared_dataset "
+            "unconditionally); it is never fabricated or substituted with the raw dataset.",
+            field="prepared_dataset_path",
+        )
     prepared_dataset_path = Path(args.prepared_dataset)
     dataset_context_path = Path(args.dataset_context) if args.dataset_context else prepared_dataset_path
     schema_path = Path(args.inference_bundle_schema)

@@ -732,6 +732,12 @@ def test_materialization_result_generates_schema_valid_external_inference_bundle
     assert bundle["external_model_evidence"]["origin"] == "validated_external_fitted_model"
     assert bundle["external_model_evidence"]["model_family"] == "hist_gradient_boosting"
     assert bundle["runtime_execution"]["model_family"] == "hist_gradient_boosting"
+    assert bundle["prepared_dataset"]["prepared_dataset_reference"]["path"] == (
+        "contracts/sample/prepared-dataset.json"
+    )
+    assert bundle["prepared_dataset"]["prepared_dataset_sha256"] == _sha256_bytes(
+        prepared_dataset_path.read_bytes()
+    )
     assert "training_evidence" not in bundle
     assert bundle["external_model_evidence"]["readiness"]["operational_validity"] == "unconfirmed"
     assert bundle["external_model_evidence"]["readiness"]["operational_threshold"] == {
@@ -739,6 +745,160 @@ def test_materialization_result_generates_schema_valid_external_inference_bundle
         "value": None,
     }
     assert bundle["external_model_evidence"]["readiness"]["operational_prediction_available"] is False
+
+
+# --- prepared-dataset / inference-bundle blocker fix -------------------------
+
+
+def _bundle_kwargs_without_prepared_dataset(
+    *, repo_root: Path, materialization_result: dict, output_path: Path
+) -> dict[str, Any]:
+    execution_contract_path = repo_root / "contracts" / "sample" / "execution-contract.json"
+    _write_json(execution_contract_path, _minimal_execution_contract())
+    runtime_contract_path = repo_root / "contracts" / "sample" / "runtime-contract.json"
+    _write_json(runtime_contract_path, {"contract_version": "runtime_contract.v1"})
+    public_contract_path = repo_root / "contracts" / "sample" / "public-contract.json"
+    _write_json(public_contract_path, {"contract_version": "public_contract.v1"})
+    dataset_context_path = repo_root / "contracts" / "sample" / "dataset-context.json"
+    _write_json(dataset_context_path, {"schema_version": "dataset-context.v1"})
+
+    return {
+        "external_fitted_model_materialization_result": materialization_result,
+        "execution_contract_path": execution_contract_path,
+        "runtime_contract_path": runtime_contract_path,
+        "public_contract_path": public_contract_path,
+        "dataset_context_path": dataset_context_path,
+        "output_path": output_path,
+        "prediction_type": "number",
+        "repo_root": repo_root,
+        "dataset_slug": DATASET_SLUG,
+        "release_id": "release-20260801-001",
+        "class_labels": ["no", "yes"],
+        "probability_output": True,
+        "inference_bundle_schema_path": str(INFERENCE_BUNDLE_SCHEMA_PATH),
+        "execution_contract_ref": "contracts/sample/execution-contract.json",
+        "runtime_contract_ref": "contracts/sample/runtime-contract.json",
+        "public_contract_ref": "contracts/sample/public-contract.json",
+        "dataset_context_ref": "contracts/sample/dataset-context.json",
+    }
+
+
+def test_external_bundle_missing_prepared_dataset_path_blocks_without_type_error(tmp_path: Path) -> None:
+    """The historical bug: omitting prepared_dataset_path/ref must never raise
+    TypeError from Path(None) -- it must return a governed blocked result."""
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+    output_path = repo_root / "contracts" / "sample" / "inference-bundle.json"
+
+    kwargs = _bundle_kwargs_without_prepared_dataset(
+        repo_root=repo_root, materialization_result=materialization_result, output_path=output_path
+    )
+    # prepared_dataset_path / prepared_dataset_ref intentionally omitted.
+
+    result = generate_inference_bundle.materialize_governed_inference_bundle(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"]
+    assert any("prepared_dataset" in reason for reason in result["blocking_reasons"])
+    assert not output_path.exists()
+
+
+def test_external_bundle_nonexistent_prepared_dataset_path_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+    output_path = repo_root / "contracts" / "sample" / "inference-bundle.json"
+
+    kwargs = _bundle_kwargs_without_prepared_dataset(
+        repo_root=repo_root, materialization_result=materialization_result, output_path=output_path
+    )
+    kwargs["prepared_dataset_path"] = repo_root / "contracts" / "sample" / "does-not-exist.json"
+    kwargs["prepared_dataset_ref"] = "contracts/sample/does-not-exist.json"
+
+    result = generate_inference_bundle.materialize_governed_inference_bundle(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"]
+    assert not output_path.exists()
+
+
+def test_prepared_dataset_metadata_content_sha256_mismatch_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Direct unit test of the same governed
+    `pipeline.training._prepared_dataset_metadata_blocking_reasons` boundary
+    the notebook's prepared-dataset resolution step reuses (already imported
+    by this module for the internal-training branch): a prepared dataset
+    whose actual bytes do not match the metadata's governed content_sha256
+    must block."""
+    prepared_dataset_dir = tmp_path / "pipeline" / "prepared" / DATASET_SLUG
+    prepared_dataset_dir.mkdir(parents=True)
+    prepared_dataset_file = prepared_dataset_dir / "prepared-data.csv"
+    prepared_dataset_file.write_text("a,b\n1,2\n", encoding="utf-8")
+    actual_sha256 = _sha256_bytes(prepared_dataset_file.read_bytes())
+    governed_sha256 = "0" * 64
+    assert governed_sha256 != actual_sha256
+
+    metadata = {
+        "schema_version": "prepared-data-metadata.v1",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "prepared_candidate": {
+            "produced": True,
+            "reference": {
+                "path": f"pipeline/prepared/{DATASET_SLUG}/prepared-data.csv",
+                "content_sha256": governed_sha256,
+            },
+        },
+        "training_readiness": {"is_training_ready": True},
+        "unresolved_review_items": [],
+    }
+
+    import pipeline.training as _training_module
+
+    monkeypatch.setattr(_training_module, "_repo_root", lambda: tmp_path)
+    blocking_reasons, reference = generate_inference_bundle._prepared_dataset_metadata_blocking_reasons(
+        metadata
+    )
+
+    assert blocking_reasons
+    assert any("content_sha256 mismatch" in reason for reason in blocking_reasons)
+
+
+def test_prepared_dataset_metadata_content_sha256_match_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared_dataset_dir = tmp_path / "pipeline" / "prepared" / DATASET_SLUG
+    prepared_dataset_dir.mkdir(parents=True)
+    prepared_dataset_file = prepared_dataset_dir / "prepared-data.csv"
+    prepared_dataset_file.write_text("a,b\n1,2\n", encoding="utf-8")
+    actual_sha256 = _sha256_bytes(prepared_dataset_file.read_bytes())
+
+    metadata = {
+        "schema_version": "prepared-data-metadata.v1",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "prepared_candidate": {
+            "produced": True,
+            "reference": {
+                "path": f"pipeline/prepared/{DATASET_SLUG}/prepared-data.csv",
+                "content_sha256": actual_sha256,
+            },
+        },
+        "training_readiness": {"is_training_ready": True},
+        "unresolved_review_items": [],
+    }
+
+    import pipeline.training as _training_module
+
+    monkeypatch.setattr(_training_module, "_repo_root", lambda: tmp_path)
+    blocking_reasons, reference = generate_inference_bundle._prepared_dataset_metadata_blocking_reasons(
+        metadata
+    )
+
+    assert blocking_reasons == []
+    assert reference == f"pipeline/prepared/{DATASET_SLUG}/prepared-data.csv"
 
 
 @pytest.mark.parametrize(

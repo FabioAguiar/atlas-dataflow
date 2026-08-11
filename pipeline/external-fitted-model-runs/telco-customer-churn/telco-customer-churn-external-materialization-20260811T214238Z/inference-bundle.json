@@ -11,8 +11,8 @@
   },
   "bundle_identity": {
     "artifact_kind": "inference_bundle",
-    "bundle_id": "telco-customer-churn-inference-bundle-20260811T214423Z",
-    "created_at": "2026-08-11T21:44:23+00:00"
+    "bundle_id": "telco-customer-churn-inference-bundle-20260811T214238Z",
+    "created_at": "2026-08-11T21:42:38+00:00"
   },
   "compatibility_constraints": {
     "requires_contract_versions": {
@@ -65,17 +65,17 @@
     "evidence_references": {
       "model_selection_evidence_reference": {
         "contract_version": "model-selection-evidence.external-fitted-model.v1",
-        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/model-selection-evidence.json",
+        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/model-selection-evidence.json",
         "sha256": "ce9d71b65c817b3406227fc9e85790a0976789292187e6ab84cc0f637e915206"
       },
       "training_metrics_reference": {
         "contract_version": "training-metrics.external-fitted-model.v1",
-        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-metrics.json",
+        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/training-metrics.json",
         "sha256": "daa4953cb13a9dfa997b1df10a7dd7e09903c26bb713b52aa8c688059717cad4"
       },
       "training_parameter_record_reference": {
         "contract_version": "training-parameter-record.external-fitted-model.v1",
-        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-parameter-record.json",
+        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/training-parameter-record.json",
         "sha256": "6b2e2d190d635d9d99b2edef73e2eb184d8a24f809cfc707e144905f186cbdba"
       }
     },
@@ -126,7 +126,7 @@
   "model_artifact": {
     "path": "models/model.pkl",
     "sha256": "48da4c7aa56d5d08090e808f551f555740d18e791af39c4c3f373467ec296b8c",
-    "source_training_parameter_record_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-parameter-record.json"
+    "source_training_parameter_record_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/training-parameter-record.json"
   },
   "model_provenance_origin": "validated_external_fitted_model",
   "output_schema": {

@@ -1,6 +1,6 @@
 {
   "artifact_kind": "model_card",
-  "created_at": "2026-08-11T21:44:23+00:00",
+  "created_at": "2026-08-11T21:42:38+00:00",
   "data_notes": "Reduced, deterministic external candidate-support model card. No raw dataset rows, model bytes, raw logs, raw runtime data, secrets, or notebook state are included.",
   "dataset_identity": {
     "dataset_slug": "telco-customer-churn"
@@ -62,17 +62,17 @@
   "model_source_mode": "validated_external_fitted_model",
   "model_summary": "hist_gradient_boosting model, validated outside Atlas and materialized as governed evidence, for dataset telco-customer-churn to predict Churn.",
   "path_references": {
-    "model_card_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/model-card.json",
+    "model_card_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/model-card.json",
     "model_selection_evidence_reference": {
-      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/model-selection-evidence.json",
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/model-selection-evidence.json",
       "sha256": "ce9d71b65c817b3406227fc9e85790a0976789292187e6ab84cc0f637e915206"
     },
     "training_metrics_reference": {
-      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-metrics.json",
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/training-metrics.json",
       "sha256": "daa4953cb13a9dfa997b1df10a7dd7e09903c26bb713b52aa8c688059717cad4"
     },
     "training_parameter_record_reference": {
-      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-parameter-record.json",
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214238Z/training-parameter-record.json",
       "sha256": "6b2e2d190d635d9d99b2edef73e2eb184d8a24f809cfc707e144905f186cbdba"
     }
   },

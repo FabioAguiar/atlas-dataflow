@@ -1,0 +1,61 @@
+{
+  "artifact_kind": "external_fitted_model_materialization_result",
+  "boundary_confirmations": {
+    "atlas_training_invoked": false,
+    "estimator_fit_or_fit_transform_called": false,
+    "external_models_created_or_recreated": false,
+    "external_project_root_retained": false,
+    "inference_performed": false,
+    "model_bytes_imported_or_deserialized": false,
+    "model_selection_performed": false,
+    "threshold_optimized": false,
+    "training_run_identity_fabricated": false
+  },
+  "created_at": "2026-08-11T21:44:23+00:00",
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn"
+  },
+  "educational_threshold": {
+    "scenario": "minimum_recall_0_80",
+    "value": 0.2577809673219062
+  },
+  "evidence_hashes": {
+    "model_selection_evidence_sha256": "ce9d71b65c817b3406227fc9e85790a0976789292187e6ab84cc0f637e915206",
+    "training_metrics_sha256": "daa4953cb13a9dfa997b1df10a7dd7e09903c26bb713b52aa8c688059717cad4",
+    "training_parameter_record_sha256": "6b2e2d190d635d9d99b2edef73e2eb184d8a24f809cfc707e144905f186cbdba"
+  },
+  "evidence_references": {
+    "model_selection_evidence_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/model-selection-evidence.json",
+    "training_metrics_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-metrics.json",
+    "training_parameter_record_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-parameter-record.json"
+  },
+  "final_test_completion": {
+    "evaluation_count": 1,
+    "used_for_threshold_selection": false
+  },
+  "materialization_identity": {
+    "materialization_id": "telco-customer-churn-external-materialization-20260811T214423Z",
+    "producer": "notebooks/datasets/telco-customer-churn/dataset_integration.ipynb"
+  },
+  "model_artifact_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/model.bin",
+  "model_artifact_sha256": "48da4c7aa56d5d08090e808f551f555740d18e791af39c4c3f373467ec296b8c",
+  "model_source_mode": "validated_external_fitted_model",
+  "model_state_fingerprint": "c9328311e2ed5953b5aab1abc17b439ff7e90c7c8e4f15b6a31598d05dc771e6",
+  "operational_readiness": {
+    "educational_final_model_complete": true,
+    "educational_inference_demo_ready": true,
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "unresolved",
+      "value": null
+    },
+    "operational_validity": "unconfirmed"
+  },
+  "runtime_compatibility": {
+    "load_safety_confirmed": true,
+    "loader_strategy": "joblib_sklearn_predict",
+    "serialization_format": "joblib"
+  },
+  "schema_version": "external-fitted-model-materialization.v1",
+  "status": "materialized"
+}

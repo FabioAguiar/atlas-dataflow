@@ -3016,240 +3016,111 @@ def test_public_health_remains_available_when_admin_runtime_disabled():
 
 
 # ---------------------------------------------------------------------------
-# Project Spec S0189: operational_readiness_summary projection and
-# POST /admin/runs/{run_id}/operational-readiness.
-#
-# Reuses tests/publisher/test_operational_readiness.py's own fixture
-# builders (a real candidate + a real publisher.validate.run() call) rather
-# than duplicating that ~150 lines of fixture code here: unlike
-# promote_admin_run's hand-authored manifest/validation-result fixtures
-# (sufficient because promote only reads those two files), a genuine
-# operational-readiness review recomputes and cross-checks real SHA-256
-# bindings against the actual candidate/predictive-bundle bytes, so its
-# fixtures must be self-consistent, not hand-typed.
+# Project Spec S0190: operational-readiness review removal, direct promotion
+# for a stale promotion_gate, and unavailable-run removal.
 # ---------------------------------------------------------------------------
 
-_TESTS_PUBLISHER_DIR = REPO_ROOT / "tests" / "publisher"
-if str(_TESTS_PUBLISHER_DIR) not in sys.path:
-    sys.path.insert(0, str(_TESTS_PUBLISHER_DIR))
-import test_operational_readiness as or_fixtures  # noqa: E402
 
-
-def _make_operational_readiness_request(run_id: str, headers: dict[str, str]) -> Request:
-    encoded_headers = [
-        (key.lower().encode("latin-1"), value.encode("latin-1"))
-        for key, value in headers.items()
-    ]
-    scope = {
-        "type": "http",
-        "method": "POST",
-        "path": f"/admin/runs/{run_id}/operational-readiness",
-        "headers": encoded_headers,
-    }
-    return Request(scope)
-
-
-def test_operational_readiness_summary_present_and_unresolved_for_external_run(tmp_path):
-    repo_root = tmp_path / "repo"
-    _candidate_dir, source_run_dir = or_fixtures._prepare_source_run(
-        repo_root, predictive_bundle_payload=or_fixtures._external_predictive_bundle_payload()
-    )
-    from publisher import manifest as publisher_manifest
-    publisher_manifest.run(str(source_run_dir), repo_root=repo_root)
-
-    original_root = admin_runs._admin_runs_root
-    try:
-        admin_runs._admin_runs_root = lambda: repo_root / "publisher" / "runs"
-        result = admin_runs.list_admin_run_summaries()
-    finally:
-        admin_runs._admin_runs_root = original_root
-
-    entry = next(e for e in result["runs"] if e["run_id"] == source_run_dir.name)
-    summary = entry["operational_readiness_summary"]
-    assert summary == {
-        "model_source_mode": "validated_external_fitted_model",
-        "operational_validity": "unconfirmed",
-        "operational_threshold_status": "unresolved",
-        "operational_threshold_value": None,
-        "operational_prediction_available": False,
-        "review_required": True,
-        "review_available": True,
-        "decision_applied": False,
-    }
-
-
-def test_operational_readiness_summary_absent_for_internal_run(tmp_path):
-    repo_root = tmp_path / "repo"
-    _candidate_dir, source_run_dir = or_fixtures._prepare_source_run(
-        repo_root,
-        predictive_bundle_payload=or_fixtures._artifact_payload("predictive_bundle"),
-        model_source_mode="atlas_internal_training",
-        include_visualizations=True,
-    )
-
-    original_root = admin_runs._admin_runs_root
-    try:
-        admin_runs._admin_runs_root = lambda: repo_root / "publisher" / "runs"
-        result = admin_runs.list_admin_run_summaries()
-    finally:
-        admin_runs._admin_runs_root = original_root
-
-    entry = next(e for e in result["runs"] if e["run_id"] == source_run_dir.name)
-    assert "operational_readiness_summary" not in entry
-
-
-def test_review_admin_run_operational_readiness_creates_new_run_and_reveals_it(tmp_path):
-    repo_root = tmp_path / "repo"
-    _candidate_dir, source_run_dir = or_fixtures._prepare_source_run(
-        repo_root, predictive_bundle_payload=or_fixtures._external_predictive_bundle_payload()
-    )
-    from publisher import manifest as publisher_manifest
-    publisher_manifest.run(str(source_run_dir), repo_root=repo_root)
-
-    original_root = admin_runs._admin_runs_root
-    original_repo_root = admin_runs._REPO_ROOT
-    try:
-        admin_runs._admin_runs_root = lambda: repo_root / "publisher" / "runs"
-        admin_runs._REPO_ROOT = repo_root
-
-        result = admin_runs.review_admin_run_operational_readiness(
-            source_run_dir.name, or_fixtures.VALID_OPERATOR_DECISION
-        )
-        assert result["reviewed"] is True
-        assert result["promotion_eligible"] is True
-        assert result["new_run_id"] != source_run_dir.name
-
-        listing = admin_runs.list_admin_run_summaries()
-    finally:
-        admin_runs._admin_runs_root = original_root
-        admin_runs._REPO_ROOT = original_repo_root
-
-    new_entry = next(e for e in listing["runs"] if e["run_id"] == result["new_run_id"])
-    new_summary = new_entry["operational_readiness_summary"]
-    assert new_summary["decision_applied"] is True
-    assert new_summary["operational_validity"] == "confirmed"
-    assert new_summary["operational_threshold_status"] == "resolved"
-    assert new_summary["operational_threshold_value"] == 0.31
-    assert new_summary["operational_prediction_available"] is True
-    assert new_summary["review_required"] is False
-
-    # The source run itself remains untouched and still shows unresolved.
-    source_entry = next(e for e in listing["runs"] if e["run_id"] == source_run_dir.name)
-    assert source_entry["operational_readiness_summary"]["decision_applied"] is False
-
-    # This review flow never promotes or touches the registry.
-    assert not (repo_root / "releases" / or_fixtures.RELEASE_ID).exists()
-
-
-def test_review_admin_run_operational_readiness_rejects_forbidden_operator_field(tmp_path):
-    repo_root = tmp_path / "repo"
-    _candidate_dir, source_run_dir = or_fixtures._prepare_source_run(
-        repo_root, predictive_bundle_payload=or_fixtures._external_predictive_bundle_payload()
-    )
-    tampered_decision = dict(or_fixtures.VALID_OPERATOR_DECISION)
-    tampered_decision["promotion_allowed"] = True
-
-    original_root = admin_runs._admin_runs_root
-    original_repo_root = admin_runs._REPO_ROOT
-    try:
-        admin_runs._admin_runs_root = lambda: repo_root / "publisher" / "runs"
-        admin_runs._REPO_ROOT = repo_root
-        result = admin_runs.review_admin_run_operational_readiness(source_run_dir.name, tampered_decision)
-    finally:
-        admin_runs._admin_runs_root = original_root
-        admin_runs._REPO_ROOT = original_repo_root
-
-    assert result["reviewed"] is False
-    assert result["errors"][0]["code"] == "OPERATIONAL_READINESS_REVIEW_BLOCKED"
-
-
-def test_review_admin_run_operational_readiness_run_not_found():
-    original_root = admin_runs._admin_runs_root
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            admin_runs._admin_runs_root = lambda: Path(tmp)
-            result = admin_runs.review_admin_run_operational_readiness(
-                "does-not-exist", or_fixtures.VALID_OPERATOR_DECISION
-            )
-    finally:
-        admin_runs._admin_runs_root = original_root
-
-    assert result["reviewed"] is False
-    assert result["errors"][0]["code"] == "RUN_NOT_FOUND"
-
-
-# --- POST /admin/runs/{run_id}/operational-readiness: access-control boundary ---
-
-
-def test_operational_readiness_route_returns_generic_not_found_when_admin_runtime_unset():
-    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
-    os.environ.pop("ADMIN_API_TOKEN", None)
-    request = _make_operational_readiness_request("any-run", {})
-    response = api_main.review_admin_run_operational_readiness_route("any-run", request)
-    assert response.status_code == 404
-    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
-
-
-def test_operational_readiness_route_reviews_run_when_admin_runtime_enabled(tmp_path):
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ.pop("ADMIN_API_TOKEN", None)
-    repo_root = tmp_path / "repo"
-    _candidate_dir, source_run_dir = or_fixtures._prepare_source_run(
-        repo_root, predictive_bundle_payload=or_fixtures._external_predictive_bundle_payload()
-    )
-
-    original_root = admin_runs._admin_runs_root
-    original_repo_root = admin_runs._REPO_ROOT
-    try:
-        admin_runs._admin_runs_root = lambda: repo_root / "publisher" / "runs"
-        admin_runs._REPO_ROOT = repo_root
-        request = _make_operational_readiness_request(source_run_dir.name, {})
-        response = api_main.review_admin_run_operational_readiness_route(
-            source_run_dir.name, request, dict(or_fixtures.VALID_OPERATOR_DECISION)
-        )
-
-        assert response["reviewed"] is True
-        assert response["promotion_eligible"] is True
-    finally:
-        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
-        os.environ.pop("ADMIN_API_TOKEN", None)
-        admin_runs._admin_runs_root = original_root
-        admin_runs._REPO_ROOT = original_repo_root
-
-
-def test_operational_readiness_route_returns_sanitized_422_when_run_not_found():
-    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
-    os.environ.pop("ADMIN_API_TOKEN", None)
-    original_root = admin_runs._admin_runs_root
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            admin_runs._admin_runs_root = lambda: root
-            request = _make_operational_readiness_request("does-not-exist", {})
-            response = api_main.review_admin_run_operational_readiness_route(
-                "does-not-exist", request, dict(or_fixtures.VALID_OPERATOR_DECISION)
-            )
-
-            assert response.status_code == 422
-            body = json.loads(response.body.decode("utf-8"))
-            assert body["error_code"] == "ADMIN_RUN_OPERATIONAL_READINESS_REVIEW_FAILED"
-            assert body["errors"][0]["code"] == "RUN_NOT_FOUND"
-            _assert_no_private_markers(body)
-    finally:
-        os.environ.pop("ATLAS_ADMIN_ENABLED", None)
-        os.environ.pop("ADMIN_API_TOKEN", None)
-        admin_runs._admin_runs_root = original_root
-
-
-def test_operational_readiness_route_registered_and_public_routes_unchanged():
+def test_operational_readiness_review_route_is_absent():
     paths = {route.path for route in api_main.app.routes}
-    assert "/admin/runs/{run_id}/operational-readiness" in paths
+    assert "/admin/runs/{run_id}/operational-readiness" not in paths
+    assert not any("operational-readiness" in path for path in paths)
 
     dataset_paths = {path for path in paths if path.startswith("/datasets")}
     assert dataset_paths == _EXPECTED_PUBLIC_DATASET_PATHS
 
-    public_paths = {path for path in paths if not path.startswith("/admin")}
-    assert not any("operational-readiness" in path for path in public_paths)
+
+def test_review_admin_run_operational_readiness_function_is_absent():
+    assert not hasattr(admin_runs, "review_admin_run_operational_readiness")
+    assert not hasattr(api_main, "review_admin_run_operational_readiness_route")
+    assert not hasattr(api_main, "ADMIN_RUN_OPERATIONAL_READINESS_REVIEW_FAILED")
+
+
+def test_admin_run_summary_never_projects_operational_readiness_summary():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        # Simulate a historical S0189-era validation-result.json that still
+        # carries operational_readiness_evaluation -- the Admin summary must
+        # never project it as operational_readiness_summary any longer.
+        legacy_validation_result = {
+            **_ACCEPTED_VALIDATION_RESULT,
+            "promotion_gate": {"promotion_allowed": False, "registry_update_allowed": False},
+            "operational_readiness_evaluation": {
+                "source": "bundle_only",
+                "decision_reference": None,
+                "sha256": None,
+                "operational_validity": "unconfirmed",
+                "operational_threshold_status": "unresolved",
+                "operational_prediction_available": False,
+                "decision_valid": False,
+            },
+        }
+        _write_run_dir(root, "validate-legacy-external", _VALID_MANIFEST, legacy_validation_result)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            result = admin_runs.list_admin_run_summaries()
+        finally:
+            admin_runs._admin_runs_root = original
+
+        entry = result["runs"][0]
+        assert entry["status"] == "available"
+        assert "operational_readiness_summary" not in entry
+
+
+def test_promote_admin_run_promotes_accepted_run_with_stale_promotion_gate_false(tmp_path):
+    """Project Spec S0190 Section D compatibility: an existing accepted run
+    whose validation-result.json still carries a stale
+    promotion_gate.promotion_allowed: false (from the retired
+    operational-readiness gate) must be directly promotable through the
+    Admin API without editing that file."""
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root, repo_root, "validate-stale-gate", "stale-gate-dataset", "release-20260811t214424z"
+    )
+    validation_result_path = run_dir / "validation-result.json"
+    validation_result = json.loads(validation_result_path.read_text())
+    assert validation_result["validation_outcome"] == "accepted"
+    validation_result["promotion_gate"] = {"promotion_allowed": False, "registry_update_allowed": False}
+    validation_result_path.write_text(json.dumps(validation_result), encoding="utf-8")
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.promote_admin_run("validate-stale-gate")
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    assert result["promoted"] is True
+    assert result["errors"] == []
+
+
+def test_remove_admin_run_removes_an_unavailable_run_and_leaves_others_untouched():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_run_dir(root, "validate-unavailable", None, None)
+        _write_run_dir(root, "validate-untouched", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+        original = admin_runs._admin_runs_root
+        try:
+            admin_runs._admin_runs_root = lambda: root
+            listing_before = admin_runs.list_admin_run_summaries()
+            unavailable_entry = next(e for e in listing_before["runs"] if e["run_id"] == "validate-unavailable")
+            assert unavailable_entry["status"] == "unavailable"
+
+            result = admin_runs.remove_admin_run("validate-unavailable")
+
+            listing_after = admin_runs.list_admin_run_summaries()
+        finally:
+            admin_runs._admin_runs_root = original
+
+        assert result == {"run_id": "validate-unavailable", "removed": True, "errors": []}
+        remaining_run_ids = {e["run_id"] for e in listing_after["runs"]}
+        assert remaining_run_ids == {"validate-untouched"}
 
 
 if __name__ == "__main__":

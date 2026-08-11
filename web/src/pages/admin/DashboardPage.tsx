@@ -21,23 +21,6 @@ type PromotionSummary = {
   reason?: string;
 };
 
-// Project Spec S0189: reduced operational-readiness projection, present
-// only for an available run whose source provenance is
-// validated_external_fitted_model. operational_threshold_value is exposed
-// only when a governed decision has actually been applied to this specific
-// run -- never the bundle's own educational threshold, which this reduced
-// API projection does not carry at all.
-type OperationalReadinessSummary = {
-  model_source_mode: "validated_external_fitted_model";
-  operational_validity: "confirmed" | "unconfirmed" | null;
-  operational_threshold_status: "resolved" | "unresolved" | null;
-  operational_threshold_value: number | null;
-  operational_prediction_available: boolean | null;
-  review_required: boolean;
-  review_available: boolean;
-  decision_applied: boolean;
-};
-
 type AdminRunSummary = {
   schema_version: "admin-run-summary.v1";
   run_id: string;
@@ -49,7 +32,6 @@ type AdminRunSummary = {
   unavailable_reason?: "source_run_evidence_missing" | "source_run_evidence_unreadable";
   invalid_reason?: "source_run_evidence_malformed" | "source_run_evidence_incomplete" | "source_run_evidence_schema_invalid";
   promotion_summary?: PromotionSummary;
-  operational_readiness_summary?: OperationalReadinessSummary;
 };
 
 type AdminRunsResponse = {
@@ -104,35 +86,6 @@ type RunRemovalState =
 type PromotedInfoModalState =
   | { status: "idle" }
   | { status: "open"; runId: string; summary: PromotionSummary };
-
-// Project Spec S0189: every field starts blank/unset -- in particular
-// thresholdValue must never be prefilled from the bundle's educational
-// threshold (this reduced projection does not even carry that value).
-// Empty string is the deliberate "not yet chosen" state for every select.
-type ReadinessReviewFormFields = {
-  operationalValidity: "confirmed" | "unconfirmed" | "";
-  thresholdStatus: "resolved" | "unresolved" | "";
-  thresholdValue: string;
-  selectionBasis: string;
-  predictionAvailable: "true" | "false" | "";
-  decisionBasis: string;
-};
-
-const EMPTY_READINESS_REVIEW_FIELDS: ReadinessReviewFormFields = {
-  operationalValidity: "",
-  thresholdStatus: "",
-  thresholdValue: "",
-  selectionBasis: "",
-  predictionAvailable: "",
-  decisionBasis: "",
-};
-
-type ReadinessReviewModalState =
-  | { status: "idle" }
-  | { status: "open"; runId: string; fields: ReadinessReviewFormFields }
-  | { status: "submitting"; runId: string; fields: ReadinessReviewFormFields }
-  | { status: "error"; runId: string; fields: ReadinessReviewFormFields; message: string }
-  | { status: "success"; runId: string; newRunId: string | null };
 
 type DatasetDetailRemovalState =
   | { status: "idle" }
@@ -551,30 +504,6 @@ function isPromotionSummary(value: unknown): value is PromotionSummary {
   );
 }
 
-function isOperationalReadinessSummary(value: unknown): value is OperationalReadinessSummary {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const record = value as Partial<OperationalReadinessSummary>;
-  const validValidity = record.operational_validity === null || record.operational_validity === "confirmed" || record.operational_validity === "unconfirmed";
-  const validThresholdStatus =
-    record.operational_threshold_status === null ||
-    record.operational_threshold_status === "resolved" ||
-    record.operational_threshold_status === "unresolved";
-
-  return (
-    record.model_source_mode === "validated_external_fitted_model" &&
-    validValidity &&
-    validThresholdStatus &&
-    (record.operational_threshold_value === null || typeof record.operational_threshold_value === "number") &&
-    (record.operational_prediction_available === null || typeof record.operational_prediction_available === "boolean") &&
-    typeof record.review_required === "boolean" &&
-    typeof record.review_available === "boolean" &&
-    typeof record.decision_applied === "boolean"
-  );
-}
-
 function isAdminRunSummary(value: unknown): value is AdminRunSummary {
   if (!value || typeof value !== "object") {
     return false;
@@ -593,8 +522,6 @@ function isAdminRunSummary(value: unknown): value is AdminRunSummary {
     record.invalid_reason === undefined ||
     invalidReasons.includes(record.invalid_reason as NonNullable<AdminRunSummary["invalid_reason"]>);
   const validPromotionSummary = record.status !== "promoted" || isPromotionSummary(record.promotion_summary);
-  const validOperationalReadinessSummary =
-    record.operational_readiness_summary === undefined || isOperationalReadinessSummary(record.operational_readiness_summary);
 
   return (
     record.schema_version === "admin-run-summary.v1" &&
@@ -608,8 +535,7 @@ function isAdminRunSummary(value: unknown): value is AdminRunSummary {
     isValidationSummary(record.validation_summary) &&
     validUnavailableReason &&
     validInvalidReason &&
-    validPromotionSummary &&
-    validOperationalReadinessSummary
+    validPromotionSummary
   );
 }
 
@@ -682,15 +608,6 @@ const PROMOTION_CONSEQUENCE =
 
 function canPromoteRun(run: AdminRunSummary): boolean {
   if (run.status === "available") {
-    // Project Spec S0189: an accepted validated_external_fitted_model run
-    // whose own operational readiness is not yet resolved (review_required)
-    // must never become promotion-eligible from the Dashboard's own
-    // eligibility check alone -- even though validation_summary.outcome is
-    // "accepted". Every other accepted run (including one whose readiness
-    // review already produced this exact revalidation run) is unaffected.
-    if (run.operational_readiness_summary?.review_required) {
-      return false;
-    }
     return run.validation_summary?.outcome === "accepted";
   }
 
@@ -706,7 +623,11 @@ function canPromoteRun(run: AdminRunSummary): boolean {
 }
 
 function canRemoveRun(run: AdminRunSummary): boolean {
-  if (run.status === "available") {
+  // Project Spec S0190: Remove is also available for a safely-addressable
+  // "unavailable" run (no source run evidence could be located) -- the
+  // backend's existing confined deletion semantics (remove_admin_run) only
+  // ever deletes the run's own directory and never inspects run status.
+  if (run.status === "available" || run.status === "unavailable") {
     return true;
   }
 
@@ -759,33 +680,6 @@ function reasonLabel(run: AdminRunSummary): string | null {
     return run.unavailable_reason?.replaceAll("_", " ") ?? "Source evidence unavailable";
   }
   return run.validation_summary?.reason ?? null;
-}
-
-// Project Spec S0189: a concrete, specific readiness blocker replaces the
-// generic "not eligible" wording an operator would otherwise see for an
-// accepted-but-unresolved validated_external_fitted_model run (reasonLabel
-// above returns null for that case, since validation_summary.reason is only
-// ever set for a rejected/failed outcome).
-function operationalReadinessReasonLabel(run: AdminRunSummary): string | null {
-  const summary = run.operational_readiness_summary;
-  if (!summary || !summary.review_required) {
-    return null;
-  }
-
-  const blockers: string[] = [];
-  if (summary.operational_validity !== "confirmed") {
-    blockers.push("operational validity not confirmed");
-  }
-  if (summary.operational_threshold_status !== "resolved") {
-    blockers.push("operational threshold not resolved");
-  }
-  if (summary.operational_prediction_available !== true) {
-    blockers.push("operational prediction not available");
-  }
-
-  return blockers.length > 0
-    ? `Operational readiness review required: ${blockers.join(", ")}.`
-    : "Operational readiness review required before promotion.";
 }
 
 function formatCreatedAt(value: string | null): string {
@@ -883,7 +777,6 @@ export default function DashboardPage() {
   const [promotionState, setPromotionState] = useState<RunPromotionState>({});
   const [datasetRegistryState, setDatasetRegistryState] = useState<DatasetRegistryState>({ status: "idle" });
   const [promotedInfoModalState, setPromotedInfoModalState] = useState<PromotedInfoModalState>({ status: "idle" });
-  const [readinessReviewState, setReadinessReviewState] = useState<ReadinessReviewModalState>({ status: "idle" });
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
@@ -1252,115 +1145,6 @@ export default function DashboardPage() {
       });
   }
 
-  // Project Spec S0189: opens with every field blank -- in particular, the
-  // operational threshold input must start empty and is never prefilled
-  // from an educational threshold value.
-  function openReadinessReviewModal(runId: string) {
-    setReadinessReviewState({ status: "open", runId, fields: { ...EMPTY_READINESS_REVIEW_FIELDS } });
-  }
-
-  function closeReadinessReviewModal() {
-    setReadinessReviewState({ status: "idle" });
-  }
-
-  function updateReadinessReviewField<K extends keyof ReadinessReviewFormFields>(
-    field: K,
-    value: ReadinessReviewFormFields[K],
-  ) {
-    setReadinessReviewState((previous) => {
-      if (previous.status !== "open" && previous.status !== "error") {
-        return previous;
-      }
-      const fields = { ...previous.fields, [field]: value };
-      // Clearing threshold-status back to unresolved clears any previously
-      // entered resolved-only fields, so a stale value can never be
-      // silently submitted alongside status: "unresolved".
-      if (field === "thresholdStatus" && value === "unresolved") {
-        fields.thresholdValue = "";
-        fields.selectionBasis = "";
-      }
-      return { status: "open", runId: previous.runId, fields };
-    });
-  }
-
-  function readinessReviewFormIsComplete(fields: ReadinessReviewFormFields): boolean {
-    if (fields.operationalValidity === "" || fields.predictionAvailable === "" || fields.decisionBasis.trim() === "") {
-      return false;
-    }
-    if (fields.thresholdStatus === "") {
-      return false;
-    }
-    if (fields.thresholdStatus === "resolved") {
-      const numericValue = Number(fields.thresholdValue);
-      if (fields.thresholdValue.trim() === "" || !Number.isFinite(numericValue) || numericValue < 0 || numericValue > 1) {
-        return false;
-      }
-      if (fields.selectionBasis.trim() === "") {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  function submitReadinessReview(runId: string, fields: ReadinessReviewFormFields) {
-    if (!readinessReviewFormIsComplete(fields)) {
-      return;
-    }
-    setReadinessReviewState({ status: "submitting", runId, fields });
-
-    // Project Spec S0189: the request body carries only the four
-    // operator-entered fields -- never a server-computed identity, hash, or
-    // promotion flag.
-    const payload = {
-      operational_validity: fields.operationalValidity,
-      operational_threshold: {
-        status: fields.thresholdStatus,
-        value: fields.thresholdStatus === "resolved" ? Number(fields.thresholdValue) : null,
-        selection_basis: fields.thresholdStatus === "resolved" ? fields.selectionBasis : null,
-      },
-      operational_prediction_available: fields.predictionAvailable === "true",
-      decision_basis: fields.decisionBasis,
-    };
-
-    fetch(`${apiBaseUrl}/admin/runs/${encodeURIComponent(runId)}/operational-readiness`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => null)) as {
-          new_run_id?: string | null;
-          errors?: Array<{ message?: string }>;
-        } | null;
-
-        if (!res.ok) {
-          setReadinessReviewState({
-            status: "error",
-            runId,
-            fields,
-            message:
-              body?.errors?.[0]?.message ??
-              "The operational-readiness review could not be completed. Confirm the run is still available and try again.",
-          });
-          return;
-        }
-
-        // Project Spec S0189: success only ever reveals the new
-        // revalidation run and refreshes the run list -- it never calls the
-        // promotion endpoint.
-        setReadinessReviewState({ status: "success", runId, newRunId: body?.new_run_id ?? null });
-        loadRuns();
-      })
-      .catch(() => {
-        setReadinessReviewState({
-          status: "error",
-          runId,
-          fields,
-          message: "The operational-readiness review could not be completed. Check private admin API reachability.",
-        });
-      });
-  }
-
   return (
     <section
       aria-labelledby="admin-dashboard-title"
@@ -1666,11 +1450,7 @@ export default function DashboardPage() {
                       // is intentionally excluded here -- it is shown only
                       // on demand inside the informational modal opened by
                       // clicking Promoted, never as a persistent row legend.
-                      const metaMessage =
-                        promotionSuccessMessage ?? promotionError ?? operationalReadinessReasonLabel(run) ?? reasonLabel(run);
-                      const readinessReviewAvailable =
-                        run.operational_readiness_summary?.review_required === true &&
-                        run.operational_readiness_summary?.review_available === true;
+                      const metaMessage = promotionSuccessMessage ?? promotionError ?? reasonLabel(run);
 
                       return (
                       <TableRow
@@ -1727,7 +1507,7 @@ export default function DashboardPage() {
                                   ? "This run has already been promoted as a Dataset Detail. Clicking shows the current promotion status and does not trigger another promotion."
                                   : promotionEligible
                                     ? PROMOTION_CONSEQUENCE
-                                    : (operationalReadinessReasonLabel(run) ?? "Promote is only available for eligible runs.")
+                                    : "Promote is only available for eligible runs."
                               }
                               variant="secondary"
                             >
@@ -1736,17 +1516,6 @@ export default function DashboardPage() {
                               </span>
                               {isPromoting ? "Promoting..." : registryBoundPromoted ? "Promoted" : "Promote"}
                             </Button>
-                            {readinessReviewAvailable && (
-                              <Button
-                                data-run-action="review-readiness"
-                                onClick={() => openReadinessReviewModal(run.run_id)}
-                                style={runActionButtonStyle}
-                                title="Review operational readiness for this run and submit an explicit operator decision. Creates a new revalidation run and never promotes automatically."
-                                variant="secondary"
-                              >
-                                Review readiness
-                              </Button>
-                            )}
                             <Button
                               data-run-action={removeEligible ? "remove" : "remove-disabled"}
                               disabled={!removeEligible}
@@ -1755,7 +1524,7 @@ export default function DashboardPage() {
                               title={
                                 removeEligible
                                   ? "Remove this run from the Admin Dashboard after confirmation."
-                                  : "Remove is only available for safe, available or promoted runs."
+                                  : "Remove is only available for safe, available, unavailable, or promoted runs."
                               }
                               variant="secondary"
                             >
@@ -1923,189 +1692,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {readinessReviewState.status !== "idle" && readinessReviewState.status !== "success" && (
-        <div style={modalBackdropStyle}>
-          <Card aria-labelledby="readiness-review-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
-            <h2 id="readiness-review-modal-title" style={cardTitleStyle}>
-              Review operational readiness for run {displayRunId(readinessReviewState.runId)}
-            </h2>
-            <p style={{ margin: 0 }}>
-              Every field below requires an explicit choice. Nothing is prefilled, and no educational/reference
-              threshold is copied in automatically. Submitting creates a new revalidation run -- it never promotes
-              this run automatically; Promote remains a separate action once the new run appears eligible.
-            </p>
-
-            <div style={fieldStyle} role="radiogroup" aria-labelledby="readiness-validity-label">
-              <span id="readiness-validity-label" style={labelStyle}>
-                Operational validity
-              </span>
-              <label>
-                <input
-                  checked={readinessReviewState.fields.operationalValidity === "confirmed"}
-                  name="operational-validity"
-                  onChange={() => updateReadinessReviewField("operationalValidity", "confirmed")}
-                  type="radio"
-                  value="confirmed"
-                />{" "}
-                Confirmed
-              </label>
-              <label>
-                <input
-                  checked={readinessReviewState.fields.operationalValidity === "unconfirmed"}
-                  name="operational-validity"
-                  onChange={() => updateReadinessReviewField("operationalValidity", "unconfirmed")}
-                  type="radio"
-                  value="unconfirmed"
-                />{" "}
-                Unconfirmed
-              </label>
-            </div>
-
-            <div style={fieldStyle} role="radiogroup" aria-labelledby="readiness-threshold-status-label">
-              <span id="readiness-threshold-status-label" style={labelStyle}>
-                Operational threshold
-              </span>
-              <label>
-                <input
-                  checked={readinessReviewState.fields.thresholdStatus === "resolved"}
-                  name="operational-threshold-status"
-                  onChange={() => updateReadinessReviewField("thresholdStatus", "resolved")}
-                  type="radio"
-                  value="resolved"
-                />{" "}
-                Resolved
-              </label>
-              <label>
-                <input
-                  checked={readinessReviewState.fields.thresholdStatus === "unresolved"}
-                  name="operational-threshold-status"
-                  onChange={() => updateReadinessReviewField("thresholdStatus", "unresolved")}
-                  type="radio"
-                  value="unresolved"
-                />{" "}
-                Unresolved
-              </label>
-            </div>
-
-            {readinessReviewState.fields.thresholdStatus === "resolved" && (
-              <>
-                <div style={fieldStyle}>
-                  <label htmlFor="readiness-threshold-value" style={labelStyle}>
-                    Operational threshold value (0-1)
-                  </label>
-                  <input
-                    id="readiness-threshold-value"
-                    onChange={(event) => updateReadinessReviewField("thresholdValue", event.target.value)}
-                    placeholder="e.g. 0.31"
-                    style={inputStyle}
-                    type="number"
-                    min={0}
-                    max={1}
-                    step="any"
-                    value={readinessReviewState.fields.thresholdValue}
-                  />
-                </div>
-                <div style={fieldStyle}>
-                  <label htmlFor="readiness-selection-basis" style={labelStyle}>
-                    Threshold selection basis
-                  </label>
-                  <input
-                    id="readiness-selection-basis"
-                    onChange={(event) => updateReadinessReviewField("selectionBasis", event.target.value)}
-                    placeholder="Describe how this value was selected"
-                    style={inputStyle}
-                    type="text"
-                    value={readinessReviewState.fields.selectionBasis}
-                  />
-                </div>
-              </>
-            )}
-
-            <div style={fieldStyle} role="radiogroup" aria-labelledby="readiness-prediction-available-label">
-              <span id="readiness-prediction-available-label" style={labelStyle}>
-                Operational prediction available
-              </span>
-              <label>
-                <input
-                  checked={readinessReviewState.fields.predictionAvailable === "true"}
-                  name="operational-prediction-available"
-                  onChange={() => updateReadinessReviewField("predictionAvailable", "true")}
-                  type="radio"
-                  value="true"
-                />{" "}
-                Yes
-              </label>
-              <label>
-                <input
-                  checked={readinessReviewState.fields.predictionAvailable === "false"}
-                  name="operational-prediction-available"
-                  onChange={() => updateReadinessReviewField("predictionAvailable", "false")}
-                  type="radio"
-                  value="false"
-                />{" "}
-                No
-              </label>
-            </div>
-
-            <div style={fieldStyle}>
-              <label htmlFor="readiness-decision-basis" style={labelStyle}>
-                Decision basis
-              </label>
-              <textarea
-                id="readiness-decision-basis"
-                onChange={(event) => updateReadinessReviewField("decisionBasis", event.target.value)}
-                placeholder="Explain the basis for this operational-readiness decision"
-                rows={3}
-                style={{ ...inputStyle, minHeight: "4.5rem", padding: "var(--atlas-space-2) var(--atlas-space-3)" }}
-                value={readinessReviewState.fields.decisionBasis}
-              />
-            </div>
-
-            {readinessReviewState.status === "error" && (
-              <ErrorState title="Operational-readiness review failed" message={readinessReviewState.message} />
-            )}
-
-            <div style={modalActionsStyle}>
-              <Button
-                disabled={readinessReviewState.status === "submitting"}
-                onClick={closeReadinessReviewModal}
-                variant="secondary"
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={
-                  readinessReviewState.status === "submitting" ||
-                  !readinessReviewFormIsComplete(readinessReviewState.fields)
-                }
-                onClick={() => submitReadinessReview(readinessReviewState.runId, readinessReviewState.fields)}
-              >
-                {readinessReviewState.status === "submitting" ? "Submitting review..." : "Submit review"}
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {readinessReviewState.status === "success" && (
-        <div style={modalBackdropStyle}>
-          <Card aria-labelledby="readiness-review-success-modal-title" aria-modal="true" role="dialog" style={modalCardStyle}>
-            <h2 id="readiness-review-success-modal-title" style={cardTitleStyle}>
-              Operational-readiness review submitted
-            </h2>
-            <p role="status" style={{ margin: 0 }}>
-              {readinessReviewState.newRunId
-                ? `A new revalidation run (${displayRunId(readinessReviewState.newRunId)}) was created and now appears in the runs list below. Promote remains a separate action.`
-                : "A new revalidation run was created and now appears in the runs list below. Promote remains a separate action."}
-            </p>
-            <div style={modalActionsStyle}>
-              <Button onClick={closeReadinessReviewModal} variant="secondary">
-                Close
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
     </section>
   );
 }

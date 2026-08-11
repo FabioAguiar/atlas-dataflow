@@ -1,7 +1,7 @@
 """Controlled fixture/monkeypatch coverage for the isolated service's
 governed release-resolution and load-safe gate
-(external-inference/runtime_loader.py), including the Project Spec S0189
-operational-readiness threshold gate.
+(external-inference/runtime_loader.py), including the Project Spec S0190
+bundle-governed operational threshold gate.
 
 Mirrors this repository's established real-pipeline-training technique
 rather than mocking scikit-learn itself, but never deserializes the real
@@ -38,7 +38,6 @@ _DATASET_SLUG = "telco-customer-churn"
 _BUNDLE_ID = "telco-customer-churn-inference-bundle-test"
 _BUNDLE_RELATIVE_PATH = "predictions/bundle.json"
 _MODEL_RELATIVE_PATH = "models/model.joblib"
-_DECISION_RELATIVE_PATH = "operational-readiness-decision.json"
 
 
 def _train_fixture_pipeline() -> Pipeline:
@@ -135,22 +134,16 @@ def _write_release(
     model_relative_path: str = _MODEL_RELATIVE_PATH,
     corrupt_model_after_hash: bool = False,
     provenance: str | None = "validated_external_fitted_model",
-    include_operational_readiness: bool = True,
-    operational_validity: str = "confirmed",
-    threshold_status: str = "resolved",
-    threshold_value: float | None = 0.31,
-    prediction_available: bool = True,
-    decision_hash_override: str | None = None,
-    decision_bundle_sha_override: str | None = None,
-    decision_release_id_override: str | None = None,
-    decision_dataset_slug_override: str | None = None,
-    write_decision_file: bool = True,
-    write_decision_artifact_entry: bool = True,
+    include_external_model_evidence: bool = True,
+    educational_threshold_value: object = 0.31,
 ) -> Path:
     """Write a real, governed-resolver-shaped release directory. Returns the
     release directory. Every hash embedded in manifest.json's artifacts[]
-    is computed from the actual bytes written, unless an *_override is
-    supplied to simulate a stale/corrupted declaration."""
+    is computed from the actual bytes written. Project Spec S0190:
+    `educational_threshold_value` is the bundle's own governed operational
+    decisioning threshold source (external_model_evidence.educational_threshold.value)
+    -- no run-owned operational-readiness decision artifact exists any
+    longer."""
     release_dir = releases_root / release_id
     release_dir.mkdir(parents=True, exist_ok=True)
 
@@ -166,10 +159,11 @@ def _write_release(
         "bundle_identity": {"bundle_id": bundle_id, "dataset_slug": dataset_slug},
         "dataset_context": {"dataset_slug": dataset_slug},
         "model_artifact": {"path": model_relative_path, "sha256": model_sha256},
-        "external_model_evidence": {
-            "educational_threshold": {"value": 0.99, "label": "educational"},
-        },
     }
+    if include_external_model_evidence:
+        bundle["external_model_evidence"] = {
+            "educational_threshold": {"value": educational_threshold_value, "label": "educational"},
+        }
     if provenance is not None:
         bundle["model_provenance_origin"] = provenance
     bundle_text = json.dumps(bundle, indent=2)
@@ -192,67 +186,6 @@ def _write_release(
             "hash_value": model_sha256,
         },
     ]
-
-    if include_operational_readiness:
-        decision = {
-            "schema_version": "operational-readiness-decision.v1",
-            "artifact_kind": "operational_readiness_decision",
-            "created_at": "2026-06-19T00:00:00Z",
-            "source_run": {"run_id": "validate-20260619T000000Z"},
-            "candidate_identity": {
-                "dataset_slug": decision_dataset_slug_override or dataset_slug,
-                "release_id": decision_release_id_override or release_id,
-                "release_version": "1.0.0",
-            },
-            "source_bindings": {
-                "release_candidate": {"path": "release-candidate.json", "sha256": "a" * 64},
-                "predictive_bundle": {
-                    "path": _BUNDLE_RELATIVE_PATH,
-                    "sha256": decision_bundle_sha_override or bundle_sha256,
-                },
-                "validated_run_terminal_result": {
-                    "path": "publisher/runs/validate-20260619T000000Z/validated-run-terminal-result.json",
-                    "sha256": "b" * 64,
-                },
-            },
-            "source_readiness": {
-                "operational_validity": "unconfirmed",
-                "operational_threshold": {"status": "unresolved", "value": None},
-                "operational_prediction_available": False,
-            },
-            "decision": {
-                "operational_validity": operational_validity,
-                "operational_threshold": {
-                    "status": threshold_status,
-                    "value": threshold_value if threshold_status == "resolved" else None,
-                    "selection_basis": "test selection basis" if threshold_status == "resolved" else None,
-                },
-                "operational_prediction_available": prediction_available,
-                "decision_basis": "Operator reviewed the external evaluation evidence.",
-            },
-            "boundary_confirmations": {
-                "educational_threshold_automatically_promoted": False,
-                "model_retrained": False,
-                "model_reselected": False,
-                "threshold_reoptimized_by_atlas": False,
-                "source_run_mutated": False,
-                "source_candidate_mutated": False,
-                "source_inference_bundle_mutated": False,
-                "promotion_invoked": False,
-                "registry_mutated": False,
-            },
-        }
-        decision_text = json.dumps(decision, indent=2)
-        if write_decision_file:
-            (release_dir / _DECISION_RELATIVE_PATH).write_text(decision_text, encoding="utf-8")
-        if write_decision_artifact_entry:
-            actual_hash = hashlib.sha256(decision_text.encode("utf-8")).hexdigest()
-            artifacts.append({
-                "role": "operational_readiness",
-                "reference": _DECISION_RELATIVE_PATH,
-                "hash_algorithm": "sha256",
-                "hash_value": decision_hash_override or actual_hash,
-            })
 
     manifest = {
         "release_identity": {"release_id": release_id},
@@ -367,12 +300,12 @@ def test_stale_bundle_identity_rejected(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Project Spec S0189: operational-readiness decision gate (before loader)
+# Project Spec S0190: bundle-governed operational threshold gate (before loader)
 # ---------------------------------------------------------------------------
 
 
-def test_missing_operational_readiness_decision_fails_before_loader(tmp_path, monkeypatch):
-    _write_release(tmp_path, include_operational_readiness=False)
+def test_missing_external_model_evidence_fails_before_loader(tmp_path, monkeypatch):
+    _write_release(tmp_path, include_external_model_evidence=False)
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
     _install_load_forbidding_joblib(monkeypatch)
 
@@ -383,32 +316,8 @@ def test_missing_operational_readiness_decision_fails_before_loader(tmp_path, mo
         assert exc.diagnostic_code == rl.DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
 
 
-def test_decision_hash_mismatch_fails_before_loader(tmp_path, monkeypatch):
-    _write_release(tmp_path, decision_hash_override="f" * 64)
-    monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
-    _install_load_forbidding_joblib(monkeypatch)
-
-    try:
-        rl.run_preflight_gate(_build_request(), tmp_path)
-        raise AssertionError("expected LoadSafeGateError")
-    except rl.LoadSafeGateError as exc:
-        assert exc.diagnostic_code == rl.DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH
-
-
-def test_decision_bundle_binding_mismatch_fails_before_loader(tmp_path, monkeypatch):
-    _write_release(tmp_path, decision_bundle_sha_override="c" * 64)
-    monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
-    _install_load_forbidding_joblib(monkeypatch)
-
-    try:
-        rl.run_preflight_gate(_build_request(), tmp_path)
-        raise AssertionError("expected LoadSafeGateError")
-    except rl.LoadSafeGateError as exc:
-        assert exc.diagnostic_code == rl.DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH
-
-
-def test_decision_release_identity_mismatch_fails_before_loader(tmp_path, monkeypatch):
-    _write_release(tmp_path, decision_release_id_override="release-20260101-999")
+def test_bundle_threshold_value_out_of_range_fails_before_loader(tmp_path, monkeypatch):
+    _write_release(tmp_path, educational_threshold_value=1.5)
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
     _install_load_forbidding_joblib(monkeypatch)
 
@@ -419,8 +328,8 @@ def test_decision_release_identity_mismatch_fails_before_loader(tmp_path, monkey
         assert exc.diagnostic_code == rl.DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
 
 
-def test_unconfirmed_operational_validity_fails_before_loader(tmp_path, monkeypatch):
-    _write_release(tmp_path, operational_validity="unconfirmed")
+def test_bundle_threshold_value_non_numeric_fails_before_loader(tmp_path, monkeypatch):
+    _write_release(tmp_path, educational_threshold_value="not-a-number")
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
     _install_load_forbidding_joblib(monkeypatch)
 
@@ -431,37 +340,14 @@ def test_unconfirmed_operational_validity_fails_before_loader(tmp_path, monkeypa
         assert exc.diagnostic_code == rl.DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
 
 
-def test_unresolved_operational_threshold_fails_before_loader(tmp_path, monkeypatch):
-    _write_release(tmp_path, threshold_status="unresolved", threshold_value=None)
-    monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
-    _install_load_forbidding_joblib(monkeypatch)
-
-    try:
-        rl.run_preflight_gate(_build_request(), tmp_path)
-        raise AssertionError("expected LoadSafeGateError")
-    except rl.LoadSafeGateError as exc:
-        assert exc.diagnostic_code == rl.DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
-
-
-def test_prediction_unavailable_fails_before_loader(tmp_path, monkeypatch):
-    _write_release(tmp_path, prediction_available=False)
-    monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
-    _install_load_forbidding_joblib(monkeypatch)
-
-    try:
-        rl.run_preflight_gate(_build_request(), tmp_path)
-        raise AssertionError("expected LoadSafeGateError")
-    except rl.LoadSafeGateError as exc:
-        assert exc.diagnostic_code == rl.DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
-
-
-def test_internal_provenance_skips_operational_readiness_requirement(tmp_path, monkeypatch):
+def test_internal_provenance_skips_bundle_threshold_requirement(tmp_path, monkeypatch):
     """A release whose predictive bundle is not validated_external_fitted_model
-    never requires an operational-readiness decision (Project Spec S0189
-    scopes that gate to 'an external governed release'), and this isolated
-    service's pre-S0189 historical threshold still applies for it, matching
+    never requires bundle-governed threshold evidence at all (Project Spec
+    S0190 scopes bundle-threshold resolution to 'a governed
+    validated_external_fitted_model release'), and this isolated service's
+    historical fallback threshold still applies for it, matching
     'internal/legacy provenance: behavior remains unchanged'."""
-    _write_release(tmp_path, provenance=None, include_operational_readiness=False)
+    _write_release(tmp_path, provenance=None, include_external_model_evidence=False)
     monkeypatch.setattr(rl, "RELEASES_ROOT", tmp_path)
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
 
@@ -515,12 +401,12 @@ def test_deserialization_exception_maps_to_controlled_failure(tmp_path, monkeypa
 
 
 # ---------------------------------------------------------------------------
-# Step 14: bounded prediction result and the S0189 operational threshold
+# Step 14: bounded prediction result and the S0190 bundle-governed threshold
 # ---------------------------------------------------------------------------
 
 
-def test_full_governed_prediction_uses_the_resolved_decision_threshold(tmp_path, monkeypatch):
-    _write_release(tmp_path, threshold_value=0.31)
+def test_full_governed_prediction_uses_the_bundle_governed_threshold(tmp_path, monkeypatch):
+    _write_release(tmp_path, educational_threshold_value=0.31)
     monkeypatch.setattr(rl, "RELEASES_ROOT", tmp_path)
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
 
@@ -533,32 +419,31 @@ def test_full_governed_prediction_uses_the_resolved_decision_threshold(tmp_path,
     rl.validate_bounded_prediction_result(result)
 
 
-def test_educational_threshold_never_overrides_operational_threshold(tmp_path, monkeypatch):
-    """The fixture bundle's educational_threshold is fixed at 0.99
-    (see _write_release); the governed operational threshold below is a
-    completely different value. The result must reflect only the governed
-    value."""
-    _write_release(tmp_path, threshold_value=0.15)
+def test_bundle_declared_threshold_value_is_used_exactly(tmp_path, monkeypatch):
+    """The result must reflect exactly the bundle's own declared
+    educational_threshold.value -- never this isolated service's
+    internal/legacy fallback constant."""
+    _write_release(tmp_path, educational_threshold_value=0.15)
     monkeypatch.setattr(rl, "RELEASES_ROOT", tmp_path)
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
 
     result = rl.execute_governed_external_prediction(_build_request())
 
     assert result["decision"]["threshold"] == 0.15
-    assert result["decision"]["threshold"] != 0.99
+    assert result["decision"]["threshold"] != rl._DECISION_THRESHOLD
 
 
 def test_changing_only_the_operational_threshold_flips_predicted_positive_at_the_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
 
     low_threshold_root = tmp_path / "low"
-    _write_release(low_threshold_root, threshold_value=0.01)
+    _write_release(low_threshold_root, educational_threshold_value=0.01)
     monkeypatch.setattr(rl, "RELEASES_ROOT", low_threshold_root)
     low_result = rl.execute_governed_external_prediction(_build_request())
     boundary_probability = low_result["positive_class_probability"]
 
     high_threshold_root = tmp_path / "high"
-    _write_release(high_threshold_root, threshold_value=min(boundary_probability + 0.20, 1.0))
+    _write_release(high_threshold_root, educational_threshold_value=min(boundary_probability + 0.20, 1.0))
     monkeypatch.setattr(rl, "RELEASES_ROOT", high_threshold_root)
     high_result = rl.execute_governed_external_prediction(_build_request())
 

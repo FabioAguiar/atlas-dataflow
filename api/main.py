@@ -93,7 +93,6 @@ from admin_runs import (  # noqa: E402
     list_admin_run_summaries,
     promote_admin_run,
     remove_admin_run,
-    review_admin_run_operational_readiness,
 )
 from admin_profile_drafts import read_profile_draft, save_profile_draft  # noqa: E402
 from admin_profile_publish import (  # noqa: E402
@@ -238,13 +237,6 @@ ADMIN_RUN_PROMOTION_FAILED = PublicError(
     error_type="admin_run_promotion_failed",
     error_code="ADMIN_RUN_PROMOTION_FAILED",
     message="The run could not be promoted.",
-)
-
-ADMIN_RUN_OPERATIONAL_READINESS_REVIEW_FAILED = PublicError(
-    status_code=422,
-    error_type="admin_run_operational_readiness_review_failed",
-    error_code="ADMIN_RUN_OPERATIONAL_READINESS_REVIEW_FAILED",
-    message="The operational-readiness review could not be completed.",
 )
 
 ADMIN_SETTINGS_INVALID = PublicError(
@@ -1115,29 +1107,6 @@ def promote_admin_run_route(run_id: str, request: Request, payload: dict | None 
     result = promote_admin_run(run_id, mode=MODE_CREATE_NEW_DATASET_DETAIL)
     if not result["promoted"]:
         return ADMIN_RUN_PROMOTION_FAILED.response(errors=result["errors"])
-
-    return result
-
-
-@app.post("/admin/runs/{run_id}/operational-readiness")
-def review_admin_run_operational_readiness_route(
-    run_id: str, request: Request, payload: dict | None = Body(default=None)
-):
-    if not _admin_request_authorized(request):
-        return _admin_route_not_found_response()
-
-    # Project Spec S0189: the request body carries only operator-entered
-    # decision inputs (operational_validity, operational_threshold,
-    # operational_prediction_available, decision_basis) -- never a
-    # server-computed identity, hash, or promotion flag. This route forwards
-    # the body verbatim; publisher.operational_readiness's own strict
-    # allow-list rejects any unexpected field (including a caller-supplied
-    # sha256 or promotion_allowed) rather than silently ignoring it.
-    operator_decision = payload if isinstance(payload, dict) else {}
-
-    result = review_admin_run_operational_readiness(run_id, operator_decision)
-    if not result["reviewed"]:
-        return ADMIN_RUN_OPERATIONAL_READINESS_REVIEW_FAILED.response(errors=result["errors"])
 
     return result
 

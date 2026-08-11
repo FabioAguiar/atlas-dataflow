@@ -1,0 +1,167 @@
+{
+  "boundary_confirmations": {
+    "absolute_paths_embedded": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "parent_traversal_embedded": false,
+    "raw_dataset_embedded": false,
+    "release_relative_paths_only": true,
+    "runtime_payload_validation_duplicated": false,
+    "training_internals_required_at_runtime": false
+  },
+  "bundle_identity": {
+    "artifact_kind": "inference_bundle",
+    "bundle_id": "telco-customer-churn-inference-bundle-20260811T214423Z",
+    "created_at": "2026-08-11T21:44:23+00:00"
+  },
+  "compatibility_constraints": {
+    "requires_contract_versions": {
+      "execution_contract": "execution_contract.v1",
+      "public_contract": "1.0.0",
+      "runtime_contract": "1.0.0"
+    },
+    "requires_feature_order_match": true,
+    "requires_hash_match": true,
+    "requires_release_relative_paths": true,
+    "requires_supported_loader": true,
+    "requires_supported_serialization": true
+  },
+  "contract_references": {
+    "execution_contract": {
+      "contract_version": "execution_contract.v1",
+      "path": "contracts/telco-customer-churn/execution-contract.json",
+      "sha256": "80b13a3364632fb4e24fd3cdfaa1f7584672ea51edd2e1c7cdfdd53220289719"
+    },
+    "public_contract": {
+      "contract_version": "1.0.0",
+      "path": "contracts/telco-customer-churn/public-contract.json",
+      "sha256": "90c1854c872f4dfe072db945493157e0d8cba33df2aab146bb2ff4fe34aca513"
+    },
+    "runtime_contract": {
+      "contract_version": "1.0.0",
+      "path": "contracts/telco-customer-churn/runtime-contract.json",
+      "sha256": "90731caba3076080f8a75ec469f68dbeb636bea8b0b6f178dee71f7854a31ff8"
+    }
+  },
+  "contract_version": "inference_bundle.v1",
+  "dataset_context": {
+    "dataset_context_reference": {
+      "path": "contracts/telco-customer-churn/dataset-context.json",
+      "sha256": "ea67349a4e826455c287ec496eb3be8773d95fab16568614146f4721e67ef3ae"
+    },
+    "dataset_slug": "telco-customer-churn"
+  },
+  "external_model_evidence": {
+    "educational_threshold": {
+      "label": "educational",
+      "scenario": "minimum_recall_0_80",
+      "selection_partition": "validation",
+      "value": 0.2577809673219062
+    },
+    "estimator_identity": {
+      "class_name": "HistGradientBoostingClassifier",
+      "library": "scikit-learn"
+    },
+    "evidence_references": {
+      "model_selection_evidence_reference": {
+        "contract_version": "model-selection-evidence.external-fitted-model.v1",
+        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/model-selection-evidence.json",
+        "sha256": "ce9d71b65c817b3406227fc9e85790a0976789292187e6ab84cc0f637e915206"
+      },
+      "training_metrics_reference": {
+        "contract_version": "training-metrics.external-fitted-model.v1",
+        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-metrics.json",
+        "sha256": "daa4953cb13a9dfa997b1df10a7dd7e09903c26bb713b52aa8c688059717cad4"
+      },
+      "training_parameter_record_reference": {
+        "contract_version": "training-parameter-record.external-fitted-model.v1",
+        "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-parameter-record.json",
+        "sha256": "6b2e2d190d635d9d99b2edef73e2eb184d8a24f809cfc707e144905f186cbdba"
+      }
+    },
+    "final_test_completion": {
+      "evaluation_count": 1,
+      "used_for_threshold_selection": false
+    },
+    "model_family": "hist_gradient_boosting",
+    "model_state_fingerprint": "c9328311e2ed5953b5aab1abc17b439ff7e90c7c8e4f15b6a31598d05dc771e6",
+    "origin": "validated_external_fitted_model",
+    "readiness": {
+      "educational_final_model_complete": true,
+      "educational_inference_demo_ready": true,
+      "operational_modeling_ready": false,
+      "operational_prediction_available": false,
+      "operational_threshold": {
+        "status": "unresolved",
+        "value": null
+      },
+      "operational_validity": "unconfirmed"
+    }
+  },
+  "feature_order": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+  ],
+  "input_schema": {
+    "payload_shape": "runtime_contract_features_object",
+    "runtime_contract_reference": "contract_references.runtime_contract"
+  },
+  "model_artifact": {
+    "path": "models/model.pkl",
+    "sha256": "48da4c7aa56d5d08090e808f551f555740d18e791af39c4c3f373467ec296b8c",
+    "source_training_parameter_record_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260811T214423Z/training-parameter-record.json"
+  },
+  "model_provenance_origin": "validated_external_fitted_model",
+  "output_schema": {
+    "class_labels": [
+      "No",
+      "Yes"
+    ],
+    "prediction_key": "prediction",
+    "prediction_type": "number",
+    "probability_output": true
+  },
+  "prepared_dataset": {
+    "prepared_dataset_reference": {
+      "path": "pipeline/prepared/telco-customer-churn/prepared-data.csv",
+      "sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88"
+    },
+    "prepared_dataset_sha256": "d4ac02e925c6a95b4d6d053ea61a4d0f3c845d85a8d8c85a511389eea3aded88"
+  },
+  "preprocessing": {
+    "categorical_encoding_policy": "onehot",
+    "missing_value_policy": {},
+    "numeric_handling": "standardize",
+    "source": "execution_contract_and_training_parameter_record",
+    "transformations": [
+      "passthrough"
+    ]
+  },
+  "release_context": {
+    "release_id": "release-20260811-001",
+    "release_package_reference": "predictions/bundle.json"
+  },
+  "runtime_execution": {
+    "loader_strategy": "joblib_sklearn_predict",
+    "model_family": "hist_gradient_boosting",
+    "prediction_interface": "predict",
+    "serialization_format": "joblib"
+  }
+}

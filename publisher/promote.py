@@ -33,32 +33,15 @@ passes it in, keeping this module's only coupling to the registry system
 at the orchestration layer, not the import layer.
 """
 
-import hashlib
 import json
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Project Spec S0189: the run-owned (not candidate-owned) governed
-# operational-readiness decision supplemental artifact role, matching
-# publisher/manifest.py's own constant.
-_OPERATIONAL_READINESS_ROLE = "operational_readiness"
-
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
-
-
-def _sha256_file_or_none(path: Path) -> str | None:
-    try:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            while chunk := handle.read(65536):
-                digest.update(chunk)
-        return digest.hexdigest()
-    except OSError:
-        return None
 
 
 def _load_json_file(path: Path, label: str) -> tuple:
@@ -79,20 +62,30 @@ def _load_operational_note(repo_root: Path) -> tuple:
 
 
 def _check_promotion_gate(validation_result: dict) -> tuple:
-    """Return (allowed, errors). Halts if promotion_gate.promotion_allowed is absent or not True."""
+    """Return (allowed, errors).
+
+    Project Spec S0190: promotion eligibility is derived from the run's own
+    immutable validation_outcome, not trusted from a persisted
+    promotion_gate.promotion_allowed flag -- a structurally accepted
+    validated_external_fitted_model run produced before S0190 may still
+    carry promotion_gate.promotion_allowed: false from the retired
+    operational-readiness gate; that stale flag no longer blocks promotion.
+    promotion_gate must still be present as a well-formed object (every real
+    publisher/validate.py output has always produced one), but its
+    promotion_allowed boolean is no longer authoritative.
+    """
+    if validation_result.get("validation_outcome") != "accepted":
+        return False, [_err(
+            "PROMOTION_NOT_ALLOWED",
+            "validation_outcome",
+            "Promotion halted: validation_outcome is not 'accepted'.",
+        )]
     pg = validation_result.get("promotion_gate")
     if not isinstance(pg, dict):
         return False, [_err(
             "PROMOTION_GATE_MISSING",
             "promotion_gate",
             "Validation result is missing the 'promotion_gate' field.",
-        )]
-    allowed = pg.get("promotion_allowed")
-    if allowed is not True:
-        return False, [_err(
-            "PROMOTION_NOT_ALLOWED",
-            "promotion_gate.promotion_allowed",
-            "Promotion halted: promotion_gate.promotion_allowed is not true.",
         )]
     return True, []
 
@@ -147,7 +140,6 @@ def _build_promotion_result(validation_result: dict, manifest: dict) -> dict:
     """
     candidate_identity = validation_result.get("candidate_identity") or {}
     validation_outcome = validation_result.get("validation_outcome", "accepted")
-    promotion_gate = validation_result.get("promotion_gate") or {}
 
     completeness_outcome = (
         validation_outcome if validation_outcome in ("accepted", "rejected") else "accepted"
@@ -170,7 +162,13 @@ def _build_promotion_result(validation_result: dict, manifest: dict) -> dict:
             "completeness_validation_outcome": completeness_outcome,
             "manifest_valid": True,
             "all_required_hashes_present": all_hashes_present,
-            "candidate_state_was_valid": bool(promotion_gate.get("promotion_allowed")),
+            # Project Spec S0190: this function only ever runs after
+            # _check_promotion_gate has already confirmed validation_outcome
+            # == "accepted" -- a persisted promotion_gate.promotion_allowed
+            # flag is no longer authoritative (see _check_promotion_gate),
+            # so this reflects the same real gating condition instead of a
+            # possibly-stale historical flag.
+            "candidate_state_was_valid": validation_outcome == "accepted",
             "all_preconditions_met": True,
         },
         "registry_update_record": {
@@ -326,28 +324,11 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
                 raise RuntimeError(
                     "Manifest artifact entry is missing 'reference' field; cannot copy."
                 )
-            # Project Spec S0189: operational_readiness is run-owned, not
-            # candidate-owned -- its source lives in the publisher run
-            # directory (alongside validation-result.json/manifest.json),
-            # never in the immutable candidate directory. All other roles
-            # keep resolving from candidate_dir exactly as before.
-            if artifact.get("role") == _OPERATIONAL_READINESS_ROLE:
-                src = run_dir / reference
-                if not src.is_file():
-                    raise RuntimeError(
-                        "Governed operational-readiness decision artifact is missing from the run directory."
-                    )
-                actual_hash = _sha256_file_or_none(src)
-                if actual_hash is None or actual_hash != artifact.get("hash_value"):
-                    raise RuntimeError(
-                        "Governed operational-readiness decision artifact hash does not match the manifest declaration."
-                    )
-            else:
-                src = candidate_dir / reference
-                if not src.is_file():
-                    raise RuntimeError(
-                        f"Artifact source file for reference '{reference}' is not readable during copy."
-                    )
+            src = candidate_dir / reference
+            if not src.is_file():
+                raise RuntimeError(
+                    f"Artifact source file for reference '{reference}' is not readable during copy."
+                )
             dst = release_dir / reference
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)

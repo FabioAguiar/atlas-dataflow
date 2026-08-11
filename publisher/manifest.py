@@ -45,11 +45,6 @@ _REQUIRED_ROLES = (
 _ALWAYS_REQUIRED_ROLES = tuple(role for role in _REQUIRED_ROLES if role != "visualizations")
 _OPTIONAL_ROLES = ("visualizations",)
 
-# Project Spec S0189: the run-owned (not candidate-owned) governed
-# operational-readiness decision artifact, written by publisher/validate.py
-# into the same run directory as validation-result.json.
-_OPERATIONAL_READINESS_DECISION_FILENAME = "operational-readiness-decision.json"
-
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
@@ -186,12 +181,7 @@ def _hash_role_artifact(role: str, role_def: Any, candidate_dir: Path) -> tuple:
     }, []
 
 
-def generate_manifest(
-    candidate_dir: Path,
-    *,
-    run_dir: Path | None = None,
-    operational_readiness_evaluation: dict | None = None,
-) -> tuple:
+def generate_manifest(candidate_dir: Path) -> tuple:
     """
     Generate a release manifest from a validated candidate directory.
 
@@ -204,15 +194,9 @@ def generate_manifest(
     candidate declares it, and cleanly omitted -- never an error -- when it
     does not; every other role remains mandatory.
 
-    Project Spec S0189: when `operational_readiness_evaluation` (the
-    validation result's own bounded block) declares
-    `source: "governed_decision"` with a `decision_reference`, an
-    `operational_readiness` supplemental artifact entry is added, hashed
-    directly from `run_dir / "operational-readiness-decision.json"` --
-    never from candidate_dir, since this artifact is run-owned, not
-    candidate-owned. The hash is recomputed from the persisted file and
-    cross-checked against the validation result's own declared hash;
-    mismatch or missing file halts manifest generation.
+    Project Spec S0190: manifest generation no longer injects a run-owned
+    `operational_readiness` supplemental artifact -- the Project Spec S0189
+    governed operational-readiness decision gate has been retired.
     """
     candidate_json_path = candidate_dir / _CANDIDATE_FILENAME
     candidate, errors = _load_json_file(candidate_json_path, "candidate_json")
@@ -257,40 +241,9 @@ def generate_manifest(
         if entry is not None:
             artifacts.append(entry)
 
-    # Project Spec S0189: captured before the operational_readiness entry
-    # (if any) is appended below -- required_hash_coverage.required_artifact_roles
-    # is the fixed 9-10-role vocabulary only; operational_readiness is a
-    # supplemental artifact entry, never part of that required-role list.
+    # required_hash_coverage.required_artifact_roles is the fixed 9-10-role
+    # vocabulary only.
     required_hash_coverage_roles = [a["role"] for a in artifacts]
-
-    if (
-        operational_readiness_evaluation
-        and operational_readiness_evaluation.get("source") == "governed_decision"
-        and operational_readiness_evaluation.get("decision_reference")
-    ):
-        if run_dir is None:
-            return None, [_err(
-                "OPERATIONAL_READINESS_ARTIFACT_MISSING",
-                None,
-                "Manifest generation requires run_dir to locate the governed operational-readiness decision artifact.",
-            )]
-        decision_file = run_dir / _OPERATIONAL_READINESS_DECISION_FILENAME
-        hash_value, hash_errors = _sha256_file(decision_file)
-        if hash_errors:
-            return None, hash_errors
-        declared_hash = operational_readiness_evaluation.get("sha256")
-        if declared_hash != hash_value:
-            return None, [_err(
-                "OPERATIONAL_READINESS_ARTIFACT_HASH_MISMATCH",
-                None,
-                "Governed operational-readiness decision artifact hash does not match the validation result.",
-            )]
-        artifacts.append({
-            "role": "operational_readiness",
-            "reference": _OPERATIONAL_READINESS_DECISION_FILENAME,
-            "hash_algorithm": "sha256",
-            "hash_value": hash_value,
-        })
 
     dataset_identity: dict = {"dataset_slug": dataset_slug}
     if dataset_title:
@@ -458,11 +411,7 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
             + "; ".join(e["message"] for e in cd_errors)
         )
 
-    manifest, gen_errors = generate_manifest(
-        candidate_dir,
-        run_dir=run_dir,
-        operational_readiness_evaluation=validation_result.get("operational_readiness_evaluation"),
-    )
+    manifest, gen_errors = generate_manifest(candidate_dir)
     if gen_errors:
         raise RuntimeError(
             "Manifest generation failed: "

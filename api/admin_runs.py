@@ -16,8 +16,6 @@ from registry.validate import RELEASE_ID_PATTERN  # noqa: E402
 _RUN_ARTIFACT_MANIFEST = "manifest.json"
 _RUN_ARTIFACT_VALIDATION_RESULT = "validation-result.json"
 _RUN_ARTIFACT_PROMOTION_RESULT = "promotion-result.json"
-_RUN_ARTIFACT_OPERATIONAL_DECISION = "operational-readiness-decision.json"
-_EXTERNAL_MODEL_SOURCE_MODE = "validated_external_fitted_model"
 
 _DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -272,67 +270,6 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
     return summary
 
 
-def _operational_readiness_summary_from(run_dir: Path, validation_result: dict) -> dict | None:
-    """Reduced, safe operational-readiness projection for an available run
-    (Project Spec S0189). Present only when this run's own
-    validation-result.json operational_readiness_evaluation block is
-    populated -- which publisher.validate only ever does for a
-    validated_external_fitted_model candidate (Project Spec S0180/S0189);
-    an internal/legacy accepted candidate's evaluation block, and any
-    rejected candidate's evaluation block regardless of provenance, is
-    always entirely null. That population is therefore itself the
-    external-provenance-and-structurally-accepted signal, self-consistent
-    across both the original externally-materialized run and any later
-    operational-readiness revalidation run created for it -- no separate
-    terminal-result artifact is read or required here. The only field read
-    from elsewhere is operational_threshold_value (only when a governed
-    decision was actually applied to this specific run), taken directly
-    from this run's own operational-readiness-decision.json. Never a raw
-    candidate path, a decision basis string, or any other unbounded
-    content.
-    """
-    evaluation = validation_result.get("operational_readiness_evaluation")
-    if not isinstance(evaluation, dict):
-        return None
-
-    operational_validity = evaluation.get("operational_validity")
-    operational_threshold_status = evaluation.get("operational_threshold_status")
-    operational_prediction_available = evaluation.get("operational_prediction_available")
-    if operational_validity is None and operational_threshold_status is None and operational_prediction_available is None:
-        return None
-
-    decision_applied = (
-        evaluation.get("source") == "governed_decision" and evaluation.get("decision_valid") is True
-    )
-
-    operational_threshold_value = None
-    if decision_applied:
-        decision = _read_json_object(run_dir / _RUN_ARTIFACT_OPERATIONAL_DECISION)
-        decision_block = decision.get("decision") if isinstance(decision, dict) else None
-        threshold = decision_block.get("operational_threshold") if isinstance(decision_block, dict) else None
-        value = threshold.get("value") if isinstance(threshold, dict) else None
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            operational_threshold_value = float(value)
-
-    review_required = not (
-        operational_validity == "confirmed"
-        and operational_threshold_status == "resolved"
-        and operational_prediction_available is True
-    )
-    review_available = validation_result.get("validation_outcome") == "accepted"
-
-    return {
-        "model_source_mode": _EXTERNAL_MODEL_SOURCE_MODE,
-        "operational_validity": operational_validity,
-        "operational_threshold_status": operational_threshold_status,
-        "operational_threshold_value": operational_threshold_value,
-        "operational_prediction_available": operational_prediction_available,
-        "review_required": review_required,
-        "review_available": review_available,
-        "decision_applied": decision_applied,
-    }
-
-
 def _derive_run_summary(run_dir: Path, runs_root: Path) -> dict:
     run_id = run_dir.name
 
@@ -372,15 +309,6 @@ def _derive_run_summary(run_dir: Path, runs_root: Path) -> dict:
         "trace_reference": _trace_reference_for(run_dir),
         "validation_summary": validation_summary,
     }
-
-    validation_result = _read_json_object(run_dir / _RUN_ARTIFACT_VALIDATION_RESULT)
-    operational_readiness_summary = (
-        _operational_readiness_summary_from(run_dir, validation_result)
-        if isinstance(validation_result, dict)
-        else None
-    )
-    if operational_readiness_summary is not None:
-        entry["operational_readiness_summary"] = operational_readiness_summary
 
     # Project Spec S0045: a well-formed, promoted run must never continue to
     # be reflected as an available/pending promotion target once
@@ -463,12 +391,20 @@ def remove_admin_run(run_id: str) -> dict:
 
 
 def _promotion_gate_allows(validation_result: dict) -> bool:
+    """Project Spec S0190: promotion eligibility derives from the run's own
+    immutable validation_outcome, not a persisted promotion_gate.promotion_allowed
+    flag -- a structurally accepted validated_external_fitted_model run
+    produced before S0190 may still carry promotion_gate.promotion_allowed:
+    false from the retired operational-readiness gate; that stale flag no
+    longer blocks promotion. promotion_gate must still be present as a
+    well-formed object (every real publisher/validate.py output has always
+    produced one), but its promotion_allowed boolean is no longer
+    authoritative -- matches publisher/promote.py's own _check_promotion_gate.
+    """
     if validation_result.get("validation_outcome") != "accepted":
         return False
     promotion_gate = validation_result.get("promotion_gate")
-    if not isinstance(promotion_gate, dict):
-        return False
-    return promotion_gate.get("promotion_allowed") is True
+    return isinstance(promotion_gate, dict)
 
 
 def _promotion_matches_promoted_release(run_dir: Path, release_id: str) -> bool:
@@ -617,91 +553,5 @@ def promote_admin_run(
         "release_id": candidate_identity.get("release_id"),
         "registry_action": registry_action,
         "public_dataset_slug": registry_result.get("allocated_dataset_slug"),
-        "errors": [],
-    }
-
-
-# ---------------------------------------------------------------------------
-# Project Spec S0189: Admin-only operational-readiness review.
-# ---------------------------------------------------------------------------
-
-_OPERATIONAL_READINESS_REVIEW_FAILED_ERROR = {
-    "code": "OPERATIONAL_READINESS_REVIEW_FAILED",
-    "field": None,
-    "message": "The operational-readiness review could not be completed.",
-}
-
-
-def _operational_readiness_review_failure_result(run_id: str, error: dict) -> dict:
-    return {
-        "run_id": run_id,
-        "reviewed": False,
-        "new_run_id": None,
-        "validation_outcome": None,
-        "promotion_eligible": False,
-        "errors": [error],
-    }
-
-
-def review_admin_run_operational_readiness(run_id: str, operator_decision: dict) -> dict:
-    """Admin-only operational-readiness review for one structurally
-    accepted, validated_external_fitted_model run (Project Spec S0189).
-
-    Returns {"run_id", "reviewed": bool, "new_run_id": str|None,
-    "validation_outcome": str|None, "promotion_eligible": bool,
-    "errors": [...]}. Delegates all real review work to
-    publisher.operational_readiness.review_operational_readiness -- this
-    function only validates run_id shape/confinement up front and adapts
-    that module's blocked/reviewed result into this module's existing
-    admin-result error conventions. Never calls promotion or registry
-    update, and never itself constructs the governed decision artifact --
-    `operator_decision` is forwarded verbatim as the operator-entered
-    fields, and the reviewer module alone computes/verifies every hash
-    binding.
-
-    Never raises for an invalid run id, missing run, or a downstream review
-    failure -- those are reported as a non-reviewed result with a reduced
-    error instead, matching promote_admin_run's contract.
-    """
-    validity_error = _run_id_validation_error(run_id)
-    if validity_error is not None:
-        return _operational_readiness_review_failure_result(run_id, validity_error)
-
-    runs_root = _admin_runs_root()
-    run_dir = runs_root / run_id
-
-    if not _is_within_root(run_dir, runs_root):
-        return _operational_readiness_review_failure_result(run_id, _RUN_NOT_FOUND_ERROR)
-
-    try:
-        is_directory = run_dir.is_dir()
-    except OSError:
-        is_directory = False
-    if not is_directory:
-        return _operational_readiness_review_failure_result(run_id, _RUN_NOT_FOUND_ERROR)
-
-    from publisher import operational_readiness  # local import: avoid a package-level cross-module dependency
-
-    result = operational_readiness.review_operational_readiness(
-        run_id, operator_decision, repo_root=_REPO_ROOT
-    )
-
-    if result.get("review_status") != "reviewed":
-        message = result.get("message") or _OPERATIONAL_READINESS_REVIEW_FAILED_ERROR["message"]
-        return _operational_readiness_review_failure_result(
-            run_id,
-            {
-                "code": "OPERATIONAL_READINESS_REVIEW_BLOCKED",
-                "field": None,
-                "message": message,
-            },
-        )
-
-    return {
-        "run_id": run_id,
-        "reviewed": True,
-        "new_run_id": result.get("new_run_id"),
-        "validation_outcome": result.get("validation_outcome"),
-        "promotion_eligible": bool(result.get("promotion_eligible")),
         "errors": [],
     }

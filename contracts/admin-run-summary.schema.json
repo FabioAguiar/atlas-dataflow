@@ -151,55 +151,6 @@
         }
       ]
     },
-    "operational_readiness_summary": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "model_source_mode",
-        "operational_validity",
-        "operational_threshold_status",
-        "operational_threshold_value",
-        "operational_prediction_available",
-        "review_required",
-        "review_available",
-        "decision_applied"
-      ],
-      "description": "Project Spec S0189. Reduced operational-readiness projection present only for an available run whose source provenance is validated_external_fitted_model. Every field is bounded evidence already safe for reduced Admin evidence -- never a raw candidate path, raw decision basis text, or any other unbounded content.",
-      "properties": {
-        "model_source_mode": {
-          "type": "string",
-          "const": "validated_external_fitted_model"
-        },
-        "operational_validity": {
-          "type": ["string", "null"],
-          "enum": ["confirmed", "unconfirmed", null]
-        },
-        "operational_threshold_status": {
-          "type": ["string", "null"],
-          "enum": ["resolved", "unresolved", null]
-        },
-        "operational_threshold_value": {
-          "type": ["number", "null"],
-          "minimum": 0,
-          "maximum": 1
-        },
-        "operational_prediction_available": {
-          "type": ["boolean", "null"]
-        },
-        "review_required": {
-          "type": "boolean",
-          "description": "True whenever operational_validity/operational_threshold_status/operational_prediction_available do not together already confirm operational readiness."
-        },
-        "review_available": {
-          "type": "boolean",
-          "description": "True when this run's own structural validation_outcome is accepted, so the Review readiness action may be offered for it."
-        },
-        "decision_applied": {
-          "type": "boolean",
-          "description": "True only when this specific run's own validation-result.json was produced from a governed, hash-verified operational-readiness decision (this run is itself a revalidation run created by a prior review), never merely because a decision exists somewhere in the dataset's history."
-        }
-      }
-    },
     "unavailable_reason": {
       "type": "string",
       "enum": ["source_run_evidence_missing", "source_run_evidence_unreadable"],

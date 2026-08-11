@@ -53,12 +53,12 @@ _CATEGORICAL_MAX_CARDINALITY = 20
 _NULL_LIKE_TOKENS = {"na", "n/a", "nan", "null", "none"}
 _REDUCED_SAMPLE_BOUND = 5
 
-# Canonical dataset-integration authoring entrypoint selected by S0162/S0169.
+# Canonical dataset-integration notebook selected by S0162/S0169/S0179/S0184.
 # This is traceability metadata only: discovery remains dataset-agnostic and
 # never imports or executes the notebook.
 CANONICAL_DATASET_INTEGRATION_AUTHORING_NOTEBOOK = (
     "notebooks/datasets/telco-customer-churn/"
-    "01_dataset_integration_authoring.ipynb"
+    "dataset_integration.ipynb"
 )
 
 AUTHORING_HELPER_EVIDENCE_POLICY: dict[str, bool] = {

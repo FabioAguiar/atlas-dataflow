@@ -33,12 +33,17 @@ project. Lumen inspects that project and the Atlas repository during authoring
 only, then translates reviewed conclusions into dataset-specific Atlas intent.
 Atlas does not mount or resolve the external project after authoring.
 
-- **Dataset integration authoring notebooks** (`notebooks/`) are the
-  human-facing Atlas authoring surface. The target Telco naming convention is
-  `notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb`;
-  its implementation is future work. This dataset-specific notebook verifies
-  the exact Atlas-owned input, records semantic intent, and invokes generic
-  Atlas materializers. Input identity, drift, and authored-assumption checks
+- **Dataset integration notebooks** (`notebooks/`) are the human-facing Atlas
+  orchestration surface. The canonical Telco notebook is
+  `notebooks/datasets/telco-customer-churn/dataset_integration.ipynb`. This
+  dataset-specific notebook verifies the exact Atlas-owned input, records
+  semantic intent, invokes generic Atlas materializers, and orchestrates the
+  full S0179 extended boundary: capability-aware projection, external
+  fitted-model governed materialization, inference-bundle materialization,
+  release-candidate assembly, publisher structural validation, conditional
+  manifest generation, and one validated-run terminal outcome. It stops
+  unconditionally before publisher promotion, registry activation, or
+  runtime prediction. Input identity, drift, and authored-assumption checks
   are distinct from re-performing scientific exploration, model training, or
   model selection already established by authoritative external analysis.
 - **Durable authoring state** is a governed Atlas-native artifact suite rather

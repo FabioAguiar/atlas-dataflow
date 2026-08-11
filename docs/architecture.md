@@ -182,26 +182,40 @@ artifacts; it must not create an ongoing external filesystem dependency or
 bypass Atlas contracts, integrity gates, release validation, publisher
 boundaries, or public/internal evidence controls.
 
-### Dataset integration authoring notebook
+### Dataset integration notebook
 
-The dataset integration authoring notebook is dataset-specific. The target
-Telco name is
-`notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb`;
-this document establishes the naming and responsibility boundary but does not
-claim that refactor is implemented.
+The dataset integration notebook is dataset-specific and is the single
+canonical, human-facing orchestration entrypoint for its dataset. The
+canonical Telco name is
+`notebooks/datasets/telco-customer-churn/dataset_integration.ipynb`.
 
-The notebook:
+Project Spec S0179 extended this notebook's orchestration boundary beyond
+authoring alone. The notebook:
 
 - performs controlled verification of the exact Atlas-owned input, including
   identity, drift-sensitive observations, target and identifier candidates,
   missing-value conditions, and assumptions needed for contract correctness;
+- verifies external scientific evidence at authoring time against the real
+  `external-evidence-index.v1` producer contract, hash-verifying every
+  referenced item before use and never persisting the absolute external
+  project root into a durable Atlas artifact;
 - authors dataset-specific semantic intent from reviewed evidence;
-- invokes generic Atlas materializers and services rather than implementing
-  reusable projection, release, or publisher policy in cells;
+- declares/resolves a capability profile by reference and invokes
+  capability-aware projection;
+- orchestrates external fitted-model governed materialization, governed
+  inference-bundle generation, release-candidate assembly, publisher
+  structural validation, and manifest generation when the current generic
+  structural gate permits it -- reusing generic Atlas materializers and
+  services (`pipeline/`, `publisher/`) rather than implementing reusable
+  projection, release, or publisher policy in cells;
+- materializes one explicit validated-run terminal outcome, persisting the
+  schema-valid result the generic terminal producer returns without
+  reimplementing its eligibility/hash/schema logic;
 - persists durable decisions through governed Atlas-native artifacts and is
   never the sole durable source of truth;
-- does not own generic release or publisher policy and does not activate a
-  registry entry or release; and
+- stops unconditionally before publisher promotion, registry
+  `active_release` mutation, public visibility/profile activation, or
+  runtime prediction; and
 - does not repeat exploratory scientific analysis, model training, model
   selection, final-test evaluation, or threshold optimization already owned by
   an authoritative external analysis, unless a separately governed workflow

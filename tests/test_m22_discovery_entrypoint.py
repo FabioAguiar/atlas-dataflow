@@ -34,7 +34,7 @@ def _source(cell_type: str | None = None) -> str:
 def test_canonical_discovery_entrypoint_exists_and_is_valid_notebook():
     assert canonical_dataset_integration_authoring_notebook_ref() == (
         "notebooks/datasets/telco-customer-churn/"
-        "01_dataset_integration_authoring.ipynb"
+        "dataset_integration.ipynb"
     )
     assert NOTEBOOK_PATH.is_file()
     notebook = _load_notebook()
@@ -61,12 +61,19 @@ def test_entrypoint_uses_atlas_discovery_helpers_for_current_source():
     assert 'dataset_relative_path = "data/raw/telco-customer-churn.csv"' in code
 
 
-def test_entrypoint_declares_authoring_only_boundary():
+def test_entrypoint_declares_extended_orchestration_boundary():
     source = _source()
-    assert "AUTHORING_BOUNDARY" in source
+    assert "ORCHESTRATION_BOUNDARY" in source
     assert "external_evidence_is_authoring_time_only" in source
-    assert "stops_before_downstream_release_and_runtime_stages" in source
-    assert "not_final_operational_truth" in source or "stops at the authoring boundary" in source
+    assert "stops_before_promotion_registry_activation_and_runtime_prediction" in source
+    assert "external_fitted_model_governed_materialization" in source
+    assert "publisher_promotion" in source and "registry_active_release_mutation" in source
+
+
+def test_entrypoint_does_not_use_cwd_as_repository_root():
+    code = _source("code")
+    assert "Path.cwd()" not in code
+    assert "repo_root = resolve_repository_root()" in code
 
 
 def test_entrypoint_has_no_public_service_dependency():

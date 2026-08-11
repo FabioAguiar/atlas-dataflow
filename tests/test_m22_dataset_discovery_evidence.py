@@ -406,7 +406,7 @@ def _build_telco_shaped_modeling_intent(**overrides):
     kwargs = dict(
         dataset_slug="telco-customer-churn",
         dataset_source_ref="data/raw/telco-customer-churn.csv",
-        authoring_notebook_ref="notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb",
+        authoring_notebook_ref="notebooks/datasets/telco-customer-churn/dataset_integration.ipynb",
         columns=MODELING_INTENT_COLUMNS,
         target_column="Churn",
         task_type="binary_classification",
@@ -441,7 +441,7 @@ def test_modeling_intent_dataset_identity():
 def test_modeling_intent_authoring_source():
     intent = _build_telco_shaped_modeling_intent()
     assert intent["authoring_source"]["authoring_notebook_ref"] == (
-        "notebooks/datasets/telco-customer-churn/01_dataset_integration_authoring.ipynb"
+        "notebooks/datasets/telco-customer-churn/dataset_integration.ipynb"
     )
 
 

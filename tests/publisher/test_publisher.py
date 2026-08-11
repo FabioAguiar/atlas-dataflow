@@ -46,6 +46,8 @@ def _copy_publisher_contracts(tmp_repo: Path) -> None:
     for relative in (
         "publisher/release-candidate.operational-note.json",
         "publisher/release-manifest.schema.json",
+        "publisher/operational-readiness-decision.schema.json",
+        "publisher/validation/release-candidate-validation.schema.json",
         "publisher/evidence/publication-validation-evidence.schema.json",
         "contracts/public-contract.schema.json",
         "pipeline/analytical-visualizations.schema.json",
@@ -986,6 +988,217 @@ def test_external_provenance_candidate_without_visualizations_is_structurally_ac
     assert result["validation_outcome"] == "accepted"
     assert "visualizations" not in result["required_artifact_role_results"]
     assert len(result["required_artifact_role_results"]) == 9
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0189: operational-readiness decision reconciliation across
+# publisher.validate / publisher.manifest / publisher.promote.
+# ---------------------------------------------------------------------------
+
+
+def _build_operational_readiness_decision(
+    candidate_dir: Path,
+    *,
+    operational_validity: str = "confirmed",
+    threshold_status: str = "resolved",
+    threshold_value: float | None = 0.31,
+    prediction_available: bool = True,
+) -> dict:
+    pb_relative_path = _role_path("predictive_bundle")
+    rc_sha256 = hashlib.sha256((candidate_dir / "release-candidate.json").read_bytes()).hexdigest()
+    pb_sha256 = hashlib.sha256((candidate_dir / pb_relative_path).read_bytes()).hexdigest()
+    return {
+        "schema_version": "operational-readiness-decision.v1",
+        "artifact_kind": "operational_readiness_decision",
+        "created_at": "2026-06-19T00:00:00Z",
+        "source_run": {"run_id": "validate-20260619T000000Z"},
+        "candidate_identity": {
+            "dataset_slug": DATASET_SLUG,
+            "release_id": RELEASE_ID,
+            "release_version": RELEASE_VERSION,
+        },
+        "source_bindings": {
+            "release_candidate": {"path": "release-candidate.json", "sha256": rc_sha256},
+            "predictive_bundle": {"path": pb_relative_path, "sha256": pb_sha256},
+            "validated_run_terminal_result": {
+                "path": "publisher/runs/validate-20260619T000000Z/validated-run-terminal-result.json",
+                "sha256": "b" * 64,
+            },
+        },
+        "source_readiness": {
+            "operational_validity": "unconfirmed",
+            "operational_threshold": {"status": "unresolved", "value": None},
+            "operational_prediction_available": False,
+        },
+        "decision": {
+            "operational_validity": operational_validity,
+            "operational_threshold": {
+                "status": threshold_status,
+                "value": threshold_value if threshold_status == "resolved" else None,
+                "selection_basis": "test selection basis" if threshold_status == "resolved" else None,
+            },
+            "operational_prediction_available": prediction_available,
+            "decision_basis": "Operator reviewed the external evaluation evidence.",
+        },
+        "boundary_confirmations": {
+            "educational_threshold_automatically_promoted": False,
+            "model_retrained": False,
+            "model_reselected": False,
+            "threshold_reoptimized_by_atlas": False,
+            "source_run_mutated": False,
+            "source_candidate_mutated": False,
+            "source_inference_bundle_mutated": False,
+            "promotion_invoked": False,
+            "registry_mutated": False,
+        },
+    }
+
+
+def test_governed_decision_makes_accepted_external_candidate_promotion_eligible(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo, role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()})
+    candidate_dir = _candidate_dir(tmp_repo)
+    decision = _build_operational_readiness_decision(candidate_dir)
+
+    result = validate.run(str(candidate_dir), repo_root=tmp_repo, operational_readiness_decision=decision)
+
+    assert result["validation_outcome"] == "accepted"
+    assert result["promotion_gate"] == {"promotion_allowed": True, "registry_update_allowed": True}
+    evaluation = result["operational_readiness_evaluation"]
+    assert evaluation["source"] == "governed_decision"
+    assert evaluation["decision_valid"] is True
+    assert evaluation["decision_reference"] is not None
+    assert evaluation["sha256"] is not None
+
+
+def test_unconfirmed_governed_decision_keeps_promotion_ineligible(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo, role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()})
+    candidate_dir = _candidate_dir(tmp_repo)
+    decision = _build_operational_readiness_decision(
+        candidate_dir,
+        operational_validity="unconfirmed",
+        threshold_status="unresolved",
+        threshold_value=None,
+        prediction_available=False,
+    )
+
+    result = validate.run(str(candidate_dir), repo_root=tmp_repo, operational_readiness_decision=decision)
+
+    assert result["validation_outcome"] == "accepted"
+    assert result["promotion_gate"] == {"promotion_allowed": False, "registry_update_allowed": False}
+
+
+def test_structural_rejection_cannot_be_overridden_by_a_decision(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(
+        tmp_repo,
+        missing_role="metrics",
+        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+    )
+    candidate_dir = _candidate_dir(tmp_repo)
+    decision = _build_operational_readiness_decision(candidate_dir)
+
+    result = validate.run(str(candidate_dir), repo_root=tmp_repo, operational_readiness_decision=decision)
+
+    assert result["validation_outcome"] == "rejected"
+    assert result["promotion_gate"] == {"promotion_allowed": False, "registry_update_allowed": False}
+
+
+def test_internal_candidate_ignores_a_supplied_operational_decision(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo)
+    candidate_dir = _candidate_dir(tmp_repo)
+    decision = _build_operational_readiness_decision(
+        candidate_dir,
+        operational_validity="unconfirmed",
+        threshold_status="unresolved",
+        threshold_value=None,
+        prediction_available=False,
+    )
+
+    result = validate.run(str(candidate_dir), repo_root=tmp_repo, operational_readiness_decision=decision)
+
+    assert result["validation_outcome"] == "accepted"
+    assert result["promotion_gate"] == {"promotion_allowed": True, "registry_update_allowed": True}
+    assert result["operational_readiness_evaluation"]["source"] == "bundle_only"
+
+
+def test_manifest_contains_operational_readiness_only_for_decision_governed_run(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo, role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()})
+    candidate_dir = _candidate_dir(tmp_repo)
+    decision = _build_operational_readiness_decision(candidate_dir)
+
+    validate.run(str(candidate_dir), repo_root=tmp_repo, operational_readiness_decision=decision)
+    decision_run_dir = _latest_run_dir(tmp_repo)
+    decision_manifest = manifest.run(str(decision_run_dir), repo_root=tmp_repo)
+
+    roles = {a["role"] for a in decision_manifest["artifacts"]}
+    assert "operational_readiness" in roles
+    op_entry = next(a for a in decision_manifest["artifacts"] if a["role"] == "operational_readiness")
+    assert op_entry["reference"] == "operational-readiness-decision.json"
+    assert "operational_readiness" not in decision_manifest["required_hash_coverage"]["required_artifact_roles"]
+
+    # A bundle-only run (no decision supplied) must never carry this role.
+    validate.run(str(candidate_dir), repo_root=tmp_repo)
+    bundle_only_run_dir = _latest_run_dir(tmp_repo)
+    assert bundle_only_run_dir != decision_run_dir
+    bundle_only_manifest = manifest.run(str(bundle_only_run_dir), repo_root=tmp_repo)
+    assert "operational_readiness" not in {a["role"] for a in bundle_only_manifest["artifacts"]}
+
+
+def test_promotion_copies_run_owned_decision_and_verifies_hash(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo, role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()})
+    candidate_dir = _candidate_dir(tmp_repo)
+    decision = _build_operational_readiness_decision(candidate_dir)
+
+    validate.run(str(candidate_dir), repo_root=tmp_repo, operational_readiness_decision=decision)
+    run_dir = _latest_run_dir(tmp_repo)
+    manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    result = promote.run(str(run_dir), repo_root=tmp_repo)
+
+    assert result["promotion_outcome"] == "promoted"
+    promoted_decision_path = tmp_repo / "releases" / RELEASE_ID / "operational-readiness-decision.json"
+    assert promoted_decision_path.is_file()
+    expected_hash = hashlib.sha256((run_dir / "operational-readiness-decision.json").read_bytes()).hexdigest()
+    actual_hash = hashlib.sha256(promoted_decision_path.read_bytes()).hexdigest()
+    assert actual_hash == expected_hash
+
+
+def test_promotion_rolls_back_when_run_owned_decision_is_tampered(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo, role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()})
+    candidate_dir = _candidate_dir(tmp_repo)
+    decision = _build_operational_readiness_decision(candidate_dir)
+
+    validate.run(str(candidate_dir), repo_root=tmp_repo, operational_readiness_decision=decision)
+    run_dir = _latest_run_dir(tmp_repo)
+    manifest.run(str(run_dir), repo_root=tmp_repo)
+
+    decision_path = run_dir / "operational-readiness-decision.json"
+    decision_path.write_text(decision_path.read_text(encoding="utf-8") + "tampered", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="hash does not match"):
+        promote.run(str(run_dir), repo_root=tmp_repo)
+
+    assert not (tmp_repo / "releases" / RELEASE_ID).exists()
 
 
 def test_internal_candidate_without_visualizations_role_is_rejected(tmp_path):

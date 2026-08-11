@@ -431,7 +431,8 @@
         "manifest_input",
         "candidate_metadata",
         "release_manifest",
-        "validation_evidence"
+        "validation_evidence",
+        "operational_readiness"
       ]
     },
     "required_artifact_role": {

@@ -103,7 +103,19 @@ _NEGATIVE_CLASS_ID = "No"
 # non-operational "educational_threshold" (inference-bundle.json,
 # threshold_scenario "minimum_recall_0_80", selected on the validation
 # partition) -- never fabricated, never presented as an operational
-# decision policy.
+# decision policy for a governed validated_external_fitted_model release.
+#
+# Project Spec S0189 scopes its operational-readiness gate to "an external
+# governed release" (a release whose predictive bundle declares
+# model_provenance_origin: validated_external_fitted_model): for that
+# release class, this constant is never used for operational decisioning at
+# all -- `_resolve_operational_readiness_threshold` below requires and
+# resolves a governed decision instead, and fails closed before
+# deserialization when one is missing/invalid. This constant remains the
+# fallback threshold only for a release this isolated service loads without
+# that declared provenance, matching S0189's "internal/legacy provenance:
+# behavior remains unchanged, no operational decision required" principle
+# (stated for publisher/validate.py and extended here for consistency).
 _DECISION_THRESHOLD = 0.2577809673219062
 _MODEL_DESCRIPTOR = {
     "model_family": "gradient_boosting",
@@ -695,6 +707,135 @@ def _verify_declared_hash(path: Path, declaration: Mapping[str, Any], *, diagnos
         raise LoadSafeGateError("Governed artifact hash does not match.", diagnostic_code=diagnostic_code)
 
 
+_OPERATIONAL_READINESS_ROLE = "operational_readiness"
+_OPERATIONAL_READINESS_DECISION_SCHEMA_VERSION = "operational-readiness-decision.v1"
+
+
+def _operational_readiness_declaration(manifest: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        return None
+    matches = [
+        item for item in artifacts if isinstance(item, Mapping) and item.get("role") == _OPERATIONAL_READINESS_ROLE
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _resolve_operational_readiness_threshold(
+    manifest: Mapping[str, Any],
+    bundle_decl: Mapping[str, Any],
+    release_dir: Path,
+    root: Path,
+) -> float:
+    """Verify the governed operational-readiness decision for this release
+    and return its resolved operational threshold. Runs entirely before
+    model deserialization. Project Spec S0189 -- and reuses the closed,
+    unchanged, eight-value RUNTIME_DIAGNOSTIC_CODES vocabulary (S0160/G0001):
+    this module never introduces a ninth diagnostic code, so a missing or
+    invalid decision maps to INFERENCE_BUNDLE_UNAVAILABLE (the governed
+    package needed to run inference is not usable) and any stale/mismatched
+    binding maps to MODEL_ARTIFACT_HASH_MISMATCH (the same code already
+    reused by `verify_model_state_fingerprint` for a non-model-bytes
+    integrity declaration)."""
+    decision_decl = _operational_readiness_declaration(manifest)
+    if decision_decl is None:
+        raise LoadSafeGateError(
+            "Governed operational-readiness decision is unavailable.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+    if (
+        decision_decl.get("hash_algorithm") != "sha256"
+        or not isinstance(decision_decl.get("hash_value"), str)
+        or len(decision_decl["hash_value"]) != 64
+    ):
+        raise LoadSafeGateError(
+            "Governed operational-readiness decision hash declaration is invalid.",
+            diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
+        )
+
+    decision_path = _confined_path(
+        root, release_dir, decision_decl.get("reference"), diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
+    )
+    if not decision_path.is_file():
+        raise LoadSafeGateError(
+            "Governed operational-readiness decision artifact is unavailable.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+    _verify_declared_hash(decision_path, decision_decl, diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH)
+    decision = _load_json(decision_path, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+
+    if decision.get("schema_version") != _OPERATIONAL_READINESS_DECISION_SCHEMA_VERSION:
+        raise LoadSafeGateError(
+            "Governed operational-readiness decision is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+
+    candidate_identity = decision.get("candidate_identity")
+    release_identity = manifest.get("release_identity")
+    dataset_identity = manifest.get("dataset_identity")
+    if (
+        not isinstance(candidate_identity, Mapping)
+        or not isinstance(release_identity, Mapping)
+        or not isinstance(dataset_identity, Mapping)
+        or candidate_identity.get("release_id") != release_identity.get("release_id")
+        or candidate_identity.get("dataset_slug") != dataset_identity.get("dataset_slug")
+    ):
+        raise LoadSafeGateError(
+            "Governed operational-readiness decision release binding is stale.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+
+    source_bindings = decision.get("source_bindings")
+    predictive_bundle_binding = (
+        source_bindings.get("predictive_bundle") if isinstance(source_bindings, Mapping) else None
+    )
+    if (
+        not isinstance(predictive_bundle_binding, Mapping)
+        or predictive_bundle_binding.get("sha256") != bundle_decl.get("hash_value")
+    ):
+        raise LoadSafeGateError(
+            "Governed operational-readiness decision predictive-bundle binding is stale.",
+            diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH,
+        )
+
+    decision_block = decision.get("decision")
+    if not isinstance(decision_block, Mapping):
+        raise LoadSafeGateError(
+            "Governed operational-readiness decision is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+    if decision_block.get("operational_validity") != "confirmed":
+        raise LoadSafeGateError(
+            "Operational readiness has not been confirmed for this release.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+
+    threshold = decision_block.get("operational_threshold")
+    if not isinstance(threshold, Mapping) or threshold.get("status") != "resolved":
+        raise LoadSafeGateError(
+            "Operational threshold has not been resolved for this release.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+    threshold_value = threshold.get("value")
+    if (
+        not isinstance(threshold_value, (int, float))
+        or isinstance(threshold_value, bool)
+        or not (0.0 <= float(threshold_value) <= 1.0)
+    ):
+        raise LoadSafeGateError(
+            "Operational threshold value is invalid.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+
+    if decision_block.get("operational_prediction_available") is not True:
+        raise LoadSafeGateError(
+            "Operational prediction is not available for this release.",
+            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
+        )
+
+    return float(threshold_value)
+
+
 def load_governed_release(request: Mapping[str, Any], releases_root: Path | None = None) -> dict:
     root = (releases_root or RELEASES_ROOT).resolve(strict=True)
     release_id = _release_id_from_request(request)
@@ -733,7 +874,22 @@ def load_governed_release(request: Mapping[str, Any], releases_root: Path | None
     ):
         raise LoadSafeGateError("Predictive bundle identity is stale or inconsistent.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE, runtime_compatibility_status="stale_bundle_reference")
     _verify_declared_hash(model_path, model_decl, diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH)
-    return {"manifest": manifest, "bundle": bundle, "model_path": model_path}
+
+    # Project Spec S0189: for a validated external fitted-model release used
+    # operationally, a governed operational-readiness decision is required
+    # and verified -- entirely before model deserialization -- and its
+    # resolved threshold is what `execute_prediction` uses, never the
+    # bundle's own educational threshold.
+    operational_threshold: float | None = None
+    if bundle.get("model_provenance_origin") == "validated_external_fitted_model":
+        operational_threshold = _resolve_operational_readiness_threshold(manifest, bundle_decl, release_dir, root)
+
+    return {
+        "manifest": manifest,
+        "bundle": bundle,
+        "model_path": model_path,
+        "operational_threshold": operational_threshold,
+    }
 
 
 def check_releases_root_ready(releases_root: Path | None = None) -> None:
@@ -858,7 +1014,7 @@ def _resolve_band(probability: float) -> str:
     )
 
 
-def execute_prediction(model: Any, feature_payload: Mapping[str, Any]) -> dict:
+def execute_prediction(model: Any, feature_payload: Mapping[str, Any], operational_threshold: float) -> dict:
     try:
         import pandas as pd
     except ImportError as exc:
@@ -947,7 +1103,7 @@ def execute_prediction(model: Any, feature_payload: Mapping[str, Any]) -> dict:
         )
 
     positive_class_probability = class_probabilities[positive_index]
-    predicted_positive = positive_class_probability >= _DECISION_THRESHOLD
+    predicted_positive = positive_class_probability >= operational_threshold
     predicted_class_id = _POSITIVE_CLASS["class_id"] if predicted_positive else _NEGATIVE_CLASS_ID
     band_id = _resolve_band(positive_class_probability)
 
@@ -962,7 +1118,7 @@ def execute_prediction(model: Any, feature_payload: Mapping[str, Any]) -> dict:
             {"class_id": str(model_classes[1]), "probability": class_probabilities[1]},
         ],
         "decision": {
-            "threshold": _DECISION_THRESHOLD,
+            "threshold": operational_threshold,
             "predicted_positive": bool(predicted_positive),
         },
         "interpretation": {
@@ -994,6 +1150,21 @@ def execute_governed_external_prediction(request: Mapping[str, Any]) -> dict:
 
     preflight = run_preflight_gate(request)
     try:
+        # For a validated_external_fitted_model release,
+        # load_governed_release() has already resolved and verified a
+        # governed operational_threshold here -- or raised before this point
+        # if it could not (missing/invalid/stale decision evidence always
+        # fails closed before deserialization for that release class). For
+        # any other provenance, operational_threshold is None and this
+        # service's pre-S0189, still-unchanged historical threshold applies,
+        # matching "internal/legacy provenance: behavior remains unchanged".
+        operational_threshold = preflight.get("operational_threshold")
+        if (
+            not isinstance(operational_threshold, (int, float))
+            or isinstance(operational_threshold, bool)
+            or not (0.0 <= float(operational_threshold) <= 1.0)
+        ):
+            operational_threshold = _DECISION_THRESHOLD
         model = invoke_allowlisted_loader(preflight["model_path"])
         feature_payload = request.get("feature_payload")
         if not isinstance(feature_payload, dict):
@@ -1001,7 +1172,7 @@ def execute_governed_external_prediction(request: Mapping[str, Any]) -> dict:
                 "Prediction execution failed.",
                 diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
             )
-        return execute_prediction(model, feature_payload)
+        return execute_prediction(model, feature_payload, float(operational_threshold))
     except LoadSafeGateError as exc:
         # Steps 11-14 only ever run after the preflight gate (steps 1-10)
         # already established "compatible" -- a failure here is never a

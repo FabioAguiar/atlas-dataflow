@@ -33,15 +33,32 @@ passes it in, keeping this module's only coupling to the registry system
 at the orchestration layer, not the import layer.
 """
 
+import hashlib
 import json
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Project Spec S0189: the run-owned (not candidate-owned) governed
+# operational-readiness decision supplemental artifact role, matching
+# publisher/manifest.py's own constant.
+_OPERATIONAL_READINESS_ROLE = "operational_readiness"
+
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
+
+
+def _sha256_file_or_none(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(65536):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def _load_json_file(path: Path, label: str) -> tuple:
@@ -309,11 +326,28 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
                 raise RuntimeError(
                     "Manifest artifact entry is missing 'reference' field; cannot copy."
                 )
-            src = candidate_dir / reference
-            if not src.is_file():
-                raise RuntimeError(
-                    f"Artifact source file for reference '{reference}' is not readable during copy."
-                )
+            # Project Spec S0189: operational_readiness is run-owned, not
+            # candidate-owned -- its source lives in the publisher run
+            # directory (alongside validation-result.json/manifest.json),
+            # never in the immutable candidate directory. All other roles
+            # keep resolving from candidate_dir exactly as before.
+            if artifact.get("role") == _OPERATIONAL_READINESS_ROLE:
+                src = run_dir / reference
+                if not src.is_file():
+                    raise RuntimeError(
+                        "Governed operational-readiness decision artifact is missing from the run directory."
+                    )
+                actual_hash = _sha256_file_or_none(src)
+                if actual_hash is None or actual_hash != artifact.get("hash_value"):
+                    raise RuntimeError(
+                        "Governed operational-readiness decision artifact hash does not match the manifest declaration."
+                    )
+            else:
+                src = candidate_dir / reference
+                if not src.is_file():
+                    raise RuntimeError(
+                        f"Artifact source file for reference '{reference}' is not readable during copy."
+                    )
             dst = release_dir / reference
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)

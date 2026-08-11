@@ -315,6 +315,130 @@ def _visualizations_conforms_to_schema(data: dict, repo_root: Path) -> bool:
     return True
 
 
+def _operational_readiness_decision_conforms_to_schema(data: dict, repo_root: Path) -> bool:
+    """Validate a parsed operational-readiness decision against the
+    repository-authoritative
+    publisher/operational-readiness-decision.schema.json (Project Spec
+    S0189). Fails closed on any missing schema, unreadable schema, or
+    missing jsonschema dependency, matching
+    `_visualizations_conforms_to_schema`'s convention: selects the
+    validator declared by the schema's own `$schema` instead of hardcoding
+    Draft7Validator."""
+    try:
+        import jsonschema
+    except ImportError:
+        return False
+    schema = _load_json_if_possible(
+        repo_root / "publisher" / "operational-readiness-decision.schema.json"
+    )
+    if schema is None:
+        return False
+    try:
+        validator_cls = jsonschema.validators.validator_for(
+            schema, default=jsonschema.Draft202012Validator
+        )
+        validator_cls.check_schema(schema)
+        validator_cls(schema).validate(data)
+    except (jsonschema.ValidationError, jsonschema.SchemaError):
+        return False
+    return True
+
+
+def _evaluate_operational_readiness_decision(
+    decision: dict | None,
+    candidate_dir: Path,
+    predictive_bundle_role_result: dict | None,
+    dataset_slug: str,
+    release_id: str,
+    release_version: str,
+    repo_root: Path,
+) -> dict:
+    """Evaluate an operator-supplied governed operational-readiness decision
+    (Project Spec S0189) against the release candidate currently being
+    validated. Never trusts a decision-declared hash: always recomputes the
+    release-candidate.json and predictive_bundle hashes directly from
+    candidate_dir. Returns {"evaluation": <reduced block, decision_reference
+    and sha256 left None for the caller to fill in once the decision has
+    been persisted>, "promotion_eligible": bool}.
+    """
+    schema_conforms = isinstance(decision, dict) and _operational_readiness_decision_conforms_to_schema(
+        decision, repo_root
+    )
+    if not schema_conforms:
+        return {
+            "evaluation": {
+                "source": "governed_decision",
+                "decision_reference": None,
+                "sha256": None,
+                "operational_validity": None,
+                "operational_threshold_status": None,
+                "operational_prediction_available": None,
+                "decision_valid": False,
+            },
+            "promotion_eligible": False,
+        }
+
+    candidate_identity = decision.get("candidate_identity") or {}
+    identity_ok = (
+        candidate_identity.get("dataset_slug") == dataset_slug
+        and candidate_identity.get("release_id") == release_id
+        and candidate_identity.get("release_version") == release_version
+    )
+
+    rc_actual_sha256 = _sha256_file(candidate_dir / _CANDIDATE_FILENAME)
+    pb_reference = (
+        predictive_bundle_role_result.get("artifact_reference")
+        if isinstance(predictive_bundle_role_result, dict)
+        else None
+    )
+    pb_actual_sha256 = _sha256_file(candidate_dir / pb_reference) if isinstance(pb_reference, str) else None
+
+    source_bindings = decision.get("source_bindings") or {}
+    rc_binding = source_bindings.get("release_candidate") or {}
+    pb_binding = source_bindings.get("predictive_bundle") or {}
+    bindings_ok = (
+        rc_actual_sha256 is not None
+        and rc_binding.get("sha256") == rc_actual_sha256
+        and pb_actual_sha256 is not None
+        and pb_binding.get("sha256") == pb_actual_sha256
+    )
+
+    decision_block = decision.get("decision") or {}
+    operational_validity = decision_block.get("operational_validity")
+    operational_threshold = decision_block.get("operational_threshold") or {}
+    operational_threshold_status = operational_threshold.get("status")
+    operational_prediction_available = decision_block.get("operational_prediction_available")
+
+    decision_valid = bool(identity_ok and bindings_ok)
+    promotion_eligible = (
+        decision_valid
+        and operational_validity == "confirmed"
+        and operational_threshold_status == "resolved"
+        and operational_prediction_available is True
+    )
+
+    return {
+        "evaluation": {
+            "source": "governed_decision",
+            "decision_reference": None,
+            "sha256": None,
+            "operational_validity": (
+                operational_validity if isinstance(operational_validity, str) else None
+            ),
+            "operational_threshold_status": (
+                operational_threshold_status if isinstance(operational_threshold_status, str) else None
+            ),
+            "operational_prediction_available": (
+                operational_prediction_available
+                if isinstance(operational_prediction_available, bool)
+                else None
+            ),
+            "decision_valid": decision_valid,
+        },
+        "promotion_eligible": promotion_eligible,
+    }
+
+
 def _load_operational_note(repo_root: Path) -> dict:
     note_path = repo_root / "publisher" / "release-candidate.operational-note.json"
     try:
@@ -468,7 +592,12 @@ def _early_predictive_bundle_provenance(artifact_roles_decl: dict | None, candid
     return origin if isinstance(origin, str) else None
 
 
-def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | None = None) -> dict:
+def validate_candidate(
+    candidate: dict,
+    candidate_dir: Path,
+    repo_root: Path | None = None,
+    operational_readiness_decision: dict | None = None,
+) -> dict:
     """
     Validate a loaded release candidate dict.
 
@@ -482,6 +611,14 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
     repo_root defaults to the real repository root when not supplied. It is
     used only to locate contracts/public-contract.schema.json for the
     public_contract role's schema-compatibility check (Project Spec S0101).
+
+    operational_readiness_decision (Project Spec S0189) is an optional,
+    already-parsed governed operational-readiness decision. When supplied,
+    it is verified against this candidate's own actual hashes/identity
+    (never trusted at face value) and, when valid, allowed to derive
+    promotion_gate for a validated_external_fitted_model candidate instead
+    of the bundle's own self-declared readiness. Absent, behavior is
+    completely unchanged from the pre-S0189 bundle-only fail-closed path.
     """
     resolved_repo_root = Path(repo_root) if repo_root is not None else _DEFAULT_REPO_ROOT
     errors: list[dict] = []
@@ -890,6 +1027,18 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
     capability_conditional_validation = validate_capability_conditional_roles(candidate, role_results)
     rejection_reasons.extend(capability_conditional_validation["rejection_reasons"])
 
+    operational_readiness_decision_evaluation = None
+    if operational_readiness_decision is not None:
+        operational_readiness_decision_evaluation = _evaluate_operational_readiness_decision(
+            operational_readiness_decision,
+            candidate_dir,
+            role_results.get("predictive_bundle"),
+            dataset_slug,
+            release_id,
+            release_version,
+            resolved_repo_root,
+        )
+
     return {
         "valid": len(rejection_reasons) == 0 and len(errors) == 0,
         "errors": errors,
@@ -906,6 +1055,7 @@ def validate_candidate(candidate: dict, candidate_dir: Path, repo_root: Path | N
         "predictive_bundle_promotion_readiness": _predictive_bundle_promotion_readiness(
             json_artifacts.get("predictive_bundle")
         ),
+        "operational_readiness_decision_evaluation": operational_readiness_decision_evaluation,
     }
 
 
@@ -1170,7 +1320,11 @@ def _empty_validation_result(errors: list[dict], candidate_dir: Path) -> dict:
     }
 
 
-def validate_candidate_file(candidate_dir: Path, repo_root: Path | None = None) -> dict:
+def validate_candidate_file(
+    candidate_dir: Path,
+    repo_root: Path | None = None,
+    operational_readiness_decision: dict | None = None,
+) -> dict:
     """Load the release candidate JSON from a candidate directory and validate it."""
     candidate_json_path = candidate_dir / _CANDIDATE_FILENAME
     try:
@@ -1195,7 +1349,12 @@ def validate_candidate_file(candidate_dir: Path, repo_root: Path | None = None) 
             )],
             candidate_dir,
         )
-    return validate_candidate(candidate, candidate_dir, repo_root=repo_root)
+    return validate_candidate(
+        candidate,
+        candidate_dir,
+        repo_root=repo_root,
+        operational_readiness_decision=operational_readiness_decision,
+    )
 
 
 def _build_validation_result(validation: dict) -> dict:
@@ -1236,6 +1395,19 @@ def _build_validation_result(validation: dict) -> dict:
     predictive_bundle_promotion_readiness: dict = validation.get(
         "predictive_bundle_promotion_readiness"
     ) or {}
+    operational_readiness_decision_evaluation: dict | None = validation.get(
+        "operational_readiness_decision_evaluation"
+    )
+
+    _empty_operational_readiness_evaluation = {
+        "source": "bundle_only",
+        "decision_reference": None,
+        "sha256": None,
+        "operational_validity": None,
+        "operational_threshold_status": None,
+        "operational_prediction_available": None,
+        "decision_valid": False,
+    }
 
     if all_pass:
         validation_outcome = "accepted"
@@ -1250,21 +1422,47 @@ def _build_validation_result(validation: dict) -> dict:
         # unchanged historical behavior: structural acceptance implies
         # promotion_allowed.
         if predictive_bundle_promotion_readiness.get("model_provenance_origin") == "validated_external_fitted_model":
-            operationally_ready = (
-                predictive_bundle_promotion_readiness.get("operational_validity") == "confirmed"
-                and predictive_bundle_promotion_readiness.get("operational_threshold_status") == "resolved"
-                and predictive_bundle_promotion_readiness.get("operational_prediction_available") is True
-            )
+            # Project Spec S0189: a governed, hash-verified operational
+            # decision -- when supplied and valid -- replaces the bundle's
+            # own self-declared readiness as the promotion-eligibility
+            # source. Absent a decision, behavior is exactly the pre-S0189
+            # bundle-only fail-closed path.
+            if operational_readiness_decision_evaluation is not None:
+                operationally_ready = operational_readiness_decision_evaluation["promotion_eligible"]
+                operational_readiness_evaluation = dict(
+                    operational_readiness_decision_evaluation["evaluation"]
+                )
+            else:
+                operationally_ready = (
+                    predictive_bundle_promotion_readiness.get("operational_validity") == "confirmed"
+                    and predictive_bundle_promotion_readiness.get("operational_threshold_status") == "resolved"
+                    and predictive_bundle_promotion_readiness.get("operational_prediction_available") is True
+                )
+                operational_readiness_evaluation = {
+                    "source": "bundle_only",
+                    "decision_reference": None,
+                    "sha256": None,
+                    "operational_validity": predictive_bundle_promotion_readiness.get("operational_validity"),
+                    "operational_threshold_status": predictive_bundle_promotion_readiness.get(
+                        "operational_threshold_status"
+                    ),
+                    "operational_prediction_available": predictive_bundle_promotion_readiness.get(
+                        "operational_prediction_available"
+                    ),
+                    "decision_valid": False,
+                }
             promotion_gate: dict = {
                 "promotion_allowed": operationally_ready,
                 "registry_update_allowed": operationally_ready,
             }
         else:
             promotion_gate = {"promotion_allowed": True, "registry_update_allowed": True}
+            operational_readiness_evaluation = dict(_empty_operational_readiness_evaluation)
     else:
         validation_outcome = "rejected"
         rejection_obj = {"rejected": True, "reasons": rejection_reasons}
         promotion_gate = {"promotion_allowed": False, "registry_update_allowed": False}
+        operational_readiness_evaluation = dict(_empty_operational_readiness_evaluation)
 
     if not identifier_consistency.get("checked_sources"):
         identifier_consistency["checked_sources"] = [
@@ -1294,6 +1492,7 @@ def _build_validation_result(validation: dict) -> dict:
         "capability_conditional_validation": capability_conditional_validation,
         "rejection": rejection_obj,
         "promotion_gate": promotion_gate,
+        "operational_readiness_evaluation": operational_readiness_evaluation,
         "evidence_safety": {
             "reduced_evidence_only": True,
             "raw_logs_persisted": False,
@@ -1317,13 +1516,28 @@ def _build_validation_result(validation: dict) -> dict:
     }
 
 
-def run(candidate_dir_path: str, repo_root: Path | None = None) -> dict:
+def run(
+    candidate_dir_path: str,
+    repo_root: Path | None = None,
+    operational_readiness_decision: dict | None = None,
+) -> dict:
     """
     Validate a release candidate directory and write the result.
 
     Reads publisher/release-candidate.operational-note.json at runtime
     to confirm the candidate directory convention. The caller supplies the
     full candidate directory path — no path inference is performed here.
+
+    operational_readiness_decision (Project Spec S0189): when supplied, an
+    already-built, already-hash-consistent governed decision dict. This
+    function persists it verbatim as operational-readiness-decision.json in
+    the new run directory, computes its SHA-256 from the persisted bytes,
+    and backfills validation-result.json's
+    operational_readiness_evaluation.decision_reference/sha256 with that
+    run-relative path and digest -- the same "compute from persisted bytes"
+    discipline the canonical finalizer uses for its own result/evidence
+    pair. Absent, no decision artifact is written and behavior is
+    unchanged.
 
     Returns the validation result dict.
     Raises RuntimeError if the operational note cannot be loaded.
@@ -1351,12 +1565,47 @@ def run(candidate_dir_path: str, repo_root: Path | None = None) -> dict:
     if not candidate_dir.is_dir():
         raise ValueError("Candidate directory does not exist or is not a directory.")
 
-    validation = validate_candidate_file(candidate_dir, repo_root=repo_root)
+    validation = validate_candidate_file(
+        candidate_dir,
+        repo_root=repo_root,
+        operational_readiness_decision=operational_readiness_decision,
+    )
     result = _build_validation_result(validation)
 
-    run_id = "validate-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    runs_dir = repo_root / "publisher" / "runs" / run_id
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    # Project Spec S0189: a second-resolution timestamp alone can collide
+    # when two runs (e.g. an original structural validation and its
+    # operational-readiness revalidation) are created within the same
+    # second. exist_ok=False plus a disambiguating numeric suffix on
+    # collision guarantees every call gets its own directory and never
+    # silently overwrites an existing run's files.
+    run_id_base = "validate-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = run_id_base
+    collision_suffix = 1
+    while True:
+        runs_dir = repo_root / "publisher" / "runs" / run_id
+        try:
+            runs_dir.mkdir(parents=True, exist_ok=False)
+            break
+        except FileExistsError:
+            collision_suffix += 1
+            run_id = f"{run_id_base}-{collision_suffix}"
+
+    if operational_readiness_decision is not None:
+        decision_path = runs_dir / "operational-readiness-decision.json"
+        decision_text = json.dumps(operational_readiness_decision, indent=2, ensure_ascii=False)
+        decision_path.write_text(decision_text, encoding="utf-8")
+        decision_sha256 = hashlib.sha256(decision_text.encode("utf-8")).hexdigest()
+        # Only a real "governed_decision" evaluation (validated_external_fitted_model
+        # provenance, structurally accepted) gets the persisted reference/hash
+        # backfilled -- an internal/legacy candidate or a rejected candidate
+        # falls back to source: bundle_only above and must not carry a
+        # decision_reference pointing at an artifact that never influenced it.
+        if result["operational_readiness_evaluation"]["source"] == "governed_decision":
+            result["operational_readiness_evaluation"]["decision_reference"] = str(
+                decision_path.relative_to(repo_root)
+            )
+            result["operational_readiness_evaluation"]["sha256"] = decision_sha256
+
     result_path = runs_dir / "validation-result.json"
     result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 

@@ -982,6 +982,228 @@ describe("DashboardPage", () => {
     });
   });
 
+  describe("Operational readiness review (Project Spec S0189)", () => {
+    function unresolvedExternalRun() {
+      return {
+        schema_version: "admin-run-summary.v1",
+        run_id: "run-external-unresolved",
+        status: "available",
+        dataset_candidate: "telco-customer-churn",
+        created_at: "2026-08-11T20:15:01Z",
+        trace_reference: "trace/run-external-unresolved",
+        validation_summary: { outcome: "accepted" },
+        operational_readiness_summary: {
+          model_source_mode: "validated_external_fitted_model",
+          operational_validity: "unconfirmed",
+          operational_threshold_status: "unresolved",
+          operational_threshold_value: null,
+          operational_prediction_available: false,
+          review_required: true,
+          review_available: true,
+          decision_applied: false,
+        },
+      };
+    }
+
+    function installSoleUnresolvedExternalRunFetchMock() {
+      return installRunsFetchMock(
+        jsonResponse({ runs_root_status: "available", runs: [unresolvedExternalRun()] }),
+      );
+    }
+
+    it("shows a concrete readiness blocker reason and keeps Promote disabled for an unresolved external run", async () => {
+      installSoleUnresolvedExternalRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      const promoteButton = within(table).getByRole("button", { name: "Promote" });
+      expect(promoteButton).toBeDisabled();
+      expect(promoteButton).toHaveAttribute(
+        "title",
+        expect.stringContaining("Operational readiness review required"),
+      );
+      expect(
+        within(table).getByText(/Operational readiness review required:.*operational validity not confirmed/i),
+      ).toBeInTheDocument();
+    });
+
+    it("exposes Review readiness only for a structurally accepted external run with unresolved readiness", async () => {
+      installRunsFetchMock(
+        jsonResponse({
+          runs_root_status: "available",
+          runs: [
+            unresolvedExternalRun(),
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-internal-eligible",
+              status: "available",
+              dataset_candidate: "synthetic-retail-forecast",
+              created_at: "2026-06-01T12:00:00Z",
+              trace_reference: "trace/run-internal-eligible",
+              validation_summary: { outcome: "accepted" },
+            },
+            {
+              schema_version: "admin-run-summary.v1",
+              run_id: "run-external-resolved",
+              status: "available",
+              dataset_candidate: "telco-customer-churn",
+              created_at: "2026-08-11T20:20:00Z",
+              trace_reference: "trace/run-external-resolved",
+              validation_summary: { outcome: "accepted" },
+              operational_readiness_summary: {
+                model_source_mode: "validated_external_fitted_model",
+                operational_validity: "confirmed",
+                operational_threshold_status: "resolved",
+                operational_threshold_value: 0.31,
+                operational_prediction_available: true,
+                review_required: false,
+                review_available: true,
+                decision_applied: true,
+              },
+            },
+          ],
+        }),
+      );
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      expect(within(table).getAllByRole("button", { name: "Review readiness" })).toHaveLength(1);
+      // The resolved external run is now promotion-eligible and shows no
+      // review action; the internal run never had readiness evidence at all.
+      const promoteButtons = within(table).getAllByRole("button", { name: "Promote" });
+      expect(promoteButtons).toHaveLength(3);
+      expect(promoteButtons.some((button) => !button.hasAttribute("disabled"))).toBe(true);
+      expect(promoteButtons.some((button) => button.hasAttribute("disabled"))).toBe(true);
+    });
+
+    it("opens the review form with every field blank -- the threshold input is never prefilled", async () => {
+      installSoleUnresolvedExternalRunFetchMock();
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Review readiness" }));
+
+      const dialog = await screen.findByRole("dialog", { name: /Review operational readiness/i });
+      expect(within(dialog).getByRole("radio", { name: "Confirmed" })).not.toBeChecked();
+      expect(within(dialog).getByRole("radio", { name: "Unconfirmed" })).not.toBeChecked();
+      expect(within(dialog).getByRole("radio", { name: "Resolved" })).not.toBeChecked();
+      expect(within(dialog).queryByLabelText("Operational threshold value (0-1)")).not.toBeInTheDocument();
+      expect(within(dialog).getByLabelText("Decision basis")).toHaveValue("");
+      expect(within(dialog).getByRole("button", { name: "Submit review" })).toBeDisabled();
+    });
+
+    it("submits only the operator-entered fields to the operational-readiness endpoint and never calls promote", async () => {
+      const fetchMock = installSoleUnresolvedExternalRunFetchMock();
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-external-unresolved/operational-readiness") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-external-unresolved",
+            reviewed: true,
+            new_run_id: "validate-20260811T204900Z",
+            validation_outcome: "accepted",
+            promotion_eligible: true,
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          return jsonResponse({ runs_root_status: "available", runs: [unresolvedExternalRun()] });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Review readiness" }));
+      const dialog = await screen.findByRole("dialog", { name: /Review operational readiness/i });
+
+      fireEvent.click(within(dialog).getByRole("radio", { name: "Confirmed" }));
+      fireEvent.click(within(dialog).getByRole("radio", { name: "Resolved" }));
+      fireEvent.change(within(dialog).getByLabelText("Operational threshold value (0-1)"), {
+        target: { value: "0.31" },
+      });
+      fireEvent.change(within(dialog).getByLabelText("Threshold selection basis"), {
+        target: { value: "Reviewed on the holdout partition." },
+      });
+      fireEvent.click(within(dialog).getByRole("radio", { name: "Yes" }));
+      fireEvent.change(within(dialog).getByLabelText("Decision basis"), {
+        target: { value: "Operator reviewed the external evaluation evidence." },
+      });
+
+      const submitButton = within(dialog).getByRole("button", { name: "Submit review" });
+      expect(submitButton).not.toBeDisabled();
+      fireEvent.click(submitButton);
+
+      await screen.findByText(/Operational-readiness review submitted/i);
+
+      const reviewCall = fetchMock.mock.calls.find(([reqInput]) =>
+        String(reqInput).endsWith("/admin/runs/run-external-unresolved/operational-readiness"),
+      );
+      expect(reviewCall).toBeDefined();
+      const [, reviewInit] = reviewCall as [RequestInfo | URL, RequestInit];
+      const sentBody = JSON.parse(String(reviewInit.body));
+      expect(sentBody).toEqual({
+        operational_validity: "confirmed",
+        operational_threshold: { status: "resolved", value: 0.31, selection_basis: "Reviewed on the holdout partition." },
+        operational_prediction_available: true,
+        decision_basis: "Operator reviewed the external evaluation evidence.",
+      });
+
+      // Never calls the promotion endpoint as part of this flow.
+      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput).includes("/promote"))).toBe(false);
+    });
+
+    it("refreshes the runs list on success without auto-clicking Promote", async () => {
+      const fetchMock = installSoleUnresolvedExternalRunFetchMock();
+      let runsCallCount = 0;
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/runs/run-external-unresolved/operational-readiness") && init?.method === "POST") {
+          return jsonResponse({
+            run_id: "run-external-unresolved",
+            reviewed: true,
+            new_run_id: "validate-20260811T204900Z",
+            validation_outcome: "accepted",
+            promotion_eligible: true,
+            errors: [],
+          });
+        }
+        if (url.endsWith("/admin/runs")) {
+          runsCallCount += 1;
+          return jsonResponse({ runs_root_status: "available", runs: [unresolvedExternalRun()] });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      render(<DashboardPage />);
+      await loadRuns();
+      const callsBeforeReview = runsCallCount;
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+      fireEvent.click(within(table).getByRole("button", { name: "Review readiness" }));
+      const dialog = await screen.findByRole("dialog", { name: /Review operational readiness/i });
+
+      fireEvent.click(within(dialog).getByRole("radio", { name: "Confirmed" }));
+      fireEvent.click(within(dialog).getByRole("radio", { name: "Resolved" }));
+      fireEvent.change(within(dialog).getByLabelText("Operational threshold value (0-1)"), {
+        target: { value: "0.31" },
+      });
+      fireEvent.change(within(dialog).getByLabelText("Threshold selection basis"), { target: { value: "basis" } });
+      fireEvent.click(within(dialog).getByRole("radio", { name: "Yes" }));
+      fireEvent.change(within(dialog).getByLabelText("Decision basis"), { target: { value: "explicit basis" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Submit review" }));
+
+      await screen.findByText(/Operational-readiness review submitted/i);
+      expect(runsCallCount).toBeGreaterThan(callsBeforeReview);
+      expect(fetchMock.mock.calls.some(([reqInput]) => String(reqInput).includes("/promote"))).toBe(false);
+    });
+  });
+
   describe("Promoted run reflection", () => {
     function installPromotedRunFetchMock() {
       return installRunsFetchMock(

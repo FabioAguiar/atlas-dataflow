@@ -17,6 +17,7 @@
     "cross_artifact_consistency",
     "rejection",
     "promotion_gate",
+    "operational_readiness_evaluation",
     "evidence_safety",
     "publisher_boundaries"
   ],
@@ -327,6 +328,63 @@
               "registry_update_allowed": {
                 "const": false
               }
+            }
+          }
+        }
+      ]
+    },
+    "operational_readiness_evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0189. Bounded operational-readiness evaluation, without raw contents: whether promotion eligibility for a validated_external_fitted_model candidate was derived purely from the predictive bundle's own self-declared readiness (bundle_only) or from a governed, hash-verified operator decision (governed_decision). Present and populated with a bundle_only, all-null/false shape even for a structurally rejected or non-external candidate, so the key is always structurally present.",
+      "required": [
+        "source",
+        "decision_reference",
+        "sha256",
+        "operational_validity",
+        "operational_threshold_status",
+        "operational_prediction_available",
+        "decision_valid"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["bundle_only", "governed_decision"]
+        },
+        "decision_reference": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Repository/run-relative reference to the governed operational-readiness-decision.json this evaluation was derived from. Null when source is bundle_only."
+        },
+        "sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "operational_validity": {
+          "type": ["string", "null"],
+          "enum": ["confirmed", "unconfirmed", null]
+        },
+        "operational_threshold_status": {
+          "type": ["string", "null"],
+          "enum": ["resolved", "unresolved", null]
+        },
+        "operational_prediction_available": {
+          "type": ["boolean", "null"]
+        },
+        "decision_valid": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "source": { "const": "bundle_only" } },
+            "required": ["source"]
+          },
+          "then": {
+            "properties": {
+              "decision_reference": { "type": "null" },
+              "sha256": { "type": "null" }
             }
           }
         }

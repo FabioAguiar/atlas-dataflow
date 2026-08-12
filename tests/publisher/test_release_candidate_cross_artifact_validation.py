@@ -943,15 +943,40 @@ def test_external_provenance_candidate_structurally_omitting_visualizations_is_a
             continue
         overrides = {}
         if role == "predictive_bundle":
+            # Project Spec S0192: result_semantics.decision.threshold must
+            # equal external_model_evidence.educational_threshold.value --
+            # required by the S0191 publisher compatibility check.
             overrides = {
                 "model_provenance_origin": "validated_external_fitted_model",
+                "result_semantics": {
+                    "schema_version": "binary-result-semantics.v1",
+                    "problem_type": "binary_classification",
+                    "decision": {"threshold": 0.25},
+                },
                 "external_model_evidence": {
                     "origin": "validated_external_fitted_model",
+                    "educational_threshold": {"value": 0.25},
                     "readiness": {
                         "operational_validity": "unconfirmed",
                         "operational_threshold": {"status": "unresolved", "value": None},
                         "operational_prediction_available": False,
                     },
+                },
+            }
+        elif role == "metrics":
+            # Project Spec S0192: a supported public metric on
+            # validation_evaluation, required by the S0191 publisher
+            # compatibility check for a validated_external_fitted_model
+            # candidate.
+            overrides = {
+                "schema_version": "training-metrics.external-fitted-model.v1",
+                "evidence_identity": {
+                    "model_source_mode": "validated_external_fitted_model",
+                    "dataset_slug": DATASET_SLUG,
+                },
+                "validation_evaluation": {
+                    "partition_role": "validation",
+                    "metrics": [{"name": "roc_auc", "value": 0.80}],
                 },
             }
         _write_json(candidate_dir / role_path, _artifact_payload(role, **overrides))

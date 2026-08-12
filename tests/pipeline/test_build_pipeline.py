@@ -852,19 +852,38 @@ def _write_external_governed_artifacts(repo_root: Path) -> dict:
         "model_family": "hist_gradient_boosting",
         "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
     })
+    # Project Spec S0192: validation_evaluation carries the one supported
+    # public metric the S0191 publisher compatibility check requires for a
+    # validated_external_fitted_model candidate.
     _write_json(repo_root / paths["training_metrics"], {
         "schema_version": "training-metrics.external-fitted-model.v1",
         "evidence_identity": {"model_source_mode": "validated_external_fitted_model", "dataset_slug": DATASET_SLUG},
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "metrics": [{"name": "roc_auc", "value": 0.80}],
+        },
     })
     _write_json(repo_root / paths["model_card"], {"schema_version": "model-card.v1"})
     _write_json(repo_root / paths["public_context"], {"role": "public_context", "schema_version": "x"})
     _write_json(repo_root / paths["public_contract"], _VALID_PUBLIC_CONTRACT)
     model_artifact_sha256 = hashlib.sha256((repo_root / paths["model_artifact"]).read_bytes()).hexdigest()
+    # Project Spec S0192: compatible binary result_semantics whose
+    # decision.threshold matches external_model_evidence.educational_threshold.value
+    # -- required by the S0191 publisher compatibility check.
     _write_json(repo_root / paths["inference_bundle"], {
         "role": "inference_bundle",
         "schema_version": "inference_bundle.v1",
         "model_provenance_origin": "validated_external_fitted_model",
         "model_artifact": {"path": "models/model.pkl", "sha256": model_artifact_sha256},
+        "result_semantics": {
+            "schema_version": "binary-result-semantics.v1",
+            "problem_type": "binary_classification",
+            "decision": {"threshold": 0.25},
+        },
+        "external_model_evidence": {
+            "origin": "validated_external_fitted_model",
+            "educational_threshold": {"value": 0.25},
+        },
     })
     # No governed visualization artifact exists for this external model --
     # legitimately unresolved rather than fabricated.

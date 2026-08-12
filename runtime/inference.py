@@ -93,6 +93,18 @@ _PROBABILITY_SUM_TOLERANCE = 1e-6
 
 _RISK_BAND_IDS = ("low", "medium", "high")
 
+# Project Spec S0192: the closed set of governed binary result model
+# families accepted by project_result_contract's result_semantics
+# validation -- the internal M25-02 families plus hist_gradient_boosting,
+# the already-governed external public-result family (Project Spec S0180/
+# S0191). Never an unconstrained string and never dataset-slug-specific.
+_GOVERNED_RESULT_MODEL_FAMILIES = (
+    "logistic_regression",
+    "gradient_boosting",
+    "random_forest",
+    "hist_gradient_boosting",
+)
+
 # In-memory JSON Schema for binary-classification-result.v1. Deliberately not
 # persisted as contracts/binary-classification-result.schema.json: that path
 # is a candidate_edit_paths entry only, never promoted into this request's
@@ -189,7 +201,13 @@ _BINARY_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
             "properties": {
                 "model_family": {
                     "type": "string",
-                    "enum": ["logistic_regression", "gradient_boosting", "random_forest"],
+                    # Project Spec S0192: hist_gradient_boosting is the
+                    # already-governed external public-result model family
+                    # (contracts/inference-bundle.schema.json,
+                    # pipeline/generate_inference_bundle.py); this is a
+                    # closed, bounded allow-list, never an unconstrained
+                    # string.
+                    "enum": list(_GOVERNED_RESULT_MODEL_FAMILIES),
                 },
                 "display_name": {"type": "string", "minLength": 1},
             },
@@ -1148,7 +1166,7 @@ def _validate_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]
         )
     model_family = model_descriptor.get("model_family")
     display_name = model_descriptor.get("display_name")
-    if model_family not in ("logistic_regression", "gradient_boosting", "random_forest"):
+    if model_family not in _GOVERNED_RESULT_MODEL_FAMILIES:
         raise BundleValidationError(
             "invalid_model_family",
             "Inference bundle model family is invalid.",

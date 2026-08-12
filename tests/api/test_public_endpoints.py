@@ -2810,22 +2810,16 @@ def test_result_contract_available_when_binary_result_semantics_present():
             api_main._inference_releases_root = original_releases_root
 
 
-def test_result_contract_currently_unavailable_for_external_hist_gradient_boosting_semantics():
-    """Project Spec S0191 disclosed gap (out of scope for S0191 itself):
-    runtime/inference.py is read-only for this spec (not in
-    allowed_edit_paths), and its _validate_result_semantics hardcodes
-    model_descriptor.model_family to exactly
-    ("logistic_regression", "gradient_boosting", "random_forest") --
-    excluding hist_gradient_boosting, the only external public-result
-    family (contracts/inference-bundle.schema.json and
-    pipeline/generate_inference_bundle.py already support it). This
-    anchors the exact blocking condition the S0191 context pack itself
-    pre-declares ("the correction would require editing
-    runtime/inference.py"): a newly-generated external bundle with
-    schema-valid result_semantics still cannot be projected as
-    status=available today. A follow-up spec extending that one
-    allow-list in runtime/inference.py is required before this can flip
-    to "available"; when it does, this test must be updated alongside it."""
+def test_result_contract_available_for_external_hist_gradient_boosting_semantics():
+    """Project Spec S0192: reconciles the S0191-disclosed gap --
+    runtime/inference.py's _validate_result_semantics now accepts
+    hist_gradient_boosting (the only external public-result model family;
+    contracts/inference-bundle.schema.json and
+    pipeline/generate_inference_bundle.py already supported it) in its
+    closed model_family allow-list. A newly-generated external bundle
+    with schema-valid result_semantics now projects as status=available,
+    preserving the governed positive/negative class identities, decision
+    threshold, and model descriptor -- with no model deserialization."""
     from runtime.inference import project_result_contract
 
     external_result_semantics = {
@@ -2844,6 +2838,64 @@ def test_result_contract_currently_unavailable_for_external_hist_gradient_boosti
             "origin": "validated_external_fitted_model",
             "model_family": "hist_gradient_boosting",
         },
+    }
+
+    result = project_result_contract(bundle)
+
+    assert result["status"] == "available"
+    assert result["semantics"] == {
+        **external_result_semantics,
+        "negative_class": {"class_id": "No"},
+    }
+    assert result["semantics"]["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
+    assert result["semantics"]["decision"]["threshold"] == 0.5
+    assert result["semantics"]["model_descriptor"] == {
+        "model_family": "hist_gradient_boosting",
+        "display_name": "HistGradientBoosting",
+    }
+
+
+def test_result_contract_available_for_every_governed_model_family():
+    """Project Spec S0192 acceptance criteria 6-8: internal model families
+    remain accepted alongside the newly-added external family."""
+    from runtime.inference import project_result_contract
+
+    for model_family, display_name in (
+        ("logistic_regression", "Logistic Regression"),
+        ("gradient_boosting", "Gradient Boosting"),
+        ("random_forest", "Random Forest"),
+        ("hist_gradient_boosting", "HistGradientBoosting"),
+    ):
+        semantics = {
+            **_S0109_RESULT_SEMANTICS,
+            "model_descriptor": {"model_family": model_family, "display_name": display_name},
+        }
+        bundle = {
+            "feature_order": ["age"],
+            "output_schema": {"class_labels": ["No", "Yes"]},
+            "result_semantics": semantics,
+        }
+
+        result = project_result_contract(bundle)
+
+        assert result["status"] == "available"
+        assert result["semantics"]["model_descriptor"]["model_family"] == model_family
+
+
+def test_result_contract_unavailable_for_unsupported_model_family():
+    """Project Spec S0192 acceptance criteria 9-10: an arbitrary
+    unsupported model family remains rejected -- the allow-list stays
+    closed, never an unconstrained string."""
+    from runtime.inference import project_result_contract
+
+    semantics = {
+        **_S0109_RESULT_SEMANTICS,
+        "model_descriptor": {"model_family": "xgboost", "display_name": "XGBoost"},
+    }
+    bundle = {
+        "feature_order": ["age"],
+        "output_schema": {"class_labels": ["No", "Yes"]},
+        "result_semantics": semantics,
     }
 
     result = project_result_contract(bundle)

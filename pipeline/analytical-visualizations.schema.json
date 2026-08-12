@@ -153,11 +153,12 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["model_family", "external_evidence_reference", "external_evidence_sha256"],
-          "description": "Binds this artifact to the external model/run without ever retaining the absolute external project root: model_family names the validated external estimator family, and external_evidence_reference/external_evidence_sha256 are the same repository-relative-to-the-external-project reference and SHA-256 already verified by the canonical notebook's existing external evidence boundary.",
+          "description": "Binds this artifact to the external model/run without ever retaining the absolute external project root: model_family names the validated external estimator family, and external_evidence_reference/external_evidence_sha256 are the same reference and SHA-256 already verified by the canonical notebook's existing external evidence boundary. Project Spec S0194: visual_evidence_origin optionally, truthfully identifies whether that reference/hash describe the external producer's own directly authored evidence (external_evidence_index) or Atlas's own bounded, hash-bound derivation performed only when that producer role was absent (atlas_reference_derivation); its absence preserves the historical S0193 profile unchanged.",
           "properties": {
             "model_family": { "$ref": "#/$defs/external_model_family" },
             "external_evidence_reference": { "$ref": "#/$defs/safe_relative_reference" },
-            "external_evidence_sha256": { "$ref": "#/$defs/sha256" }
+            "external_evidence_sha256": { "$ref": "#/$defs/sha256" },
+            "visual_evidence_origin": { "enum": ["external_evidence_index", "atlas_reference_derivation"] }
           }
         },
         "charts": {

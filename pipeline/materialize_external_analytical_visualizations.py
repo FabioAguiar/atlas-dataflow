@@ -4,11 +4,15 @@ Generic external analytical-visualization materializer for atlas-dataflow (Proje
 Given an already-materialized ``external_fitted_model_materialization_result``
 (status: "materialized", produced by
 ``pipeline.materialize_external_fitted_model``) and one already
-hash-verified external visual-evidence payload (the canonical notebook's own
+hash-verified external visual-evidence payload -- either the external
+producer's own directly authored evidence (the canonical notebook's own
 safe-relative-path + SHA-256 verification boundary against
 ``external-evidence-index.v1`` has already run before this module is ever
 called -- see ``pipeline.materialize_external_candidate_support`` for the
-same evidence-boundary convention), produces a release-candidate-compatible
+same evidence-boundary convention) or Atlas's own bounded derivation
+(Project Spec S0194: ``pipeline.derive_external_analytical_visualization_evidence``,
+used only when the producer's role was absent), truthfully labeled by
+``visual_evidence_origin`` -- produces a release-candidate-compatible
 ``analytical-visualizations.external-fitted-model.v1`` artifact (Target
 Distribution and Feature Importance).
 
@@ -40,6 +44,21 @@ ARTIFACT_KIND = "analytical_visualizations"
 
 _MODEL_FAMILIES = ("hist_gradient_boosting", "gradient_boosting", "random_forest", "logistic_regression")
 _PUBLIC_ROW_LIMIT = 10
+
+# Project Spec S0194: the visual-evidence origin this artifact's
+# external_evidence_reference/external_evidence_sha256 actually describe --
+# either the external producer's own directly authored evidence
+# (unchanged S0193 behavior), or Atlas's own bounded, hash-bound derivation
+# (pipeline.derive_external_analytical_visualization_evidence) performed
+# only when the producer's role was absent. This module never computes
+# either kind of evidence itself; it only truthfully labels which kind the
+# caller already produced.
+VISUAL_EVIDENCE_ORIGIN_EXTERNAL_EVIDENCE_INDEX = "external_evidence_index"
+VISUAL_EVIDENCE_ORIGIN_ATLAS_REFERENCE_DERIVATION = "atlas_reference_derivation"
+_VISUAL_EVIDENCE_ORIGINS = (
+    VISUAL_EVIDENCE_ORIGIN_EXTERNAL_EVIDENCE_INDEX,
+    VISUAL_EVIDENCE_ORIGIN_ATLAS_REFERENCE_DERIVATION,
+)
 
 
 class VisualizationsMaterializationBlocked(Exception):
@@ -239,6 +258,7 @@ def materialize_external_analytical_visualizations(
     external_evidence_reference: str,
     external_evidence_sha256: str,
     output_visualizations_path: str,
+    visual_evidence_origin: str = VISUAL_EVIDENCE_ORIGIN_EXTERNAL_EVIDENCE_INDEX,
     repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Materialize a reduced, truthful external analytical-visualizations artifact.
@@ -251,11 +271,16 @@ def materialize_external_analytical_visualizations(
     hash-verified, governed ``training_parameter_record`` -- never a second,
     independently supplied value. ``external_visual_evidence`` is the
     already parsed, already hash-verified external visual-evidence payload
-    (the caller's evidence-index verification boundary already ran);
+    (the caller's evidence-index verification boundary already ran, whether
+    that boundary was the producer's own external-evidence-index role or
+    Atlas's own bounded derivation module);
     ``external_evidence_reference``/``external_evidence_sha256`` are the
     same relative-path/hash pair from that verification, embedded into the
     output artifact's provenance -- never the absolute external project
-    root. Writes exactly one runtime artifact,
+    root. ``visual_evidence_origin`` truthfully labels which of those two
+    kinds of verification boundary produced this evidence; it never
+    describes Atlas-derived evidence as producer-authored external
+    evidence. Writes exactly one runtime artifact,
     ``output_visualizations_path`` (repository-relative, resolved beneath
     ``repo_root``), only on success; writes nothing on any validation
     failure.
@@ -267,6 +292,13 @@ def materialize_external_analytical_visualizations(
     resolved_repo_root = Path(repo_root).expanduser().resolve() if repo_root else _repo_root()
 
     try:
+        if visual_evidence_origin not in _VISUAL_EVIDENCE_ORIGINS:
+            raise VisualizationsMaterializationBlocked(
+                "invalid_visual_evidence_origin",
+                f"visual_evidence_origin must be one of {list(_VISUAL_EVIDENCE_ORIGINS)!r}.",
+                "visual_evidence_origin",
+            )
+
         dataset_slug = _require_nonempty_string(dataset_slug, "dataset_slug")
 
         materialization_result = _require_mapping(materialization_result, "materialization_result")
@@ -429,6 +461,7 @@ def materialize_external_analytical_visualizations(
                 "model_family": record_model_family,
                 "external_evidence_reference": external_evidence_reference,
                 "external_evidence_sha256": external_evidence_sha256,
+                "visual_evidence_origin": visual_evidence_origin,
             },
             "charts": [
                 {

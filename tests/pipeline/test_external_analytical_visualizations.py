@@ -454,3 +454,196 @@ def test_materialize_writes_beneath_current_external_fitted_model_run_directory(
     assert result["visualizations_path"].startswith(
         "pipeline/external-fitted-model-runs/telco-customer-churn/run-001/"
     )
+
+
+# --- Project Spec S0194: visual_evidence_origin provenance ------------------
+
+
+def test_materialize_defaults_to_external_evidence_index_provenance(tmp_path):
+    materialization_result = _materialization_result(repo_root=tmp_path)
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_external_visual_evidence(),
+        external_evidence_reference="artifacts/telco-customer-churn/analytical-visual-evidence.json",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "materialized", result
+    artifact = json.loads((tmp_path / _output_path()).read_text())
+    assert artifact["external_materialization_provenance"]["visual_evidence_origin"] == "external_evidence_index"
+
+    schema = json.loads((REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(artifact)
+
+
+def test_materialize_accepts_atlas_reference_derivation_provenance(tmp_path):
+    materialization_result = _materialization_result(repo_root=tmp_path)
+    derived_reference = "pipeline/external-fitted-model-runs/telco-customer-churn/run-001/derived-analytical-visualization-evidence.json"
+    derived_sha256 = "b" * 64
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_external_visual_evidence(),
+        external_evidence_reference=derived_reference,
+        external_evidence_sha256=derived_sha256,
+        output_visualizations_path=_output_path(),
+        visual_evidence_origin="atlas_reference_derivation",
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "materialized", result
+    artifact = json.loads((tmp_path / _output_path()).read_text())
+    provenance = artifact["external_materialization_provenance"]
+    assert provenance["visual_evidence_origin"] == "atlas_reference_derivation"
+    # Atlas-derived evidence must bind to the derived-evidence Atlas
+    # relative path and exact SHA-256 -- never described as producer-
+    # authored external evidence -- while reusing the same reference/hash
+    # fields the direct S0193 path already uses.
+    assert provenance["external_evidence_reference"] == derived_reference
+    assert provenance["external_evidence_sha256"] == derived_sha256
+
+    schema = json.loads((REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(artifact)
+
+
+def test_materialize_blocks_on_invalid_visual_evidence_origin(tmp_path):
+    materialization_result = _materialization_result(repo_root=tmp_path)
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_external_visual_evidence(),
+        external_evidence_reference="x",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        visual_evidence_origin="fabricated_origin",
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked", result
+    assert result["blocking_reasons"][0]["code"] == "invalid_visual_evidence_origin"
+    assert not (tmp_path / _output_path()).exists()
+
+
+def test_materialize_blocks_on_unsafe_derived_evidence_reference(tmp_path):
+    materialization_result = _materialization_result(repo_root=tmp_path)
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_external_visual_evidence(),
+        external_evidence_reference="/etc/passwd",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        visual_evidence_origin="atlas_reference_derivation",
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked", result
+    assert result["blocking_reasons"][0]["code"] == "unsafe_path"
+    assert not (tmp_path / _output_path()).exists()
+
+
+def test_materialize_blocks_on_invalid_derived_evidence_hash(tmp_path):
+    materialization_result = _materialization_result(repo_root=tmp_path)
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_external_visual_evidence(),
+        external_evidence_reference="pipeline/external-fitted-model-runs/telco-customer-churn/run-001/derived-analytical-visualization-evidence.json",
+        external_evidence_sha256="not-a-hash",
+        output_visualizations_path=_output_path(),
+        visual_evidence_origin="atlas_reference_derivation",
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked", result
+    assert result["blocking_reasons"][0]["code"] == "invalid_hash"
+
+
+def test_historical_external_evidence_index_only_provenance_remains_schema_valid():
+    # Historical/S0193 fixture objects that carry only the original two
+    # provenance fields (no visual_evidence_origin at all) must remain
+    # schema-valid after the S0194 schema extension.
+    historical_artifact = {
+        "schema_version": "analytical-visualizations.external-fitted-model.v1",
+        "artifact_kind": "analytical_visualizations",
+        "model_source_mode": "validated_external_fitted_model",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "external_materialization_provenance": {
+            "model_family": "hist_gradient_boosting",
+            "external_evidence_reference": "artifacts/telco-customer-churn/analytical-visual-evidence.json",
+            "external_evidence_sha256": VALID_SHA256,
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": "Churn",
+                "y_label": "Count",
+                "data": [{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": [{"name": "tenure", "value": 0.23}],
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "external_prepared_dataset",
+            "source": "external_prepared_evaluation_population",
+            "target_column": "Churn",
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "external_validated_fitted_model",
+            "method": "permutation_importance",
+            "total_source_feature_count": 19,
+            "omitted_source_feature_count": 18,
+            "public_row_limit": 10,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+    schema = json.loads((REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(historical_artifact)
+
+
+def test_materializer_module_still_has_no_sklearn_joblib_or_permutation_implementation():
+    import pipeline.materialize_external_analytical_visualizations as module
+
+    source_lines = Path(module.__file__).read_text(encoding="utf-8").splitlines()
+    for forbidden in (
+        "import sklearn",
+        "from sklearn",
+        "import joblib",
+        "pickle.load",
+        ".fit(",
+        ".predict(",
+        "permutation_importance(",
+    ):
+        assert not any(
+            forbidden in line and not line.strip().startswith("#") for line in source_lines
+        ), forbidden

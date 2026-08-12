@@ -313,6 +313,8 @@ def test_notebook_never_persists_absolute_prepared_dataset_path():
 
 # --- Project Spec S0193: external analytical-visualization evidence and
 # release materialization ---
+# --- Project Spec S0194: Atlas-owned derivation fallback when the external
+# analytical_visualizations role is absent ---
 
 
 def test_notebook_consumes_analytical_visualizations_external_evidence_role():
@@ -321,17 +323,34 @@ def test_notebook_consumes_analytical_visualizations_external_evidence_role():
         "from pipeline.materialize_external_analytical_visualizations import "
         "materialize_external_analytical_visualizations" in code
     )
-    assert '"analytical_visualizations" not in evidence_by_role' in code
+    assert '"analytical_visualizations" in evidence_by_role' in code
     assert 'load_verified_external_evidence(\n            "analytical_visualizations"\n        )' in code
     assert "materialize_external_analytical_visualizations" in _called_names()
 
 
-def test_notebook_blocks_with_specific_reason_when_analytical_visualizations_role_is_absent():
+def test_notebook_imports_and_calls_the_generic_derivation_module():
     code = _source("code")
-    assert '"external_visual_evidence_role_missing"' in code
-    role_missing_index = code.index('"external_visual_evidence_role_missing"')
+    assert (
+        "from pipeline.derive_external_analytical_visualization_evidence import "
+        "derive_external_analytical_visualization_evidence" in code
+    )
+    assert "derive_external_analytical_visualization_evidence" in _called_names()
+
+
+def test_notebook_direct_role_has_precedence_and_role_absence_selects_derivation():
+    code = _source("code")
+    visualizations_section_start = code.index('analytical_visualizations_relative_path = ""')
     candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
-    assert role_missing_index < candidate_assembly_index
+    visualizations_section = code[visualizations_section_start:candidate_assembly_index]
+    # Role absence no longer terminates unconditionally with
+    # external_visual_evidence_role_missing -- it selects the Atlas-owned
+    # derivation fallback instead, and the direct external role (when
+    # present) still takes precedence over ever attempting derivation.
+    assert '"external_visual_evidence_role_missing"' not in visualizations_section
+    if_present_index = visualizations_section.index('if "analytical_visualizations" in evidence_by_role:')
+    else_index = visualizations_section.index("\n    else:\n")
+    derivation_call_index = visualizations_section.index("derive_external_analytical_visualization_evidence(")
+    assert if_present_index < else_index < derivation_call_index
 
 
 def test_notebook_calls_visualizations_materializer_only_after_external_model_materialization_succeeds():
@@ -349,27 +368,84 @@ def test_notebook_calls_visualizations_materializer_only_after_external_model_ma
     assert 'if not run_state["blocked"]:' in visualizations_section
 
 
-def test_notebook_visualizations_materializer_receives_external_materialization_result():
+def test_notebook_direct_path_visualizations_materializer_receives_external_materialization_result():
     code = _source("code")
     assert "materialization_result=external_materialization_result," in code
     assert "external_visual_evidence=analytical_visual_evidence," in code
     assert 'external_evidence_reference=analytical_visual_evidence_ref["relative_path"],' in code
     assert 'external_evidence_sha256=analytical_visual_evidence_ref["sha256"],' in code
+    assert 'visual_evidence_origin="external_evidence_index",' in code
 
 
 def test_notebook_visualizations_materializer_writes_beneath_external_fitted_model_run_directory():
     code = _source("code")
     assert (
         'analytical_visualizations_output_relative_path = (\n'
-        '            f"{external_fitted_model_run_relative_path}/analytical-visualizations.json"\n'
-        "        )"
+        '        f"{external_fitted_model_run_relative_path}/analytical-visualizations.json"\n'
+        "    )"
     ) in code
     assert "output_visualizations_path=analytical_visualizations_output_relative_path," in code
 
 
+def test_notebook_split_identity_is_hash_verified_before_derivation():
+    code = _source("code")
+    assert 'split_manifest, split_manifest_ref = load_verified_external_evidence("split_identity")' in code
+    split_load_index = code.index('load_verified_external_evidence("split_identity")')
+    derivation_call_index = code.index("derive_external_analytical_visualization_evidence(\n")
+    assert split_load_index < derivation_call_index
+
+
+def test_notebook_derivation_receives_governed_inputs_without_absolute_external_root_in_output():
+    code = _source("code")
+    section_start = code.index("visual_evidence_derivation_result = derive_external_analytical_visualization_evidence(")
+    section_end = code.index("if visual_evidence_derivation_result[\"status\"] == \"derived\":")
+    section = code[section_start:section_end]
+    assert "dataset_slug=dataset_slug," in section
+    assert "external_root=external_root," in section
+    assert "split_manifest=split_manifest," in section
+    assert 'split_manifest_reference=split_manifest_ref["relative_path"],' in section
+    assert 'split_manifest_sha256=split_manifest_ref["sha256"],' in section
+    assert "final_model_manifest=final_model_manifest," in section
+    assert 'final_model_manifest_reference=final_model_manifest_ref["relative_path"],' in section
+    assert 'final_model_manifest_sha256=final_model_manifest_ref["sha256"],' in section
+    assert "materialization_result=external_materialization_result," in section
+    assert "output_derivation_evidence_path=derived_evidence_output_relative_path," in section
+
+
+def test_notebook_derived_evidence_path_and_hash_feed_the_materializer():
+    code = _source("code")
+    assert 'external_evidence_reference=visual_evidence_derivation_result["derivation_evidence_path"],' in code
+    assert 'external_evidence_sha256=visual_evidence_derivation_result["derivation_evidence_sha256"],' in code
+    assert 'visual_evidence_origin="atlas_reference_derivation",' in code
+    # The materializer's external_visual_evidence for the derived path is
+    # built only from the derivation result's own reduced fields -- never a
+    # different, re-guessed shape.
+    payload_start = code.index('external_visual_evidence={\n                    "dataset_slug"')
+    payload_end = code.index("},\n                external_evidence_reference=visual_evidence_derivation_result")
+    payload_section = code[payload_start:payload_end]
+    assert 'visual_evidence_derivation_result["dataset_slug"]' in payload_section
+    assert 'visual_evidence_derivation_result["model_family"]' in payload_section
+    assert 'visual_evidence_derivation_result["target_distribution"]' in payload_section
+    assert 'visual_evidence_derivation_result["feature_importance"]' in payload_section
+    assert 'visual_evidence_derivation_result["feature_importance_method"]' in payload_section
+
+
+def test_notebook_derivation_block_is_recorded_and_stops_before_candidate_assembly():
+    code = _source("code")
+    section_start = code.index('if visual_evidence_derivation_result["status"] == "derived":')
+    section_end = code.index("if visual_evidence_materialization_result is not None:")
+    section = code[section_start:section_end]
+    assert "else:" in section
+    assert 'for reason in visual_evidence_derivation_result["blocking_reasons"]:' in section
+    assert 'record_block(reason["code"], reason["message"], reason.get("field"))' in section
+    block_else_index = code.index('for reason in visual_evidence_derivation_result["blocking_reasons"]:')
+    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
+    assert block_else_index < candidate_assembly_index
+
+
 def test_notebook_records_block_and_leaves_visualizations_path_unresolved_when_materializer_blocks():
     code = _source("code")
-    section_start = code.index("visual_evidence_materialization_result = materialize_external_analytical_visualizations(")
+    section_start = code.index("if visual_evidence_materialization_result is not None:")
     section_end = code.index("candidate_release_id = provisional_release_id")
     section = code[section_start:section_end]
     assert 'if visual_evidence_materialization_result["status"] == "materialized":' in section
@@ -379,26 +455,28 @@ def test_notebook_records_block_and_leaves_visualizations_path_unresolved_when_m
     )
     assert 'for reason in visual_evidence_materialization_result["blocking_reasons"]:' in section
     assert 'record_block(reason["code"], reason["message"], reason.get("field"))' in section
+    # A present-but-invalid external role is never silently bypassed: the
+    # direct-path materializer call result flows into this exact same
+    # blocked-vs-materialized branch, whether it came from the direct
+    # external_evidence_index path or the atlas_reference_derivation
+    # fallback path.
+    assert section.startswith("if visual_evidence_materialization_result is not None:")
 
 
-def test_notebook_does_not_infer_feature_importance_from_unrelated_artifacts():
+def test_notebook_does_not_mutate_the_external_evidence_index_or_write_into_the_external_project():
     code = _source("code")
-    visualizations_section_start = code.index("analytical_visualizations_relative_path = \"\"")
-    visualizations_section_end = code.index(
-        "from pipeline.training import _prepared_dataset_metadata_blocking_reasons"
-    )
-    visualizations_section = code[visualizations_section_start:visualizations_section_end]
-    # The only evidence source for this section is the one verified,
-    # hash-bound analytical_visualizations role -- never final_model_manifest,
-    # readiness_and_limitations, or any other unrelated already-loaded
-    # external evidence variable.
-    for unrelated in (
-        "final_model_manifest",
-        "readiness_and_limitations",
-        "model_selection_candidates",
-        "threshold_analysis",
-    ):
-        assert unrelated not in visualizations_section
+    visualizations_section_start = code.index('analytical_visualizations_relative_path = ""')
+    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
+    visualizations_section = code[visualizations_section_start:candidate_assembly_index]
+    # "external_evidence_index" appears only inside the
+    # visual_evidence_origin="external_evidence_index" provenance-label
+    # string literal, never as a mutation of the actual index artifact.
+    assert 'external_evidence_index_relative_path' not in visualizations_section
+    assert "external_evidence_index.json" not in visualizations_section
+    assert ".write_text(" not in visualizations_section
+    assert "write_governed_json" not in visualizations_section
+    assert "external_root /" not in visualizations_section
+    assert "external_root.write" not in visualizations_section
 
 
 def test_notebook_orchestrates_release_candidate_assembly_from_compatible_roles():

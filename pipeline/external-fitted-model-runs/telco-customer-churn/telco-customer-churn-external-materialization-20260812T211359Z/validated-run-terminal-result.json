@@ -1,0 +1,47 @@
+{
+  "artifact_kind": "validated_run_terminal_result",
+  "boundary_confirmations": {
+    "educational_threshold_reinterpreted_as_operational": false,
+    "publisher_promotion_invoked": false,
+    "registry_state_written": false
+  },
+  "durable_references": {
+    "inference_bundle": null,
+    "manifest": null,
+    "materialization_result": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260812T211359Z/materialization-result.json",
+      "sha256": "f39d5e9ee73af9bb04d8297dade2b294c9288550fcff48424f5ef19e0b618b74"
+    },
+    "operational_readiness_source": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260812T211359Z/materialization-result.json",
+      "sha256": "f39d5e9ee73af9bb04d8297dade2b294c9288550fcff48424f5ef19e0b618b74"
+    },
+    "publisher_validation_result": null,
+    "release_candidate": null
+  },
+  "manifest_outcome": null,
+  "model_source_mode": "validated_external_fitted_model",
+  "operational_readiness": {
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "unresolved",
+      "value": null
+    },
+    "operational_validity": "unconfirmed"
+  },
+  "promotion_eligibility": false,
+  "reasons": [
+    {
+      "code": "inference_bundle_blocked",
+      "message": "training evidence positive_class_id does not match result_semantics.positive_class.class_id."
+    }
+  ],
+  "run_identity": {
+    "created_at": "2026-08-12T21:14:22+00:00",
+    "dataset_slug": "telco-customer-churn",
+    "run_id": "telco-customer-churn-external-materialization-20260812T211359Z"
+  },
+  "schema_version": "validated-run-terminal-result.v1",
+  "status": "blocked",
+  "structural_validation": null
+}

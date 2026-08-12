@@ -1270,6 +1270,166 @@ def test_public_metrics_loader_flat_top_level_shape_never_raises():
         assert metrics["evaluation"]["metrics"] == {"accuracy": 0.9}
 
 
+# --- Project Spec S0191: explicit training-metrics.external-fitted-model.v1
+# public projector -----------------------------------------------------------
+
+
+def _s0191_external_metrics_payload(
+    *,
+    include_final_test: bool = False,
+    final_test_completed: bool = True,
+    validation_metrics: list | None = None,
+    final_test_metrics: list | None = None,
+    validation_row_count: int | None = 500,
+) -> dict:
+    payload: dict = {
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "artifact_kind": "training_metrics",
+        "created_at": "2026-08-01T00:00:00Z",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": "sample-dataset",
+        },
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "used_for_fitting": True,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            # Never the public holdout evaluation -- distinct value from
+            # validation/test below so a leak is caught deterministically.
+            "metrics": [{"name": "roc_auc", "value": 0.99}],
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "used_for_fitting": False,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": True,
+            "sealed_before_finalization": False,
+            "metrics": (
+                validation_metrics
+                if validation_metrics is not None
+                else [
+                    {"name": "roc_auc", "value": 0.80},
+                    {"name": "average_precision", "value": 0.62},
+                ]
+            ),
+        },
+    }
+    if validation_row_count is not None:
+        payload["validation_evaluation"]["row_count"] = validation_row_count
+    if include_final_test:
+        payload["final_test_evaluation"] = {
+            "partition_role": "test",
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_threshold_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": True,
+            "completed": final_test_completed,
+            "evaluation_count": 1 if final_test_completed else 0,
+            "metrics": (
+                (final_test_metrics if final_test_metrics is not None else [{"name": "roc_auc", "value": 0.77}])
+                if final_test_completed
+                else []
+            ),
+        }
+        if final_test_completed:
+            payload["final_test_evaluation"]["row_count"] = 300
+    return payload
+
+
+def test_public_metrics_loader_external_fitted_model_uses_validation_when_final_test_absent():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0191-001", _s0191_external_metrics_payload())
+        metrics = api_main.load_public_metrics("release-s0191-001", releases_root=releases_root)
+        evaluation = metrics["evaluation"]
+        assert evaluation["split_name"] == "validation"
+        assert evaluation["sample_size"] == 500
+        assert evaluation["primary_metric_id"] is None
+        assert evaluation["metrics"] == {"roc_auc": 0.80, "pr_auc": 0.62}
+
+
+def test_public_metrics_loader_external_fitted_model_prefers_completed_final_test():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0191-002",
+            _s0191_external_metrics_payload(
+                include_final_test=True,
+                final_test_completed=True,
+                final_test_metrics=[{"name": "roc_auc", "value": 0.77}],
+            ),
+        )
+        metrics = api_main.load_public_metrics("release-s0191-002", releases_root=releases_root)
+        evaluation = metrics["evaluation"]
+        assert evaluation["split_name"] == "test"
+        assert evaluation["sample_size"] == 300
+        assert evaluation["metrics"] == {"roc_auc": 0.77}
+
+
+def test_public_metrics_loader_external_fitted_model_ignores_incomplete_final_test():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0191-003",
+            _s0191_external_metrics_payload(include_final_test=True, final_test_completed=False),
+        )
+        metrics = api_main.load_public_metrics("release-s0191-003", releases_root=releases_root)
+        assert metrics["evaluation"]["split_name"] == "validation"
+
+
+def test_public_metrics_loader_external_fitted_model_cross_validation_never_exposed():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0191-004", _s0191_external_metrics_payload())
+        metrics = api_main.load_public_metrics("release-s0191-004", releases_root=releases_root)
+        # cross_validation_summary's roc_auc value (0.99) must never surface
+        # as the projected public metric -- only validation_evaluation's
+        # (0.80) may.
+        assert metrics["evaluation"]["metrics"]["roc_auc"] == 0.80
+
+
+def test_public_metrics_loader_external_fitted_model_unsupported_metric_omitted():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0191-005",
+            _s0191_external_metrics_payload(
+                validation_metrics=[
+                    {"name": "roc_auc", "value": 0.80},
+                    {"name": "brier_score", "value": 0.1},
+                    {"name": "f2", "value": 0.5},
+                ]
+            ),
+        )
+        metrics = api_main.load_public_metrics("release-s0191-005", releases_root=releases_root)
+        assert set(metrics["evaluation"]["metrics"]) == {"roc_auc"}
+
+
+def test_public_metrics_loader_external_fitted_model_omits_internal_evidence_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0191-006", _s0191_external_metrics_payload())
+        metrics = api_main.load_public_metrics("release-s0191-006", releases_root=releases_root)
+        serialized = json.dumps(metrics)
+        for internal_marker in (
+            "evidence_identity",
+            "cross_validation_summary",
+            "used_for_fitting",
+            "sealed_before_finalization",
+            "artifact_kind",
+            "created_at",
+            "sample-dataset",
+        ):
+            assert internal_marker not in serialized
+
+
 def test_real_release_dataset_home_model_card_payload_shape():
     for resolved in _real_release_dataset_pairs():
         model_card = api_main.load_public_model_card(
@@ -2648,6 +2808,47 @@ def test_result_contract_available_when_binary_result_semantics_present():
             api_main.load_public_contract = original_load_public_contract
             _restore_snapshot_ready_stub(original_snapshot_readiness)
             api_main._inference_releases_root = original_releases_root
+
+
+def test_result_contract_currently_unavailable_for_external_hist_gradient_boosting_semantics():
+    """Project Spec S0191 disclosed gap (out of scope for S0191 itself):
+    runtime/inference.py is read-only for this spec (not in
+    allowed_edit_paths), and its _validate_result_semantics hardcodes
+    model_descriptor.model_family to exactly
+    ("logistic_regression", "gradient_boosting", "random_forest") --
+    excluding hist_gradient_boosting, the only external public-result
+    family (contracts/inference-bundle.schema.json and
+    pipeline/generate_inference_bundle.py already support it). This
+    anchors the exact blocking condition the S0191 context pack itself
+    pre-declares ("the correction would require editing
+    runtime/inference.py"): a newly-generated external bundle with
+    schema-valid result_semantics still cannot be projected as
+    status=available today. A follow-up spec extending that one
+    allow-list in runtime/inference.py is required before this can flip
+    to "available"; when it does, this test must be updated alongside it."""
+    from runtime.inference import project_result_contract
+
+    external_result_semantics = {
+        **_S0109_RESULT_SEMANTICS,
+        "model_descriptor": {
+            "model_family": "hist_gradient_boosting",
+            "display_name": "HistGradientBoosting",
+        },
+    }
+    bundle = {
+        "feature_order": ["age"],
+        "output_schema": {"class_labels": ["No", "Yes"]},
+        "result_semantics": external_result_semantics,
+        "model_provenance_origin": "validated_external_fitted_model",
+        "external_model_evidence": {
+            "origin": "validated_external_fitted_model",
+            "model_family": "hist_gradient_boosting",
+        },
+    }
+
+    result = project_result_contract(bundle)
+
+    assert result == {"status": "unavailable", "reason": "binary_result_semantics_unavailable"}
 
 
 def test_result_contract_unavailable_for_historical_bundle_without_result_semantics():

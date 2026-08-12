@@ -14,6 +14,7 @@ Does NOT modify any candidate artifact.
 
 import hashlib
 import json
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -793,6 +794,18 @@ def validate_candidate(
         if data is not None:
             json_artifacts[role] = data
 
+    # --- External public-release compatibility (Project Spec S0191).
+    # Gated on the candidate's own declared provenance (never dataset
+    # identity); historical/internal candidates are never subject to these
+    # checks, so their acceptance behavior is unchanged. ---
+    if predictive_bundle_provenance == _VALIDATED_EXTERNAL_FITTED_MODEL_PROVENANCE:
+        rejection_reasons.extend(
+            _external_predictive_bundle_compatibility(json_artifacts.get("predictive_bundle"))
+        )
+        rejection_reasons.extend(
+            _external_metrics_public_projection_check(json_artifacts.get("metrics"))
+        )
+
     # --- Model artifact / predictive bundle cross-consistency (Project Spec
     # S0107). The model is binary and never JSON-parsed itself; only its
     # already-computed bytes hash and declared candidate path are
@@ -959,6 +972,136 @@ def _predictive_bundle_promotion_readiness(predictive_bundle_data: dict | None) 
             operational_prediction_available if isinstance(operational_prediction_available, bool) else None
         ),
     }
+
+
+# Project Spec S0191: external public-release compatibility checks for a
+# validated_external_fitted_model candidate's predictive bundle and metrics
+# artifact. Gated exclusively on model_provenance_origin ==
+# validated_external_fitted_model (never dataset identity); historical/
+# internal candidates never reach these functions, so their acceptance
+# behavior is unchanged. Reuses the existing rejection-code vocabulary
+# (incomplete_required_artifact, contradictory_candidate_artifact) already
+# present in publisher/validation/release-candidate-validation.schema.json
+# rather than inventing new codes. Structural JSON checks only -- this
+# module never imports the web UI, model runtime, or model loader, and
+# deliberately does not import api/public_metrics_loader.py either, to keep
+# that isolation; the bounded alias set below intentionally mirrors (not
+# imports) that module's public metric vocabulary.
+_EXTERNAL_METRICS_SCHEMA_VERSION = "training-metrics.external-fitted-model.v1"
+_PUBLIC_PROJECTABLE_METRIC_ALIASES = frozenset({
+    "roc_auc", "auc_roc", "auc",
+    "f1", "f1_score",
+    "pr_auc", "average_precision",
+    "precision", "recall", "accuracy", "log_loss",
+})
+
+
+def _is_finite_numeric(value) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return math.isfinite(value)
+    return False
+
+
+def _external_predictive_bundle_compatibility(predictive_bundle_data: dict | None) -> list[dict]:
+    """Require a validated_external_fitted_model candidate's predictive
+    bundle to carry compatible binary result_semantics whose decision
+    threshold matches the bundle's own governed external threshold
+    evidence, before the candidate can be accepted."""
+    if not isinstance(predictive_bundle_data, dict):
+        return []
+
+    result_semantics = predictive_bundle_data.get("result_semantics")
+    if (
+        not isinstance(result_semantics, dict)
+        or result_semantics.get("problem_type") != "binary_classification"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Validated external fitted-model predictive bundle is missing compatible "
+            "binary result_semantics required for public release compatibility.",
+            "predictive_bundle",
+            "external_result_semantics_missing",
+        )]
+
+    decision = result_semantics.get("decision")
+    result_threshold = decision.get("threshold") if isinstance(decision, dict) else None
+
+    external_evidence = predictive_bundle_data.get("external_model_evidence")
+    educational_threshold = (
+        external_evidence.get("educational_threshold") if isinstance(external_evidence, dict) else None
+    )
+    governed_threshold = (
+        educational_threshold.get("value") if isinstance(educational_threshold, dict) else None
+    )
+
+    if (
+        not _is_finite_numeric(result_threshold)
+        or not _is_finite_numeric(governed_threshold)
+        or result_threshold != governed_threshold
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Validated external fitted-model result_semantics.decision.threshold does not "
+            "match the bundle's governed external threshold evidence.",
+            "predictive_bundle",
+            "external_threshold_mismatch",
+        )]
+    return []
+
+
+def _external_metrics_public_projection_check(metrics_data: dict | None) -> list[dict]:
+    """Require a validated_external_fitted_model candidate's metrics
+    artifact to be training-metrics.external-fitted-model.v1 and to contain
+    at least one metric id that the closed public projection can expose
+    from its selected public evaluation partition (completed
+    final_test_evaluation when present, otherwise validation_evaluation --
+    never cross_validation_summary)."""
+    if not isinstance(metrics_data, dict):
+        return []
+
+    if metrics_data.get("schema_version") != _EXTERNAL_METRICS_SCHEMA_VERSION:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Validated external fitted-model candidate metrics artifact does not declare "
+            f"{_EXTERNAL_METRICS_SCHEMA_VERSION!r}.",
+            "metrics",
+            "external_metrics_schema_version_missing",
+        )]
+
+    final_test = metrics_data.get("final_test_evaluation")
+    validation = metrics_data.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    raw_metrics = selected.get("metrics") if isinstance(selected, dict) else None
+    has_projectable_metric = False
+    if isinstance(raw_metrics, list):
+        for item in raw_metrics:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if (
+                isinstance(name, str)
+                and name.strip().lower() in _PUBLIC_PROJECTABLE_METRIC_ALIASES
+                and _is_finite_numeric(item.get("value"))
+            ):
+                has_projectable_metric = True
+                break
+
+    if not has_projectable_metric:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Validated external fitted-model candidate metrics selected public evaluation "
+            "partition yields no supported public metric.",
+            "metrics",
+            "external_metrics_no_public_metric",
+        )]
+    return []
 
 
 def _validate_cross_artifact_consistency(

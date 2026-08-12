@@ -41,6 +41,20 @@ MODEL_FAMILY_DISPLAY_NAMES: dict[str, str] = {
     "logistic_regression": "Logistic Regression",
     "gradient_boosting": "Gradient Boosting",
     "random_forest": "Random Forest",
+    # Project Spec S0191: the only external public-result model family
+    # (training-parameter-record.external-fitted-model.v1 restricts
+    # model_family to exactly this one enum value). An internal training
+    # record can never reach this entry -- SUPPORTED_MODEL_FAMILIES below
+    # (checked by _resolve_runtime_execution before result_semantics is
+    # ever resolved) does not include it.
+    "hist_gradient_boosting": "HistGradientBoosting",
+}
+# Project Spec S0191: bounded governed pairing of external public-result
+# model_family to its required estimator_identity, mirroring
+# training-parameter-record.schema.json's external profile enums. Never
+# open-ended -- a family not present here is never accepted.
+_EXTERNAL_GOVERNED_ESTIMATOR_IDENTITIES: dict[str, dict[str, str]] = {
+    "hist_gradient_boosting": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
 }
 BINARY_RESULT_SEMANTICS_SCHEMA_VERSION = "binary-result-semantics.v1"
 BINARY_CLASSIFICATION_RESULT_SCHEMA_VERSION = "binary-classification-result.v1"
@@ -426,10 +440,140 @@ def _resolve_runtime_execution(training_record: dict[str, Any], args: argparse.N
     return runtime
 
 
+def _resolve_internal_result_semantics_model_descriptor(
+    training_record: dict[str, Any], positive_class_id: str
+) -> dict[str, str]:
+    """training-parameter-record.v1 (internal) model_descriptor resolution.
+
+    Unchanged from the pre-S0191 behavior: validates
+    training_parameters.model_family and
+    binary_classification_evidence.positive_class_id.
+    """
+    training_parameters = _require_mapping(training_record, "training_parameters")
+    model_family = _require_string(training_parameters, "model_family")
+    if model_family not in MODEL_FAMILY_DISPLAY_NAMES:
+        raise BundleGenerationError(
+            "unsupported_model_family",
+            "model_family is not supported by the result_semantics model_descriptor mapping.",
+            field="training_parameters.model_family",
+        )
+
+    binary_classification_evidence = training_record.get("binary_classification_evidence")
+    if not isinstance(binary_classification_evidence, dict):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training_parameter_record.binary_classification_evidence is required when "
+            "result_semantics is present.",
+            field="binary_classification_evidence",
+        )
+    if binary_classification_evidence.get("positive_class_id") != positive_class_id:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training evidence positive_class_id does not match "
+            "result_semantics.positive_class.class_id.",
+            field="binary_classification_evidence.positive_class_id",
+        )
+    return {
+        "model_family": model_family,
+        "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
+    }
+
+
+def _resolve_external_result_semantics_model_descriptor(
+    training_record: dict[str, Any],
+    model_selection: dict[str, Any] | None,
+    positive_class_id: str,
+) -> dict[str, str]:
+    """training-parameter-record.external-fitted-model.v1 (external)
+    model_descriptor resolution (Project Spec S0191).
+
+    Never trusts training_parameters/binary_classification_evidence -- those
+    fields do not exist on the external profile and are never fabricated.
+    Instead validates the actual external fields: origin, model_family,
+    selected_model_id, and estimator_identity, fail-closed on any mismatch.
+    """
+    if training_record.get("origin") != EXTERNAL_MODEL_SOURCE_MODE:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            f"training_parameter_record.origin must be {EXTERNAL_MODEL_SOURCE_MODE!r} "
+            "when result_semantics is present on an external training record.",
+            field="origin",
+        )
+
+    model_family = _require_string(training_record, "model_family")
+    if model_family not in MODEL_FAMILY_DISPLAY_NAMES:
+        raise BundleGenerationError(
+            "unsupported_model_family",
+            "model_family is not supported by the result_semantics model_descriptor mapping.",
+            field="model_family",
+        )
+
+    selected_model_id = _require_string(training_record, "selected_model_id")
+
+    estimator_identity = _require_mapping(training_record, "estimator_identity")
+    estimator_identity_value = {
+        "library": _require_string(estimator_identity, "library"),
+        "class_name": _require_string(estimator_identity, "class_name"),
+    }
+    if estimator_identity_value != _EXTERNAL_GOVERNED_ESTIMATOR_IDENTITIES.get(model_family):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "estimator_identity is not compatible with the governed external model_family.",
+            field="estimator_identity",
+        )
+
+    if isinstance(model_selection, dict):
+        selected_candidate_ref = model_selection.get("selected_candidate")
+        candidate_id = (
+            selected_candidate_ref.get("candidate_id")
+            if isinstance(selected_candidate_ref, dict)
+            else None
+        )
+        candidates = model_selection.get("candidates")
+        matching_candidates = (
+            [
+                candidate
+                for candidate in candidates
+                if isinstance(candidate, dict) and candidate.get("candidate_id") == candidate_id
+            ]
+            if isinstance(candidates, list)
+            else []
+        )
+        selected_candidate_entry = matching_candidates[0] if len(matching_candidates) == 1 else None
+        if (
+            candidate_id != selected_model_id
+            or selected_candidate_entry is None
+            or selected_candidate_entry.get("model_family") != model_family
+            or selected_candidate_entry.get("estimator_identity") != estimator_identity_value
+        ):
+            raise BundleGenerationError(
+                "result_semantics_cross_artifact_mismatch",
+                "selected_model_id is not consistent with model_family in "
+                "model_selection_evidence's selected candidate.",
+                field="selected_model_id",
+            )
+
+    if training_record.get("positive_class_id") != positive_class_id:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training evidence positive_class_id does not match "
+            "result_semantics.positive_class.class_id.",
+            field="positive_class_id",
+        )
+
+    return {
+        "model_family": model_family,
+        "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
+    }
+
+
 def _resolve_result_semantics(
     execution_contract: dict[str, Any],
     training_record: dict[str, Any],
     output_schema: dict[str, Any],
+    *,
+    model_selection: dict[str, Any] | None = None,
+    decision_threshold_override: Any = None,
 ) -> dict[str, Any] | None:
     """Project the execution contract's result_semantics into the bundle, or None.
 
@@ -438,8 +582,29 @@ def _resolve_result_semantics(
     historical-compatibility path: the bundle is generated exactly as
     before. When `result_semantics` is present, validates cross-artifact
     consistency against the bundle's own output_schema and the training
-    parameter record's governed `binary_classification_evidence`, blocking
-    (raising, never writing a partial bundle) on any mismatch.
+    parameter record's governed identity fields, blocking (raising, never
+    writing a partial bundle) on any mismatch.
+
+    Supports exactly the two known training-parameter-record profiles
+    (Project Spec S0191), dispatched on `training_record["schema_version"]`:
+    `training-parameter-record.v1` (internal, unchanged validation against
+    `training_parameters.model_family` /
+    `binary_classification_evidence.positive_class_id`) and
+    `training-parameter-record.external-fitted-model.v1` (external,
+    validated against its own governed identity fields -- see
+    `_resolve_external_result_semantics_model_descriptor`).
+
+    `model_selection` is only consulted for the external profile, as an
+    extra fail-closed cross-check that `selected_model_id` matches the
+    governed selected candidate; ignored for the internal profile.
+
+    `decision_threshold_override`, when not None, replaces the execution
+    contract's own `result_semantics.decision.threshold` value in the
+    returned bundle -- used only by the external path (Project Spec S0191
+    Desired Change B) to synchronize the projected threshold with the
+    already-validated external threshold evidence instead of treating the
+    execution contract's older threshold as runtime truth. The execution
+    contract's threshold is still structurally validated either way.
     """
     result_semantics_source = execution_contract.get("result_semantics")
     if result_semantics_source is None:
@@ -488,29 +653,13 @@ def _resolve_result_semantics(
             field="output_schema.probability_output",
         )
 
-    training_parameters = _require_mapping(training_record, "training_parameters")
-    model_family = _require_string(training_parameters, "model_family")
-    if model_family not in MODEL_FAMILY_DISPLAY_NAMES:
-        raise BundleGenerationError(
-            "unsupported_model_family",
-            "model_family is not supported by the result_semantics model_descriptor mapping.",
-            field="training_parameters.model_family",
+    if training_record.get("schema_version") == _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
+        model_descriptor = _resolve_external_result_semantics_model_descriptor(
+            training_record, model_selection, positive_class_id
         )
-
-    binary_classification_evidence = training_record.get("binary_classification_evidence")
-    if not isinstance(binary_classification_evidence, dict):
-        raise BundleGenerationError(
-            "result_semantics_cross_artifact_mismatch",
-            "training_parameter_record.binary_classification_evidence is required when "
-            "result_semantics is present.",
-            field="binary_classification_evidence",
-        )
-    if binary_classification_evidence.get("positive_class_id") != positive_class_id:
-        raise BundleGenerationError(
-            "result_semantics_cross_artifact_mismatch",
-            "training evidence positive_class_id does not match "
-            "result_semantics.positive_class.class_id.",
-            field="binary_classification_evidence.positive_class_id",
+    else:
+        model_descriptor = _resolve_internal_result_semantics_model_descriptor(
+            training_record, positive_class_id
         )
 
     decision = _require_mapping(result_semantics_source, "decision")
@@ -521,6 +670,21 @@ def _resolve_result_semantics(
             "result_semantics.decision.threshold must be a number within [0, 1].",
             field="result_semantics.decision.threshold",
         )
+
+    effective_threshold = threshold
+    if decision_threshold_override is not None:
+        if (
+            isinstance(decision_threshold_override, bool)
+            or not isinstance(decision_threshold_override, (int, float))
+            or not (0.0 <= decision_threshold_override <= 1.0)
+        ):
+            raise BundleGenerationError(
+                "invalid_result_semantics",
+                "external_model_evidence.educational_threshold.value must be a number "
+                "within [0, 1] to synchronize result_semantics.decision.threshold.",
+                field="external_model_evidence.educational_threshold.value",
+            )
+        effective_threshold = decision_threshold_override
 
     interpretation = _require_mapping(result_semantics_source, "interpretation")
     bands = interpretation.get("bands")
@@ -540,15 +704,12 @@ def _resolve_result_semantics(
             "class_id": positive_class_id,
             "event_label": event_label,
         },
-        "decision": {"threshold": threshold},
+        "decision": {"threshold": effective_threshold},
         "interpretation": {
             "preset": _require_string(interpretation, "preset"),
             "bands": [dict(band) for band in bands],
         },
-        "model_descriptor": {
-            "model_family": model_family,
-            "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
-        },
+        "model_descriptor": model_descriptor,
     }
 
 
@@ -1147,6 +1308,21 @@ def _build_external_bundle(
     preprocessing = _resolve_preprocessing(execution_contract)
     output_schema = _resolve_output_schema(args)
 
+    # Project Spec S0191 Desired Change B: when the execution contract
+    # carries governed binary result_semantics, project it into the
+    # external bundle too, synchronizing decision.threshold to the
+    # already-validated external threshold evidence (never the execution
+    # contract's older threshold, never re-run threshold selection). When
+    # the execution contract carries no result_semantics, this preserves
+    # historical absence behavior identically to the internal path.
+    result_semantics = _resolve_result_semantics(
+        execution_contract,
+        training_record,
+        output_schema,
+        model_selection=model_selection,
+        decision_threshold_override=educational_threshold_source.get("value"),
+    )
+
     external_model_evidence = {
         "origin": EXTERNAL_MODEL_SOURCE_MODE,
         "evidence_references": {
@@ -1259,6 +1435,9 @@ def _build_external_bundle(
         "model_provenance_origin": EXTERNAL_MODEL_SOURCE_MODE,
         "external_model_evidence": external_model_evidence,
     }
+
+    if result_semantics is not None:
+        bundle["result_semantics"] = result_semantics
 
     if args.description:
         bundle["bundle_identity"]["description"] = args.description

@@ -72,6 +72,10 @@ def _training_parameter_record(*, dataset_slug: str = DATASET_SLUG, model_artifa
             "library": "scikit-learn",
             "class_name": "HistGradientBoostingClassifier",
         },
+        # Present only when the fitted model is binary (Project Spec
+        # S0191) -- matches the "yes" positive class used by this test
+        # module's class_labels=["no", "yes"] fixtures.
+        "positive_class_id": "yes",
         "hyperparameters": {"max_depth": 3, "learning_rate": 0.1},
         "feature_order": ["feature_one", "feature_two"],
         "preprocessing_evidence_reference": "artifacts/models/sample/preprocessing-evidence.json",
@@ -957,3 +961,289 @@ def test_materialization_result_field_shape_matches_bundle_consumer_requirements
         "operational_prediction_available",
     ):
         assert key in result["operational_readiness"]
+
+
+# --- Project Spec S0191: external result_semantics projection and threshold
+# synchronization -----------------------------------------------------------
+
+
+def _minimal_execution_contract_with_result_semantics(
+    *, dataset_id: str = DATASET_SLUG, threshold: float = 0.5
+) -> dict:
+    contract = _minimal_execution_contract(dataset_id=dataset_id)
+    contract["result_semantics"] = {
+        "schema_version": "binary-result-semantics.v1",
+        "problem_type": "binary_classification",
+        "positive_class": {"class_id": "yes", "event_label": "Positive Event"},
+        "primary_output": "positive_class_probability",
+        "decision": {"threshold": threshold},
+        "interpretation": {
+            "preset": "risk",
+            "bands": [
+                {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+            ],
+        },
+    }
+    return contract
+
+
+def test_materialization_result_generates_external_bundle_with_synced_result_semantics(
+    tmp_path: Path,
+) -> None:
+    """Project Spec S0191: when the execution contract carries governed
+    binary result_semantics, the external bundle branch projects it too --
+    proving bundle.result_semantics.decision.threshold ==
+    bundle.external_model_evidence.educational_threshold.value (never the
+    execution contract's own older threshold), that the positive class is
+    preserved, that hist_gradient_boosting resolves to a bounded display
+    name, and that no internal training_parameters/
+    binary_classification_evidence/training_evidence are fabricated."""
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+    external_threshold = materialization_result["educational_threshold"]["value"]
+    assert external_threshold != 0.5
+
+    execution_contract_path = repo_root / "contracts" / "sample" / "execution-contract.json"
+    _write_json(execution_contract_path, _minimal_execution_contract_with_result_semantics())
+    runtime_contract_path = repo_root / "contracts" / "sample" / "runtime-contract.json"
+    _write_json(runtime_contract_path, {"contract_version": "runtime_contract.v1"})
+    public_contract_path = repo_root / "contracts" / "sample" / "public-contract.json"
+    _write_json(public_contract_path, {"contract_version": "public_contract.v1"})
+    dataset_context_path = repo_root / "contracts" / "sample" / "dataset-context.json"
+    _write_json(dataset_context_path, {"schema_version": "dataset-context.v1"})
+    prepared_dataset_path = repo_root / "contracts" / "sample" / "prepared-dataset.json"
+    _write_json(prepared_dataset_path, {"schema_version": "prepared-dataset.v1"})
+
+    output_path = repo_root / "contracts" / "sample" / "inference-bundle.json"
+
+    bundle_result = generate_inference_bundle.materialize_governed_inference_bundle(
+        external_fitted_model_materialization_result=materialization_result,
+        execution_contract_path=execution_contract_path,
+        runtime_contract_path=runtime_contract_path,
+        public_contract_path=public_contract_path,
+        dataset_context_path=dataset_context_path,
+        prepared_dataset_path=prepared_dataset_path,
+        output_path=output_path,
+        prediction_type="number",
+        repo_root=repo_root,
+        dataset_slug=DATASET_SLUG,
+        release_id="release-20260801-001",
+        class_labels=["no", "yes"],
+        probability_output=True,
+        inference_bundle_schema_path=str(INFERENCE_BUNDLE_SCHEMA_PATH),
+        execution_contract_ref="contracts/sample/execution-contract.json",
+        runtime_contract_ref="contracts/sample/runtime-contract.json",
+        public_contract_ref="contracts/sample/public-contract.json",
+        dataset_context_ref="contracts/sample/dataset-context.json",
+        prepared_dataset_ref="contracts/sample/prepared-dataset.json",
+    )
+
+    assert bundle_result["status"] == "generated"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+    schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(bundle)
+
+    assert "result_semantics" in bundle
+    assert bundle["result_semantics"]["positive_class"]["class_id"] == "yes"
+    assert bundle["result_semantics"]["model_descriptor"] == {
+        "model_family": "hist_gradient_boosting",
+        "display_name": "HistGradientBoosting",
+    }
+    assert bundle["result_semantics"]["decision"]["threshold"] == external_threshold
+    assert bundle["result_semantics"]["decision"]["threshold"] == (
+        bundle["external_model_evidence"]["educational_threshold"]["value"]
+    )
+    assert "training_parameters" not in bundle
+    assert "binary_classification_evidence" not in bundle
+    assert "training_evidence" not in bundle
+
+
+def test_materialization_result_generates_external_bundle_without_result_semantics_when_absent(
+    tmp_path: Path,
+) -> None:
+    """Historical-compatibility path: an execution contract without
+    result_semantics must still produce an external bundle with no
+    result_semantics at all -- never an invented default."""
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    execution_contract_path = repo_root / "contracts" / "sample" / "execution-contract.json"
+    _write_json(execution_contract_path, _minimal_execution_contract())
+    runtime_contract_path = repo_root / "contracts" / "sample" / "runtime-contract.json"
+    _write_json(runtime_contract_path, {"contract_version": "runtime_contract.v1"})
+    public_contract_path = repo_root / "contracts" / "sample" / "public-contract.json"
+    _write_json(public_contract_path, {"contract_version": "public_contract.v1"})
+    dataset_context_path = repo_root / "contracts" / "sample" / "dataset-context.json"
+    _write_json(dataset_context_path, {"schema_version": "dataset-context.v1"})
+    prepared_dataset_path = repo_root / "contracts" / "sample" / "prepared-dataset.json"
+    _write_json(prepared_dataset_path, {"schema_version": "prepared-dataset.v1"})
+
+    output_path = repo_root / "contracts" / "sample" / "inference-bundle.json"
+
+    bundle_result = generate_inference_bundle.materialize_governed_inference_bundle(
+        external_fitted_model_materialization_result=materialization_result,
+        execution_contract_path=execution_contract_path,
+        runtime_contract_path=runtime_contract_path,
+        public_contract_path=public_contract_path,
+        dataset_context_path=dataset_context_path,
+        prepared_dataset_path=prepared_dataset_path,
+        output_path=output_path,
+        prediction_type="number",
+        repo_root=repo_root,
+        dataset_slug=DATASET_SLUG,
+        release_id="release-20260801-001",
+        class_labels=["no", "yes"],
+        probability_output=True,
+        inference_bundle_schema_path=str(INFERENCE_BUNDLE_SCHEMA_PATH),
+        execution_contract_ref="contracts/sample/execution-contract.json",
+        runtime_contract_ref="contracts/sample/runtime-contract.json",
+        public_contract_ref="contracts/sample/public-contract.json",
+        dataset_context_ref="contracts/sample/dataset-context.json",
+        prepared_dataset_ref="contracts/sample/prepared-dataset.json",
+    )
+
+    assert bundle_result["status"] == "generated"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+    assert "result_semantics" not in bundle
+
+
+def _internal_execution_contract_with_result_semantics(threshold: float = 0.5) -> dict:
+    return {
+        "contract_version": "execution_contract.v1",
+        "result_semantics": {
+            "problem_type": "binary_classification",
+            "primary_output": "positive_class_probability",
+            "positive_class": {"class_id": "yes", "event_label": "Positive Event"},
+            "decision": {"threshold": threshold},
+            "interpretation": {
+                "preset": "risk",
+                "bands": [
+                    {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                    {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                    {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+                ],
+            },
+        },
+    }
+
+
+def test_resolve_result_semantics_internal_profile_unchanged_by_external_refactor() -> None:
+    """Project Spec S0191: the shared _resolve_result_semantics dispatcher
+    must not weaken the pre-existing internal (training-parameter-record.v1)
+    validation path -- same fields checked, same error codes, same return
+    shape as before the external-profile generalization."""
+    execution_contract = _internal_execution_contract_with_result_semantics()
+    output_schema = {"class_labels": ["no", "yes"], "probability_output": True}
+    training_record = {
+        "schema_version": "training-parameter-record.v1",
+        "training_parameters": {"model_family": "gradient_boosting"},
+        "binary_classification_evidence": {"positive_class_id": "yes"},
+    }
+
+    result = generate_inference_bundle._resolve_result_semantics(
+        execution_contract, training_record, output_schema
+    )
+
+    assert result["model_descriptor"] == {
+        "model_family": "gradient_boosting",
+        "display_name": "Gradient Boosting",
+    }
+    assert result["decision"]["threshold"] == 0.5
+
+
+def test_resolve_result_semantics_internal_profile_missing_binary_evidence_blocks() -> None:
+    execution_contract = _internal_execution_contract_with_result_semantics()
+    output_schema = {"class_labels": ["no", "yes"], "probability_output": True}
+    training_record = {
+        "schema_version": "training-parameter-record.v1",
+        "training_parameters": {"model_family": "gradient_boosting"},
+    }
+
+    with pytest.raises(generate_inference_bundle.BundleGenerationError) as exc_info:
+        generate_inference_bundle._resolve_result_semantics(
+            execution_contract, training_record, output_schema
+        )
+    assert exc_info.value.code == "result_semantics_cross_artifact_mismatch"
+
+
+def test_resolve_external_result_semantics_model_descriptor_wrong_origin_blocks() -> None:
+    training_record = {
+        "origin": "atlas_governed_training_run",
+        "model_family": "hist_gradient_boosting",
+        "selected_model_id": "candidate-001",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        "positive_class_id": "yes",
+    }
+    with pytest.raises(generate_inference_bundle.BundleGenerationError) as exc_info:
+        generate_inference_bundle._resolve_external_result_semantics_model_descriptor(
+            training_record, None, "yes"
+        )
+    assert exc_info.value.code == "result_semantics_cross_artifact_mismatch"
+    assert exc_info.value.field == "origin"
+
+
+def test_resolve_external_result_semantics_model_descriptor_estimator_mismatch_blocks() -> None:
+    training_record = {
+        "origin": "validated_external_fitted_model",
+        "model_family": "hist_gradient_boosting",
+        "selected_model_id": "candidate-001",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "LogisticRegression"},
+        "positive_class_id": "yes",
+    }
+    with pytest.raises(generate_inference_bundle.BundleGenerationError) as exc_info:
+        generate_inference_bundle._resolve_external_result_semantics_model_descriptor(
+            training_record, None, "yes"
+        )
+    assert exc_info.value.code == "result_semantics_cross_artifact_mismatch"
+    assert exc_info.value.field == "estimator_identity"
+
+
+def test_resolve_external_result_semantics_model_descriptor_selected_model_id_mismatch_blocks() -> None:
+    training_record = {
+        "origin": "validated_external_fitted_model",
+        "model_family": "hist_gradient_boosting",
+        "selected_model_id": "candidate-001",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        "positive_class_id": "yes",
+    }
+    model_selection = {
+        "selected_candidate": {"candidate_id": "candidate-002"},
+        "candidates": [
+            {
+                "candidate_id": "candidate-002",
+                "model_family": "hist_gradient_boosting",
+                "estimator_identity": {
+                    "library": "scikit-learn",
+                    "class_name": "HistGradientBoostingClassifier",
+                },
+            }
+        ],
+    }
+    with pytest.raises(generate_inference_bundle.BundleGenerationError) as exc_info:
+        generate_inference_bundle._resolve_external_result_semantics_model_descriptor(
+            training_record, model_selection, "yes"
+        )
+    assert exc_info.value.code == "result_semantics_cross_artifact_mismatch"
+    assert exc_info.value.field == "selected_model_id"
+
+
+def test_resolve_external_result_semantics_model_descriptor_positive_class_mismatch_blocks() -> None:
+    training_record = {
+        "origin": "validated_external_fitted_model",
+        "model_family": "hist_gradient_boosting",
+        "selected_model_id": "candidate-001",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+        "positive_class_id": "no",
+    }
+    with pytest.raises(generate_inference_bundle.BundleGenerationError) as exc_info:
+        generate_inference_bundle._resolve_external_result_semantics_model_descriptor(
+            training_record, None, "yes"
+        )
+    assert exc_info.value.code == "result_semantics_cross_artifact_mismatch"
+    assert exc_info.value.field == "positive_class_id"

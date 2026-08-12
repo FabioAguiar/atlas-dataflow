@@ -866,6 +866,8 @@ def _external_predictive_bundle_payload(
     threshold_status: str = "unresolved",
     threshold_value: float | None = None,
     prediction_available: bool = False,
+    include_result_semantics: bool = True,
+    result_semantics_threshold: float = 0.5,
 ) -> dict:
     payload = _artifact_payload("predictive_bundle")
     payload["model_provenance_origin"] = "validated_external_fitted_model"
@@ -876,8 +878,56 @@ def _external_predictive_bundle_payload(
             "operational_threshold": {"status": threshold_status, "value": threshold_value},
             "operational_prediction_available": prediction_available,
         },
+        # Project Spec S0191: the governed external threshold evidence a
+        # compatible predictive bundle's result_semantics.decision.threshold
+        # must match.
+        "educational_threshold": {"value": result_semantics_threshold},
     }
+    if include_result_semantics:
+        # Project Spec S0191: minimal compatible binary result_semantics --
+        # the publisher only structurally checks problem_type and
+        # decision.threshold consistency, never the full inference-bundle
+        # schema shape (predictive_bundle is not one of the roles the
+        # publisher runs real JSON Schema validation against).
+        payload["result_semantics"] = {
+            "schema_version": "binary-result-semantics.v1",
+            "problem_type": "binary_classification",
+            "decision": {"threshold": result_semantics_threshold},
+        }
     return payload
+
+
+def _external_metrics_payload() -> dict:
+    """A schema-shaped training-metrics.external-fitted-model.v1 artifact
+    (Project Spec S0191) carrying one supported public metric on its
+    validation_evaluation partition, for a validated_external_fitted_model
+    candidate's metrics role."""
+    return {
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "artifact_kind": "training_metrics",
+        "created_at": "2026-06-19T00:00:00Z",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": DATASET_SLUG,
+        },
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "used_for_fitting": True,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            "metrics": [{"name": "roc_auc", "value": 0.81}],
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "used_for_fitting": False,
+            "used_for_model_selection": True,
+            "used_for_threshold_selection": True,
+            "sealed_before_finalization": False,
+            "metrics": [{"name": "roc_auc", "value": 0.80}],
+        },
+    }
 
 
 def test_external_provenance_accepted_candidate_is_directly_promotion_eligible(tmp_path):
@@ -886,7 +936,10 @@ def test_external_provenance_accepted_candidate_is_directly_promotion_eligible(t
     _write_registry(tmp_repo)
     _write_candidate(
         tmp_repo,
-        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(),
+            "metrics": _external_metrics_payload(),
+        },
     )
 
     result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
@@ -933,7 +986,10 @@ def test_manifest_generates_for_accepted_external_candidate(tmp_path):
     _write_registry(tmp_repo)
     _write_candidate(
         tmp_repo,
-        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(),
+            "metrics": _external_metrics_payload(),
+        },
     )
     validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
     run_dir = _latest_run_dir(tmp_repo)
@@ -984,7 +1040,10 @@ def test_external_provenance_candidate_without_visualizations_is_structurally_ac
     _write_candidate(
         tmp_repo,
         omit_role="visualizations",
-        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(),
+            "metrics": _external_metrics_payload(),
+        },
     )
 
     result = validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
@@ -1031,7 +1090,10 @@ def test_manifest_for_external_no_visualizations_candidate_emits_nine_artifacts(
     _write_candidate(
         tmp_repo,
         omit_role="visualizations",
-        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(),
+            "metrics": _external_metrics_payload(),
+        },
     )
     validate.run(str(_candidate_dir(tmp_repo)), repo_root=tmp_repo)
     run_dir = _latest_run_dir(tmp_repo)
@@ -1088,7 +1150,10 @@ def test_validation_result_and_manifest_schemas_validate_both_role_count_shapes(
     _write_candidate(
         tmp_repo_external,
         omit_role="visualizations",
-        role_payload_overrides={"predictive_bundle": _external_predictive_bundle_payload()},
+        role_payload_overrides={
+            "predictive_bundle": _external_predictive_bundle_payload(),
+            "metrics": _external_metrics_payload(),
+        },
     )
     external_validation = validate.run(str(_candidate_dir(tmp_repo_external)), repo_root=tmp_repo_external)
     jsonschema.validate(_without_pre_existing_unrelated_drift(external_validation), validation_schema)

@@ -39,11 +39,17 @@ _METRIC_ALIASES: dict[str, str] = {
     "f1": "f1_score",
     "f1_score": "f1_score",
     "pr_auc": "pr_auc",
+    "average_precision": "pr_auc",
     "precision": "precision",
     "recall": "recall",
     "accuracy": "accuracy",
     "log_loss": "log_loss",
 }
+
+# Project Spec S0191: schema_version discriminator for the external
+# fitted-model training-metrics profile, dispatched on explicitly (never by
+# loose shape matching).
+_EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION = "training-metrics.external-fitted-model.v1"
 
 # Top-level keys that are never themselves metric declarations, used only
 # by the bounded flat top-level fallback (case 3 below) to avoid mistaking
@@ -252,7 +258,58 @@ def _project_flat_top_level_shape(payload: dict) -> dict:
     }
 
 
+def _project_external_fitted_model_metrics(payload: dict) -> dict:
+    """Project Spec S0191: public projector for
+    training-metrics.external-fitted-model.v1.
+
+    Prefers a completed final_test_evaluation when present; otherwise falls
+    back to validation_evaluation. cross_validation_summary (the train
+    partition) is never selected -- it is not a public holdout evaluation.
+    The external schema does not designate a primary metric, so
+    primary_metric_id is never fabricated and remains None. Only
+    evaluation.split_name (from partition_role), evaluation.sample_size
+    (from row_count, when present), and the bounded alias-normalized
+    metrics are projected -- no evidence paths, producer ids, raw
+    predictions, or partition rows are ever exposed.
+    """
+    final_test = payload.get("final_test_evaluation")
+    validation = payload.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    split_name = None
+    sample_size = None
+    entries: list[tuple[Any, Any, bool]] = []
+    if isinstance(selected, dict):
+        split_name = _optional_str(selected.get("partition_role"))
+        sample_size = _optional_int(selected.get("row_count"))
+        raw_metrics = selected.get("metrics")
+        if isinstance(raw_metrics, list):
+            entries = [
+                (item.get("name"), item.get("value"), False)
+                for item in raw_metrics
+                if isinstance(item, dict)
+            ]
+
+    metrics, metric_order = _project_metric_entries(entries)
+
+    return {
+        "evaluation": {
+            "split_name": split_name,
+            "sample_size": sample_size,
+            "primary_metric_id": None,
+            "metrics": metrics,
+            "metric_order": metric_order,
+        }
+    }
+
+
 def _project_public_metrics(payload: dict) -> dict:
+    if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION:
+        return _project_external_fitted_model_metrics(payload)
     metrics_block = payload.get("metrics")
     if isinstance(metrics_block, dict) and isinstance(metrics_block.get("primary_metric"), dict):
         return _project_training_metrics_v1(payload)

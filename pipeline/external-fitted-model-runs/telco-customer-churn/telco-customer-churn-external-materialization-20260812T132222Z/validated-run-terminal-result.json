@@ -1,0 +1,48 @@
+{
+  "artifact_kind": "validated_run_terminal_result",
+  "boundary_confirmations": {
+    "educational_threshold_reinterpreted_as_operational": false,
+    "publisher_promotion_invoked": false,
+    "registry_state_written": false
+  },
+  "durable_references": {
+    "inference_bundle": null,
+    "manifest": null,
+    "materialization_result": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260812T132222Z/materialization-result.json",
+      "sha256": "ef30072118c4721302e46cad14a8cc6f46e12e89b46da080a7a36ce93faad7e8"
+    },
+    "operational_readiness_source": {
+      "path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260812T132222Z/materialization-result.json",
+      "sha256": "ef30072118c4721302e46cad14a8cc6f46e12e89b46da080a7a36ce93faad7e8"
+    },
+    "publisher_validation_result": null,
+    "release_candidate": null
+  },
+  "manifest_outcome": null,
+  "model_source_mode": "validated_external_fitted_model",
+  "operational_readiness": {
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "unresolved",
+      "value": null
+    },
+    "operational_validity": "unconfirmed"
+  },
+  "promotion_eligibility": false,
+  "reasons": [
+    {
+      "code": "external_visual_evidence_role_missing",
+      "field": "evidence_inventory.analytical_visualizations",
+      "message": "external-evidence-index.v1 does not declare a required 'analytical_visualizations' role (expected an external visual-evidence artifact providing target_distribution, feature_importance, and feature_importance_method). Atlas cannot materialize Target Distribution / Feature Importance for this release without bounded, hash-verified external evidence; this stops before candidate assembly rather than fabricating chart values."
+    }
+  ],
+  "run_identity": {
+    "created_at": "2026-08-12T13:22:22+00:00",
+    "dataset_slug": "telco-customer-churn",
+    "run_id": "telco-customer-churn-external-materialization-20260812T132222Z"
+  },
+  "schema_version": "validated-run-terminal-result.v1",
+  "status": "blocked",
+  "structural_validation": null
+}

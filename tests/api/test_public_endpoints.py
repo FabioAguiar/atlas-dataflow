@@ -1592,6 +1592,128 @@ def _load_public_visualizations_real(active_release, releases_root):
     )
 
 
+# --- S0193: analytical-visualizations.external-fitted-model.v1 profile
+# projects the identical bounded public shape as the historical v1 profile.
+_S0193_VALID_EXTERNAL_ARTIFACT = {
+    "schema_version": "analytical-visualizations.external-fitted-model.v1",
+    "artifact_kind": "analytical_visualizations",
+    "model_source_mode": "validated_external_fitted_model",
+    "created_at": "2026-08-12T12:00:00Z",
+    "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+    "external_materialization_provenance": {
+        "model_family": "hist_gradient_boosting",
+        "external_evidence_reference": "artifacts/telco-customer-churn/analytical-visual-evidence.json",
+        "external_evidence_sha256": "a" * 64,
+    },
+    "charts": [
+        {
+            "id": "target_distribution",
+            "title": "Target Distribution",
+            "type": "bar",
+            "x_label": "Churn",
+            "y_label": "Rows",
+            "data": [{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+        },
+        {
+            "id": "feature_importance",
+            "title": "Feature Importance",
+            "type": "bar",
+            "x_label": "Feature",
+            "y_label": "Importance",
+            "data": [{"name": "tenure", "value": 0.4}, {"name": "Contract", "value": 0.3}],
+        },
+    ],
+    "target_distribution_method": {
+        "population_kind": "external_prepared_dataset",
+        "source": "external_prepared_evaluation_population",
+        "target_column": "Churn",
+    },
+    "feature_importance_method": {
+        "model_family": "hist_gradient_boosting",
+        "source": "external_validated_fitted_model",
+        "method": "permutation_importance",
+        "total_source_feature_count": 19,
+        "omitted_source_feature_count": 9,
+        "public_row_limit": 10,
+    },
+    "evidence_policy": {
+        "raw_logs_prohibited": True,
+        "raw_runtime_prohibited": True,
+        "raw_api_payloads_prohibited": True,
+        "secrets_prohibited": True,
+        "raw_dataset_embedded": False,
+        "model_bytes_embedded": False,
+        "serialized_estimator_state_embedded": False,
+        "raw_transformed_matrices_embedded": False,
+        "notebook_state_embedded": False,
+        "reduced_and_sanitized": True,
+    },
+}
+
+
+def test_public_visualizations_endpoint_returns_ready_payload_for_external_fitted_model_release(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0193-001"
+        _s0101_write_artifact_file(
+            release_dir, "visualizations/visualizations.json", _S0193_VALID_EXTERNAL_ARTIFACT
+        )
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+        )
+        monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda _dataset_slug: True)
+        monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset_snapshot_readiness",
+            lambda *_a, **_k: {"status": "current_release", "matches_active_release": True},
+        )
+        monkeypatch.setattr(
+            api_main,
+            "resolve_dataset",
+            lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0193-001"
+            ),
+        )
+        monkeypatch.setattr(
+            api_main,
+            "load_public_visualizations",
+            lambda active_release: _load_public_visualizations_real(active_release, releases_root),
+        )
+
+        response = api_main.get_public_visualizations("example-dataset")
+
+        assert response == {
+            "dataset_slug": "example-dataset",
+            "visualizations": {"charts": _S0193_VALID_EXTERNAL_ARTIFACT["charts"]},
+        }
+
+
+def test_public_visualizations_loader_external_profile_never_exposes_provenance_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0193-002"
+        _s0101_write_artifact_file(
+            release_dir, "visualizations/visualizations.json", _S0193_VALID_EXTERNAL_ARTIFACT
+        )
+        _s0101_write_release(
+            release_dir,
+            artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+        )
+
+        projection = api_main.load_public_visualizations(
+            "release-s0193-002", releases_root=releases_root
+        )
+
+        serialized = json.dumps(projection)
+        assert "external_materialization_provenance" not in serialized
+        assert "external_evidence_reference" not in serialized
+        assert "external_evidence_sha256" not in serialized
+        assert "hist_gradient_boosting" not in serialized
+        assert "dataset_identity" not in serialized
+
+
 def test_public_visualizations_endpoint_invalid_artifact_degrades_to_bounded_unavailable(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         releases_root = Path(tmp)

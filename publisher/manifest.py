@@ -4,9 +4,9 @@ Publisher release manifest generator.
 Reads a validation result from publisher/runs/{run_id}/validation-result.json,
 gates on validation_outcome: accepted (Project Spec S0180 -- structural
 acceptance, independent of operational promotion eligibility), calculates
-SHA-256 hashes for all required artifact role files in the validated
-release candidate (9 or 10, depending on provenance -- Project Spec S0188),
-assembles a release manifest conforming to
+SHA-256 hashes for all 10 required artifact role files in the validated
+release candidate (Project Spec S0193 restored visualizations as mandatory
+for every provenance), assembles a release manifest conforming to
 publisher/release-manifest.schema.json, and writes it to
 publisher/runs/{run_id}/manifest.json (same run directory).
 
@@ -36,15 +36,6 @@ _REQUIRED_ROLES = (
     "manifest_input",
     "candidate_metadata",
 )
-
-# Project Spec S0188: mandatory in every manifest regardless of provenance.
-# visualizations is packaged when the already-validated candidate legitimately
-# declares it (any provenance) and cleanly omitted when it does not -- this
-# module trusts publisher.validate's prior structural acceptance rather than
-# re-deriving provenance itself.
-_ALWAYS_REQUIRED_ROLES = tuple(role for role in _REQUIRED_ROLES if role != "visualizations")
-_OPTIONAL_ROLES = ("visualizations",)
-
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
@@ -152,9 +143,8 @@ def _unsafe_role_reference(role_path_str: str, candidate_dir: Path) -> bool:
 def _hash_role_artifact(role: str, role_def: Any, candidate_dir: Path) -> tuple:
     """Return (artifact_entry, errors) for one declared artifact role.
 
-    Returns (None, []) when role_def has no path (caller decides whether
-    that is an error, for a mandatory role, or a legitimate omission, for
-    an optional role -- Project Spec S0188)."""
+    Returns (None, []) when role_def has no path -- the caller (every role
+    is mandatory as of Project Spec S0193) treats that as an error."""
     if not isinstance(role_def, dict) or not role_def.get("path"):
         return None, []
 
@@ -189,10 +179,9 @@ def generate_manifest(candidate_dir: Path) -> tuple:
     artifact file is missing/unreadable during hash calculation, or if any
     role reference is unsafe (Project Spec S0099 -- enforces the manifest's
     own long-declared but previously unenforced
-    validation_policy.unsafe_reference_rejects). Project Spec S0188:
-    `visualizations` is hashed and included when the already-validated
-    candidate declares it, and cleanly omitted -- never an error -- when it
-    does not; every other role remains mandatory.
+    validation_policy.unsafe_reference_rejects). Project Spec S0193:
+    `visualizations` is mandatory in every manifest, historical/internal or
+    validated-external-fitted-model alike.
 
     Project Spec S0190: manifest generation no longer injects a run-owned
     `operational_readiness` supplemental artifact -- the Project Spec S0189
@@ -221,7 +210,7 @@ def generate_manifest(candidate_dir: Path) -> tuple:
     candidate_created_at = release_identity_raw.get("created_at")
 
     artifacts = []
-    for role in _ALWAYS_REQUIRED_ROLES:
+    for role in _REQUIRED_ROLES:
         role_def = artifact_roles.get(role)
         if not isinstance(role_def, dict) or not role_def.get("path"):
             return None, [_err(
@@ -234,14 +223,7 @@ def generate_manifest(candidate_dir: Path) -> tuple:
             return None, entry_errors
         artifacts.append(entry)
 
-    for role in _OPTIONAL_ROLES:
-        entry, entry_errors = _hash_role_artifact(role, artifact_roles.get(role), candidate_dir)
-        if entry_errors:
-            return None, entry_errors
-        if entry is not None:
-            artifacts.append(entry)
-
-    # required_hash_coverage.required_artifact_roles is the fixed 9-10-role
+    # required_hash_coverage.required_artifact_roles is the fixed 10-role
     # vocabulary only.
     required_hash_coverage_roles = [a["role"] for a in artifacts]
 

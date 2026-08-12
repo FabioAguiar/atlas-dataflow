@@ -5,9 +5,13 @@
   "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation.",
   "oneOf": [
     { "$ref": "#/$defs/legacy_v1" },
-    { "$ref": "#/$defs/governed_v2" }
+    { "$ref": "#/$defs/governed_v2" },
+    { "$ref": "#/$defs/external_fitted_model_v1" }
   ],
   "$defs": {
+    "external_model_family": {
+      "enum": ["hist_gradient_boosting", "gradient_boosting", "random_forest", "logistic_regression"]
+    },
     "identifier": {
       "type": "string",
       "minLength": 1,
@@ -126,6 +130,71 @@
         "raw_transformed_matrices_embedded": { "const": false },
         "notebook_state_embedded": { "const": false },
         "reduced_and_sanitized": { "const": true }
+      }
+    },
+    "external_fitted_model_v1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_kind", "model_source_mode", "created_at", "dataset_identity", "external_materialization_provenance", "charts", "target_distribution_method", "feature_importance_method", "evidence_policy"],
+      "properties": {
+        "schema_version": { "const": "analytical-visualizations.external-fitted-model.v1" },
+        "artifact_kind": { "const": "analytical_visualizations" },
+        "model_source_mode": { "const": "validated_external_fitted_model" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+          }
+        },
+        "external_materialization_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "external_evidence_reference", "external_evidence_sha256"],
+          "description": "Binds this artifact to the external model/run without ever retaining the absolute external project root: model_family names the validated external estimator family, and external_evidence_reference/external_evidence_sha256 are the same repository-relative-to-the-external-project reference and SHA-256 already verified by the canonical notebook's existing external evidence boundary.",
+          "properties": {
+            "model_family": { "$ref": "#/$defs/external_model_family" },
+            "external_evidence_reference": { "$ref": "#/$defs/safe_relative_reference" },
+            "external_evidence_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "charts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/legacy_chart" },
+          "allOf": [
+            { "contains": { "properties": { "id": { "const": "target_distribution" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "feature_importance" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 }
+          ]
+        },
+        "target_distribution_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["population_kind", "source", "target_column"],
+          "description": "Target distribution is a dataset/prepared-population statistic, distinct from feature_importance_method below; population_kind is fixed to external_prepared_dataset so this artifact never implies the distribution was recomputed inside Atlas.",
+          "properties": {
+            "population_kind": { "const": "external_prepared_dataset" },
+            "source": { "type": "string", "minLength": 1 },
+            "target_column": { "type": "string", "minLength": 1 }
+          }
+        },
+        "feature_importance_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "source", "method", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
+          "properties": {
+            "model_family": { "$ref": "#/$defs/external_model_family" },
+            "source": { "type": "string", "minLength": 1 },
+            "method": { "type": "string", "minLength": 1 },
+            "total_source_feature_count": { "type": "integer", "minimum": 1 },
+            "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
+            "public_row_limit": { "const": 10 }
+          }
+        },
+        "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
       }
     },
     "governed_v2": {

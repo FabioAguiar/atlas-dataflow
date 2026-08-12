@@ -116,6 +116,116 @@ def test_schema_is_valid_and_legacy_v1_fixture_remains_valid():
     jsonschema.Draft202012Validator(schema).validate(legacy)
 
 
+# --- S0193: analytical-visualizations.external-fitted-model.v1 profile
+# (pipeline/analytical-visualizations.schema.json's new oneOf branch, added
+# alongside legacy_v1 and governed_v2 without weakening either). These
+# tests validate the raw schema branch directly with jsonschema -- the same
+# convention test_schema_is_valid_and_legacy_v1_fixture_remains_valid uses
+# above -- since pipeline.analytical_visual_evidence.validate_analytical_visual_evidence's
+# non-legacy path is specific to the unrelated governed_v2 capability-aware
+# family and is out of S0193's authorized scope.
+
+
+def _external_fitted_model_v1_fixture() -> dict:
+    return {
+        "schema_version": "analytical-visualizations.external-fitted-model.v1",
+        "artifact_kind": "analytical_visualizations",
+        "model_source_mode": "validated_external_fitted_model",
+        "created_at": "2026-08-12T00:00:00Z",
+        "dataset_identity": {"dataset_slug": "telco-customer-churn"},
+        "external_materialization_provenance": {
+            "model_family": "hist_gradient_boosting",
+            "external_evidence_reference": "artifacts/telco-customer-churn/analytical-visual-evidence.json",
+            "external_evidence_sha256": "a" * 64,
+        },
+        "charts": [
+            {"id": "target_distribution", "title": "Target", "type": "bar", "x_label": "class", "y_label": "count", "data": [{"name": "no", "value": 1}]},
+            {"id": "feature_importance", "title": "Importance", "type": "bar", "x_label": "feature", "y_label": "importance", "data": [{"name": "age", "value": 0.5}]},
+        ],
+        "target_distribution_method": {
+            "population_kind": "external_prepared_dataset",
+            "source": "external_prepared_evaluation_population",
+            "target_column": "target",
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "external_validated_fitted_model",
+            "method": "permutation_importance",
+            "total_source_feature_count": 1,
+            "omitted_source_feature_count": 0,
+            "public_row_limit": 10,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True, "raw_runtime_prohibited": True, "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True, "raw_dataset_embedded": False, "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False, "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False, "reduced_and_sanitized": True,
+        },
+    }
+
+
+def test_external_fitted_model_v1_fixture_is_schema_valid():
+    schema = json.loads((REPO_ROOT / "pipeline/analytical-visualizations.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(_external_fitted_model_v1_fixture())
+
+
+def test_external_fitted_model_v1_permits_hist_gradient_boosting_model_family():
+    schema = json.loads((REPO_ROOT / "pipeline/analytical-visualizations.schema.json").read_text())
+    artifact = _external_fitted_model_v1_fixture()
+    assert artifact["external_materialization_provenance"]["model_family"] == "hist_gradient_boosting"
+    jsonschema.Draft202012Validator(schema).validate(artifact)
+
+
+def test_external_fitted_model_v1_rejects_fabricated_training_run_identity():
+    schema = json.loads((REPO_ROOT / "pipeline/analytical-visualizations.schema.json").read_text())
+    artifact = _external_fitted_model_v1_fixture()
+    # additionalProperties: false on every oneOf branch means an Atlas
+    # training_run_identity (the fabricated-provenance shape this profile
+    # exists to avoid) cannot be smuggled in alongside the external profile's
+    # own required fields.
+    artifact["training_run_identity"] = {
+        "dataset_slug": "telco-customer-churn",
+        "run_id": "train-20260812T000000Z",
+        "output_directory": "pipeline/training-runs/telco-customer-churn/train-20260812T000000Z/",
+    }
+    validator = jsonschema.Draft202012Validator(schema)
+    assert not validator.is_valid(artifact)
+
+
+def test_external_fitted_model_v1_missing_external_materialization_provenance_is_rejected():
+    schema = json.loads((REPO_ROOT / "pipeline/analytical-visualizations.schema.json").read_text())
+    artifact = _external_fitted_model_v1_fixture()
+    del artifact["external_materialization_provenance"]
+    validator = jsonschema.Draft202012Validator(schema)
+    assert not validator.is_valid(artifact)
+
+
+def test_external_fitted_model_v1_requires_exactly_two_charts():
+    schema = json.loads((REPO_ROOT / "pipeline/analytical-visualizations.schema.json").read_text())
+    artifact = _external_fitted_model_v1_fixture()
+    artifact["charts"] = [artifact["charts"][0]]
+    validator = jsonschema.Draft202012Validator(schema)
+    assert not validator.is_valid(artifact)
+
+
+def test_external_fitted_model_v1_bounds_feature_importance_rows_to_ten():
+    schema = json.loads((REPO_ROOT / "pipeline/analytical-visualizations.schema.json").read_text())
+    artifact = _external_fitted_model_v1_fixture()
+    for chart in artifact["charts"]:
+        if chart["id"] == "feature_importance":
+            chart["data"] = [{"name": f"feature-{i}", "value": 0.1} for i in range(11)]
+    validator = jsonschema.Draft202012Validator(schema)
+    assert not validator.is_valid(artifact)
+
+
+def test_external_fitted_model_v1_rejects_negative_chart_values():
+    schema = json.loads((REPO_ROOT / "pipeline/analytical-visualizations.schema.json").read_text())
+    artifact = _external_fitted_model_v1_fixture()
+    artifact["charts"][0]["data"][0]["value"] = -1
+    validator = jsonschema.Draft202012Validator(schema)
+    assert not validator.is_valid(artifact)
+
+
 def test_duplicate_visual_id_is_rejected():
     artifact = _artifact()
     artifact["visuals"].append(copy.deepcopy(artifact["visuals"][0]))

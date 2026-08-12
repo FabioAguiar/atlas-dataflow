@@ -39,13 +39,12 @@ _REQUIRED_ROLES = (
     "candidate_metadata",
 )
 
-# Project Spec S0188: the historical/internal 10-role shape (unchanged) and
-# the validated-external-fitted-model 9-role shape (visualizations omitted).
-_REQUIRED_ROLES_INTERNAL = _REQUIRED_ROLES
-_REQUIRED_ROLES_EXTERNAL_NO_VISUALIZATIONS = tuple(
-    role for role in _REQUIRED_ROLES if role != "visualizations"
-)
+# Project Spec S0193: visualizations is mandatory in the single 10-role
+# shape for both historical/internal and validated-external-fitted-model
+# candidates -- the Project Spec S0188 9-role "no visualizations" shape has
+# been removed.
 _VALIDATED_EXTERNAL_FITTED_MODEL_PROVENANCE = "validated_external_fitted_model"
+_EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.external-fitted-model.v1"
 
 _SCHEMA_COMPAT_ROLES = frozenset({
     "contracts",
@@ -447,12 +446,13 @@ def validate_capability_conditional_roles(candidate: dict, role_results: dict) -
 def _early_predictive_bundle_provenance(artifact_roles_decl: dict | None, candidate_dir: Path) -> str | None:
     """Read `model_provenance_origin` from the candidate's declared
     predictive_bundle artifact, before the main required-roles presence
-    loop runs (Project Spec S0188). This is the same governed provenance
-    declaration already used for operational-readiness derivation
-    (`_predictive_bundle_promotion_readiness` below) -- never a
-    dataset-slug conditional. Fails closed to `None` (treated as
-    internal/historical -- the strictest, unchanged default) on any
-    missing role, unsafe path, or unreadable/malformed content.
+    loop runs. This is the same governed provenance declaration already
+    used for operational-readiness derivation
+    (`_predictive_bundle_promotion_readiness` below) and for the Project
+    Spec S0191/S0193 external-compatibility checks -- never a dataset-slug
+    conditional. Fails closed to `None` (treated as internal/historical --
+    the strictest, unchanged default) on any missing role, unsafe path, or
+    unreadable/malformed content.
     """
     role_def = artifact_roles_decl.get("predictive_bundle") if isinstance(artifact_roles_decl, dict) else None
     if not isinstance(role_def, dict):
@@ -547,24 +547,13 @@ def validate_candidate(
         if isinstance(completeness, dict):
             hash_policy = completeness.get("hash_policy", "")
 
-    # Project Spec S0188: derive external-vs-internal provenance from the
-    # candidate's actual predictive bundle contents (never dataset identity)
-    # before the required-roles loop runs, so a validated external
-    # fitted-model candidate that legitimately omits visualizations is
-    # never rejected for a structurally-absent-but-legitimate role.
+    # Derive external-vs-internal provenance from the candidate's actual
+    # predictive bundle contents (never dataset identity) -- still needed
+    # below to gate the Project Spec S0191/S0193 external-compatibility
+    # checks, even though visualizations is now required for every
+    # candidate regardless of provenance (Project Spec S0193).
     predictive_bundle_provenance = _early_predictive_bundle_provenance(artifact_roles_decl, candidate_dir)
-    visualizations_declared = isinstance(artifact_roles_decl, dict) and isinstance(
-        artifact_roles_decl.get(_VISUALIZATIONS_ROLE), dict
-    )
-    is_external_no_visualizations_candidate = (
-        predictive_bundle_provenance == _VALIDATED_EXTERNAL_FITTED_MODEL_PROVENANCE
-        and not visualizations_declared
-    )
-    effective_required_roles = (
-        _REQUIRED_ROLES_EXTERNAL_NO_VISUALIZATIONS
-        if is_external_no_visualizations_candidate
-        else _REQUIRED_ROLES_INTERNAL
-    )
+    effective_required_roles = _REQUIRED_ROLES
 
     # --- Artifact role presence ---
     role_results: dict[str, dict] = {}
@@ -794,7 +783,7 @@ def validate_candidate(
         if data is not None:
             json_artifacts[role] = data
 
-    # --- External public-release compatibility (Project Spec S0191).
+    # --- External public-release compatibility (Project Spec S0191, S0193).
     # Gated on the candidate's own declared provenance (never dataset
     # identity); historical/internal candidates are never subject to these
     # checks, so their acceptance behavior is unchanged. ---
@@ -804,6 +793,11 @@ def validate_candidate(
         )
         rejection_reasons.extend(
             _external_metrics_public_projection_check(json_artifacts.get("metrics"))
+        )
+        rejection_reasons.extend(
+            _external_visualizations_provenance_compatibility(
+                json_artifacts.get("visualizations"), json_artifacts.get("predictive_bundle")
+            )
         )
 
     # --- Model artifact / predictive bundle cross-consistency (Project Spec
@@ -1104,6 +1098,60 @@ def _external_metrics_public_projection_check(metrics_data: dict | None) -> list
     return []
 
 
+# Project Spec S0193: reject a validated_external_fitted_model candidate
+# whose visualizations artifact declares dataset/model provenance that
+# conflicts with the predictive bundle it is packaged with. Gated on the
+# visualizations artifact actually being the external-fitted-model schema
+# profile (the historical v1 shape never carries this provenance and is
+# left to the pre-existing v1 acceptance behavior); missing/absent either
+# artifact is a no-op here since role presence is already enforced by the
+# required-roles loop above.
+def _external_visualizations_provenance_compatibility(
+    visualizations_data: dict | None, predictive_bundle_data: dict | None
+) -> list[dict]:
+    if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
+        return []
+    if visualizations_data.get("schema_version") != _EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION:
+        return []
+
+    bundle_dataset_slug = _first_nested(predictive_bundle_data, (("dataset_context", "dataset_slug"),))
+    visualizations_dataset_slug = _first_nested(
+        visualizations_data, (("dataset_identity", "dataset_slug"),)
+    )
+    if (
+        bundle_dataset_slug
+        and visualizations_dataset_slug
+        and bundle_dataset_slug != visualizations_dataset_slug
+    ):
+        return [_safe_rejection_reason(
+            "visualizations_provenance_mismatch",
+            "Validated external fitted-model visualizations dataset identity does not match "
+            "the predictive bundle.",
+            "visualizations",
+            "visualizations_dataset_slug_mismatch",
+        )]
+
+    bundle_model_family = _first_nested(
+        predictive_bundle_data, (("result_semantics", "model_descriptor", "model_family"),)
+    )
+    visualizations_model_family = _first_nested(
+        visualizations_data, (("external_materialization_provenance", "model_family"),)
+    )
+    if (
+        bundle_model_family
+        and visualizations_model_family
+        and bundle_model_family != visualizations_model_family
+    ):
+        return [_safe_rejection_reason(
+            "visualizations_provenance_mismatch",
+            "Validated external fitted-model visualizations model family does not match "
+            "the predictive bundle.",
+            "visualizations",
+            "visualizations_model_family_mismatch",
+        )]
+    return []
+
+
 def _validate_cross_artifact_consistency(
     candidate: dict,
     json_artifacts: dict[str, dict],
@@ -1377,7 +1425,7 @@ def _build_validation_result(validation: dict) -> dict:
     release_id: str = validation.get("release_id", "")
     release_version: str = validation.get("release_version", "")
     effective_required_roles: tuple[str, ...] = validation.get(
-        "effective_required_roles", _REQUIRED_ROLES_INTERNAL
+        "effective_required_roles", _REQUIRED_ROLES
     )
 
     required_artifact_role_results: dict = {}

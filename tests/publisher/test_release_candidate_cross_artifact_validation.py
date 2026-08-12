@@ -923,11 +923,12 @@ def test_visualizations_unsafe_public_key_is_rejected(tmp_path):
     assert result["schema_compatibility"]["visualizations"]["compatible"] is False
 
 
-# --- S0188: visualization-optional release boundary for a validated
-# external fitted-model candidate ---
+# --- S0193 restored visualizations as mandatory for a validated external
+# fitted-model candidate (reversing the Project Spec S0188 visualization-
+# optional exception) ---
 
 
-def test_external_provenance_candidate_structurally_omitting_visualizations_is_accepted(tmp_path):
+def test_external_provenance_candidate_structurally_omitting_visualizations_is_rejected(tmp_path):
     candidate_dir = _candidate_dir(tmp_path)
     candidate_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1017,10 +1018,12 @@ def test_external_provenance_candidate_structurally_omitting_visualizations_is_a
 
     result = validate.validate_candidate_file(candidate_dir)
 
-    assert result["valid"] is True
-    assert "visualizations" not in result["role_results"]
-    assert "visualizations" not in result["effective_required_roles"]
-    assert len(result["role_results"]) == 9
+    assert result["valid"] is False
+    assert "missing_visualizations" in _rejection_codes(result)
+    assert "visualizations" in result["role_results"]
+    assert "visualizations" in result["effective_required_roles"]
+    assert len(result["role_results"]) == 10
+    assert result["role_results"]["visualizations"]["status"] == "missing"
 
 
 def test_visualizations_rejection_reasons_are_sanitized(tmp_path):

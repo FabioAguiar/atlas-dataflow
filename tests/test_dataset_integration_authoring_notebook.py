@@ -311,6 +311,96 @@ def test_notebook_never_persists_absolute_prepared_dataset_path():
     assert "str(prepared_dataset_path)" not in code
 
 
+# --- Project Spec S0193: external analytical-visualization evidence and
+# release materialization ---
+
+
+def test_notebook_consumes_analytical_visualizations_external_evidence_role():
+    code = _source("code")
+    assert (
+        "from pipeline.materialize_external_analytical_visualizations import "
+        "materialize_external_analytical_visualizations" in code
+    )
+    assert '"analytical_visualizations" not in evidence_by_role' in code
+    assert 'load_verified_external_evidence(\n            "analytical_visualizations"\n        )' in code
+    assert "materialize_external_analytical_visualizations" in _called_names()
+
+
+def test_notebook_blocks_with_specific_reason_when_analytical_visualizations_role_is_absent():
+    code = _source("code")
+    assert '"external_visual_evidence_role_missing"' in code
+    role_missing_index = code.index('"external_visual_evidence_role_missing"')
+    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
+    assert role_missing_index < candidate_assembly_index
+
+
+def test_notebook_calls_visualizations_materializer_only_after_external_model_materialization_succeeds():
+    code = _source("code")
+    materialization_call_index = code.index("materialize_external_fitted_model(\n")
+    visualizations_call_index = code.index("materialize_external_analytical_visualizations(\n")
+    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
+    assert materialization_call_index < visualizations_call_index < candidate_assembly_index
+    # Gated by the same run_state["blocked"] boundary every other
+    # post-materialization stage uses -- never an unconditional call.
+    visualizations_section_start = code.index(
+        "analytical_visualizations_relative_path = \"\""
+    )
+    visualizations_section = code[visualizations_section_start:visualizations_call_index]
+    assert 'if not run_state["blocked"]:' in visualizations_section
+
+
+def test_notebook_visualizations_materializer_receives_external_materialization_result():
+    code = _source("code")
+    assert "materialization_result=external_materialization_result," in code
+    assert "external_visual_evidence=analytical_visual_evidence," in code
+    assert 'external_evidence_reference=analytical_visual_evidence_ref["relative_path"],' in code
+    assert 'external_evidence_sha256=analytical_visual_evidence_ref["sha256"],' in code
+
+
+def test_notebook_visualizations_materializer_writes_beneath_external_fitted_model_run_directory():
+    code = _source("code")
+    assert (
+        'analytical_visualizations_output_relative_path = (\n'
+        '            f"{external_fitted_model_run_relative_path}/analytical-visualizations.json"\n'
+        "        )"
+    ) in code
+    assert "output_visualizations_path=analytical_visualizations_output_relative_path," in code
+
+
+def test_notebook_records_block_and_leaves_visualizations_path_unresolved_when_materializer_blocks():
+    code = _source("code")
+    section_start = code.index("visual_evidence_materialization_result = materialize_external_analytical_visualizations(")
+    section_end = code.index("candidate_release_id = provisional_release_id")
+    section = code[section_start:section_end]
+    assert 'if visual_evidence_materialization_result["status"] == "materialized":' in section
+    assert (
+        'analytical_visualizations_relative_path = visual_evidence_materialization_result["visualizations_path"]'
+        in section
+    )
+    assert 'for reason in visual_evidence_materialization_result["blocking_reasons"]:' in section
+    assert 'record_block(reason["code"], reason["message"], reason.get("field"))' in section
+
+
+def test_notebook_does_not_infer_feature_importance_from_unrelated_artifacts():
+    code = _source("code")
+    visualizations_section_start = code.index("analytical_visualizations_relative_path = \"\"")
+    visualizations_section_end = code.index(
+        "from pipeline.training import _prepared_dataset_metadata_blocking_reasons"
+    )
+    visualizations_section = code[visualizations_section_start:visualizations_section_end]
+    # The only evidence source for this section is the one verified,
+    # hash-bound analytical_visualizations role -- never final_model_manifest,
+    # readiness_and_limitations, or any other unrelated already-loaded
+    # external evidence variable.
+    for unrelated in (
+        "final_model_manifest",
+        "readiness_and_limitations",
+        "model_selection_candidates",
+        "threshold_analysis",
+    ):
+        assert unrelated not in visualizations_section
+
+
 def test_notebook_orchestrates_release_candidate_assembly_from_compatible_roles():
     code = _source("code")
     assert "assemble_candidate.build_release_candidate_handoff_readiness(" in code
@@ -320,11 +410,12 @@ def test_notebook_orchestrates_release_candidate_assembly_from_compatible_roles(
     # Project Spec S0188: model_card is materialized via the generic external
     # candidate-support materializer and public_context references the
     # governed dataset-context document directly -- neither is left as an
-    # unresolved "" placeholder anymore. visualizations remains legitimately
-    # unresolved (no governed model-specific evidence exists).
+    # unresolved "" placeholder. Project Spec S0193: visualizations is now
+    # resolved the same way, via the external analytical-visualizations
+    # materializer, rather than left unresolved.
     assert '"model_card": model_card_relative_path' in code
     assert '"public_context": dataset_context_relative_path' in code
-    assert '"visualizations": ""' in code
+    assert '"visualizations": analytical_visualizations_relative_path' in code
     assert "model-card.json" in code
     assert "candidate_handoff_readiness[\"is_release_candidate_input_ready\"]" in code
 

@@ -21,7 +21,20 @@ _VISUALIZATIONS_ROLE = "visualizations"
 # projection. Any artifact that fails these checks is treated exactly like a
 # missing artifact -- the loader never exposes internal validation details,
 # it only raises the existing PublicVisualizationsUnavailableError.
+#
+# Project Spec S0193: the validated external fitted-model profile
+# (analytical-visualizations.external-fitted-model.v1) is accepted
+# alongside the historical v1 identity below -- both project the identical
+# bounded public chart shape, so the UI needs no changes. Only the
+# artifact's own identity/chart-list validity is checked here; provenance,
+# hashes, and other external-only fields are never read into the public
+# projection.
 _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.v1"
+_ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION = "analytical-visualizations.external-fitted-model.v1"
+_ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
+    _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
+    _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION,
+)
 _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND = "analytical_visualizations"
 _REQUIRED_CHART_IDS = ("target_distribution", "feature_importance")
 _MAX_CHART_DATA_POINTS = 64
@@ -103,11 +116,13 @@ def _canonical_public_charts(visualizations: Any) -> list[dict[str, Any]] | None
     """Require the canonical artifact identity and a bounded, well-formed
     chart structure before any projection is built. Returns exactly the
     two required charts (target_distribution, feature_importance), in that
-    order, or None when the artifact is not a valid, canonical,
-    analytical-visualizations.v1 document."""
+    order, or None when the artifact is not a valid, canonical
+    analytical-visualizations.v1 (Project Spec S0128) or
+    analytical-visualizations.external-fitted-model.v1 (Project Spec
+    S0193) document. Both profiles project the identical bounded shape."""
     if not isinstance(visualizations, dict):
         return None
-    if visualizations.get("schema_version") != _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION:
+    if visualizations.get("schema_version") not in _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS:
         return None
     if visualizations.get("artifact_kind") != _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND:
         return None

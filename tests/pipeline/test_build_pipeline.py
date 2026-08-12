@@ -119,6 +119,71 @@ _VALID_VISUALIZATIONS = {
 }
 
 
+# A minimal analytical-visualizations.external-fitted-model.v1 fixture
+# (Project Spec S0193) that conforms to
+# pipeline/analytical-visualizations.schema.json's external profile --
+# dataset_identity.dataset_slug must match DATASET_SLUG for the same
+# cross-artifact identity reason _VALID_VISUALIZATIONS documents above.
+_VALID_EXTERNAL_VISUALIZATIONS = {
+    "schema_version": "analytical-visualizations.external-fitted-model.v1",
+    "artifact_kind": "analytical_visualizations",
+    "model_source_mode": "validated_external_fitted_model",
+    "created_at": "2026-06-20T00:00:00Z",
+    "dataset_identity": {"dataset_slug": DATASET_SLUG},
+    "external_materialization_provenance": {
+        "model_family": "hist_gradient_boosting",
+        "external_evidence_reference": "artifacts/telco-customer-churn/analytical-visual-evidence.json",
+        "external_evidence_sha256": "a" * 64,
+    },
+    "charts": [
+        {
+            "id": "target_distribution",
+            "title": "Target Distribution",
+            "type": "bar",
+            "x_label": "Target",
+            "y_label": "Rows",
+            "data": [
+                {"name": "No", "value": 6},
+                {"name": "Yes", "value": 4},
+            ],
+        },
+        {
+            "id": "feature_importance",
+            "title": "Feature Importance",
+            "type": "bar",
+            "x_label": "Feature",
+            "y_label": "Importance",
+            "data": [{"name": "example_feature", "value": 1.0}],
+        },
+    ],
+    "target_distribution_method": {
+        "population_kind": "external_prepared_dataset",
+        "source": "external_prepared_evaluation_population",
+        "target_column": "target",
+    },
+    "feature_importance_method": {
+        "model_family": "hist_gradient_boosting",
+        "source": "external_validated_fitted_model",
+        "method": "permutation_importance",
+        "total_source_feature_count": 1,
+        "omitted_source_feature_count": 0,
+        "public_row_limit": 10,
+    },
+    "evidence_policy": {
+        "raw_logs_prohibited": True,
+        "raw_runtime_prohibited": True,
+        "raw_api_payloads_prohibited": True,
+        "secrets_prohibited": True,
+        "raw_dataset_embedded": False,
+        "model_bytes_embedded": False,
+        "serialized_estimator_state_embedded": False,
+        "raw_transformed_matrices_embedded": False,
+        "notebook_state_embedded": False,
+        "reduced_and_sanitized": True,
+    },
+}
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -826,11 +891,12 @@ def test_handoff_readiness_defaults_to_empty_references(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Project Spec S0188: visualization-optional release boundary for a
-# validated external fitted-model candidate. External provenance is
-# determined solely from the referenced training_parameter_record's own
-# declared schema_version (the real S0157 external-fitted-model constant),
-# never from dataset_slug -- the fixtures below reuse DATASET_SLUG
+# Project Spec S0193 restored visualizations as mandatory for a validated
+# external fitted-model candidate (reversing the Project Spec S0188
+# visualization-optional exception). External provenance is determined
+# solely from the referenced training_parameter_record's own declared
+# schema_version (the real S0157 external-fitted-model constant), never
+# from dataset_slug -- the fixtures below reuse DATASET_SLUG
 # ("telco-customer-churn") for both the internal and external cases.
 # ---------------------------------------------------------------------------
 
@@ -885,14 +951,11 @@ def _write_external_governed_artifacts(repo_root: Path) -> dict:
             "educational_threshold": {"value": 0.25},
         },
     })
-    # No governed visualization artifact exists for this external model --
-    # legitimately unresolved rather than fabricated.
-    paths = dict(paths)
-    paths["visualizations"] = ""
+    _write_json(repo_root / paths["visualizations"], _VALID_EXTERNAL_VISUALIZATIONS)
     return paths
 
 
-def test_handoff_readiness_external_provenance_omits_visualizations_from_not_ready(tmp_path):
+def test_handoff_readiness_external_provenance_requires_visualizations(tmp_path):
     tmp_repo = tmp_path / "repo"
     paths = _write_external_governed_artifacts(tmp_repo)
 
@@ -901,10 +964,17 @@ def test_handoff_readiness_external_provenance_omits_visualizations_from_not_rea
     assert readiness["is_release_candidate_input_ready"] is True
     assert "visualizations" not in readiness["not_ready_roles"]
     assert readiness["blocking_reasons"] == []
-    assert "visualizations" not in readiness["effective_required_roles"]
+    assert "visualizations" in readiness["effective_required_roles"]
     visualizations_result = next(r for r in readiness["role_results"] if r["role"] == "visualizations")
-    assert visualizations_result["ready"] is False
-    assert visualizations_result["reason"] == "missing_reference"
+    assert visualizations_result["ready"] is True
+
+    paths_missing_viz = dict(paths)
+    paths_missing_viz["visualizations"] = ""
+    missing_readiness = assemble_candidate.build_release_candidate_handoff_readiness(
+        paths_missing_viz, repo_root=tmp_repo
+    )
+    assert missing_readiness["is_release_candidate_input_ready"] is False
+    assert "visualizations" in missing_readiness["not_ready_roles"]
 
 
 def test_handoff_readiness_external_provenance_still_requires_model_card_and_public_context(tmp_path):
@@ -919,7 +989,7 @@ def test_handoff_readiness_external_provenance_still_requires_model_card_and_pub
     assert "visualizations" not in readiness["not_ready_roles"]
 
 
-def test_build_release_candidate_input_external_provenance_omits_visualizations(tmp_path):
+def test_build_release_candidate_input_external_provenance_includes_visualizations(tmp_path):
     tmp_repo = tmp_path / "repo"
     paths = _write_external_governed_artifacts(tmp_repo)
 
@@ -931,12 +1001,12 @@ def test_build_release_candidate_input_external_provenance_omits_visualizations(
         repo_root=tmp_repo,
     )
 
-    assert "visualizations" not in candidate_input["artifact_inputs"]
+    assert "visualizations" in candidate_input["artifact_inputs"]
     assert candidate_input["artifact_inputs"]["model_card"]["source_stage"] == "manual_governed_input"
     assert candidate_input["artifact_inputs"]["public_context"]["path"] == str(paths["public_context"])
 
 
-def test_build_release_candidate_input_external_no_visualizations_is_schema_valid(tmp_path):
+def test_build_release_candidate_input_external_with_visualizations_is_schema_valid(tmp_path):
     jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads((REPO_ROOT / "pipeline" / "release-candidate-input.schema.json").read_text())
 
@@ -951,6 +1021,21 @@ def test_build_release_candidate_input_external_no_visualizations_is_schema_vali
     )
 
     jsonschema.validate(candidate_input, schema)
+
+
+def test_build_release_candidate_input_external_provenance_missing_visualizations_blocks(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_external_governed_artifacts(tmp_repo)
+    paths["visualizations"] = ""
+
+    with pytest.raises(ValueError, match="visualizations"):
+        assemble_candidate.build_release_candidate_input(
+            dataset_slug=DATASET_SLUG,
+            release_id=RELEASE_ID,
+            source_run_id="external-run-20260101T000000Z",
+            artifact_references=paths,
+            repo_root=tmp_repo,
+        )
 
 
 def _write_internal_governed_artifacts(repo_root: Path, *, omit_visualizations: bool = False) -> dict:
@@ -1008,7 +1093,7 @@ def test_build_release_candidate_input_internal_provenance_still_requires_visual
         )
 
 
-def test_assemble_release_candidate_external_provenance_produces_nine_role_candidate(tmp_path, monkeypatch):
+def test_assemble_release_candidate_external_provenance_produces_ten_role_candidate(tmp_path, monkeypatch):
     tmp_repo = tmp_path / "repo"
     paths = _write_external_governed_artifacts(tmp_repo)
     candidate_input = assemble_candidate.build_release_candidate_input(
@@ -1025,23 +1110,26 @@ def test_assemble_release_candidate_external_provenance_produces_nine_role_candi
     public_contract_schema_dst = tmp_repo / "contracts" / "public-contract.schema.json"
     public_contract_schema_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO_ROOT / "contracts" / "public-contract.schema.json", public_contract_schema_dst)
+    visualizations_schema_dst = tmp_repo / "pipeline" / "analytical-visualizations.schema.json"
+    visualizations_schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json", visualizations_schema_dst)
 
     output_dir = tmp_repo / "releases" / "candidates"
     result = assemble_candidate.assemble_release_candidate(
-        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0188-external-test",
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0193-external-test",
     )
 
     assert result["status"] == "accepted", result
     candidate_dir = Path(result["candidate_dir"])
     release_candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
-    assert "visualizations" not in release_candidate["artifact_roles"]
+    assert "visualizations" in release_candidate["artifact_roles"]
     assert set(
         release_candidate["candidate_metadata"]["completeness_validation"]["required_artifact_roles"]
     ) == {
         "contracts", "public_contract", "predictive_bundle", "metrics", "model_card",
-        "public_context", "manifest_input", "candidate_metadata", "model_artifact",
+        "public_context", "visualizations", "manifest_input", "candidate_metadata", "model_artifact",
     }
-    assert not (candidate_dir / "visualizations").exists()
+    assert (candidate_dir / "visualizations" / "visualizations.json").exists()
 
     jsonschema = pytest.importorskip("jsonschema")
     rc_schema = json.loads((REPO_ROOT / "publisher" / "release-candidate.schema.json").read_text())

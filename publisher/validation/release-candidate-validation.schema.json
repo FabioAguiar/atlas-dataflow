@@ -105,10 +105,11 @@
         "metrics",
         "model_card",
         "public_context",
+        "visualizations",
         "manifest_input",
         "candidate_metadata"
       ],
-      "description": "Project Spec S0188: visualizations is an optional key here -- present (as an artifact_role_result) for the historical/internal 10-role shape or for an external candidate that supplies it, and absent for the validated external fitted-model 9-role shape with no governed visualization artifact.",
+      "description": "Project Spec S0193: visualizations is a mandatory key here, present (as an artifact_role_result) for every candidate, historical/internal or validated external fitted-model alike -- the Project Spec S0188 9-role shape that had omitted it has been removed.",
       "properties": {
         "contracts": {
           "$ref": "#/$defs/artifact_role_result"
@@ -192,9 +193,10 @@
         "manifest_input",
         "metrics",
         "model_card",
+        "visualizations",
         "candidate_metadata"
       ],
-      "description": "Project Spec S0188: visualizations is an optional key -- present when the role was evaluated (checked), and its absence must remain schema-valid for the external no-visualizations case.",
+      "description": "Project Spec S0193: visualizations is a mandatory key, evaluated (checked) for every candidate, historical/internal or validated external fitted-model alike.",
       "properties": {
         "contracts": {
           "$ref": "#/$defs/schema_compatibility_result"
@@ -570,13 +572,13 @@
     },
     "required_artifact_role_list": {
       "type": "array",
-      "minItems": 9,
+      "minItems": 10,
       "maxItems": 10,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/required_artifact_role"
       },
-      "description": "Project Spec S0188: exactly 10 roles (including visualizations) for the historical/internal shape, or exactly 9 roles (visualizations omitted) for a validated external fitted-model candidate with no governed visualization artifact.",
+      "description": "Project Spec S0193: exactly 10 roles (including visualizations) for every candidate, historical/internal or validated external fitted-model alike.",
       "allOf": [
         {
           "contains": {
@@ -611,6 +613,11 @@
         {
           "contains": {
             "const": "public_context"
+          }
+        },
+        {
+          "contains": {
+            "const": "visualizations"
           }
         },
         {
@@ -838,6 +845,7 @@
             "unsafe_candidate_artifact",
             "unsafe_model_reference",
             "unsafe_visualizations_reference",
+            "visualizations_provenance_mismatch",
             "model_bundle_path_mismatch",
             "model_bundle_hash_mismatch",
             "dataset_identifier_mismatch",

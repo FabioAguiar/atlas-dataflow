@@ -382,6 +382,42 @@ def test_publish_route_with_body_publishes_payload_directly_without_a_draft():
             os.environ.pop("ADMIN_API_TOKEN", None)
 
 
+def test_publish_route_with_body_publishes_documentation_directly_without_a_draft():
+    # Project Spec S0198: the direct body-based publish path must preserve
+    # submitted Documentation exactly, without requiring a persisted draft.
+    os.environ["ATLAS_ADMIN_ENABLED"] = "true"
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = _build_fake_repo(Path(tmp))
+        original = _install_isolated_publish(fake_repo)
+        try:
+            request = _make_request({})
+            documentation = {
+                "format": "markdown",
+                "content": "# S0198 unique marker\n\nDirect body publish documentation.",
+            }
+            payload = {
+                "schema_version": "0.1.0",
+                "dataset_slug": "example-dataset",
+                "display": {"title": "Directly published title"},
+                "documentation": documentation,
+            }
+            response = api_main.put_admin_profile_publish("example-dataset", request, payload)
+
+            assert response["published"] is True
+            assert response["snapshot"]["profile"]["documentation"] == documentation
+            assert response["display_title"] == "Directly published title"
+
+            snapshot_path = fake_repo / "registry" / "profile-snapshots" / "example-dataset.json"
+            persisted = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            assert persisted["profile"]["documentation"] == documentation
+            assert not (fake_repo / "registry" / "profile-drafts" / "example-dataset.json").exists()
+        finally:
+            _restore_publish(original)
+            os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+            os.environ.pop("ADMIN_API_TOKEN", None)
+
+
 def test_publish_route_with_timestamp_active_release_persists_exact_binding_and_hydrates(monkeypatch):
     release_id = "release-20260712t190939z"
     os.environ["ATLAS_ADMIN_ENABLED"] = "true"

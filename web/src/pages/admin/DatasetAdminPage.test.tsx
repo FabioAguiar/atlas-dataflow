@@ -2519,6 +2519,48 @@ describe("DatasetAdminPage", () => {
       expect(await screen.findByRole("heading", { name: "Telco hydrated documentation" })).toBeInTheDocument();
       expect(screen.queryByText("Unsaved edit never persisted")).not.toBeInTheDocument();
     });
+
+    it("survives a successful Publish changes round trip: preview stays populated, Edit restores the exact source, and Publish changes disables again until another change (Project Spec S0198)", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      const publishedMarkdown = "# S0198 published heading\n\nS0198 published body.";
+
+      openDocumentationTab();
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
+        target: { value: publishedMarkdown },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(screen.getByRole("heading", { name: "S0198 published heading" })).toBeInTheDocument();
+
+      expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+      await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled());
+
+      // The successfully published documentation remains visible -- the
+      // textarea/preview must not go blank after a successful publish.
+      expect(screen.getByRole("heading", { name: "S0198 published heading" })).toBeInTheDocument();
+      expect(screen.getByText("S0198 published body.")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      const reopenedTextarea = screen.getByLabelText("Documentation Markdown") as HTMLTextAreaElement;
+      expect(reopenedTextarea).toHaveValue(publishedMarkdown);
+
+      // The successfully published profile is now the dirty-state baseline:
+      // re-saving the identical, unmodified content leaves Publish changes
+      // disabled until a real edit occurs.
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
+        target: { value: `${publishedMarkdown}\n\nOne more paragraph.` },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    });
   });
 
   describe("Documentation Add image workflow (Project Spec S0197)", () => {

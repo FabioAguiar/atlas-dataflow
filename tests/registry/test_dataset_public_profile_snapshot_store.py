@@ -659,3 +659,85 @@ def test_invalid_dataset_slug_rejected_before_filesystem_access(fake_repo, bad_s
 
     with pytest.raises(ValueError):
         get_snapshot(bad_slug, repo_root=fake_repo)
+
+
+def test_direct_publish_preserves_exact_documentation_markdown_source(fake_repo):
+    documentation = {"format": "markdown", "content": "# Heading\n\nBody text with **bold**."}
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(documentation=documentation), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["documentation"] == documentation
+
+    snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
+    persisted = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert persisted["profile"]["documentation"] == documentation
+
+
+def test_legacy_publish_snapshot_preserves_documentation(fake_repo):
+    documentation = {"format": "markdown", "content": "## Draft-sourced heading"}
+    create_draft(
+        "telco-customer-churn", _profile(documentation=documentation), repo_root=fake_repo
+    )
+
+    result = publish_snapshot("telco-customer-churn", repo_root=fake_repo)
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["documentation"] == documentation
+
+
+def test_profile_without_documentation_remains_valid_and_omits_field(fake_repo):
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(display={"title": "No docs"}), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert "documentation" not in result["snapshot"]["profile"]
+
+
+def test_invalid_documentation_rejected_by_existing_schema_validation(fake_repo):
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(documentation={"format": "markdown", "content": "ok", "unexpected": "field"}),
+        repo_root=fake_repo,
+    )
+
+    assert result["published"] is False
+    assert "SCHEMA_VALIDATION_ERROR" in _codes(result)
+
+
+def test_documentation_backup_previous_snapshot_retains_prior_documentation(fake_repo):
+    first_documentation = {"format": "markdown", "content": "First published documentation."}
+    first = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(documentation=first_documentation), repo_root=fake_repo
+    )
+    assert first["published"] is True
+
+    second_documentation = {"format": "markdown", "content": "Second published documentation."}
+    second = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(documentation=second_documentation), repo_root=fake_repo
+    )
+    assert second["published"] is True
+
+    backup_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json.previous"
+    backup = json.loads(backup_path.read_text(encoding="utf-8"))
+    assert backup["profile"]["documentation"] == first_documentation
+
+    snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
+    current = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert current["profile"]["documentation"] == second_documentation
+
+
+def test_no_unrelated_request_only_field_is_promoted_into_snapshot_profile(fake_repo):
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn",
+        _profile(
+            documentation={"format": "markdown", "content": "Bounded profile check."},
+            _example_note="should-not-appear",
+        ),
+        repo_root=fake_repo,
+    )
+
+    assert result["published"] is True
+    assert "_example_note" not in result["snapshot"]["profile"]

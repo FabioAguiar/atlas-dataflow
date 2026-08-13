@@ -78,7 +78,7 @@ SNAPSHOT_SCHEMA_VERSION = "1.0.0"
 
 _PROFILE_FIELDS = (
     "display", "home_card", "performance_focus", "theme",
-    "inference_presentation", "result_card",
+    "inference_presentation", "result_card", "documentation",
 )
 
 

@@ -27,6 +27,9 @@ from public_profile_visibility import resolve_dataset_visibility as _real_resolv
 from public_profile_visibility import (  # noqa: E402
     resolve_dataset_snapshot_readiness as _real_resolve_dataset_snapshot_readiness,
 )
+from public_profile_visibility import (  # noqa: E402
+    resolve_public_presentation_overlay as _real_resolve_public_presentation_overlay,
+)
 from registry.dataset_public_profile_publication_store import set_visibility as _real_set_visibility  # noqa: E402
 from registry.dataset_public_profile_snapshot_store import publish_snapshot as _real_publish_snapshot  # noqa: E402
 from registry.dataset_public_profile_store import (  # noqa: E402
@@ -42,6 +45,7 @@ _TARGET_SLUG = "telco-customer-churn"
 _RELEASE_ID = "release-20260101-001"
 _ADMIN_TOKEN = "correct-token"
 _PRIVATE_MARKER = "M36-07-private-draft-marker-6dd9c1"
+_DOCUMENTATION_MARKER = "S0198-documentation-marker-4f21ab"
 
 
 def _make_request(
@@ -122,7 +126,11 @@ def _build_fake_repo(tmp_path: Path) -> Path:
     return fake_repo
 
 
-def _profile(title: str, primary_metric_key: str | None = None) -> dict:
+def _profile(
+    title: str,
+    primary_metric_key: str | None = None,
+    documentation: dict | None = None,
+) -> dict:
     profile = {
         "schema_version": "0.1.0",
         "dataset_slug": _TARGET_SLUG,
@@ -136,6 +144,8 @@ def _profile(title: str, primary_metric_key: str | None = None) -> dict:
             "short_description": "Private draft home card copy",
             "primary_metric_key": primary_metric_key,
         }
+    if documentation is not None:
+        profile["documentation"] = documentation
     return profile
 
 
@@ -212,13 +222,17 @@ def test_public_profile_publication_lifecycle_keeps_private_drafts_out_of_public
     fake_repo = _build_fake_repo(tmp_path)
     _install_isolated_lifecycle(monkeypatch, fake_repo)
 
+    published_documentation = {"format": "markdown", "content": f"# {_DOCUMENTATION_MARKER}\n\nPublished body."}
+
     draft_response = api_main.put_admin_profile_draft(
         _TARGET_SLUG,
         _make_request(path=f"/admin/datasets/{_TARGET_SLUG}/profile-draft"),
-        _profile(_PRIVATE_MARKER),
+        _profile(_PRIVATE_MARKER, documentation=published_documentation),
     )
     assert draft_response["saved"] is True
     assert _public_payload_contains_marker() is False
+    overlay_before_publish = _real_resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+    assert overlay_before_publish["documentation"] is None
 
     publish_response = api_main.put_admin_profile_publish(
         _TARGET_SLUG,
@@ -226,6 +240,7 @@ def test_public_profile_publication_lifecycle_keeps_private_drafts_out_of_public
     )
     assert publish_response["published"] is True
     assert publish_response["snapshot"]["profile"]["display"]["title"] == _PRIVATE_MARKER
+    assert publish_response["snapshot"]["profile"]["documentation"] == published_documentation
 
     snapshot_path = fake_repo / "registry" / "profile-snapshots" / f"{_TARGET_SLUG}.json"
     evidence_path = fake_repo / "registry" / "profile-snapshots" / f"{_TARGET_SLUG}.evidence.json"
@@ -233,6 +248,12 @@ def test_public_profile_publication_lifecycle_keeps_private_drafts_out_of_public
     assert evidence_path.is_file()
     snapshot_before_failure = snapshot_path.read_text(encoding="utf-8")
     evidence_before_failure = evidence_path.read_text(encoding="utf-8")
+
+    persisted_snapshot = json.loads(snapshot_before_failure)
+    assert persisted_snapshot["profile"]["documentation"] == published_documentation
+
+    overlay_after_publish = _real_resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+    assert overlay_after_publish["documentation"] == published_documentation
 
     metric_bound_profile = _profile("Metric-bound draft that must fail later", "auc_roc")
     update_response = api_main.put_admin_profile_draft(
@@ -254,6 +275,8 @@ def test_public_profile_publication_lifecycle_keeps_private_drafts_out_of_public
     assert snapshot_path.read_text(encoding="utf-8") == snapshot_before_failure
     assert evidence_path.read_text(encoding="utf-8") == evidence_before_failure
     assert not (snapshot_path.parent / f"{_TARGET_SLUG}.json.previous").exists()
+    overlay_after_rejected_publish = _real_resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+    assert overlay_after_rejected_publish["documentation"] == published_documentation
 
     hidden_response = api_main.put_admin_profile_visibility(
         _TARGET_SLUG,

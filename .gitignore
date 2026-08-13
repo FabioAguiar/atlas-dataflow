@@ -68,3 +68,7 @@ pipeline/prepared/
 
 # Generated Home card uploads are local runtime data, not repository source.
 /media/home-cards/
+
+# Generated Dataset Documentation image uploads are local runtime data, not
+# repository source.
+/media/documentation/

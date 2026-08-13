@@ -116,3 +116,94 @@ describe("DatasetDocumentation", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Payload heading" })).toBeInTheDocument();
   });
 });
+
+// Project Spec S0197: bounded Documentation image rendering. Only a
+// Markdown `img` whose `src` exactly matches the current dataset's
+// generated Documentation media namespace renders; every other source is
+// omitted without breaking the rest of Documentation rendering.
+describe("DatasetDocumentation bounded image rendering (Project Spec S0197)", () => {
+  const datasetSlug = "example-dataset";
+  const generatedFilename = "0123456789abcdef0123456789abcdef.png";
+  const safeSrc = `/media/documentation/${datasetSlug}/${generatedFilename}`;
+
+  it("renders a same-dataset Documentation media image and preserves alt text", () => {
+    const { container } = render(
+      <DatasetDocumentation content={`![Churn overview chart](${safeSrc})`} datasetSlug={datasetSlug} />,
+    );
+
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img).toHaveAttribute("src", safeSrc);
+    expect(img).toHaveAttribute("alt", "Churn overview chart");
+    expect(img).toHaveAttribute("loading", "lazy");
+    expect(img).toHaveAttribute("decoding", "async");
+  });
+
+  it.each(["png", "jpg", "webp", "avif"])("accepts a generated %s Documentation media reference", (extension) => {
+    const src = `/media/documentation/${datasetSlug}/0123456789abcdef0123456789abcdef.${extension}`;
+    const { container } = render(<DatasetDocumentation content={`![alt](${src})`} datasetSlug={datasetSlug} />);
+    expect(container.querySelector("img")).toHaveAttribute("src", src);
+  });
+
+  it("omits an unsafe or foreign image source without breaking the rest of Documentation rendering", () => {
+    const unsafeCases = [
+      `/media/documentation/other-dataset/${generatedFilename}`,
+      "/media/home-cards/0123456789abcdef0123456789abcdef.png",
+      "https://example.org/pic.png",
+      "http://example.org/pic.png",
+      "//example.org/pic.png",
+      "data:image/png;base64,aGVsbG8=",
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "blob:https://example.org/00000000-0000-0000-0000-000000000000",
+      `/media/documentation/../${datasetSlug}/${generatedFilename}`,
+      `/media/documentation/${datasetSlug}/../${generatedFilename}`,
+      `${safeSrc}?x=1`,
+      `${safeSrc}#fragment`,
+    ];
+
+    for (const unsafeSrc of unsafeCases) {
+      const { container, unmount } = render(
+        <DatasetDocumentation
+          content={`Before text.\n\n![alt](${unsafeSrc})\n\nAfter text.`}
+          datasetSlug={datasetSlug}
+        />,
+      );
+      expect(container.querySelector("img")).toBeNull();
+      expect(screen.getByText("Before text.")).toBeInTheDocument();
+      expect(screen.getByText("After text.")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("does not render an image when no datasetSlug is provided", () => {
+    const { container } = render(<DatasetDocumentation content={`![alt](${safeSrc})`} />);
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("does not treat raw HTML as active markup alongside a valid image", () => {
+    render(
+      <DatasetDocumentation
+        content={`![alt](${safeSrc})\n\nBefore <strong id="raw">raw html</strong> after`}
+        datasetSlug={datasetSlug}
+      />,
+    );
+
+    expect(document.getElementById("raw")).toBeNull();
+    expect(screen.getByText(/raw html/)).toBeInTheDocument();
+  });
+
+  it("still renders headings, lists, tables, and links alongside a valid image", () => {
+    render(
+      <DatasetDocumentation
+        content={`# Title\n\n![alt](${safeSrc})\n\n- Item one\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n[Link](https://example.org)`}
+        datasetSlug={datasetSlug}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { level: 1, name: "Title" })).toBeInTheDocument();
+    expect(screen.getByText("Item one").closest("ul")).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Link" })).toBeInTheDocument();
+  });
+});

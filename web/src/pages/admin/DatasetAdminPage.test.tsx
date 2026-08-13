@@ -725,6 +725,16 @@ function installFetchMock(
       }
       return jsonResponse({ uploaded: true, media_ref: "/media/home-cards/0123456789abcdef0123456789abcdef.png" });
     }
+    if (url.endsWith(`/admin/datasets/${datasetSlug}/documentation-image`) && init?.method === "POST") {
+      const headers = init.headers as Record<string, string>;
+      if (decodeURIComponent(headers["X-File-Name"]).includes("fail") || headers["Content-Type"] === "image/svg+xml") {
+        return jsonResponse({ errors: [{ message: "Choose a PNG, JPEG, WebP, or AVIF image." }] }, 422);
+      }
+      return jsonResponse({
+        uploaded: true,
+        media_ref: `/media/documentation/${datasetSlug}/0123456789abcdef0123456789abcdef.png`,
+      });
+    }
     if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
       if (options.noExistingDraft) {
         return jsonResponse({ draft_exists: false, profile: null });
@@ -2508,6 +2518,258 @@ describe("DatasetAdminPage", () => {
       // discarded in-progress edit from before the switch away.
       expect(await screen.findByRole("heading", { name: "Telco hydrated documentation" })).toBeInTheDocument();
       expect(screen.queryByText("Unsaved edit never persisted")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Documentation Add image workflow (Project Spec S0197)", () => {
+    const generatedMediaRef = `/media/documentation/${datasetSlug}/0123456789abcdef0123456789abcdef.png`;
+
+    function openDocumentationTab() {
+      const adminTabs = within(screen.getByRole("tablist", { name: "Dataset admin tabs" }));
+      fireEvent.click(adminTabs.getByRole("tab", { name: "Documentation" }));
+    }
+
+    function openLivePreviewDocumentationTab() {
+      const adminTabs = within(screen.getByRole("tablist", { name: "Dataset admin tabs" }));
+      fireEvent.click(adminTabs.getByRole("tab", { name: "Live Preview" }));
+      const detailTabs = within(screen.getByRole("tablist", { name: "Dataset detail sections" }));
+      fireEvent.click(detailTabs.getByRole("tab", { name: "Documentation" }));
+    }
+
+    function uploadInput(container: HTMLElement): HTMLInputElement {
+      return container.querySelector('.dataset-admin-documentation-add-image input[type="file"]')!;
+    }
+
+    it("shows Add image only in Documentation edit mode", async () => {
+      installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      expect(screen.getByText("Add image")).toBeInTheDocument();
+      expect(uploadInput(container)).toHaveAttribute("accept", "image/png,image/jpeg,image/webp,image/avif");
+
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), { target: { value: "# Body" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(screen.queryByText("Add image")).not.toBeInTheDocument();
+    });
+
+    it("POSTs an accepted file to the dataset-scoped Documentation upload route with the bounded header/body contract", async () => {
+      const fetchMock = installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      fireEvent.change(uploadInput(container), {
+        target: { files: [new File(["png"], "Churn chart.png", { type: "image/png" })] },
+      });
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([url]) =>
+            String(url).endsWith(`/admin/datasets/${datasetSlug}/documentation-image`),
+          ),
+        ).toBe(true),
+      );
+      const uploadCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith(`/admin/datasets/${datasetSlug}/documentation-image`),
+      );
+      expect(uploadCall?.[1]?.method).toBe("POST");
+      expect(uploadCall?.[1]?.headers).toMatchObject({
+        "X-File-Name": encodeURIComponent("Churn chart.png"),
+        "Content-Type": "image/png",
+      });
+      expect(uploadCall?.[1]?.body).toBeInstanceOf(File);
+    });
+
+    it("inserts the returned media_ref and bounded alt text into the unsaved buffer without committing or publishing", async () => {
+      const fetchMock = installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      const callsBeforeUpload = fetchMock.mock.calls.length;
+      fireEvent.change(uploadInput(container), {
+        target: { files: [new File(["png"], "Churn chart.png", { type: "image/png" })] },
+      });
+
+      const textarea = screen.getByLabelText("Documentation Markdown") as HTMLTextAreaElement;
+      await waitFor(() => expect(textarea.value).toContain(generatedMediaRef));
+      expect(textarea.value).toBe(`![Churn chart](${generatedMediaRef})`);
+
+      expect(
+        fetchMock.mock.calls
+          .slice(callsBeforeUpload)
+          .some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+      ).toBe(false);
+      // Upload alone touches only the local, unsaved buffer -- it never
+      // calls setField, so the workspace dirty-state (and Publish changes)
+      // is untouched, exactly like typing alone in the S0196 textarea.
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
+
+      openLivePreviewDocumentationTab();
+      expect(screen.getByText("No documentation has been published yet.")).toBeInTheDocument();
+    });
+
+    it("Save after upload commits the Markdown and Live Preview then renders the image; Edit restores the Markdown source", async () => {
+      installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      fireEvent.change(uploadInput(container), {
+        target: { files: [new File(["png"], "Churn chart.png", { type: "image/png" })] },
+      });
+      const textarea = screen.getByLabelText("Documentation Markdown") as HTMLTextAreaElement;
+      await waitFor(() => expect(textarea.value).toContain(generatedMediaRef));
+
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+
+      openLivePreviewDocumentationTab();
+      expect(container.querySelector(`.dataset-documentation img[src="${generatedMediaRef}"]`)).toBeInTheDocument();
+
+      openDocumentationTab();
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      expect(screen.getByLabelText("Documentation Markdown")).toHaveValue(`![Churn chart](${generatedMediaRef})`);
+    });
+
+    it("shows a visible upload error and leaves the prior buffer intact on failure", async () => {
+      installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), { target: { value: "Existing buffer text." } });
+      fireEvent.change(uploadInput(container), {
+        target: { files: [new File(["bad"], "fail image.png", { type: "image/png" })] },
+      });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Choose a PNG, JPEG, WebP, or AVIF image.");
+      expect(screen.getByLabelText("Documentation Markdown")).toHaveValue("Existing buffer text.");
+    });
+
+    it("blocks an oversized image client-side before any fetch is issued", async () => {
+      const fetchMock = installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      const callsBeforeUpload = fetchMock.mock.calls.length;
+      const oversized = new File(["x".repeat(10 * 1024 * 1024 + 1)], "big.png", { type: "image/png" });
+      fireEvent.change(uploadInput(container), { target: { files: [oversized] } });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Choose an image smaller than 10 MB.");
+      expect(
+        fetchMock.mock.calls
+          .slice(callsBeforeUpload)
+          .some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/documentation-image`)),
+      ).toBe(false);
+    });
+
+    it("clears upload state on dataset switch, matching S0196's dataset-switch buffer rules", async () => {
+      const otherSlug = "energy-consumption-forecast";
+
+      function minimalAuthoringContext(slug: string, title: string) {
+        return jsonResponse({
+          dataset_slug: slug,
+          active_release: "release-20260701-001",
+          dataset: { status: "ready", data: { dataset_slug: slug, title, summary: "s", domain: "d", tags: [] } },
+          context: { status: "ready", data: {} },
+          contract: {
+            status: "ready",
+            data: { contract: { schema_version: "1.0.0", features: [] }, result_contract: { status: "unavailable" } },
+          },
+          metrics: { status: "ready", data: {} },
+          visualizations: { status: "ready", data: {} },
+          views: { status: "ready", data: [] },
+        });
+      }
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: datasetSlug,
+                title: "Telco Customer Churn",
+                display_title: "Telco Customer Churn",
+                summary: "s",
+                domain: "telecom",
+                tags: [],
+                active_release: "release-20260619-001",
+                publication_status: "ready",
+                last_updated: "2026-06-19T12:00:00Z",
+              },
+              {
+                dataset_slug: otherSlug,
+                title: "Energy Consumption Forecast",
+                display_title: "Energy Consumption Forecast",
+                summary: "s",
+                domain: "energy",
+                tags: [],
+                active_release: "release-20260701-001",
+                publication_status: "ready",
+                last_updated: "2026-07-01T12:00:00Z",
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+          return minimalAuthoringContext(datasetSlug, "Telco Customer Churn");
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+          return minimalAuthoringContext(otherSlug, "Energy Consumption Forecast");
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) || url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)) {
+          return jsonResponse({ draft_exists: false, profile: null });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) || url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)) {
+          return jsonResponse({}, 404);
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { container } = renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+      openDocumentationTab();
+      fireEvent.change(uploadInput(container), {
+        target: { files: [new File(["bad"], "fail image.png", { type: "image/png" })] },
+      });
+      expect(await screen.findByRole("alert")).toHaveTextContent("The image could not be uploaded. Try again.");
+
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+      await waitFor(() => expect(selector).toHaveTextContent("Energy Consumption Forecast"));
+
+      openDocumentationTab();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Documentation Markdown")).toHaveValue("");
+    });
+
+    it("leaves Home card upload behavior unchanged", async () => {
+      const fetchMock = installFetchMock();
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(within(screen.getByRole("tablist", { name: "Dataset admin tabs" })).getByRole("tab", { name: "Metadata & Card" }));
+
+      const upload = container.querySelector('input[type="file"]')!;
+      fireEvent.change(upload, { target: { files: [new File(["png"], "Home card.png", { type: "image/png" })] } });
+
+      await waitFor(() => expect(container.querySelector(".dataset-admin-preview-card .dataset-card__media")).toBeInTheDocument());
+      const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith(`/admin/datasets/${datasetSlug}/home-card-image`));
+      expect(uploadCall).toBeDefined();
     });
   });
 

@@ -719,6 +719,237 @@ def test_remove_profile_artifacts_cleans_lifecycle_and_only_unshared_media(tmp_p
     }
 
 
+# ---------------------------------------------------------------------------
+# Documentation image lifecycle (Project Spec S0197)
+# ---------------------------------------------------------------------------
+
+
+def test_documentation_image_store_accepts_ordinary_names_and_generates_safe_references(tmp_path):
+    cases = [
+        ("Documentation final.png", "image/png", b"\x89PNG\r\n\x1a\n" + b"png", ".png"),
+        ("Churn overview (final).jpeg", "image/jpeg", b"\xff\xd8\xff" + b"jpeg", ".jpg"),
+        ("doc-figure-v2.webp", "image/webp", b"RIFF\x04\x00\x00\x00WEBPdata", ".webp"),
+        ("visão geral.avif", "image/avif", b"\x00\x00\x00\x18ftypavifdata", ".avif"),
+    ]
+    for filename, content_type, content, expected_extension in cases:
+        result = admin_profile_publish.store_documentation_image(
+            "example-dataset", filename, content_type, content, tmp_path
+        )
+
+        assert result["uploaded"] is True
+        assert result["media_ref"].startswith("/media/documentation/example-dataset/")
+        assert filename not in result["media_ref"]
+        stored_name = result["media_ref"].rsplit("/", 1)[-1]
+        assert stored_name.endswith(expected_extension)
+        assert (
+            admin_profile_publish.resolve_documentation_media_path(
+                "example-dataset", stored_name, tmp_path
+            ).read_bytes()
+            == content
+        )
+
+
+def test_documentation_image_store_uses_signature_with_generic_or_missing_mime(tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
+    for content_type in (None, "", "application/octet-stream"):
+        result = admin_profile_publish.store_documentation_image(
+            "example-dataset", "imagem verão.jpg", content_type, png, tmp_path
+        )
+        assert result["uploaded"] is True
+        assert result["media_ref"].endswith(".png")
+
+
+def test_documentation_image_store_rejects_invalid_dataset_slug(tmp_path):
+    valid_png = b"\x89PNG\r\n\x1a\n" + b"payload"
+    for invalid_slug in ("", "Invalid Slug", "../other-dataset", "example/../other", None):
+        result = admin_profile_publish.store_documentation_image(
+            invalid_slug, "card.png", "image/png", valid_png, tmp_path
+        )
+        assert result["uploaded"] is False
+        assert result["media_ref"] is None
+    assert not (tmp_path / "media").exists()
+
+
+def test_documentation_image_store_rejects_traversal_svg_oversize_and_invalid_content(tmp_path):
+    valid_png = b"\x89PNG\r\n\x1a\n" + b"payload"
+    cases = [
+        ("../card.png", "image/png", valid_png),
+        ("..%2Fcard.png", "application/octet-stream", valid_png),
+        ("folder\\card.png", "image/png", valid_png),
+        ("card.svg", "image/svg+xml", b"<svg><script/></svg>"),
+        ("card.png", "image/png", b"not a png"),
+        ("card.jpg", "image/jpeg", valid_png),
+        ("card.png", "image/png", b""),
+        ("card.png", "image/png", valid_png + b"x" * admin_profile_publish.HOME_CARD_IMAGE_MAX_BYTES),
+    ]
+    for filename, content_type, content in cases:
+        result = admin_profile_publish.store_documentation_image(
+            "example-dataset", filename, content_type, content, tmp_path
+        )
+        assert result["uploaded"] is False
+        assert result["media_ref"] is None
+
+    assert not (tmp_path / "media").exists()
+
+
+def test_documentation_media_resolver_serves_only_generated_safe_filenames_within_dataset_namespace(
+    tmp_path, monkeypatch
+):
+    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
+    stored = admin_profile_publish.store_documentation_image(
+        "example-dataset", "Documentation.png", "image/png", png, tmp_path
+    )
+    stored_name = stored["media_ref"].rsplit("/", 1)[-1]
+    monkeypatch.setenv("ATLAS_MEDIA_ROOT", str(tmp_path / "media"))
+
+    response = api_main.get_documentation_image("example-dataset", stored_name)
+    assert response.path == tmp_path / "media" / "documentation" / "example-dataset" / stored_name
+    assert response.media_type == "image/png"
+
+    for dataset_slug, filename in (
+        ("example-dataset", "does-not-exist.png"),
+        ("example-dataset", "../" + stored_name),
+        ("example-dataset", "%2e%2e%2f" + stored_name),
+        ("example-dataset", stored_name.upper()),
+        ("example-dataset", stored_name + "?x=1"),
+        ("other-dataset", stored_name),
+        ("../example-dataset", stored_name),
+        ("", stored_name),
+        ("Invalid Slug", stored_name),
+    ):
+        assert admin_profile_publish.resolve_documentation_media_path(dataset_slug, filename, tmp_path) is None
+
+
+def test_documentation_media_route_returns_safe_json_404_for_missing_file():
+    response = api_main.get_documentation_image("example-dataset", "0" * 32 + ".png")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
+
+
+def test_documentation_image_media_ref_never_exposes_absolute_local_path(tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
+    result = admin_profile_publish.store_documentation_image(
+        "example-dataset", "Documentation.png", "image/png", png, tmp_path
+    )
+    assert result["uploaded"] is True
+    assert str(tmp_path) not in result["media_ref"]
+    assert result["media_ref"].startswith("/media/documentation/")
+
+
+def test_remove_profile_artifacts_removes_deleted_dataset_documentation_media_only(tmp_path):
+    deleted_slug = "deleted-dataset"
+    live_slug = "live-dataset"
+
+    documentation_root = tmp_path / "media" / "documentation"
+    deleted_doc_dir = documentation_root / deleted_slug
+    live_doc_dir = documentation_root / live_slug
+    deleted_doc_dir.mkdir(parents=True)
+    live_doc_dir.mkdir(parents=True)
+    deleted_image = "a" * 32 + ".png"
+    live_image = "b" * 32 + ".webp"
+    (deleted_doc_dir / deleted_image).write_bytes(b"deleted doc image")
+    (live_doc_dir / live_image).write_bytes(b"live doc image")
+    # A non-matching filename in the deleted dataset's own directory must
+    # never be treated as a generated Documentation image.
+    (deleted_doc_dir / "not-generated.png").write_bytes(b"not generated")
+
+    registry_root = tmp_path / "registry"
+    registry_root.mkdir()
+    (registry_root / "datasets.json").write_text(json.dumps({
+        "datasets": [{"dataset_slug": live_slug}],
+    }), encoding="utf-8")
+
+    for slug in (deleted_slug, live_slug):
+        path = registry_root / "profile-drafts" / f"{slug}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"schema_version": "0.1.0", "dataset_slug": slug}), encoding="utf-8")
+
+    result = admin_profile_publish.remove_profile_artifacts(deleted_slug, tmp_path)
+
+    assert result["completed"] is True
+    assert result["media_removed"] == 1
+    assert not (deleted_doc_dir / deleted_image).exists()
+    # The directory is left in place (not silently recursed into further)
+    # because it still holds a filename outside the generated-image contract.
+    assert (deleted_doc_dir / "not-generated.png").is_file()
+    assert (live_doc_dir / live_image).is_file()
+    assert live_doc_dir.is_dir()
+
+
+def test_remove_profile_artifacts_missing_documentation_directory_is_a_noop(tmp_path):
+    registry_root = tmp_path / "registry"
+    registry_root.mkdir()
+    (registry_root / "datasets.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+
+    result = admin_profile_publish.remove_profile_artifacts("never-had-documentation", tmp_path)
+
+    assert result == {
+        "completed": True,
+        "artifacts_removed": 0,
+        "media_removed": 0,
+        "errors": [],
+    }
+
+
+def test_remove_profile_artifacts_preserves_home_card_cleanup_semantics_alongside_documentation_cleanup(tmp_path):
+    # Regression coverage: extending remove_profile_artifacts for
+    # Documentation media must not alter its pre-existing Home-card
+    # reference-aware cleanup behavior.
+    deleted_slug = "deleted-dataset"
+    live_slug = "live-dataset"
+    deleted_home_card_media = "a" * 32 + ".png"
+    shared_home_card_media = "b" * 32 + ".webp"
+    home_card_root = tmp_path / "media" / "home-cards"
+    home_card_root.mkdir(parents=True)
+    (home_card_root / deleted_home_card_media).write_bytes(b"deleted")
+    (home_card_root / shared_home_card_media).write_bytes(b"shared")
+
+    documentation_root = tmp_path / "media" / "documentation" / deleted_slug
+    documentation_root.mkdir(parents=True)
+    deleted_doc_image = "c" * 32 + ".png"
+    (documentation_root / deleted_doc_image).write_bytes(b"deleted doc image")
+
+    registry_root = tmp_path / "registry"
+    registry_root.mkdir()
+    (registry_root / "datasets.json").write_text(json.dumps({
+        "datasets": [{"dataset_slug": live_slug}],
+    }), encoding="utf-8")
+
+    artifact_paths = [
+        registry_root / "profile-drafts" / f"{deleted_slug}.json",
+        registry_root / "profile-drafts" / f"{deleted_slug}.json.previous",
+        registry_root / "profile-snapshots" / f"{deleted_slug}.json",
+        registry_root / "profile-snapshots" / f"{deleted_slug}.json.previous",
+        registry_root / "profile-snapshots" / f"{deleted_slug}.evidence.json",
+        registry_root / "profile-publications" / f"{deleted_slug}.json",
+    ]
+    for path in artifact_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "home_card": {
+                "deleted": f"/media/home-cards/{deleted_home_card_media}",
+                "shared": f"/media/home-cards/{shared_home_card_media}",
+            },
+        }), encoding="utf-8")
+
+    live_snapshot = registry_root / "profile-snapshots" / f"{live_slug}.json"
+    live_snapshot.write_text(json.dumps({
+        "profile": {"home_card": {"background_image_ref": f"/media/home-cards/{shared_home_card_media}"}},
+    }), encoding="utf-8")
+
+    result = admin_profile_publish.remove_profile_artifacts(deleted_slug, tmp_path)
+
+    assert result["completed"] is True
+    assert result["artifacts_removed"] == 6
+    # 1 unshared Home-card image + 1 Documentation image.
+    assert result["media_removed"] == 2
+    assert not (home_card_root / deleted_home_card_media).exists()
+    assert (home_card_root / shared_home_card_media).is_file()
+    assert not documentation_root.exists()
+
+
 if __name__ == "__main__":
     import pytest
 

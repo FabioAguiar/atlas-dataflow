@@ -2070,4 +2070,79 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
     expect(await screen.findByLabelText("Synthetic Feature")).toBeInTheDocument();
   });
+
+  // Project Spec S0197: the public Documentation tab passes the current
+  // route slug into the shared DatasetDocumentation renderer, so it renders
+  // published Documentation media images only under that renderer's own
+  // bounded same-dataset safety contract.
+  describe("bounded Documentation image rendering (Project Spec S0197)", () => {
+    const generatedFilename = "0123456789abcdef0123456789abcdef.png";
+    const safeSrc = `/media/documentation/${slug}/${generatedFilename}`;
+
+    it("renders a published same-dataset Documentation media image", async () => {
+      installDatasetPageFetchMock({
+        ...contextPayload,
+        documentation: { format: "markdown", content: `# Docs\n\n![Overview chart](${safeSrc})` },
+      });
+      renderDatasetPage();
+
+      expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+      openDocumentationTab();
+
+      const img = screen.getByRole("img", { name: "Overview chart" });
+      expect(img).toHaveAttribute("src", safeSrc);
+    });
+
+    it("does not render another dataset's Documentation media reference", async () => {
+      installDatasetPageFetchMock({
+        ...contextPayload,
+        documentation: {
+          format: "markdown",
+          content: `# Docs\n\n![alt](/media/documentation/another-dataset/${generatedFilename})`,
+        },
+      });
+      renderDatasetPage();
+
+      expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+      openDocumentationTab();
+
+      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(screen.queryByRole("img", { name: "alt" })).not.toBeInTheDocument();
+    });
+
+    it("does not render unsafe external image references", async () => {
+      installDatasetPageFetchMock({
+        ...contextPayload,
+        documentation: {
+          format: "markdown",
+          content: "# Docs\n\n![remote](https://example.org/pic.png)\n\n![data](data:image/png;base64,aGVsbG8=)",
+        },
+      });
+      renderDatasetPage();
+
+      expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+      openDocumentationTab();
+
+      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    it("does not break Documentation text rendering when the image reference is missing/invalid", async () => {
+      installDatasetPageFetchMock({
+        ...contextPayload,
+        documentation: {
+          format: "markdown",
+          content: "# Docs\n\n![broken]()\n\nRemaining paragraph text.",
+        },
+      });
+      renderDatasetPage();
+
+      expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+      openDocumentationTab();
+
+      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(screen.getByText("Remaining paragraph text.")).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+  });
 });

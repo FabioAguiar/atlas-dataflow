@@ -38,6 +38,8 @@ _IMAGE_EXTENSIONS = {
 _HOME_CARD_MEDIA_REF_PATTERN = re.compile(
     r"^/media/home-cards/([0-9a-f]{32}\.(?:avif|jpg|png|webp))$"
 )
+_DATASET_SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_DOCUMENTATION_MEDIA_FILENAME_PATTERN = re.compile(r"[0-9a-f]{32}\.(?:avif|jpg|png|webp)")
 
 
 def _media_root(repo_root: Path) -> Path:
@@ -113,6 +115,74 @@ def resolve_home_card_media_path(filename: str, repo_root: Path | None = None) -
     return candidate if candidate.is_file() else None
 
 
+def store_documentation_image(
+    dataset_slug: str,
+    original_filename: str | None,
+    content_type: str | None,
+    content: bytes,
+    repo_root: Path | None = None,
+) -> dict:
+    """Validate and store one dataset's Documentation image, returning only its public reference.
+
+    Reuses the same signature/MIME policy and 10 MB bound as Home-card
+    images (S0197); the original filename is validation/display input only
+    and is never used as the durable stored filename.
+    """
+    if not re.fullmatch(_DATASET_SLUG_PATTERN, dataset_slug or ""):
+        return {"uploaded": False, "media_ref": None, "error": "The dataset_slug is missing or invalid."}
+    if not _is_file_name(original_filename):
+        return {"uploaded": False, "media_ref": None, "error": "Choose an image file, not a folder."}
+    if len(content) > HOME_CARD_IMAGE_MAX_BYTES:
+        return {"uploaded": False, "media_ref": None, "error": "Choose an image smaller than 10 MB."}
+    if not content:
+        return {"uploaded": False, "media_ref": None, "error": "The selected image is empty or corrupt."}
+
+    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_type not in _GENERIC_IMAGE_TYPES and normalized_type not in _IMAGE_EXTENSIONS:
+        return {"uploaded": False, "media_ref": None, "error": "Choose a PNG, JPEG, WebP, or AVIF image."}
+    detected_type = _image_type_from_signature(content)
+    if detected_type is None or (normalized_type not in _GENERIC_IMAGE_TYPES and normalized_type != detected_type):
+        return {"uploaded": False, "media_ref": None, "error": "The selected image is invalid or corrupt."}
+
+    root = _media_root(Path(repo_root) if repo_root else Path(__file__).parent.parent)
+    destination_root = root / "documentation" / dataset_slug
+    stored_name = f"{uuid.uuid4().hex}.{_IMAGE_EXTENSIONS[detected_type]}"
+    destination = destination_root / stored_name
+    try:
+        destination_root.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_bytes(content)
+        temporary.replace(destination)
+    except OSError:
+        return {"uploaded": False, "media_ref": None, "error": "The image could not be stored. Try again."}
+    return {
+        "uploaded": True,
+        "media_ref": f"/media/documentation/{dataset_slug}/{stored_name}",
+        "error": None,
+    }
+
+
+def resolve_documentation_media_path(
+    dataset_slug: str, filename: str, repo_root: Path | None = None
+) -> Path | None:
+    """Resolve only generated Documentation filenames inside one dataset's media directory."""
+    if not re.fullmatch(_DATASET_SLUG_PATTERN, dataset_slug or ""):
+        return None
+    if not re.fullmatch(_DOCUMENTATION_MEDIA_FILENAME_PATTERN, filename or ""):
+        return None
+    dataset_root = (
+        _media_root(Path(repo_root) if repo_root else Path(__file__).parent.parent)
+        / "documentation"
+        / dataset_slug
+    ).resolve()
+    candidate = (dataset_root / filename).resolve()
+    try:
+        candidate.relative_to(dataset_root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def _profile_artifact_paths(dataset_slug: str, repo_root: Path) -> tuple[Path, ...]:
     """Return the complete, bounded set of mutable profile artifacts for a slug."""
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", dataset_slug):
@@ -179,7 +249,10 @@ def remove_profile_artifacts(dataset_slug: str, repo_root: Path | None = None) -
     The registry entry must already have been removed by the caller. Missing
     artifacts are successful no-ops. Only generated Home-card media owned by
     the removed artifacts and unreferenced by every live Dataset Detail is
-    eligible for deletion; run and release trees are never inspected.
+    eligible for deletion; run and release trees are never inspected. The
+    deleted dataset's whole generated Documentation media directory (S0197)
+    is also removed -- unlike Home-card media, Documentation images are
+    never shared across datasets, so no cross-dataset reference scan applies.
     """
     root = Path(repo_root) if repo_root else Path(__file__).parent.parent
     try:
@@ -228,6 +301,30 @@ def remove_profile_artifacts(dataset_slug: str, repo_root: Path | None = None) -
                 media_removed += 1
             except FileNotFoundError:
                 pass
+
+        documentation_root = (_media_root(root) / "documentation").resolve()
+        dataset_documentation_dir = documentation_root / dataset_slug
+        if dataset_documentation_dir.is_dir() and not dataset_documentation_dir.is_symlink():
+            resolved_dataset_dir = dataset_documentation_dir.resolve()
+            try:
+                resolved_dataset_dir.relative_to(documentation_root)
+            except ValueError:
+                resolved_dataset_dir = None
+            if resolved_dataset_dir is not None:
+                for entry in sorted(dataset_documentation_dir.iterdir()):
+                    if entry.is_symlink() or not entry.is_file():
+                        continue
+                    if not re.fullmatch(_DOCUMENTATION_MEDIA_FILENAME_PATTERN, entry.name):
+                        continue
+                    try:
+                        entry.unlink()
+                        media_removed += 1
+                    except FileNotFoundError:
+                        pass
+                try:
+                    dataset_documentation_dir.rmdir()
+                except OSError:
+                    pass
     except OSError:
         return {
             "completed": False,

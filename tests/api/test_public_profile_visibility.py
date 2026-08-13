@@ -828,6 +828,7 @@ _EMPTY_PUBLIC_PROFILE_OVERLAY = {
             "labels": {"high": "High", "medium": "Medium", "low": "Low"},
         },
     },
+    "documentation": None,
 }
 _CURATED_PUBLIC_PROFILE_OVERLAY = {
     **_CURATED_OVERLAY,
@@ -850,6 +851,7 @@ _CURATED_PUBLIC_PROFILE_OVERLAY = {
     "bound_predict_view_id": "churn-risk-overview",
     "legacy_submit_button_label": "Run Prediction",
     "result_card": _EMPTY_PUBLIC_PROFILE_OVERLAY["result_card"],
+    "documentation": {"format": "markdown", "content": "# Curated docs\n\nPublished body."},
 }
 
 
@@ -1070,6 +1072,7 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
                         "result_card": {
                             "submit_button_label": _CURATED_PUBLIC_PROFILE_OVERLAY["legacy_submit_button_label"],
                         },
+                        "documentation": _CURATED_PUBLIC_PROFILE_OVERLAY["documentation"],
                     },
                 }
             ),
@@ -1108,6 +1111,115 @@ def test_public_presentation_overlay_treats_malformed_display_as_missing():
         assert overlay["problem_summary_title"] is None
         assert overlay["problem_summary_body"] is None
         assert overlay["canonical_name_fallback"] is None
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0196: published Markdown documentation projection. Proves
+# the overlay reads documentation only from the published snapshot, never
+# from the private Admin draft store (this module never imports
+# registry/dataset_public_profile_store.py at all), and bounds malformed
+# documentation shapes to None rather than leaking raw content.
+# ---------------------------------------------------------------------------
+
+
+def test_public_presentation_overlay_projects_published_documentation():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        snapshots_dir = fake_repo / "registry" / "profile-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        (snapshots_dir / f"{_TARGET_SLUG}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "dataset_slug": _TARGET_SLUG,
+                    "published_at": "2026-07-01T00:00:00Z",
+                    "active_release_at_publish_time": "release-20260101-001",
+                    "profile": {
+                        "documentation": {
+                            "format": "markdown",
+                            "content": "# Heading\n\n| A | B |\n| - | - |\n| 1 | 2 |\n",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        overlay = resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+        assert overlay["documentation"] == {
+            "format": "markdown",
+            "content": "# Heading\n\n| A | B |\n| - | - |\n| 1 | 2 |\n",
+        }
+
+
+def test_public_presentation_overlay_documentation_none_when_no_snapshot_published():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        overlay = resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+        assert overlay["documentation"] is None
+
+
+def test_public_presentation_overlay_documentation_none_when_snapshot_omits_it():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        _write_fake_snapshot(fake_repo, _TARGET_SLUG)
+        overlay = resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+        assert overlay["documentation"] is None
+
+
+def test_public_presentation_overlay_documentation_none_when_malformed():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        snapshots_dir = fake_repo / "registry" / "profile-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        for malformed in (
+            {"format": "html", "content": "<p>nope</p>"},
+            {"format": "markdown", "content": 12345},
+            ["not", "an", "object"],
+        ):
+            (snapshots_dir / f"{_TARGET_SLUG}.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1.0.0",
+                        "dataset_slug": _TARGET_SLUG,
+                        "published_at": "2026-07-01T00:00:00Z",
+                        "active_release_at_publish_time": "release-20260101-001",
+                        "profile": {"documentation": malformed},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            overlay = resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+            assert overlay["documentation"] is None
+
+
+def test_public_presentation_overlay_never_reads_private_draft_documentation():
+    """
+    A private, unpublished draft's documentation must never leak through
+    this read-only public overlay -- it is never read at all, matching the
+    existing pre-S0196 unpublished-draft isolation proven above for every
+    other curated field.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        drafts_dir = fake_repo / "registry" / "profile-drafts"
+        drafts_dir.mkdir(parents=True)
+        (drafts_dir / f"{_TARGET_SLUG}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "documentation": {
+                        "format": "markdown",
+                        "content": "Private draft body never public.",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        overlay = resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo)
+        assert overlay["documentation"] is None
+        assert "Private draft body never public." not in json.dumps(overlay)
 
 
 # ---------------------------------------------------------------------------

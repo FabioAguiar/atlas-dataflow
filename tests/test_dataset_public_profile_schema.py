@@ -137,3 +137,108 @@ def test_dataset_public_profile_rejects_unsupported_icon():
         "is not one of" in error.message or "satellite" in error.message
         for error in errors
     )
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0196: optional Markdown documentation on the draft profile
+# and on the published snapshot profile, sharing the exact same bounded
+# {format, content} shape.
+# ---------------------------------------------------------------------------
+
+
+def _base_profile(**overrides):
+    profile = {"schema_version": "0.1.0", "dataset_slug": "example-dataset"}
+    profile.update(overrides)
+    return profile
+
+
+def _base_snapshot(profile_overrides=None):
+    return {
+        "schema_version": "0.1.0",
+        "dataset_slug": "telco-customer-churn",
+        "published_at": "2026-07-13T12:00:00Z",
+        "active_release_at_publish_time": "release-20260713-001",
+        "profile": profile_overrides or {},
+    }
+
+
+def test_valid_markdown_documentation_is_accepted_in_draft_and_snapshot():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    documentation = {"format": "markdown", "content": "# Heading\n\nSome **body** text."}
+
+    jsonschema.validate(_base_profile(documentation=documentation), schema)
+    jsonschema.validate(_base_snapshot({"documentation": documentation}), snapshot_schema)
+
+
+def test_blank_documentation_content_is_accepted_as_unauthored_state():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    documentation = {"format": "markdown", "content": ""}
+
+    jsonschema.validate(_base_profile(documentation=documentation), schema)
+    jsonschema.validate(_base_snapshot({"documentation": documentation}), snapshot_schema)
+
+
+def test_profiles_and_snapshots_without_documentation_remain_valid():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+
+    jsonschema.validate(_base_profile(), schema)
+    jsonschema.validate(_base_snapshot(), snapshot_schema)
+
+
+def test_documentation_rejects_unsupported_format():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    documentation = {"format": "html", "content": "<p>not markdown</p>"}
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(documentation=documentation)))
+    assert list(
+        jsonschema.Draft7Validator(snapshot_schema).iter_errors(
+            _base_snapshot({"documentation": documentation})
+        )
+    )
+
+
+def test_documentation_rejects_non_string_content():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    documentation = {"format": "markdown", "content": 12345}
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(documentation=documentation)))
+    assert list(
+        jsonschema.Draft7Validator(snapshot_schema).iter_errors(
+            _base_snapshot({"documentation": documentation})
+        )
+    )
+
+
+def test_documentation_rejects_unknown_properties():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    documentation = {"format": "markdown", "content": "Body", "rendered_html": "<p>Body</p>"}
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(documentation=documentation)))
+    assert list(
+        jsonschema.Draft7Validator(snapshot_schema).iter_errors(
+            _base_snapshot({"documentation": documentation})
+        )
+    )
+
+
+def test_documentation_enforces_max_length():
+    schema = _load_json(SCHEMA_PATH)
+    max_length = schema["definitions"]["documentation"]["properties"]["content"]["maxLength"]
+    documentation = {"format": "markdown", "content": "a" * (max_length + 1)}
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(documentation=documentation)))
+
+
+def test_documentation_does_not_bypass_technical_field_rejection():
+    schema = _load_json(SCHEMA_PATH)
+    profile = _base_profile(documentation={"format": "markdown", "content": "Body"})
+    profile["metrics"] = {"accuracy": 0.9}
+
+    errors = list(jsonschema.Draft7Validator(schema).iter_errors(profile))
+    assert errors

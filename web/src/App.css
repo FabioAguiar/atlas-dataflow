@@ -900,6 +900,152 @@ h1 {
   background: var(--atlas-color-surface);
 }
 
+/*
+ * Project Spec S0196: shared Markdown Documentation typography, used
+ * identically inside the public Dataset Detail Documentation tab and the
+ * Admin Documentation tab/Live Preview -- one style surface for the one
+ * shared DatasetDocumentation renderer.
+ */
+.dataset-documentation {
+  display: grid;
+  gap: var(--atlas-space-4);
+  max-width: 62rem;
+  color: var(--atlas-color-text);
+  line-height: var(--atlas-line-relaxed);
+  overflow-wrap: anywhere;
+}
+
+.dataset-documentation h1,
+.dataset-documentation h2,
+.dataset-documentation h3,
+.dataset-documentation h4,
+.dataset-documentation h5,
+.dataset-documentation h6 {
+  margin: var(--atlas-space-4) 0 var(--atlas-space-1);
+  color: var(--atlas-color-text);
+  line-height: var(--atlas-line-tight, 1.25);
+}
+
+.dataset-documentation > :first-child,
+.dataset-documentation h1:first-child,
+.dataset-documentation h2:first-child,
+.dataset-documentation h3:first-child {
+  margin-top: 0;
+}
+
+.dataset-documentation p {
+  margin: 0;
+}
+
+.dataset-documentation ul,
+.dataset-documentation ol {
+  margin: 0;
+  padding-left: var(--atlas-space-6);
+  display: grid;
+  gap: var(--atlas-space-1);
+}
+
+.dataset-documentation li {
+  line-height: var(--atlas-line-relaxed);
+}
+
+.dataset-documentation blockquote {
+  margin: 0;
+  padding: var(--atlas-space-2) var(--atlas-space-4);
+  border-left: 3px solid var(--atlas-color-accent);
+  color: var(--atlas-color-text-muted);
+  background: var(--atlas-color-surface-muted);
+}
+
+.dataset-documentation code {
+  padding: 0.1em 0.35em;
+  border-radius: var(--atlas-radius-sm, 0.25rem);
+  background: var(--atlas-color-surface-muted);
+  font-size: 0.9em;
+}
+
+.dataset-documentation pre {
+  margin: 0;
+  padding: var(--atlas-space-3);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-surface-muted);
+  overflow-x: auto;
+}
+
+.dataset-documentation pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.dataset-documentation hr {
+  margin: var(--atlas-space-2) 0;
+  border: none;
+  border-top: 1px solid var(--atlas-color-border);
+}
+
+.dataset-documentation a {
+  color: var(--atlas-color-accent-strong);
+}
+
+.dataset-documentation__table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+}
+
+.dataset-documentation table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dataset-documentation th,
+.dataset-documentation td {
+  padding: var(--atlas-space-2) var(--atlas-space-3);
+  border-bottom: 1px solid var(--atlas-color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.dataset-documentation thead th {
+  color: var(--atlas-color-text-muted);
+  font-weight: 800;
+  background: var(--atlas-color-surface-muted);
+}
+
+.dataset-documentation tbody tr:last-child th,
+.dataset-documentation tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.dataset-documentation--empty .dataset-documentation__empty-state {
+  margin: 0;
+  color: var(--atlas-color-text-muted);
+}
+
+.dataset-admin-documentation-tab {
+  max-width: 62rem;
+}
+
+.dataset-admin-documentation-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 18rem;
+  padding: var(--atlas-space-3);
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-md);
+  color: var(--atlas-color-text);
+  background: var(--atlas-color-surface);
+  font: inherit;
+  line-height: var(--atlas-line-relaxed);
+  resize: vertical;
+}
+
+.dataset-admin-documentation-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--atlas-space-3);
+}
+
 .performance-summary h3 {
   margin: 0;
 }

@@ -63,6 +63,9 @@
     "result_card": {
       "$ref": "#/definitions/result_card"
     },
+    "documentation": {
+      "$ref": "#/definitions/documentation"
+    },
     "_example_note": {
       "type": "string",
       "description": "Optional annotation for example or demonstration artifacts only. Omit in production profile draft records."
@@ -353,6 +356,24 @@
         "high": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "\\S"},
         "medium": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "\\S"},
         "low": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "\\S"}
+      }
+    },
+    "documentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "content"],
+      "description": "Optional Markdown documentation authored for the dataset's public Documentation tab. The canonical durable authority is the Markdown source string itself -- never generated HTML, an AST, a filesystem path, or an image manifest. Empty content is permitted only as an unpublished/blank authoring value.",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": ["markdown"],
+          "description": "Documentation source format. Only Markdown is supported."
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 50000,
+          "description": "Markdown source text. May be empty to represent a blank, unauthored authoring state."
+        }
       }
     }
   }

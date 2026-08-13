@@ -106,6 +106,7 @@ type ContextPayloadFixture = typeof contextPayload & {
       order: number;
     }>;
   } | null;
+  documentation?: { format: "markdown"; content: string } | null;
 };
 
 const metricsPayload = {
@@ -1996,5 +1997,77 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(2);
     expect(screen.queryByLabelText("target distribution")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("feature importance")).not.toBeInTheDocument();
+  });
+});
+
+// Project Spec S0196: the public Dataset Detail Documentation tab renders
+// only the published snapshot's context.documentation, through the same
+// shared DatasetDocumentation renderer the Admin surfaces use -- never a
+// second, private Admin request, and never synthesized content when nothing
+// has been published.
+describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
+  function openDocumentationTab() {
+    fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+  }
+
+  it("renders published Markdown, including a GFM table, in the Documentation tab", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      documentation: {
+        format: "markdown",
+        content:
+          "# Dataset documentation\n\nCurated public notes.\n\n| Metric | Value |\n| --- | --- |\n| Accuracy | 0.91 |\n",
+      },
+    });
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+    openDocumentationTab();
+
+    expect(screen.getByRole("heading", { name: "Dataset documentation" })).toBeInTheDocument();
+    expect(screen.getByText("Curated public notes.")).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    expect(table.querySelector("thead")).toBeInTheDocument();
+    expect(table.querySelector("tbody")).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Accuracy" })).toBeInTheDocument();
+  });
+
+  it("renders the bounded empty state when no documentation has been published", async () => {
+    installDatasetPageFetchMock(contextPayload);
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+    openDocumentationTab();
+
+    expect(screen.getByText("No documentation has been published yet.")).toBeInTheDocument();
+  });
+
+  it("never synthesizes private/unpublished content -- a malformed documentation payload falls back to the bounded empty state", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      // @ts-expect-error -- deliberately malformed to prove no unsafe fallback rendering.
+      documentation: { format: "html", content: "<p>not markdown</p>" },
+    });
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+    openDocumentationTab();
+
+    expect(screen.getByText("No documentation has been published yet.")).toBeInTheDocument();
+    expect(screen.queryByText("not markdown")).not.toBeInTheDocument();
+  });
+
+  it("leaves existing Overview and Inference content unchanged when documentation is published", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      documentation: { format: "markdown", content: "# Docs" },
+    });
+    renderDatasetPage();
+
+    expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByText("Synthetic use case")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    expect(await screen.findByLabelText("Synthetic Feature")).toBeInTheDocument();
   });
 });

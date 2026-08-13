@@ -4,6 +4,7 @@ import DatasetAccessState, { classifyDatasetAccessError } from "../components/Da
 import DatasetDetailSurface, {
   type DatasetDetailMetadataItem,
 } from "../components/DatasetDetail/DatasetDetailSurface";
+import DatasetDocumentation from "../components/DatasetDetail/DatasetDocumentation";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
@@ -58,6 +59,7 @@ type PublicContextPayload = {
   bound_predict_view_id?: string | null;
   legacy_submit_button_label?: string | null;
   result_card?: BinaryResultPresentation | null;
+  documentation?: { format: "markdown"; content: string } | null;
 };
 
 type ContractEnvelope = {
@@ -511,6 +513,12 @@ export default function DatasetPage() {
     </>
   );
 
+  // Project Spec S0196: the public Documentation tab renders only the
+  // published snapshot's documentation (context.documentation), through the
+  // same shared renderer the Admin Documentation tab and Live Preview use --
+  // never a second, private Admin request.
+  const documentationContent = <DatasetDocumentation content={context?.documentation} />;
+
   // Project Spec S0130: the route-level canvas resolves the same theme
   // authority/tokens DatasetDetailSurface itself applies -- never a second,
   // divergent theme mapping -- so the full-bleed public main region is
@@ -528,6 +536,7 @@ export default function DatasetPage() {
           analysisType={analysisType}
           datasetSubtitle={datasetSubtitle}
           datasetTitle={datasetTitle}
+          documentationContent={documentationContent}
           featureImportanceContent={featureImportanceContent}
           inferenceContent={inferenceContent}
           metadata={metadataItems}

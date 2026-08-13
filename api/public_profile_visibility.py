@@ -66,6 +66,24 @@ def _valid_snapshot_timestamp(value: object) -> bool:
     return parsed.tzinfo is not None
 
 
+def _normalize_public_documentation(documentation: object) -> dict | None:
+    """
+    Project Spec S0196: bound the published documentation projection to
+    exactly {"format": "markdown", "content": <str>}, or None when the
+    snapshot's documentation is absent or malformed. Read-only; never
+    raises on malformed snapshot content, matching this overlay's existing
+    fail-open-to-None convention for every other curated field.
+    """
+    if not isinstance(documentation, dict):
+        return None
+    if documentation.get("format") != "markdown":
+        return None
+    content = documentation.get("content")
+    if not isinstance(content, str):
+        return None
+    return {"format": "markdown", "content": content}
+
+
 def resolve_dataset_snapshot_readiness(
     dataset_slug: str, active_release: str, repo_root: Path | None = None
 ) -> dict:
@@ -184,6 +202,11 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
     inference_presentation binding; legacy_submit_button_label comes only
     from the published result_card -- neither is treated as new authority,
     and no private draft is exposed by this read-only overlay.
+
+    Project Spec S0196: adds a bounded documentation projection
+    ({"format": "markdown", "content": <str>} or None) sourced only from
+    the published snapshot's own profile.documentation -- never from the
+    private Admin draft store, which this module never imports or calls.
     """
     defaults = {
         "display_title": None,
@@ -204,6 +227,7 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "bound_predict_view_id": None,
         "legacy_submit_button_label": None,
         "result_card": normalize_binary_result_presentation(None),
+        "documentation": None,
     }
 
     try:
@@ -253,4 +277,5 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
             result_card.get("submit_button_label") if isinstance(result_card, dict) else None
         ),
         "result_card": normalize_binary_result_presentation(result_card),
+        "documentation": _normalize_public_documentation(profile.get("documentation")),
     }

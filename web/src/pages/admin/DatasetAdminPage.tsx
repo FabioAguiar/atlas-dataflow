@@ -13,6 +13,7 @@ import { Badge, Card, FormRow, StatusPill, Tabs, type TabItem } from "../../comp
 import DatasetCard from "../../components/DatasetCard";
 import { DatasetIcon } from "../../components/DatasetCard/DatasetCard";
 import DatasetDetailSurface from "../../components/DatasetDetail/DatasetDetailSurface";
+import DatasetDocumentation from "../../components/DatasetDetail/DatasetDocumentation";
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
@@ -193,6 +194,10 @@ type ProfileDraft = {
     // Bounded read-only migration input. Never serialized by profileFromForm.
     submit_button_label?: string;
   };
+  documentation?: {
+    format?: "markdown";
+    content?: string;
+  };
 };
 
 type PerformanceFocus = {
@@ -273,6 +278,12 @@ type DraftForm = {
   interpretation_high: string;
   interpretation_medium: string;
   interpretation_low: string;
+  // Project Spec S0196: the committed workspace Markdown source, i.e. the
+  // most recent Documentation-tab Save -- never the transient, unsaved
+  // editing-buffer text. Participates in the same profileFromForm/
+  // formFromProfile round trip and workspace dirty-state as every other
+  // field here.
+  documentation: string;
 };
 
 type DraftError = {
@@ -1525,6 +1536,7 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     interpretation_high: GENERIC_RESULT_PRESENTATION.interpretation.labels.high,
     interpretation_medium: GENERIC_RESULT_PRESENTATION.interpretation.labels.medium,
     interpretation_low: GENERIC_RESULT_PRESENTATION.interpretation.labels.low,
+    documentation: "",
   };
 }
 
@@ -1575,6 +1587,7 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     interpretation_high: profile.result_card?.interpretation?.labels?.high ?? form.interpretation_high,
     interpretation_medium: profile.result_card?.interpretation?.labels?.medium ?? form.interpretation_medium,
     interpretation_low: profile.result_card?.interpretation?.labels?.low ?? form.interpretation_low,
+    documentation: profile.documentation?.content ?? "",
   };
 }
 
@@ -1666,6 +1679,10 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
     },
   };
 
+  if (form.documentation.trim()) {
+    profile.documentation = { format: "markdown", content: form.documentation };
+  }
+
   return profile;
 }
 
@@ -1728,6 +1745,7 @@ type WorkspacePublishFields = Pick<
   | "interpretation_high"
   | "interpretation_medium"
   | "interpretation_low"
+  | "documentation"
 >;
 
 function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
@@ -1759,6 +1777,7 @@ function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
     interpretation_high: form.interpretation_high,
     interpretation_medium: form.interpretation_medium,
     interpretation_low: form.interpretation_low,
+    documentation: form.documentation,
   };
 }
 
@@ -4259,11 +4278,17 @@ function DatasetDetailLivePreview({
     <p style={mutedTextStyle}>Contract fields are unavailable for this dataset.</p>
   );
 
+  // Project Spec S0196: Live Preview reflects the committed workspace
+  // Markdown (form.documentation) -- never the Documentation tab's unsaved
+  // editing buffer, which stays local to DocumentationTab until Save.
+  const documentationContent = <DatasetDocumentation content={form.documentation} />;
+
   return (
     <DatasetDetailSurface
       analysisType={preview.analysisType}
       datasetSubtitle={preview.subtitle}
       datasetTitle={preview.datasetTitle}
+      documentationContent={documentationContent}
       featureImportanceContent={featureImportanceContent}
       inferenceContent={inferenceContent}
       metadata={preview.metadata}
@@ -4440,6 +4465,77 @@ function LivePreviewTab({
   );
 }
 
+// Project Spec S0196: the Admin Documentation tab's Save/Edit authoring
+// workflow. Keeps an editing buffer local to this component, separate from
+// the committed `form.documentation` workspace value, so typing alone never
+// masquerades as a Save action and never reaches Live Preview or the
+// workspace dirty-state until Save commits it. Re-derives its local
+// mode/buffer from the committed value whenever the selected dataset or its
+// committed documentation changes (dataset switch, or a backend draft
+// hydration completing) -- never leaking a prior dataset's unsaved buffer.
+function DocumentationTab({
+  form,
+  setField,
+  selectedSlug,
+}: {
+  form: DraftForm;
+  setField: <K extends keyof DraftForm>(key: K, value: DraftForm[K]) => void;
+  selectedSlug: string;
+}) {
+  const [mode, setMode] = useState<"edit" | "preview">(form.documentation.trim() ? "preview" : "edit");
+  const [buffer, setBuffer] = useState(form.documentation);
+
+  useEffect(() => {
+    setBuffer(form.documentation);
+    setMode(form.documentation.trim() ? "preview" : "edit");
+  }, [selectedSlug, form.documentation]);
+
+  function handleSave() {
+    setField("documentation", buffer);
+    setMode(buffer.trim() ? "preview" : "edit");
+  }
+
+  function handleEdit() {
+    setBuffer(form.documentation);
+    setMode("edit");
+  }
+
+  return (
+    <div className="dataset-admin-tab-workspace dataset-admin-documentation-tab">
+      <h2 style={{ marginTop: 0 }}>Documentation</h2>
+      <p style={mutedTextStyle}>
+        Author Markdown documentation for this Dataset Detail. Save commits it to the workspace draft --
+        Publish changes still governs when it becomes public.
+      </p>
+      {mode === "edit" ? (
+        <>
+          <textarea
+            aria-label="Documentation Markdown"
+            className="dataset-admin-documentation-textarea"
+            onChange={(event) => setBuffer(event.target.value)}
+            rows={16}
+            value={buffer}
+          />
+          <div className="dataset-admin-documentation-actions">
+            <button onClick={handleSave} style={actionButtonStyle} type="button">
+              Save
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <DatasetDocumentation content={form.documentation} />
+          <div className="dataset-admin-documentation-actions">
+            <button onClick={handleEdit} style={secondaryButtonStyle} type="button">
+              Edit
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function renderSelectedTab(
   selectedTab: string,
   dataset: DatasetListing | undefined,
@@ -4491,7 +4587,7 @@ function renderSelectedTab(
     case "result-card":
       return <ResultCardTab form={form} readOnlyData={readOnlyData} selectedSlug={selectedSlug} setField={setField} />;
     case "documentation":
-      return <div aria-label="Documentation placeholder" />;
+      return <DocumentationTab form={form} selectedSlug={selectedSlug} setField={setField} />;
     case "publishing":
       return (
         <PublishingTab

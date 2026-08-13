@@ -2242,8 +2242,273 @@ describe("DatasetAdminPage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
     expect(screen.getByRole("tab", { name: "Documentation", selected: true })).toBeInTheDocument();
-    expect(screen.getByLabelText("Documentation placeholder")).toBeInTheDocument();
+    // The shared publicProfile fixture never publishes documentation, so the
+    // blank initial state shows the editor -- merely viewing the tab must
+    // never itself persist anything.
+    expect(screen.getByLabelText("Documentation Markdown")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(mutationCallsBefore);
+  });
+
+  // Project Spec S0196: the Admin Documentation tab's Save/Edit Markdown
+  // authoring workflow -- a committed workspace value (ProfileDraft.
+  // documentation) separate from a transient, local editing buffer.
+  describe("Documentation Markdown authoring (Project Spec S0196)", () => {
+    function openDocumentationTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
+    }
+
+    it("shows a blank editor and Save when no documentation has been committed yet", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      expect(screen.getByLabelText("Documentation Markdown")).toHaveValue("");
+      expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    });
+
+    it("keeps typed content in the editor buffer only -- Live Preview still shows the bounded empty state until Save", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
+        target: { value: "# Unsaved heading" },
+      });
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      const detailTabs = within(screen.getByRole("tablist", { name: "Dataset detail sections" }));
+      fireEvent.click(detailTabs.getByRole("tab", { name: "Documentation" }));
+
+      expect(screen.queryByRole("heading", { name: "Unsaved heading" })).not.toBeInTheDocument();
+      expect(screen.getByText("No documentation has been published yet.")).toBeInTheDocument();
+    });
+
+    it("Save commits the buffer, hides the textarea, renders the preview, and flips the action to Edit; Edit restores the exact source and a second Save updates the preview", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      const textarea = screen.getByLabelText("Documentation Markdown");
+      fireEvent.change(textarea, { target: { value: "# First heading\n\nFirst body." } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(screen.queryByLabelText("Documentation Markdown")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "First heading" })).toBeInTheDocument();
+      expect(screen.getByText("First body.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      const reopenedTextarea = screen.getByLabelText("Documentation Markdown") as HTMLTextAreaElement;
+      expect(reopenedTextarea).toHaveValue("# First heading\n\nFirst body.");
+      expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+
+      fireEvent.change(reopenedTextarea, { target: { value: "# Second heading\n\nSecond body." } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(screen.getByRole("heading", { name: "Second heading" })).toBeInTheDocument();
+      expect(screen.getByText("Second body.")).toBeInTheDocument();
+      expect(screen.queryByText("First body.")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    });
+
+    it("Save alone never calls the publish endpoint -- Publish changes remains the sole publication action", async () => {
+      const fetchMock = installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
+        target: { value: "Body only." },
+      });
+      const callsBeforeSave = fetchMock.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(
+        fetchMock.mock.calls
+          .slice(callsBeforeSave)
+          .some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+      ).toBe(false);
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    });
+
+    it("participates in the workspace dirty-state and is carried in the Publish changes payload", async () => {
+      const fetchMock = installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled());
+
+      openDocumentationTab();
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
+        target: { value: "# Published body\n\nCarried in the payload." },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
+
+      const callsBeforePublish = fetchMock.mock.calls.length;
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+      await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled());
+
+      const publishCall = fetchMock.mock.calls
+        .slice(callsBeforePublish)
+        .find(
+          (call: unknown[]) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        );
+      expect(publishCall).toBeDefined();
+      const body = JSON.parse(String((publishCall?.[1] as RequestInit).body)) as {
+        documentation?: { format?: string; content?: string };
+      };
+      expect(body.documentation).toEqual({
+        format: "markdown",
+        content: "# Published body\n\nCarried in the payload.",
+      });
+    });
+
+    it("feeds Live Preview with the saved documentation, never the unsaved buffer", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
+        target: { value: "# Live preview body" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      const detailTabs = within(screen.getByRole("tablist", { name: "Dataset detail sections" }));
+      fireEvent.click(detailTabs.getByRole("tab", { name: "Documentation" }));
+
+      expect(screen.getByRole("heading", { name: "Live preview body" })).toBeInTheDocument();
+    });
+
+    it("restores committed documentation from backend draft hydration, and a dataset switch never leaks the prior dataset's unsaved buffer", async () => {
+      const otherSlug = "energy-consumption-forecast";
+
+      function minimalAuthoringContext(slug: string, title: string) {
+        return jsonResponse({
+          dataset_slug: slug,
+          active_release: "release-20260701-001",
+          dataset: { status: "ready", data: { dataset_slug: slug, title, summary: "s", domain: "d", tags: [] } },
+          context: { status: "ready", data: {} },
+          contract: {
+            status: "ready",
+            data: { contract: { schema_version: "1.0.0", features: [] }, result_contract: { status: "unavailable" } },
+          },
+          metrics: { status: "ready", data: {} },
+          visualizations: { status: "ready", data: {} },
+          views: { status: "ready", data: [] },
+        });
+      }
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: datasetSlug,
+                title: "Telco Customer Churn",
+                display_title: "Telco Customer Churn",
+                summary: "s",
+                domain: "telecom",
+                tags: [],
+                active_release: "release-20260619-001",
+                publication_status: "ready",
+                last_updated: "2026-06-19T12:00:00Z",
+              },
+              {
+                dataset_slug: otherSlug,
+                title: "Energy Consumption Forecast",
+                display_title: "Energy Consumption Forecast",
+                summary: "s",
+                domain: "energy",
+                tags: [],
+                active_release: "release-20260701-001",
+                publication_status: "ready",
+                last_updated: "2026-07-01T12:00:00Z",
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+          return minimalAuthoringContext(datasetSlug, "Telco Customer Churn");
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+          return minimalAuthoringContext(otherSlug, "Energy Consumption Forecast");
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
+          return jsonResponse({
+            draft_exists: true,
+            profile: {
+              schema_version: "1.0.0",
+              dataset_slug: datasetSlug,
+              documentation: { format: "markdown", content: "# Telco hydrated documentation" },
+            },
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)) {
+          return jsonResponse({ draft_exists: false, profile: null });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) || url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)) {
+          return jsonResponse({}, 404);
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+      openDocumentationTab();
+      // Published draft hydration restores documentation into the preview,
+      // not the blank editor state.
+      expect(await screen.findByRole("heading", { name: "Telco hydrated documentation" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
+        target: { value: "# Unsaved edit never persisted" },
+      });
+
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+      await waitFor(() => expect(selector).toHaveTextContent("Energy Consumption Forecast"));
+
+      openDocumentationTab();
+      // The other dataset has no documentation and no unsaved buffer leaked
+      // in from the previously selected dataset.
+      expect(screen.getByLabelText("Documentation Markdown")).toHaveValue("");
+      expect(screen.queryByText("Unsaved edit never persisted")).not.toBeInTheDocument();
+
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Telco Customer Churn" }));
+      await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+      openDocumentationTab();
+      // Switching back reloads Telco's own committed documentation, not the
+      // discarded in-progress edit from before the switch away.
+      expect(await screen.findByRole("heading", { name: "Telco hydrated documentation" })).toBeInTheDocument();
+      expect(screen.queryByText("Unsaved edit never persisted")).not.toBeInTheDocument();
+    });
   });
 
   it("surfaces publish validation feedback from the workspace toolbar without changing the visibility switch (Project Spec S0116)", async () => {
@@ -2846,8 +3111,10 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(detailTabs.getByRole("tab", { name: "Documentation" }));
     expect(container.querySelectorAll(".dataset-detail-tabs__panel:not([hidden])")).toHaveLength(1);
     const documentationPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])");
-    expect(documentationPanel).toBeEmptyDOMElement();
     expect(documentationPanel!.querySelectorAll(".atlas-card")).toHaveLength(0);
+    // The shared publicProfile fixture never publishes documentation, so
+    // Live Preview renders the shared renderer's bounded empty state.
+    expect(documentationPanel).toHaveTextContent("No documentation has been published yet.");
 
     fireEvent.click(detailTabs.getByRole("tab", { name: "Overview" }));
     // Returning to Overview restores the same four-card composition without

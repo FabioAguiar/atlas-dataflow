@@ -1,0 +1,119 @@
+{
+  "artifact_kind": "model_selection_evidence",
+  "candidates": [
+    {
+      "candidate_id": "logistic_regression",
+      "estimator_identity": {
+        "class_name": "LogisticRegression",
+        "library": "scikit-learn"
+      },
+      "model_family": "logistic_regression"
+    },
+    {
+      "candidate_id": "decision_tree",
+      "estimator_identity": {
+        "class_name": "DecisionTreeClassifier",
+        "library": "scikit-learn"
+      },
+      "model_family": "decision_tree"
+    },
+    {
+      "candidate_id": "random_forest",
+      "estimator_identity": {
+        "class_name": "RandomForestClassifier",
+        "library": "scikit-learn"
+      },
+      "model_family": "random_forest"
+    },
+    {
+      "candidate_id": "hist_gradient_boosting",
+      "estimator_identity": {
+        "class_name": "HistGradientBoostingClassifier",
+        "library": "scikit-learn"
+      },
+      "model_family": "hist_gradient_boosting"
+    }
+  ],
+  "created_at": "2026-08-11T00:00:00+00:00",
+  "cross_validation_summary": {
+    "metric_summaries": [
+      {
+        "mean": 0.6728264921781798,
+        "name": "average_precision",
+        "standard_deviation": 0.01606006597447956
+      }
+    ],
+    "partition_role": "train"
+  },
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn"
+  },
+  "evidence_identity": {
+    "handoff_lineage_reference": "artifacts/models/telco-customer-churn/final-model-handoff.json",
+    "model_source_mode": "validated_external_fitted_model",
+    "producer": "dataset-study-telco-customer-churn"
+  },
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "model_state_fingerprint": "c9328311e2ed5953b5aab1abc17b439ff7e90c7c8e4f15b6a31598d05dc771e6"
+  },
+  "path_references": {
+    "model_selection_evidence_reference": "artifacts/model-selection/telco-customer-churn/model-selection-manifest.json"
+  },
+  "practical_tie": {
+    "tie_break_criteria": [
+      {
+        "criterion": "brier_score",
+        "observed_values": [
+          {
+            "candidate_id": "hist_gradient_boosting",
+            "value": 0.13320337544392163
+          },
+          {
+            "candidate_id": "logistic_regression",
+            "value": 0.13389814952096538
+          }
+        ],
+        "order": 1
+      }
+    ],
+    "tie_detected": true,
+    "tolerance": 0.01
+  },
+  "schema_version": "model-selection-evidence.external-fitted-model.v1",
+  "sealed_test_confirmation": {
+    "sealed_before_selection": true,
+    "test_partition_role": "test",
+    "used_for_model_selection": false
+  },
+  "selected_candidate": {
+    "candidate_id": "hist_gradient_boosting"
+  },
+  "selection_policy": {
+    "primary_metric": "average_precision",
+    "ranking_direction": "higher_is_better"
+  },
+  "selection_protocol": {
+    "protocol_id": "cross_validation_with_practical_tie_break"
+  },
+  "selection_rationale": "The finalists were practically tied on validation Average Precision with overlapping approximate CV intervals; deterministic calibration, stability, interpretability, complexity, and stable-ID criteria were applied in order.",
+  "validation_metrics": {
+    "metrics": [
+      {
+        "name": "average_precision",
+        "value": 0.67082102305192
+      }
+    ],
+    "partition_role": "validation"
+  }
+}

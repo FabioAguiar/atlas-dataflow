@@ -1,0 +1,62 @@
+{
+  "atlas_fit_confirmation": {
+    "atlas_altered": false,
+    "atlas_fit": false,
+    "atlas_recalibrated": false,
+    "atlas_tuned": false
+  },
+  "dataset_identity": {
+    "dataset_slug": "telco-customer-churn"
+  },
+  "estimator_identity": {
+    "class_name": "HistGradientBoostingClassifier",
+    "library": "scikit-learn"
+  },
+  "feature_order": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges"
+  ],
+  "handoff_lineage_reference": "artifacts/models/telco-customer-churn/final-model-handoff.json",
+  "hyperparameters": {
+    "model__l2_regularization": 1.0,
+    "model__learning_rate": 0.03,
+    "model__max_depth": 3,
+    "model__max_iter": 200,
+    "model__max_leaf_nodes": 7,
+    "model__min_samples_leaf": 40
+  },
+  "model_artifact_reference": {
+    "path": "artifacts/models/telco-customer-churn/final-pipeline.joblib",
+    "sha256": "48da4c7aa56d5d08090e808f551f555740d18e791af39c4c3f373467ec296b8c"
+  },
+  "model_family": "hist_gradient_boosting",
+  "model_state_fingerprint": "c9328311e2ed5953b5aab1abc17b439ff7e90c7c8e4f15b6a31598d05dc771e6",
+  "origin": "validated_external_fitted_model",
+  "positive_class_id": "Yes",
+  "preprocessing_evidence_reference": "artifacts/models/telco-customer-churn/final-model-manifest.json",
+  "producer": "dataset-study-telco-customer-churn",
+  "raw_partition_confirmation": {
+    "raw_partitions_embedded": false
+  },
+  "record_kind": "training_parameter_record",
+  "schema_version": "training-parameter-record.external-fitted-model.v1",
+  "selected_model_id": "hist_gradient_boosting",
+  "serializer_metadata_reference": "artifacts/models/telco-customer-churn/final-model-manifest.json"
+}

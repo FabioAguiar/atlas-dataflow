@@ -668,7 +668,14 @@ def test_notebook_blocks_unsupported_or_ambiguous_tie_break_projection():
         assert reason_code in code
     assert "except TieBreakProjectionBlocked as exc:" in code
     assert "tie_break_projection_blocked_reason = {" in code
-    assert "if tie_break_projection_blocked_reason is None:" in code
+    # Project Spec S0195: the tie-break block and the governed positive-class
+    # resolution block now share a single combined gate before staging/
+    # materializing -- see test_notebook_blocks_missing_or_invalid_positive_class_before_materialization.
+    assert (
+        "external_record_blocked_reason = positive_class_resolution_blocked_reason "
+        "or tie_break_projection_blocked_reason"
+    ) in code
+    assert "if external_record_blocked_reason is None:" in code
 
 
 def test_notebook_invokes_materializer_only_after_staging_evidence_is_built():
@@ -678,6 +685,95 @@ def test_notebook_invokes_materializer_only_after_staging_evidence_is_built():
     assert staged_index < materializer_call_index
     projection_index = code.index("canonical_tie_break_criteria = project_tie_break_criteria(")
     assert projection_index < staged_index < materializer_call_index
+
+
+# --- Project Spec S0195: governed external positive-class resolution -------
+
+
+def test_notebook_resolves_positive_class_from_execution_contract_result_semantics():
+    code = _source("code")
+    assert "def resolve_external_positive_class_id(execution_contract, final_model_manifest):" in code
+    assert 'result_semantics = execution_contract.get("result_semantics")' in code
+    assert 'result_semantics.get("problem_type") != "binary_classification"' in code
+    assert 'positive_class = result_semantics.get("positive_class")' in code
+    assert 'positive_class.get("class_id") if isinstance(positive_class, dict) else None' in code
+    assert (
+        "resolved_positive_class_id = resolve_external_positive_class_id(\n"
+        "        execution_contract_for_positive_class, final_model_manifest\n"
+        "    )"
+    ) in code
+
+
+def test_notebook_checks_final_model_target_classes_and_target_encoding():
+    code = _source("code")
+    assert 'target_classes = final_model_manifest.get("target_classes")' in code
+    assert "len(set(target_classes)) != 2" in code
+    assert "class_id not in target_classes" in code
+    assert 'target_encoding = final_model_manifest.get("target_encoding")' in code
+    assert "class_id not in target_encoding" in code
+
+
+def test_notebook_requires_positive_class_to_match_governed_model_outcome_not_encoding_order():
+    code = _source("code")
+    assert 'governed_positive_class = final_model_manifest.get("positive_class")' in code
+    assert "class_id != governed_positive_class" in code
+    assert '"positive_class_disagrees_with_governed_model_outcome"' in code
+
+
+def test_notebook_does_not_hardcode_positive_class_literal():
+    code = _source("code")
+    assert 'positive_class_id = "Yes"' not in code
+    assert '"positive_class_id": "Yes"' not in code
+    assert '"positive_class_id": resolved_positive_class_id,' in code
+
+
+def test_notebook_writes_resolved_positive_class_id_into_external_training_record():
+    code = _source("code")
+    record_start = code.index('external_training_parameter_record = {')
+    record_end = code.index('external_training_metrics = {')
+    record_section = code[record_start:record_end]
+    assert '"positive_class_id": resolved_positive_class_id,' in record_section
+    assert '"schema_version": "training-parameter-record.external-fitted-model.v1"' in record_section
+
+
+def test_notebook_blocks_missing_or_invalid_positive_class_before_materialization():
+    code = _source("code")
+    assert "class PositiveClassResolutionBlocked(Exception):" in code
+    for reason_code in (
+        "result_semantics_absent",
+        "result_semantics_not_binary",
+        "result_semantics_positive_class_id_missing",
+        "final_model_target_classes_not_binary",
+        "positive_class_absent_from_target_classes",
+        "positive_class_absent_from_target_encoding",
+        "final_model_governed_positive_class_missing",
+        "positive_class_disagrees_with_governed_model_outcome",
+    ):
+        assert reason_code in code
+    assert "except PositiveClassResolutionBlocked as exc:" in code
+    assert "positive_class_resolution_blocked_reason = {" in code
+    resolution_index = code.index("resolved_positive_class_id = resolve_external_positive_class_id(")
+    record_index = code.index("external_training_parameter_record = {")
+    gate_index = code.index("if external_record_blocked_reason is None:")
+    materializer_call_index = code.index("external_materialization_result = materialize_external_fitted_model(")
+    assert resolution_index < record_index < gate_index < materializer_call_index
+
+
+def test_notebook_positive_class_resolution_does_not_mutate_external_project():
+    code = _source("code")
+    resolution_section_start = code.index("class PositiveClassResolutionBlocked(Exception):")
+    resolution_section_end = code.index("execution_contract_for_positive_class = json.loads(")
+    resolution_section = code[resolution_section_start:resolution_section_end]
+    assert "write_governed_json" not in resolution_section
+    assert ".write_text(" not in resolution_section
+    assert "external_root" not in resolution_section
+
+
+def test_notebook_preserves_visualization_orchestration_after_positive_class_resolution():
+    code = _source("code")
+    gate_index = code.index("if external_record_blocked_reason is None:")
+    visualizations_call_index = code.index("materialize_external_analytical_visualizations(\n")
+    assert gate_index < visualizations_call_index
 
 
 # --- Project Spec S0187: execution-contract source-mode precondition -------

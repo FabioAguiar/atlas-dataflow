@@ -1247,3 +1247,152 @@ def test_resolve_external_result_semantics_model_descriptor_positive_class_misma
         )
     assert exc_info.value.code == "result_semantics_cross_artifact_mismatch"
     assert exc_info.value.field == "positive_class_id"
+
+
+# --- Project Spec S0195: external positive-class evidence projection and
+# inference-bundle continuity, exercised through the full materialize ->
+# generate_inference_bundle pipeline (not just the internal
+# _resolve_external_result_semantics_model_descriptor unit) -----------------
+
+
+def _fixture_with_training_record_override(tmp_path: Path, mutate) -> _SourceFixture:
+    """Builds a normal _SourceFixture (which already carries a valid
+    positive_class_id, per the existing fixture convention) and then
+    overwrites its staged training_parameter_record source file/hash after
+    ``mutate`` edits ``fixture.training_record`` in place -- never touching
+    materialize_external_fitted_model or generate_inference_bundle
+    production code to force a scenario."""
+    fixture = _SourceFixture(tmp_path)
+    mutate(fixture.training_record)
+    record_bytes = _write_json(fixture.source_record_path, fixture.training_record)
+    fixture.expected_evidence_hashes["training_parameter_record"] = _sha256_bytes(record_bytes)
+    return fixture
+
+
+def _generate_external_bundle_result(
+    *, repo_root: Path, materialization_result: dict, execution_contract: dict
+) -> dict:
+    execution_contract_path = repo_root / "contracts" / "sample" / "execution-contract.json"
+    _write_json(execution_contract_path, execution_contract)
+    runtime_contract_path = repo_root / "contracts" / "sample" / "runtime-contract.json"
+    _write_json(runtime_contract_path, {"contract_version": "runtime_contract.v1"})
+    public_contract_path = repo_root / "contracts" / "sample" / "public-contract.json"
+    _write_json(public_contract_path, {"contract_version": "public_contract.v1"})
+    dataset_context_path = repo_root / "contracts" / "sample" / "dataset-context.json"
+    _write_json(dataset_context_path, {"schema_version": "dataset-context.v1"})
+    prepared_dataset_path = repo_root / "contracts" / "sample" / "prepared-dataset.json"
+    _write_json(prepared_dataset_path, {"schema_version": "prepared-dataset.v1"})
+    output_path = repo_root / "contracts" / "sample" / "inference-bundle.json"
+
+    result = generate_inference_bundle.materialize_governed_inference_bundle(
+        external_fitted_model_materialization_result=materialization_result,
+        execution_contract_path=execution_contract_path,
+        runtime_contract_path=runtime_contract_path,
+        public_contract_path=public_contract_path,
+        dataset_context_path=dataset_context_path,
+        prepared_dataset_path=prepared_dataset_path,
+        output_path=output_path,
+        prediction_type="number",
+        repo_root=repo_root,
+        dataset_slug=DATASET_SLUG,
+        release_id="release-20260801-001",
+        class_labels=["no", "yes"],
+        probability_output=True,
+        inference_bundle_schema_path=str(INFERENCE_BUNDLE_SCHEMA_PATH),
+        execution_contract_ref="contracts/sample/execution-contract.json",
+        runtime_contract_ref="contracts/sample/runtime-contract.json",
+        public_contract_ref="contracts/sample/public-contract.json",
+        dataset_context_ref="contracts/sample/dataset-context.json",
+        prepared_dataset_ref="contracts/sample/prepared-dataset.json",
+    )
+    return result, output_path
+
+
+def test_external_bundle_missing_positive_class_id_blocks_result_semantics(tmp_path: Path) -> None:
+    """Project Spec S0195: positive_class_id is optional on
+    training-parameter-record.schema.json's external profile, so a record
+    that omits it entirely still materializes -- but the downstream
+    result_semantics gate must still fail closed rather than silently
+    resolving/omitting result_semantics."""
+    repo_root = _isolated_repo_root(tmp_path)
+
+    def _drop_positive_class_id(record: dict) -> None:
+        del record["positive_class_id"]
+
+    fixture = _fixture_with_training_record_override(tmp_path, _drop_positive_class_id)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+    assert "positive_class_id" not in json.loads(
+        (repo_root / materialization_result["evidence_references"]["training_parameter_record_path"]).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    bundle_result, output_path = _generate_external_bundle_result(
+        repo_root=repo_root,
+        materialization_result=materialization_result,
+        execution_contract=_minimal_execution_contract_with_result_semantics(),
+    )
+
+    assert bundle_result["status"] == "blocked"
+    assert bundle_result["error"]["code"] == "result_semantics_cross_artifact_mismatch"
+    assert bundle_result["error"]["field"] == "positive_class_id"
+    assert not output_path.exists()
+
+
+def test_external_bundle_mismatched_positive_class_id_blocks_result_semantics(tmp_path: Path) -> None:
+    """Project Spec S0195: a training record whose positive_class_id
+    disagrees with the execution contract's result_semantics.positive_class
+    must remain fail-closed through the full pipeline."""
+    repo_root = _isolated_repo_root(tmp_path)
+
+    def _mismatch_positive_class_id(record: dict) -> None:
+        record["positive_class_id"] = "no"
+
+    fixture = _fixture_with_training_record_override(tmp_path, _mismatch_positive_class_id)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_external_bundle_result(
+        repo_root=repo_root,
+        materialization_result=materialization_result,
+        execution_contract=_minimal_execution_contract_with_result_semantics(),
+    )
+
+    assert bundle_result["status"] == "blocked"
+    assert bundle_result["error"]["code"] == "result_semantics_cross_artifact_mismatch"
+    assert bundle_result["error"]["field"] == "positive_class_id"
+    assert not output_path.exists()
+
+
+def test_external_bundle_matching_positive_class_id_remains_accepted_through_full_pipeline(
+    tmp_path: Path,
+) -> None:
+    """Project Spec S0195 regression anchor for the passing path: a valid
+    external training record with a matching positive_class_id must
+    continue to materialize and resolve result_semantics through the full
+    pipeline (mirrors
+    test_materialization_result_generates_external_bundle_with_synced_result_semantics,
+    kept as an explicit, minimal continuity check for this spec)."""
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+    assert (
+        json.loads(
+            (repo_root / materialization_result["evidence_references"]["training_parameter_record_path"]).read_text(
+                encoding="utf-8"
+            )
+        )["positive_class_id"]
+        == "yes"
+    )
+
+    bundle_result, output_path = _generate_external_bundle_result(
+        repo_root=repo_root,
+        materialization_result=materialization_result,
+        execution_contract=_minimal_execution_contract_with_result_semantics(),
+    )
+
+    assert bundle_result["status"] == "generated"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+    assert bundle["result_semantics"]["positive_class"]["class_id"] == "yes"

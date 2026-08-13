@@ -517,7 +517,7 @@ export default function DatasetPage() {
   // published snapshot's documentation (context.documentation), through the
   // same shared renderer the Admin Documentation tab and Live Preview use --
   // never a second, private Admin request.
-  const documentationContent = <DatasetDocumentation content={context?.documentation} datasetSlug={slug} />;
+  const documentationContent = <DatasetDocumentation content={context?.documentation} />;
 
   // Project Spec S0130: the route-level canvas resolves the same theme
   // authority/tokens DatasetDetailSurface itself applies -- never a second,

@@ -2071,15 +2071,16 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
     expect(await screen.findByLabelText("Synthetic Feature")).toBeInTheDocument();
   });
 
-  // Project Spec S0197: the public Documentation tab passes the current
-  // route slug into the shared DatasetDocumentation renderer, so it renders
-  // published Documentation media images only under that renderer's own
-  // bounded same-dataset safety contract.
-  describe("bounded Documentation image rendering (Project Spec S0197)", () => {
-    const generatedFilename = "0123456789abcdef0123456789abcdef.png";
-    const safeSrc = `/media/documentation/${slug}/${generatedFilename}`;
+  // Project Spec S0199: the public Documentation tab renders published
+  // Markdown through the shared DatasetDocumentation renderer's bounded
+  // external raw.githubusercontent.com image policy. Local Documentation
+  // media storage (S0197) is retired -- no route slug is passed for image
+  // authorization, and no network access occurs.
+  describe("bounded external GitHub raw-image rendering (Project Spec S0199)", () => {
+    const safeSrc =
+      "https://raw.githubusercontent.com/FabioAguiar/dataset-study-telco-customer-churn/main/docs/images/chart.png";
 
-    it("renders a published same-dataset Documentation media image", async () => {
+    it("renders a published raw.githubusercontent.com Markdown image", async () => {
       installDatasetPageFetchMock({
         ...contextPayload,
         documentation: { format: "markdown", content: `# Docs\n\n![Overview chart](${safeSrc})` },
@@ -2093,12 +2094,12 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(img).toHaveAttribute("src", safeSrc);
     });
 
-    it("does not render another dataset's Documentation media reference", async () => {
+    it("does not render a github.com blob page URL as an image", async () => {
       installDatasetPageFetchMock({
         ...contextPayload,
         documentation: {
           format: "markdown",
-          content: `# Docs\n\n![alt](/media/documentation/another-dataset/${generatedFilename})`,
+          content: "# Docs\n\n![alt](https://github.com/FabioAguiar/dataset-study-telco-customer-churn/blob/main/docs/images/chart.png)",
         },
       });
       renderDatasetPage();
@@ -2110,7 +2111,7 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(screen.queryByRole("img", { name: "alt" })).not.toBeInTheDocument();
     });
 
-    it("does not render unsafe external image references", async () => {
+    it("does not render an arbitrary HTTPS image host", async () => {
       installDatasetPageFetchMock({
         ...contextPayload,
         documentation: {
@@ -2125,6 +2126,23 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
 
       expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    it("does not render a legacy /media/documentation reference", async () => {
+      installDatasetPageFetchMock({
+        ...contextPayload,
+        documentation: {
+          format: "markdown",
+          content: `# Docs\n\n![alt](/media/documentation/${slug}/0123456789abcdef0123456789abcdef.png)`,
+        },
+      });
+      renderDatasetPage();
+
+      expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+      openDocumentationTab();
+
+      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(screen.queryByRole("img", { name: "alt" })).not.toBeInTheDocument();
     });
 
     it("does not break Documentation text rendering when the image reference is missing/invalid", async () => {
@@ -2143,6 +2161,26 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
       expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.getByText("Remaining paragraph text.")).toBeInTheDocument();
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    });
+
+    it("leaves existing Markdown text/table behavior unchanged", async () => {
+      installDatasetPageFetchMock({
+        ...contextPayload,
+        documentation: {
+          format: "markdown",
+          content: "# Docs\n\nBody text.\n\n| Metric | Value |\n| --- | --- |\n| Accuracy | 0.91 |",
+        },
+      });
+      renderDatasetPage();
+
+      expect(await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 })).toBeInTheDocument();
+      openDocumentationTab();
+
+      expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
+      expect(screen.getByText("Body text.")).toBeInTheDocument();
+      const table = screen.getByRole("table");
+      expect(table.querySelector("thead")).toBeInTheDocument();
+      expect(screen.getByRole("cell", { name: "Accuracy" })).toBeInTheDocument();
     });
   });
 });

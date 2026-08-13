@@ -38,7 +38,6 @@ _IMAGE_EXTENSIONS = {
 _HOME_CARD_MEDIA_REF_PATTERN = re.compile(
     r"^/media/home-cards/([0-9a-f]{32}\.(?:avif|jpg|png|webp))$"
 )
-_DATASET_SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _DOCUMENTATION_MEDIA_FILENAME_PATTERN = re.compile(r"[0-9a-f]{32}\.(?:avif|jpg|png|webp)")
 
 
@@ -110,74 +109,6 @@ def resolve_home_card_media_path(filename: str, repo_root: Path | None = None) -
     candidate = (root / filename).resolve()
     try:
         candidate.relative_to(root)
-    except ValueError:
-        return None
-    return candidate if candidate.is_file() else None
-
-
-def store_documentation_image(
-    dataset_slug: str,
-    original_filename: str | None,
-    content_type: str | None,
-    content: bytes,
-    repo_root: Path | None = None,
-) -> dict:
-    """Validate and store one dataset's Documentation image, returning only its public reference.
-
-    Reuses the same signature/MIME policy and 10 MB bound as Home-card
-    images (S0197); the original filename is validation/display input only
-    and is never used as the durable stored filename.
-    """
-    if not re.fullmatch(_DATASET_SLUG_PATTERN, dataset_slug or ""):
-        return {"uploaded": False, "media_ref": None, "error": "The dataset_slug is missing or invalid."}
-    if not _is_file_name(original_filename):
-        return {"uploaded": False, "media_ref": None, "error": "Choose an image file, not a folder."}
-    if len(content) > HOME_CARD_IMAGE_MAX_BYTES:
-        return {"uploaded": False, "media_ref": None, "error": "Choose an image smaller than 10 MB."}
-    if not content:
-        return {"uploaded": False, "media_ref": None, "error": "The selected image is empty or corrupt."}
-
-    normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
-    if normalized_type not in _GENERIC_IMAGE_TYPES and normalized_type not in _IMAGE_EXTENSIONS:
-        return {"uploaded": False, "media_ref": None, "error": "Choose a PNG, JPEG, WebP, or AVIF image."}
-    detected_type = _image_type_from_signature(content)
-    if detected_type is None or (normalized_type not in _GENERIC_IMAGE_TYPES and normalized_type != detected_type):
-        return {"uploaded": False, "media_ref": None, "error": "The selected image is invalid or corrupt."}
-
-    root = _media_root(Path(repo_root) if repo_root else Path(__file__).parent.parent)
-    destination_root = root / "documentation" / dataset_slug
-    stored_name = f"{uuid.uuid4().hex}.{_IMAGE_EXTENSIONS[detected_type]}"
-    destination = destination_root / stored_name
-    try:
-        destination_root.mkdir(parents=True, exist_ok=True)
-        temporary = destination.with_suffix(destination.suffix + ".tmp")
-        temporary.write_bytes(content)
-        temporary.replace(destination)
-    except OSError:
-        return {"uploaded": False, "media_ref": None, "error": "The image could not be stored. Try again."}
-    return {
-        "uploaded": True,
-        "media_ref": f"/media/documentation/{dataset_slug}/{stored_name}",
-        "error": None,
-    }
-
-
-def resolve_documentation_media_path(
-    dataset_slug: str, filename: str, repo_root: Path | None = None
-) -> Path | None:
-    """Resolve only generated Documentation filenames inside one dataset's media directory."""
-    if not re.fullmatch(_DATASET_SLUG_PATTERN, dataset_slug or ""):
-        return None
-    if not re.fullmatch(_DOCUMENTATION_MEDIA_FILENAME_PATTERN, filename or ""):
-        return None
-    dataset_root = (
-        _media_root(Path(repo_root) if repo_root else Path(__file__).parent.parent)
-        / "documentation"
-        / dataset_slug
-    ).resolve()
-    candidate = (dataset_root / filename).resolve()
-    try:
-        candidate.relative_to(dataset_root)
     except ValueError:
         return None
     return candidate if candidate.is_file() else None

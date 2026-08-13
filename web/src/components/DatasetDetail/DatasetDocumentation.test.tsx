@@ -117,18 +117,19 @@ describe("DatasetDocumentation", () => {
   });
 });
 
-// Project Spec S0197: bounded Documentation image rendering. Only a
-// Markdown `img` whose `src` exactly matches the current dataset's
-// generated Documentation media namespace renders; every other source is
-// omitted without breaking the rest of Documentation rendering.
-describe("DatasetDocumentation bounded image rendering (Project Spec S0197)", () => {
-  const datasetSlug = "example-dataset";
-  const generatedFilename = "0123456789abcdef0123456789abcdef.png";
-  const safeSrc = `/media/documentation/${datasetSlug}/${generatedFilename}`;
+// Project Spec S0199: bounded external GitHub raw-image rendering. Only a
+// Markdown `img` whose `src` is an exact, well-formed
+// `https://raw.githubusercontent.com/owner/repository/ref/path.ext`
+// reference renders; every other source is omitted without breaking the
+// rest of Documentation rendering. Local Documentation media storage
+// (S0197) is retired -- this renderer never fetches, proxies, or knows
+// about a dataset slug.
+describe("DatasetDocumentation bounded external image rendering (Project Spec S0199)", () => {
+  const safeSrc = "https://raw.githubusercontent.com/FabioAguiar/dataset-study-telco-customer-churn/main/docs/images/churn_target_class_distribution.png";
 
-  it("renders a same-dataset Documentation media image and preserves alt text", () => {
+  it("renders a raw.githubusercontent.com PNG and preserves alt text, lazy loading, and async decoding", () => {
     const { container } = render(
-      <DatasetDocumentation content={`![Churn overview chart](${safeSrc})`} datasetSlug={datasetSlug} />,
+      <DatasetDocumentation content={`![Churn overview chart](${safeSrc})`} />,
     );
 
     const img = container.querySelector("img");
@@ -139,35 +140,41 @@ describe("DatasetDocumentation bounded image rendering (Project Spec S0197)", ()
     expect(img).toHaveAttribute("decoding", "async");
   });
 
-  it.each(["png", "jpg", "webp", "avif"])("accepts a generated %s Documentation media reference", (extension) => {
-    const src = `/media/documentation/${datasetSlug}/0123456789abcdef0123456789abcdef.${extension}`;
-    const { container } = render(<DatasetDocumentation content={`![alt](${src})`} datasetSlug={datasetSlug} />);
+  it.each(["png", "jpg", "jpeg", "webp", "avif"])("accepts a raw GitHub %s image reference", (extension) => {
+    const src = `https://raw.githubusercontent.com/owner/repository/main/docs/images/chart.${extension}`;
+    const { container } = render(<DatasetDocumentation content={`![alt](${src})`} />);
+    expect(container.querySelector("img")).toHaveAttribute("src", src);
+  });
+
+  it("accepts a commit-SHA ref path", () => {
+    const src = "https://raw.githubusercontent.com/owner/repository/0123456789abcdef0123456789abcdef01234567/docs/images/chart.webp";
+    const { container } = render(<DatasetDocumentation content={`![alt](${src})`} />);
     expect(container.querySelector("img")).toHaveAttribute("src", src);
   });
 
   it("omits an unsafe or foreign image source without breaking the rest of Documentation rendering", () => {
     const unsafeCases = [
-      `/media/documentation/other-dataset/${generatedFilename}`,
-      "/media/home-cards/0123456789abcdef0123456789abcdef.png",
-      "https://example.org/pic.png",
-      "http://example.org/pic.png",
-      "//example.org/pic.png",
+      "https://github.com/FabioAguiar/dataset-study-telco-customer-churn/blob/main/docs/images/chart.png",
+      "https://example.org/chart.png",
+      "http://raw.githubusercontent.com/owner/repo/main/chart.png",
+      "https://raw.githubusercontent.com.evil.example/owner/repo/main/chart.png",
+      "//raw.githubusercontent.com/owner/repo/main/chart.png",
       "data:image/png;base64,aGVsbG8=",
       "javascript:alert(1)",
-      "file:///etc/passwd",
+      "file:///tmp/chart.png",
       "blob:https://example.org/00000000-0000-0000-0000-000000000000",
-      `/media/documentation/../${datasetSlug}/${generatedFilename}`,
-      `/media/documentation/${datasetSlug}/../${generatedFilename}`,
-      `${safeSrc}?x=1`,
-      `${safeSrc}#fragment`,
+      "/media/documentation/example-dataset/0123456789abcdef0123456789abcdef.png",
+      "https://user:pass@raw.githubusercontent.com/owner/repo/main/chart.png",
+      "https://raw.githubusercontent.com:8443/owner/repo/main/chart.png",
+      "https://raw.githubusercontent.com/owner/repo/main/chart.png?x=1",
+      "https://raw.githubusercontent.com/owner/repo/main/chart.png#fragment",
+      "https://raw.githubusercontent.com/owner/repo/main/chart.svg",
+      "https://raw.githubusercontent.com/owner/repo/chart.png",
     ];
 
     for (const unsafeSrc of unsafeCases) {
       const { container, unmount } = render(
-        <DatasetDocumentation
-          content={`Before text.\n\n![alt](${unsafeSrc})\n\nAfter text.`}
-          datasetSlug={datasetSlug}
-        />,
+        <DatasetDocumentation content={`Before text.\n\n![alt](${unsafeSrc})\n\nAfter text.`} />,
       );
       expect(container.querySelector("img")).toBeNull();
       expect(screen.getByText("Before text.")).toBeInTheDocument();
@@ -176,17 +183,9 @@ describe("DatasetDocumentation bounded image rendering (Project Spec S0197)", ()
     }
   });
 
-  it("does not render an image when no datasetSlug is provided", () => {
-    const { container } = render(<DatasetDocumentation content={`![alt](${safeSrc})`} />);
-    expect(container.querySelector("img")).toBeNull();
-  });
-
   it("does not treat raw HTML as active markup alongside a valid image", () => {
     render(
-      <DatasetDocumentation
-        content={`![alt](${safeSrc})\n\nBefore <strong id="raw">raw html</strong> after`}
-        datasetSlug={datasetSlug}
-      />,
+      <DatasetDocumentation content={`![alt](${safeSrc})\n\nBefore <strong id="raw">raw html</strong> after`} />,
     );
 
     expect(document.getElementById("raw")).toBeNull();
@@ -197,7 +196,6 @@ describe("DatasetDocumentation bounded image rendering (Project Spec S0197)", ()
     render(
       <DatasetDocumentation
         content={`# Title\n\n![alt](${safeSrc})\n\n- Item one\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n[Link](https://example.org)`}
-        datasetSlug={datasetSlug}
       />,
     );
 

@@ -756,122 +756,47 @@ def test_remove_profile_artifacts_cleans_lifecycle_and_only_unshared_media(tmp_p
 
 
 # ---------------------------------------------------------------------------
-# Documentation image lifecycle (Project Spec S0197)
+# Documentation image storage/serving retirement (Project Spec S0199)
+#
+# S0197's authoring/serving operations (store_documentation_image,
+# resolve_documentation_media_path) and their API routes are retired: Atlas
+# no longer stores or serves Documentation images. External GitHub raw-image
+# rendering is a frontend renderer concern only (no backend involvement).
+# Home Card upload/serving and the bounded, delete-only legacy Documentation
+# media cleanup in remove_profile_artifacts are unaffected.
 # ---------------------------------------------------------------------------
 
 
-def test_documentation_image_store_accepts_ordinary_names_and_generates_safe_references(tmp_path):
-    cases = [
-        ("Documentation final.png", "image/png", b"\x89PNG\r\n\x1a\n" + b"png", ".png"),
-        ("Churn overview (final).jpeg", "image/jpeg", b"\xff\xd8\xff" + b"jpeg", ".jpg"),
-        ("doc-figure-v2.webp", "image/webp", b"RIFF\x04\x00\x00\x00WEBPdata", ".webp"),
-        ("visão geral.avif", "image/avif", b"\x00\x00\x00\x18ftypavifdata", ".avif"),
-    ]
-    for filename, content_type, content, expected_extension in cases:
-        result = admin_profile_publish.store_documentation_image(
-            "example-dataset", filename, content_type, content, tmp_path
-        )
-
-        assert result["uploaded"] is True
-        assert result["media_ref"].startswith("/media/documentation/example-dataset/")
-        assert filename not in result["media_ref"]
-        stored_name = result["media_ref"].rsplit("/", 1)[-1]
-        assert stored_name.endswith(expected_extension)
-        assert (
-            admin_profile_publish.resolve_documentation_media_path(
-                "example-dataset", stored_name, tmp_path
-            ).read_bytes()
-            == content
-        )
+def test_documentation_image_storage_operations_are_no_longer_available():
+    assert not hasattr(admin_profile_publish, "store_documentation_image")
+    assert not hasattr(admin_profile_publish, "resolve_documentation_media_path")
 
 
-def test_documentation_image_store_uses_signature_with_generic_or_missing_mime(tmp_path):
-    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
-    for content_type in (None, "", "application/octet-stream"):
-        result = admin_profile_publish.store_documentation_image(
-            "example-dataset", "imagem verão.jpg", content_type, png, tmp_path
-        )
-        assert result["uploaded"] is True
-        assert result["media_ref"].endswith(".png")
+def test_documentation_image_upload_route_no_longer_exists():
+    paths = {route.path for route in api_main.app.routes}
+    assert "/admin/datasets/{dataset_slug}/documentation-image" not in paths
+    assert not hasattr(api_main, "post_admin_documentation_image")
 
 
-def test_documentation_image_store_rejects_invalid_dataset_slug(tmp_path):
-    valid_png = b"\x89PNG\r\n\x1a\n" + b"payload"
-    for invalid_slug in ("", "Invalid Slug", "../other-dataset", "example/../other", None):
-        result = admin_profile_publish.store_documentation_image(
-            invalid_slug, "card.png", "image/png", valid_png, tmp_path
-        )
-        assert result["uploaded"] is False
-        assert result["media_ref"] is None
-    assert not (tmp_path / "media").exists()
+def test_documentation_public_media_route_no_longer_exists():
+    paths = {route.path for route in api_main.app.routes}
+    assert "/media/documentation/{dataset_slug}/{filename}" not in paths
+    assert not hasattr(api_main, "get_documentation_image")
 
 
-def test_documentation_image_store_rejects_traversal_svg_oversize_and_invalid_content(tmp_path):
-    valid_png = b"\x89PNG\r\n\x1a\n" + b"payload"
-    cases = [
-        ("../card.png", "image/png", valid_png),
-        ("..%2Fcard.png", "application/octet-stream", valid_png),
-        ("folder\\card.png", "image/png", valid_png),
-        ("card.svg", "image/svg+xml", b"<svg><script/></svg>"),
-        ("card.png", "image/png", b"not a png"),
-        ("card.jpg", "image/jpeg", valid_png),
-        ("card.png", "image/png", b""),
-        ("card.png", "image/png", valid_png + b"x" * admin_profile_publish.HOME_CARD_IMAGE_MAX_BYTES),
-    ]
-    for filename, content_type, content in cases:
-        result = admin_profile_publish.store_documentation_image(
-            "example-dataset", filename, content_type, content, tmp_path
-        )
-        assert result["uploaded"] is False
-        assert result["media_ref"] is None
+def test_home_card_image_upload_route_remains_available_under_existing_auth_contract():
+    paths = {route.path for route in api_main.app.routes}
+    assert "/admin/datasets/{dataset_slug}/home-card-image" in paths
 
-    assert not (tmp_path / "media").exists()
-
-
-def test_documentation_media_resolver_serves_only_generated_safe_filenames_within_dataset_namespace(
-    tmp_path, monkeypatch
-):
-    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
-    stored = admin_profile_publish.store_documentation_image(
-        "example-dataset", "Documentation.png", "image/png", png, tmp_path
-    )
-    stored_name = stored["media_ref"].rsplit("/", 1)[-1]
-    monkeypatch.setenv("ATLAS_MEDIA_ROOT", str(tmp_path / "media"))
-
-    response = api_main.get_documentation_image("example-dataset", stored_name)
-    assert response.path == tmp_path / "media" / "documentation" / "example-dataset" / stored_name
-    assert response.media_type == "image/png"
-
-    for dataset_slug, filename in (
-        ("example-dataset", "does-not-exist.png"),
-        ("example-dataset", "../" + stored_name),
-        ("example-dataset", "%2e%2e%2f" + stored_name),
-        ("example-dataset", stored_name.upper()),
-        ("example-dataset", stored_name + "?x=1"),
-        ("other-dataset", stored_name),
-        ("../example-dataset", stored_name),
-        ("", stored_name),
-        ("Invalid Slug", stored_name),
-    ):
-        assert admin_profile_publish.resolve_documentation_media_path(dataset_slug, filename, tmp_path) is None
-
-
-def test_documentation_media_route_returns_safe_json_404_for_missing_file():
-    response = api_main.get_documentation_image("example-dataset", "0" * 32 + ".png")
-
+    os.environ.pop("ATLAS_ADMIN_ENABLED", None)
+    os.environ.pop("ADMIN_API_TOKEN", None)
+    response = api_main._admin_route_not_found_response()
     assert response.status_code == 404
-    assert response.headers["content-type"].startswith("application/json")
-    assert json.loads(response.body.decode("utf-8")) == {"detail": "Not Found"}
 
 
-def test_documentation_image_media_ref_never_exposes_absolute_local_path(tmp_path):
-    png = b"\x89PNG\r\n\x1a\n" + b"safe image payload"
-    result = admin_profile_publish.store_documentation_image(
-        "example-dataset", "Documentation.png", "image/png", png, tmp_path
-    )
-    assert result["uploaded"] is True
-    assert str(tmp_path) not in result["media_ref"]
-    assert result["media_ref"].startswith("/media/documentation/")
+def test_home_card_public_media_route_remains_unchanged():
+    paths = {route.path for route in api_main.app.routes}
+    assert "/media/home-cards/{filename}" in paths
 
 
 def test_remove_profile_artifacts_removes_deleted_dataset_documentation_media_only(tmp_path):

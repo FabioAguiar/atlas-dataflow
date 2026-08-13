@@ -13,13 +13,9 @@ export type DatasetDocumentationProps = {
   // plain string) and the public route (context.documentation, the
   // payload shape) can feed this same renderer directly.
   content?: string | DatasetDocumentationPayload | null;
-  // Project Spec S0197: the current dataset's slug, used exclusively to
-  // bound which generated Documentation media `img` references this
-  // renderer will accept -- never used for data fetching.
-  datasetSlug?: string;
 };
 
-// Project Spec S0196/S0197: the single shared, presentation-only Markdown
+// Project Spec S0196/S0199: the single shared, presentation-only Markdown
 // Documentation renderer used by both the Admin Documentation tab/Live
 // Preview and the public Dataset Detail Documentation tab. Deliberately has
 // no data fetching and no knowledge of Admin state, route params, profile
@@ -27,12 +23,12 @@ export type DatasetDocumentationProps = {
 //
 // Raw HTML is never enabled (no rehype-raw plugin is registered, so HTML
 // tags in the Markdown source are inert text, not executed markup). `img`
-// is allowed only through an explicit component override (S0197) that
-// independently re-validates `src` against a bounded, exact
-// `/media/documentation/{datasetSlug}/{32hex}.{ext}` pattern before
-// rendering -- react-markdown's own default safe-URL transform (which
-// strips unsafe schemes like `javascript:` down to an inert empty href)
-// still applies first, but is never relied upon alone.
+// is allowed only through an explicit component override (S0199) that
+// independently re-validates `src` against a bounded, exact external
+// `https://raw.githubusercontent.com/...` image policy before rendering --
+// react-markdown's own default safe-URL transform (which strips unsafe
+// schemes like `javascript:` down to an inert empty href) still applies
+// first, but is never relied upon alone.
 const ALLOWED_ELEMENTS = [
   "h1", "h2", "h3", "h4", "h5", "h6",
   "p", "strong", "em",
@@ -45,6 +41,12 @@ const ALLOWED_ELEMENTS = [
   "img",
 ];
 
+const RAW_GITHUB_IMAGE_HOSTNAME = "raw.githubusercontent.com";
+// owner/repository/ref/path -- the minimum segment count for a real raw
+// GitHub file reference.
+const MIN_RAW_GITHUB_PATH_SEGMENTS = 4;
+const ALLOWED_RAW_GITHUB_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "avif"]);
+
 function resolveMarkdownSource(content: DatasetDocumentationProps["content"]): string {
   if (typeof content === "string") {
     return content;
@@ -55,17 +57,42 @@ function resolveMarkdownSource(content: DatasetDocumentationProps["content"]): s
   return "";
 }
 
-function escapeForRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Project Spec S0199: bounded external-image source policy. Only an exact
+// `https://raw.githubusercontent.com` reference -- no credentials, no
+// explicit non-default port, no query string or fragment, an
+// owner/repository/ref/path-shaped absolute path, and an approved image
+// extension -- is accepted. Parsed with the platform `URL` constructor
+// (never substring/`includes` matching, which an attacker-controlled
+// hostname like `raw.githubusercontent.com.evil.example` could bypass).
+// `github.com/.../blob/...` pages are never auto-converted -- explicit
+// author intent in the Markdown source is preserved.
+function isAllowedExternalImageSource(src: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(src);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== "https:") return false;
+  if (url.hostname !== RAW_GITHUB_IMAGE_HOSTNAME) return false;
+  if (url.username || url.password) return false;
+  // The URL parser normalizes an explicit default port (443 for https:)
+  // away to "" -- only a genuinely non-default explicit port survives here.
+  if (url.port !== "") return false;
+  if (url.search !== "") return false;
+  if (url.hash !== "") return false;
+
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length < MIN_RAW_GITHUB_PATH_SEGMENTS) return false;
+
+  const finalSegment = segments[segments.length - 1];
+  const extensionMatch = /\.([a-z0-9]+)$/i.exec(finalSegment);
+  const extension = extensionMatch?.[1]?.toLowerCase();
+  return !!extension && ALLOWED_RAW_GITHUB_IMAGE_EXTENSIONS.has(extension);
 }
 
-// Exact match only -- no query strings, fragments, protocol-relative or
-// absolute URLs, and no other dataset's or Home card's media namespace.
-function buildSafeDocumentationImagePattern(datasetSlug: string): RegExp {
-  return new RegExp(`^/media/documentation/${escapeForRegExp(datasetSlug)}/[0-9a-f]{32}\\.(?:png|jpg|webp|avif)$`);
-}
-
-export default function DatasetDocumentation({ content, datasetSlug }: DatasetDocumentationProps) {
+export default function DatasetDocumentation({ content }: DatasetDocumentationProps) {
   const source = resolveMarkdownSource(content).trim();
 
   if (!source) {
@@ -76,15 +103,13 @@ export default function DatasetDocumentation({ content, datasetSlug }: DatasetDo
     );
   }
 
-  const safeImagePattern = buildSafeDocumentationImagePattern(datasetSlug ?? "");
-
   return (
     <div className="dataset-documentation">
       <ReactMarkdown
         allowedElements={ALLOWED_ELEMENTS}
         components={{
           img: ({ alt, src }) => {
-            if (typeof src !== "string" || !safeImagePattern.test(src)) {
+            if (typeof src !== "string" || !isAllowedExternalImageSource(src)) {
               return null;
             }
             return <img alt={alt ?? ""} decoding="async" loading="lazy" src={src} />;

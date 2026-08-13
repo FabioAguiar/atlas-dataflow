@@ -4281,7 +4281,7 @@ function DatasetDetailLivePreview({
   // Project Spec S0196: Live Preview reflects the committed workspace
   // Markdown (form.documentation) -- never the Documentation tab's unsaved
   // editing buffer, which stays local to DocumentationTab until Save.
-  const documentationContent = <DatasetDocumentation content={form.documentation} datasetSlug={selectedSlug} />;
+  const documentationContent = <DatasetDocumentation content={form.documentation} />;
 
   return (
     <DatasetDetailSurface
@@ -4465,15 +4465,6 @@ function LivePreviewTab({
   );
 }
 
-// Project Spec S0197: derives a bounded, human-editable Markdown alt string
-// from the selected file's name -- never the durable stored filename, and
-// never used for anything but Markdown alt text.
-function boundedDocumentationImageAltText(filename: string): string {
-  const withoutExtension = filename.replace(/\.[^./\\]+$/, "");
-  const normalized = withoutExtension.trim() || "Documentation image";
-  return normalized.length > 120 ? normalized.slice(0, 120) : normalized;
-}
-
 // Project Spec S0196: the Admin Documentation tab's Save/Edit authoring
 // workflow. Keeps an editing buffer local to this component, separate from
 // the committed `form.documentation` workspace value, so typing alone never
@@ -4483,10 +4474,10 @@ function boundedDocumentationImageAltText(filename: string): string {
 // committed documentation changes (dataset switch, or a backend draft
 // hydration completing) -- never leaking a prior dataset's unsaved buffer.
 //
-// Project Spec S0197 extends only the edit mode with an "Add image" upload
-// action: a successful upload inserts Markdown into the local buffer (never
-// `form.documentation` directly, and never Publish changes) at the
-// textarea's current selection.
+// Project Spec S0199: local image upload/storage (S0197) is retired.
+// Authors reference externally hosted images (public HTTPS
+// raw.githubusercontent.com URLs) directly in the Markdown source; Atlas
+// never uploads, stores, or validates remote image availability.
 function DocumentationTab({
   form,
   setField,
@@ -4498,15 +4489,10 @@ function DocumentationTab({
 }) {
   const [mode, setMode] = useState<"edit" | "preview">(form.documentation.trim() ? "preview" : "edit");
   const [buffer, setBuffer] = useState(form.documentation);
-  const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
-  const [imageUploadError, setImageUploadError] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setBuffer(form.documentation);
     setMode(form.documentation.trim() ? "preview" : "edit");
-    setImageUploadState("idle");
-    setImageUploadError("");
   }, [selectedSlug, form.documentation]);
 
   function handleSave() {
@@ -4519,75 +4505,20 @@ function DocumentationTab({
     setMode("edit");
   }
 
-  function insertImageMarkdown(markdown: string) {
-    const textarea = textareaRef.current;
-    if (textarea && typeof textarea.selectionStart === "number" && typeof textarea.selectionEnd === "number") {
-      const { selectionEnd, selectionStart, value } = textarea;
-      const before = value.slice(0, selectionStart);
-      const after = value.slice(selectionEnd);
-      const separatorBefore = before && !before.endsWith("\n") ? "\n" : "";
-      const separatorAfter = after && !after.startsWith("\n") ? "\n" : "";
-      setBuffer(`${before}${separatorBefore}${markdown}${separatorAfter}${after}`);
-      return;
-    }
-    setBuffer((current) => (current && !current.endsWith("\n") ? `${current}\n${markdown}` : `${current}${markdown}`));
-  }
-
-  function uploadDocumentationImage(file: File | undefined) {
-    if (!file || !selectedSlug) return;
-    setImageUploadError("");
-    if (file.size > 10 * 1024 * 1024) {
-      setImageUploadError("Choose an image smaller than 10 MB.");
-      return;
-    }
-    setImageUploadState("uploading");
-    const headers: Record<string, string> = { "X-File-Name": encodeURIComponent(file.name) };
-    if (file.type) headers["Content-Type"] = file.type;
-    fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(selectedSlug)}/documentation-image`, {
-      method: "POST",
-      headers,
-      body: file,
-    })
-      .then(async (response) => {
-        const body = (await response.json()) as { media_ref?: string; errors?: DraftError[] };
-        if (!response.ok || !body.media_ref) {
-          throw new Error(body.errors?.[0]?.message || "The image could not be uploaded. Try again.");
-        }
-        insertImageMarkdown(`![${boundedDocumentationImageAltText(file.name)}](${body.media_ref})`);
-      })
-      .catch((error: Error) => setImageUploadError(error.message || "The image could not be uploaded. Try again."))
-      .finally(() => setImageUploadState("idle"));
-  }
-
   return (
     <div className="dataset-admin-tab-workspace dataset-admin-documentation-tab">
       <h2 style={{ marginTop: 0 }}>Documentation</h2>
       <p style={mutedTextStyle}>
         Author Markdown documentation for this Dataset Detail. Save commits it to the workspace draft --
-        Publish changes still governs when it becomes public.
+        Publish changes still governs when it becomes public. Use standard Markdown image syntax with
+        public HTTPS raw.githubusercontent.com image URLs when the study images are hosted on GitHub.
       </p>
       {mode === "edit" ? (
         <>
-          <div className="dataset-admin-documentation-toolbar">
-            <label className="dataset-admin-documentation-add-image">
-              <span>{imageUploadState === "uploading" ? "Uploading…" : "Add image"}</span>
-              <input
-                accept="image/png,image/jpeg,image/webp,image/avif"
-                disabled={!selectedSlug || imageUploadState === "uploading"}
-                onChange={(event) => {
-                  uploadDocumentationImage(event.target.files?.[0]);
-                  event.target.value = "";
-                }}
-                type="file"
-              />
-            </label>
-          </div>
-          {imageUploadError ? <p className="dataset-admin-image-upload-error" role="alert">{imageUploadError}</p> : null}
           <textarea
             aria-label="Documentation Markdown"
             className="dataset-admin-documentation-textarea"
             onChange={(event) => setBuffer(event.target.value)}
-            ref={textareaRef}
             rows={16}
             value={buffer}
           />
@@ -4599,7 +4530,7 @@ function DocumentationTab({
         </>
       ) : (
         <>
-          <DatasetDocumentation content={form.documentation} datasetSlug={selectedSlug} />
+          <DatasetDocumentation content={form.documentation} />
           <div className="dataset-admin-documentation-actions">
             <button onClick={handleEdit} style={secondaryButtonStyle} type="button">
               Edit

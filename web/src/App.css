@@ -988,11 +988,13 @@ h1 {
 }
 
 /*
- * Project Spec S0197: shared responsive styling for bounded Documentation
- * images -- the same rules apply identically in the public Dataset Detail
- * Documentation tab and the Admin Documentation tab/Live Preview, and are
- * scoped to .dataset-documentation so they never affect unrelated images
- * (Home card, icons, charts) elsewhere in the app.
+ * Project Spec S0199: shared responsive styling for bounded external
+ * (raw.githubusercontent.com) Documentation images -- the same rules apply
+ * identically in the public Dataset Detail Documentation tab and the Admin
+ * Documentation tab/Live Preview, and are scoped to .dataset-documentation
+ * so they never affect unrelated images (Home card, icons, charts)
+ * elsewhere in the app. No fixed graph widths from the source README's
+ * HTML attributes are introduced here.
  */
 .dataset-documentation img {
   display: block;
@@ -1059,36 +1061,6 @@ h1 {
   display: flex;
   justify-content: flex-end;
   margin-top: var(--atlas-space-3);
-}
-
-.dataset-admin-documentation-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--atlas-space-2);
-}
-
-.dataset-admin-documentation-add-image {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--atlas-space-2);
-  padding: var(--atlas-space-2) var(--atlas-space-3);
-  border: 1px dashed var(--atlas-color-accent-strong);
-  border-radius: var(--atlas-radius-md);
-  color: var(--atlas-color-accent-strong);
-  background: var(--atlas-color-accent-muted);
-  font: inherit;
-  font-size: var(--atlas-text-sm);
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.dataset-admin-documentation-add-image input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
 }
 
 .performance-summary h3 {

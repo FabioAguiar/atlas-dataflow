@@ -101,9 +101,7 @@ from admin_profile_publish import (  # noqa: E402
     publish_profile_payload,
     read_published_profile_snapshot,
     remove_profile_artifacts,
-    resolve_documentation_media_path,
     resolve_home_card_media_path,
-    store_documentation_image,
     store_home_card_image,
 )
 from admin_profile_visibility import (  # noqa: E402
@@ -211,13 +209,6 @@ HOME_CARD_IMAGE_UPLOAD_FAILED = PublicError(
     error_type="home_card_image_upload_failed",
     error_code="HOME_CARD_IMAGE_UPLOAD_FAILED",
     message="The Home card image could not be uploaded.",
-)
-
-DOCUMENTATION_IMAGE_UPLOAD_FAILED = PublicError(
-    status_code=422,
-    error_type="documentation_image_upload_failed",
-    error_code="DOCUMENTATION_IMAGE_UPLOAD_FAILED",
-    message="The Documentation image could not be uploaded.",
 )
 
 PROFILE_VISIBILITY_DATASET_SLUG_INVALID = PublicError(
@@ -1375,40 +1366,6 @@ async def post_admin_home_card_image(dataset_slug: str, request: Request):
 @app.get("/media/home-cards/{filename}")
 def get_home_card_image(filename: str):
     path = resolve_home_card_media_path(filename, _REPO_ROOT)
-    if path is None:
-        return _admin_route_not_found_response()
-    return FileResponse(path)
-
-
-@app.post("/admin/datasets/{dataset_slug}/documentation-image")
-async def post_admin_documentation_image(dataset_slug: str, request: Request):
-    if not _admin_request_authorized(request):
-        return _admin_route_not_found_response()
-    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", dataset_slug):
-        return public_error_response(PROFILE_PUBLISH_DATASET_SLUG_INVALID)
-    declared_length = request.headers.get("content-length")
-    if declared_length and declared_length.isdigit() and int(declared_length) > HOME_CARD_IMAGE_MAX_BYTES:
-        return DOCUMENTATION_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 10 MB."}])
-    chunks = bytearray()
-    async for chunk in request.stream():
-        chunks.extend(chunk)
-        if len(chunks) > HOME_CARD_IMAGE_MAX_BYTES:
-            return DOCUMENTATION_IMAGE_UPLOAD_FAILED.response(errors=[{"message": "Choose an image smaller than 10 MB."}])
-    result = store_documentation_image(
-        dataset_slug,
-        request.headers.get("x-file-name"),
-        request.headers.get("content-type"),
-        bytes(chunks),
-        _REPO_ROOT,
-    )
-    if not result["uploaded"]:
-        return DOCUMENTATION_IMAGE_UPLOAD_FAILED.response(errors=[{"message": result["error"]}])
-    return result
-
-
-@app.get("/media/documentation/{dataset_slug}/{filename}")
-def get_documentation_image(dataset_slug: str, filename: str):
-    path = resolve_documentation_media_path(dataset_slug, filename, _REPO_ROOT)
     if path is None:
         return _admin_route_not_found_response()
     return FileResponse(path)

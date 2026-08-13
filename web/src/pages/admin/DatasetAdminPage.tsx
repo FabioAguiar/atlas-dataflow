@@ -59,6 +59,10 @@ import {
   type DatasetIconName,
   type DatasetThemePresetId,
 } from "../../lib/datasetPresentation";
+import {
+  PERFORMANCE_FOCUS_CATALOG,
+  getPerformanceMetricMetadata,
+} from "../../lib/performanceMetricMetadata";
 
 // Curator-facing labels for Atlas's full controlled icon bank (see
 // contracts/dataset-public-profile.schema.json's home_card.icon enum).
@@ -222,13 +226,11 @@ type PerformanceFocusDraft = {
   scores: PerformanceScoreDraft[];
 };
 
-const PERFORMANCE_SCORE_CATALOG = {
-  overall_discrimination: [["roc_auc", "ROC-AUC"], ["pr_auc", "PR-AUC"], ["gini_coefficient", "Gini coefficient"], ["ks_statistic", "KS statistic"]],
-  positive_class_detection: [["recall", "Recall"], ["precision", "Precision"], ["f1_score", "F1-score"], ["f_beta_score", "F-beta score"], ["pr_auc", "PR-AUC"], ["false_negative_rate", "False Negative Rate"]],
-  balanced_classification: [["balanced_accuracy", "Balanced Accuracy"], ["mcc", "MCC"], ["f1_score", "F1-score"], ["accuracy", "Accuracy"], ["recall", "Recall"], ["specificity", "Specificity"], ["cohens_kappa", "Cohen's Kappa"], ["g_mean", "G-Mean"]],
-  probability_quality: [["log_loss", "Log Loss"], ["brier_score", "Brier Score"], ["calibration_error", "Calibration Error"], ["calibration_slope", "Calibration Slope"], ["calibration_intercept", "Calibration Intercept"], ["expected_calibration_error", "Expected Calibration Error"]],
-  operational_decision: [["precision_at_k", "Precision@K"], ["recall_at_k", "Recall@K"], ["lift_at_k", "Lift@K"], ["gain_at_k", "Gain@K"], ["expected_cost", "Expected Cost"], ["expected_profit", "Expected Profit"], ["net_benefit", "Net Benefit"], ["cost_per_correct_detection", "Cost per Correct Detection"], ["false_positives_at_k", "False Positives at K"], ["false_negatives_at_k", "False Negatives at K"]],
-} as const;
+// Project Spec S0200: the catalog itself now lives in
+// lib/performanceMetricMetadata.ts (the single shared frontend authority for
+// score ids/display labels) -- referenced here rather than redeclared, so
+// Admin can never drift into a competing local catalog.
+const PERFORMANCE_SCORE_CATALOG = PERFORMANCE_FOCUS_CATALOG;
 
 const PERFORMANCE_FOCUS_OPTIONS: Array<{ value: PerformanceFocusId; label: string }> = [
   { value: "overall_discrimination", label: "Overall discrimination" },
@@ -2432,6 +2434,45 @@ function MetadataCardTab({
   );
 }
 
+// Project Spec S0200: explanatory-only orientation for a single score row --
+// never an input, never operator-editable, and never persisted. Direction
+// comes exclusively from the shared performanceMetricMetadata module, so
+// Admin can never diverge from PerformanceSummary's public rendering.
+// Renders nothing for an unknown score id (no invented default direction).
+function PerformanceMetricOrientation({ scoreId }: { scoreId: string }) {
+  const metadata = getPerformanceMetricMetadata(scoreId);
+  if (!metadata) {
+    return null;
+  }
+
+  if (metadata.optimization.kind === "target_is_better") {
+    return (
+      <p className="performance-metric-orientation performance-metric-orientation--target">
+        <span aria-hidden="true">◎</span> Closer to {metadata.optimization.target} is better
+      </p>
+    );
+  }
+
+  const higherIsBetter = metadata.optimization.kind === "higher_is_better";
+  return (
+    <p className="performance-metric-orientation">
+      <span
+        aria-hidden="true"
+        className={`performance-metric-orientation__arrow performance-metric-orientation__arrow--${higherIsBetter ? "favorable" : "unfavorable"}`}
+      >
+        ↑
+      </span>
+      <span
+        aria-hidden="true"
+        className={`performance-metric-orientation__arrow performance-metric-orientation__arrow--${higherIsBetter ? "unfavorable" : "favorable"}`}
+      >
+        ↓
+      </span>
+      {higherIsBetter ? "Higher is better" : "Lower is better"}
+    </p>
+  );
+}
+
 function PerformanceFocusBuilder({ focus, onChange }: { focus: PerformanceFocusDraft; onChange: (focus: PerformanceFocusDraft) => void }) {
   const visibleScores = focus.scores.filter((score) => score.visible);
   const highlighted = visibleScores.find((score) => score.score_id === focus.highlighted_score_id);
@@ -2495,6 +2536,7 @@ function PerformanceFocusBuilder({ focus, onChange }: { focus: PerformanceFocusD
               style={inputStyle}
               value={score.value}
             />
+            <PerformanceMetricOrientation scoreId={score.score_id} />
           </div>
         ))}
       </div>

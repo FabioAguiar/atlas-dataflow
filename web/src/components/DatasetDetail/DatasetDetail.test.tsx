@@ -483,3 +483,166 @@ describe("DatasetDetailSurface exact tab card ownership (S0138)", () => {
     expect(panel.querySelector(".inference-result")).not.toBeInTheDocument();
   });
 });
+
+// Project Spec S0200: PerformanceSummary consumes the shared
+// performanceMetricMetadata module for both its performance_focus.visible_scores
+// path and its normalizeEvaluation(metrics) fallback path, rendering a
+// single-line, explanatory-only optimization orientation that never becomes
+// a second independent direction map, never persists into public profiles
+// (this component receives only presentation props), and never invents a
+// direction for an unknown score.
+describe("PerformanceSummary optimization orientation (Project Spec S0200)", () => {
+  it("renders only the favorable-direction hint for a higher-is-better score (ROC-AUC 0.8402)", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "roc_auc",
+          visible_scores: [
+            { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.8402", value_source: "canonical", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("ROC-AUC").closest(".performance-summary__score") as HTMLElement;
+    expect(within(score).getByText("Higher is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
+    expect(score).toHaveTextContent("0.8402");
+  });
+
+  it("renders only the favorable-direction hint for a lower-is-better score (Brier Score 0.1394)", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "probability_quality",
+          highlighted_score_id: "brier_score",
+          visible_scores: [
+            { score_id: "brier_score", display_label: "Brier Score", value: "0.1394", value_source: "canonical", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("Brier Score").closest(".performance-summary__score") as HTMLElement;
+    expect(within(score).getByText("Lower is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(score).toHaveTextContent("0.1394");
+  });
+
+  it("renders a neutral closer-to-1 message for Calibration Slope, never a monotonic arrow pair", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "probability_quality",
+          highlighted_score_id: "calibration_slope",
+          visible_scores: [
+            { score_id: "calibration_slope", display_label: "Calibration Slope", value: "0.97", value_source: "canonical", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("Calibration Slope").closest(".performance-summary__score") as HTMLElement;
+    expect(within(score).getByText("Closer to 1 is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
+  });
+
+  it("renders a neutral closer-to-0 message for Calibration Intercept, never a monotonic arrow pair", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "probability_quality",
+          highlighted_score_id: "calibration_intercept",
+          visible_scores: [
+            { score_id: "calibration_intercept", display_label: "Calibration Intercept", value: "-0.03", value_source: "canonical", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("Calibration Intercept").closest(".performance-summary__score") as HTMLElement;
+    expect(within(score).getByText("Closer to 0 is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
+  });
+
+  it("renders no direction hint for an unknown score id, without throwing, while still showing label and value", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "operational_decision",
+          highlighted_score_id: "not_a_real_metric",
+          visible_scores: [
+            { score_id: "not_a_real_metric", display_label: "Mystery Metric", value: "1.0", value_source: "manual", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("Mystery Metric").closest(".performance-summary__score") as HTMLElement;
+    expect(score.querySelector(".performance-summary__score-orientation")).not.toBeInTheDocument();
+    expect(score).toHaveTextContent("1.0");
+  });
+
+  it("preserves Highlighted and score value alongside the orientation for real Telco-style examples (pr_auc 0.6413, roc_auc 0.8402)", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "pr_auc",
+          visible_scores: [
+            { score_id: "pr_auc", display_label: "PR-AUC", value: "0.6413", value_source: "canonical", order: 0 },
+            { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.8402", value_source: "canonical", order: 1 },
+          ],
+        }}
+      />,
+    );
+
+    const prAucScore = screen.getByText("PR-AUC").closest(".performance-summary__score") as HTMLElement;
+    expect(within(prAucScore).getByText("Highlighted")).toBeInTheDocument();
+    expect(prAucScore).toHaveTextContent("0.6413");
+    expect(within(prAucScore).getByText("Higher is better")).toBeInTheDocument();
+
+    const rocAucScore = screen.getByText("ROC-AUC").closest(".performance-summary__score") as HTMLElement;
+    expect(within(rocAucScore).queryByText("Highlighted")).not.toBeInTheDocument();
+    expect(rocAucScore).toHaveTextContent("0.8402");
+  });
+
+  it("expresses direction as visible accessible text, with the arrow glyph aria-hidden rather than color-only (log_loss 0.4207)", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "probability_quality",
+          highlighted_score_id: "log_loss",
+          visible_scores: [
+            { score_id: "log_loss", display_label: "Log Loss", value: "0.4207", value_source: "canonical", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
+    const arrow = within(score).getByText("↓");
+    expect(arrow).toHaveAttribute("aria-hidden", "true");
+    expect(score).toHaveTextContent("Lower is better");
+  });
+
+  it("also applies the shared optimization metadata when rendering from normalizeEvaluation(metrics) directly, preserving existing normalized labels/values", () => {
+    render(<PerformanceSummary metrics={{ auc_roc: 0.87, log_loss: 0.42 }} />);
+
+    const rocScore = screen.getByText("AUC ROC").closest(".performance-summary__score") as HTMLElement;
+    expect(within(rocScore).getByText("Higher is better")).toBeInTheDocument();
+
+    const logLossScore = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
+    expect(within(logLossScore).getByText("Lower is better")).toBeInTheDocument();
+  });
+});

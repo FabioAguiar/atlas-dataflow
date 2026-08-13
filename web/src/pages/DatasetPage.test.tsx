@@ -2184,3 +2184,42 @@ describe("DatasetPage public Documentation tab (Project Spec S0196)", () => {
     });
   });
 });
+
+// Project Spec S0200: proves the shared performanceMetricMetadata
+// optimization semantics reach the real public page for published
+// performance_focus.visible_scores -- not just the PerformanceSummary unit
+// tests -- and that Highlighted plus an unknown score's safe fallback both
+// survive alongside the new orientation text.
+describe("DatasetPage performance metric optimization orientation (Project Spec S0200)", () => {
+  it("renders shared higher/lower orientation semantics, preserves Highlighted, and shows an unknown score without an invented direction", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      performance_focus: {
+        focus_id: "probability_quality" as const,
+        highlighted_score_id: "roc_auc",
+        visible_scores: [
+          { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.8402", value_source: "canonical" as const, order: 0 },
+          { score_id: "log_loss", display_label: "Log Loss", value: "0.4207", value_source: "canonical" as const, order: 1 },
+          { score_id: "not_a_real_metric", display_label: "Mystery Metric", value: "1.0", value_source: "manual" as const, order: 2 },
+        ],
+      },
+    });
+
+    const { container } = renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    const rocScore = (await screen.findByText("ROC-AUC")).closest(".performance-summary__score") as HTMLElement;
+    expect(within(rocScore).getByText("Highlighted")).toBeInTheDocument();
+    expect(within(rocScore).getByText("Higher is better")).toBeInTheDocument();
+
+    const logLossScore = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
+    expect(within(logLossScore).queryByText("Highlighted")).not.toBeInTheDocument();
+    expect(within(logLossScore).getByText("Lower is better")).toBeInTheDocument();
+
+    const mysteryScore = screen.getByText("Mystery Metric").closest(".performance-summary__score") as HTMLElement;
+    expect(mysteryScore.querySelector(".performance-summary__score-orientation")).not.toBeInTheDocument();
+    expect(mysteryScore).toHaveTextContent("1.0");
+
+    expect(container.querySelectorAll(".performance-summary__score")).toHaveLength(3);
+  });
+});

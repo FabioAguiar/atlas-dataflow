@@ -7360,3 +7360,109 @@ describe("DatasetAdminPage", () => {
     });
   });
 });
+
+// Project Spec S0200: Admin score rows render a compact, explanatory-only
+// optimization orientation sourced from the shared performanceMetricMetadata
+// module -- never an editable control, never a separate independent
+// direction map, and identical to what the shared PerformanceSummary renders
+// in Live Preview.
+describe("Performance metric optimization semantics (Project Spec S0200)", () => {
+  async function openMetadataCardTab() {
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+  }
+
+  function scoreRow(label: string): HTMLElement {
+    return screen.getByText(label, { selector: "strong" }).closest(".performance-focus-builder__score") as HTMLElement;
+  }
+
+  it("renders favorable-up/unfavorable-down orientation with visible text for a higher-is-better score (ROC-AUC)", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "overall_discrimination" } });
+
+    const row = scoreRow("ROC-AUC");
+    expect(within(row).getByText("Higher is better")).toBeInTheDocument();
+    const favorable = row.querySelector(".performance-metric-orientation__arrow--favorable")!;
+    const unfavorable = row.querySelector(".performance-metric-orientation__arrow--unfavorable")!;
+    expect(favorable).toHaveTextContent("↑");
+    expect(favorable).toHaveAttribute("aria-hidden", "true");
+    expect(unfavorable).toHaveTextContent("↓");
+    expect(unfavorable).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("renders unfavorable-up/favorable-down orientation with visible text for a lower-is-better score (Brier Score)", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "probability_quality" } });
+
+    const row = scoreRow("Brier Score");
+    expect(within(row).getByText("Lower is better")).toBeInTheDocument();
+    const favorable = row.querySelector(".performance-metric-orientation__arrow--favorable")!;
+    const unfavorable = row.querySelector(".performance-metric-orientation__arrow--unfavorable")!;
+    expect(favorable).toHaveTextContent("↓");
+    expect(unfavorable).toHaveTextContent("↑");
+  });
+
+  it("renders neutral target-based orientation with no favorable/unfavorable arrow pair for Calibration Slope and Calibration Intercept", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "probability_quality" } });
+
+    const slopeRow = scoreRow("Calibration Slope");
+    expect(within(slopeRow).getByText("Closer to 1 is better")).toBeInTheDocument();
+    expect(slopeRow.querySelector(".performance-metric-orientation__arrow--favorable")).not.toBeInTheDocument();
+    expect(slopeRow.querySelector(".performance-metric-orientation__arrow--unfavorable")).not.toBeInTheDocument();
+
+    const interceptRow = scoreRow("Calibration Intercept");
+    expect(within(interceptRow).getByText("Closer to 0 is better")).toBeInTheDocument();
+    expect(interceptRow.querySelector(".performance-metric-orientation__arrow--favorable")).not.toBeInTheDocument();
+    expect(interceptRow.querySelector(".performance-metric-orientation__arrow--unfavorable")).not.toBeInTheDocument();
+  });
+
+  it("keeps the orientation explanatory-only (no editable control inside it) while existing value editing, highlighting, and dirty-state tracking keep working", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    const toolbarPublish = within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole(
+      "button",
+      { name: "Publish changes" },
+    );
+    expect(toolbarPublish).toBeDisabled();
+
+    const row = scoreRow("Recall");
+    const orientation = row.querySelector(".performance-metric-orientation")!;
+    expect(orientation).toBeInTheDocument();
+    expect(orientation.querySelector("input, button, select, textarea")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Highlighted score"), { target: { value: "precision" } });
+    expect(toolbarPublish).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Highlighted score value"), { target: { value: "0.77" } });
+    expect(screen.getByLabelText("Precision value")).toHaveValue("0.77");
+  });
+
+  it("gives Admin and Live Preview the same shared-metadata orientation text for a visible score", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "probability_quality" } });
+    const adminRow = scoreRow("Log Loss");
+    expect(within(adminRow).getByText("Lower is better")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+    const previewScore = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
+    expect(within(previewScore).getByText("Lower is better")).toBeInTheDocument();
+    // The public shared component never shows an opposing favorable/
+    // unfavorable arrow pair -- only the single-arrow public orientation.
+    expect(previewScore.querySelectorAll(".performance-metric-orientation__arrow")).toHaveLength(0);
+  });
+});

@@ -1133,6 +1133,29 @@ h1 {
   font-size: var(--atlas-text-sm);
 }
 
+/*
+ * Project Spec S0200: the public orientation line stays discrete -- smaller
+ * than the score value, ordered after it so it never competes visually with
+ * the Highlighted badge, no animation, no hardcoded semantic colors.
+ */
+.performance-summary__score-orientation {
+  margin: 0.2rem 0 0;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 600;
+}
+
+.performance-summary__score-orientation--favorable {
+  color: var(--atlas-color-success);
+}
+
+.performance-summary__score-orientation--target {
+  color: var(--atlas-color-text-subtle);
+}
+
 .dataset-detail-visualization {
   display: grid;
   gap: var(--atlas-space-4);
@@ -2426,6 +2449,41 @@ h1 {
 .performance-focus-builder__score { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6rem, .7fr); align-items: center; gap: var(--atlas-space-2); padding: var(--atlas-space-2); border: 1px solid var(--atlas-color-border); border-radius: var(--atlas-radius-md); opacity: .68; }
 .performance-focus-builder__score.is-selected { border-color: var(--atlas-color-accent); background: var(--atlas-color-surface-subtle); opacity: 1; }
 .performance-focus-builder__score label { display: flex; align-items: center; gap: var(--atlas-space-2); font-size: .86rem; }
+
+/*
+ * Project Spec S0200: the orientation line spans both grid columns of its
+ * score row (label + value input) so it wraps onto its own row rather than
+ * competing with either for horizontal space -- min-width: 0 plus flex-wrap
+ * keeps it from ever forcing horizontal overflow at narrow widths.
+ */
+.performance-metric-orientation {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 600;
+}
+
+.performance-metric-orientation__arrow {
+  font-weight: 800;
+}
+
+.performance-metric-orientation__arrow--favorable {
+  color: var(--atlas-color-success);
+}
+
+.performance-metric-orientation__arrow--unfavorable {
+  color: var(--atlas-color-danger);
+}
+
+.performance-metric-orientation--target {
+  color: var(--atlas-color-text-subtle);
+}
 
 .dataset-admin-config-card,
 .dataset-admin-preview-card,

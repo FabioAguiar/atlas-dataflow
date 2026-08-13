@@ -1,5 +1,6 @@
 import { Badge, Card } from "../ui";
 import { normalizeEvaluation, type NormalizedMetricKey } from "../../lib/metricsNormalization";
+import { getPerformanceMetricMetadata } from "../../lib/performanceMetricMetadata";
 
 type MetricsData = Record<string, unknown>;
 
@@ -41,6 +42,37 @@ const FOCUS_LABELS: Record<PerformanceFocus["focus_id"], string> = {
 
 function formatScore(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+/**
+ * Project Spec S0200: the single-line, explanatory-only orientation for a
+ * score tile -- sourced exclusively from the shared performanceMetricMetadata
+ * module, so public rendering can never diverge from Admin's. Renders
+ * nothing for an unknown score id (no invented default direction), and never
+ * shows an opposing favorable/unfavorable arrow pair for a target-based
+ * metric.
+ */
+function ScoreOrientation({ scoreId }: { scoreId: string }) {
+  const metadata = getPerformanceMetricMetadata(scoreId);
+  if (!metadata) {
+    return null;
+  }
+
+  if (metadata.optimization.kind === "target_is_better") {
+    return (
+      <p className="performance-summary__score-orientation performance-summary__score-orientation--target">
+        <span aria-hidden="true">◎</span> Closer to {metadata.optimization.target} is better
+      </p>
+    );
+  }
+
+  const higherIsBetter = metadata.optimization.kind === "higher_is_better";
+  return (
+    <p className="performance-summary__score-orientation performance-summary__score-orientation--favorable">
+      <span aria-hidden="true">{higherIsBetter ? "↑" : "↓"}</span>{" "}
+      {higherIsBetter ? "Higher is better" : "Lower is better"}
+    </p>
+  );
 }
 
 /**
@@ -92,6 +124,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
             >
               <dt>{score.display_label}{emphasized && <Badge>Highlighted</Badge>}</dt>
               <dd>{score.value}</dd>
+              <ScoreOrientation scoreId={score.score_id} />
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );
@@ -115,6 +148,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
                 {emphasized && <Badge>Highlighted</Badge>}
               </dt>
               <dd>{formatScore(value)}</dd>
+              <ScoreOrientation scoreId={key} />
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );

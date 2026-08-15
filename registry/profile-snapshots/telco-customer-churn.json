@@ -1,12 +1,18 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-08-13T19:39:26Z",
+  "published_at": "2026-08-15T15:27:11Z",
   "active_release_at_publish_time": "release-20260812-001",
   "profile": {
     "display": {
       "title": "Telco Customer Churn",
+      "subtitle": "Explore customer churn patterns and an educational model for estimating churn risk.",
+      "problem_summary_title": "Understanding customer churn and churn risk",
+      "problem_summary_body": "This study examines how customer profile, service usage, contract, and billing characteristics are associated with churn in a telecommunications customer snapshot. It also develops and evaluates an educational binary-classification model that estimates churn risk from 19 customer features.",
+      "source_name": "Kaggle",
+      "source_url": "https://www.kaggle.com/datasets/blastchar/telco-customer-churn",
       "release_date_label": "2026-08-11",
+      "date_format": "dd/mm/yyyy",
       "canonical_name_fallback": true
     },
     "home_card": {

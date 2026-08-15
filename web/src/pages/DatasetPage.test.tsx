@@ -1541,6 +1541,47 @@ describe("DatasetPage curated Source/Release/highlight rendering (M39-03)", () =
   });
 });
 
+// Project Spec S0203: the public Release hint drops its "Format: " prefix,
+// and a monotonic public score renders its value and ↑/↓ arrow pair in one
+// compact composition, with no visible "favorable"/"unfavorable" word.
+describe("DatasetPage Release hint and monotonic score presentation (Project Spec S0203)", () => {
+  it("shows the Release hint as exactly the effective date format, and the score value followed by ↑ then ↓ with no visible favorable/unfavorable word", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      source_name: "Original Source Org",
+      release_date_label: "2026-07-01",
+      date_format: "dd/mm/yyyy",
+      performance_focus: {
+        focus_id: "overall_discrimination" as const,
+        highlighted_score_id: "roc_auc",
+        visible_scores: [
+          { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.8402", value_source: "canonical" as const, order: 0 },
+        ],
+      },
+    });
+
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("01/07/2026")).toBeInTheDocument();
+    expect(screen.getByText("dd/mm/yyyy")).toBeInTheDocument();
+    expect(screen.queryByText(/^Format:/)).not.toBeInTheDocument();
+
+    const score = screen.getByText("ROC-AUC").closest(".performance-summary__score") as HTMLElement;
+    const valueRow = score.querySelector("dd") as HTMLElement;
+    expect(within(valueRow).getByText("0.8402")).toBeInTheDocument();
+    const ddText = valueRow.textContent ?? "";
+    expect(ddText.indexOf("0.8402")).toBeLessThan(ddText.indexOf("↑"));
+    expect(ddText.indexOf("↑")).toBeLessThan(ddText.indexOf("↓"));
+
+    expect(within(score).getByText("Highlighted")).toBeInTheDocument();
+    expect(within(score).getByText("Higher is better")).toBeInTheDocument();
+    // "unfavorable" contains "favorable" as a substring, so this single
+    // assertion proves neither visible word is rendered.
+    expect(score).not.toHaveTextContent("favorable");
+  });
+});
+
 // Project Spec S0127: metrics/metadata projection alignment -- the stable
 // evaluation shape drives the Performance Summary fallback tiles, and
 // release-bound result semantics (not the raw problem_type) drive the

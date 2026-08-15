@@ -887,7 +887,6 @@ h1 {
 
 .dataset-detail-overview__problem-summary p {
   margin: 0;
-  max-width: 62rem;
   color: var(--atlas-color-text-muted);
   line-height: var(--atlas-line-relaxed);
 }
@@ -1079,7 +1078,20 @@ h1 {
   margin-top: var(--atlas-space-3);
 }
 
+/*
+ * Project Spec S0203: tighter, more deliberate vertical rhythm than the
+ * card's generic atlas-space-4 grid gap -- title and focus subtitle sit
+ * close together, with a slightly larger beat before the score stack below.
+ */
+.performance-summary {
+  gap: var(--atlas-space-2);
+}
+
 .performance-summary h3 {
+  margin: 0;
+}
+
+.performance-summary__focus {
   margin: 0;
 }
 
@@ -1092,7 +1104,7 @@ h1 {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--atlas-space-3);
-  margin: 0;
+  margin-top: var(--atlas-space-2);
 }
 
 /*
@@ -1100,17 +1112,14 @@ h1 {
  * plain definition-list cell) -- semantic dt/dd ownership is unchanged, only
  * the surrounding tile chrome and the decorative rail are new.
  *
- * Project Spec S0201: within the single-column stack each tile lays its
- * primary label/value out left, with the optimization orientation aligned
- * to the right so the row reads as a compact horizontal card rather than a
- * grid cell; the decorative rail continues to span the full tile width.
+ * Project Spec S0203: a plain single-column stack (title row, value+arrows
+ * row, secondary direction text, rail) -- the previous right-hand
+ * orientation-panel column is gone in favor of putting the arrows directly
+ * beside the score value.
  */
 .performance-summary__score {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: var(--atlas-space-4);
-  row-gap: 0.2rem;
+  gap: 0.3rem;
   border: 1px solid var(--atlas-color-border);
   border-radius: 0.9rem;
   padding: 0.85rem 1rem;
@@ -1118,8 +1127,6 @@ h1 {
 }
 
 .performance-summary__score-primary {
-  grid-column: 1;
-  grid-row: 1;
   display: grid;
   gap: var(--atlas-space-1);
   min-width: 0;
@@ -1135,8 +1142,16 @@ h1 {
   text-transform: uppercase;
 }
 
+/*
+ * Project Spec S0203: the value and its monotonic arrow pair render on one
+ * row, wrapping gracefully at narrow widths instead of overflowing.
+ */
 .performance-summary__score dd {
   margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
   color: var(--atlas-color-text);
   font-size: var(--atlas-text-lg);
   font-weight: 700;
@@ -1144,23 +1159,10 @@ h1 {
 
 .performance-summary__score-rail {
   display: block;
-  grid-column: 1 / -1;
   margin-top: 0.2rem;
   height: 0.3rem;
   border-radius: var(--atlas-radius-pill);
   background: linear-gradient(90deg, var(--atlas-color-accent-muted), var(--atlas-color-accent));
-}
-
-@media (max-width: 640px) {
-  .performance-summary__score {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .performance-summary__score-orientation {
-    grid-column: 1;
-    justify-items: start;
-    text-align: left;
-  }
 }
 
 .performance-summary__score--emphasized {
@@ -1187,34 +1189,35 @@ h1 {
  * Project Spec S0200: the public orientation line stays discrete -- smaller
  * than the score value, no animation, no hardcoded semantic colors.
  *
- * Project Spec S0201: aligned into the tile's right-hand column (see
- * .performance-summary__score above) and spans both of its rows so it reads
- * as a compact side panel next to the label/value.
+ * Project Spec S0203: now a plain secondary line below the value+arrows row
+ * (see .performance-summary__score above) instead of a right-hand panel.
  */
 .performance-summary__score-orientation {
-  grid-column: 2;
-  grid-row: 1 / span 2;
   margin: 0;
-  display: grid;
-  justify-items: end;
-  gap: 0.2rem;
   color: var(--atlas-color-text-subtle);
   font-size: var(--atlas-text-xs);
   font-weight: 600;
-  text-align: right;
 }
 
 /*
- * Project Spec S0201: both monotonic directions are always shown together --
- * the favorable arrow uses the existing semantic success variable, the
- * unfavorable arrow the existing semantic danger variable, and each carries
- * its own "favorable"/"unfavorable" text so direction never depends on color
- * alone.
+ * Project Spec S0203: the monotonic arrow pair renders immediately beside
+ * the score value (see .performance-summary__score dd above) -- both
+ * directions always shown together, ↑ then ↓, each carrying only its
+ * favorable/unfavorable color semantic (never a visible "favorable"/
+ * "unfavorable" word) so direction is explained instead by the visible
+ * "Higher is better"/"Lower is better" text in
+ * .performance-summary__score-orientation.
  */
-.performance-summary__score-orientation-arrow {
+.performance-summary__score-arrows {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+  font-size: var(--atlas-text-sm);
+}
+
+.performance-summary__score-orientation-arrow {
+  display: inline-flex;
+  align-items: center;
 }
 
 .performance-summary__score-orientation-arrow--favorable {
@@ -1223,10 +1226,6 @@ h1 {
 
 .performance-summary__score-orientation-arrow--unfavorable {
   color: var(--atlas-color-danger);
-}
-
-.performance-summary__score-orientation-label {
-  color: var(--atlas-color-text-subtle);
 }
 
 .performance-summary__score-orientation--target {

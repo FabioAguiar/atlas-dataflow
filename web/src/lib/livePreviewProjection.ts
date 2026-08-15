@@ -227,7 +227,7 @@ export function projectDatasetDetailPreview(
     {
       label: "Release",
       value: release?.value ?? null,
-      hint: release ? `Format: ${release.effectiveFormat}` : undefined,
+      hint: release ? release.effectiveFormat : undefined,
     },
   ];
 

@@ -580,7 +580,6 @@ function FieldInput({
   const label = (
     <label className="public-inference-form__label" htmlFor={`field-${feature.name}`}>
       {displayLabel}
-      {feature.input_type === "select" && " (categorical field)"}
       {/* Project Spec S0146: a checkbox always represents a complete
           two-state boolean, so the required marker (which implies the
           checked state is mandatory) is scoped to non-boolean controls. */}

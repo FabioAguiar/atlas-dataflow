@@ -294,7 +294,7 @@ describe("projectDatasetDetailPreview: Release date", () => {
     expect(ddmmyyyy.metadata.find((item) => item.label === "Release")).toEqual({
       label: "Release",
       value: "12/07/2026",
-      hint: "Format: dd/mm/yyyy",
+      hint: "dd/mm/yyyy",
     });
 
     const mmddyyyy = projectDatasetDetailPreview(
@@ -307,7 +307,7 @@ describe("projectDatasetDetailPreview: Release date", () => {
     expect(mmddyyyy.metadata.find((item) => item.label === "Release")).toEqual({
       label: "Release",
       value: "07/12/2026",
-      hint: "Format: mm/dd/yyyy",
+      hint: "mm/dd/yyyy",
     });
 
     const yyyymmdd = projectDatasetDetailPreview(
@@ -320,7 +320,7 @@ describe("projectDatasetDetailPreview: Release date", () => {
     expect(yyyymmdd.metadata.find((item) => item.label === "Release")).toEqual({
       label: "Release",
       value: "2026-07-12",
-      hint: "Format: yyyy-mm-dd",
+      hint: "yyyy-mm-dd",
     });
   });
 
@@ -363,7 +363,7 @@ describe("projectDatasetDetailPreview: remaining metadata", () => {
       { label: "Instances", value: "7,043" },
       { label: "Features", value: "2" },
       { label: "Target", value: "Customer churn" },
-      { label: "Release", value: "2026-07-04", hint: "Format: yyyy-mm-dd" },
+      { label: "Release", value: "2026-07-04", hint: "yyyy-mm-dd" },
     ]);
   });
 });

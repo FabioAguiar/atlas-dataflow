@@ -651,10 +651,11 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     expect(within(logLossScore).getByText("Lower is better")).toBeInTheDocument();
   });
 
-  // Project Spec S0201: a monotonic public score always shows both the
-  // favorable and unfavorable direction, each carrying the correct
-  // favorable/unfavorable class and its own visible text -- direction is
-  // never implied by a single arrow or by color alone.
+  // Project Spec S0201/S0203: a monotonic public score always shows both
+  // the favorable and unfavorable direction, each carrying the correct
+  // favorable/unfavorable class -- direction is explained by the visible
+  // "Higher/Lower is better" text, never by a visible "favorable"/
+  // "unfavorable" word or by color alone.
   it("shows both up and down arrows, correctly classed favorable/unfavorable, for a higher-is-better score (ROC-AUC)", () => {
     render(
       <PerformanceSummary
@@ -673,10 +674,11 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     const favorable = score.querySelector(".performance-summary__score-orientation-arrow--favorable")!;
     const unfavorable = score.querySelector(".performance-summary__score-orientation-arrow--unfavorable")!;
     expect(favorable).toHaveTextContent("↑");
-    expect(favorable).toHaveTextContent("favorable");
     expect(unfavorable).toHaveTextContent("↓");
-    expect(unfavorable).toHaveTextContent("unfavorable");
     expect(within(score).getByText("Higher is better")).toBeInTheDocument();
+    // "unfavorable" contains "favorable" as a substring, so this single
+    // assertion proves neither visible word is rendered.
+    expect(score).not.toHaveTextContent("favorable");
   });
 
   it("shows both up and down arrows, correctly classed favorable/unfavorable, for a lower-is-better score (Brier Score)", () => {
@@ -697,10 +699,37 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     const favorable = score.querySelector(".performance-summary__score-orientation-arrow--favorable")!;
     const unfavorable = score.querySelector(".performance-summary__score-orientation-arrow--unfavorable")!;
     expect(favorable).toHaveTextContent("↓");
-    expect(favorable).toHaveTextContent("favorable");
     expect(unfavorable).toHaveTextContent("↑");
-    expect(unfavorable).toHaveTextContent("unfavorable");
     expect(within(score).getByText("Lower is better")).toBeInTheDocument();
+    expect(score).not.toHaveTextContent("favorable");
+  });
+
+  // Project Spec S0203: the ↑/↓ arrow pair renders inside the same value
+  // composition (the score's <dd>) as the score value itself, always in
+  // ↑-then-↓ order -- not a separate side panel.
+  it("renders the value followed by ↑ then ↓ in the same value composition, for both monotonic directions", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "roc_auc",
+          visible_scores: [
+            { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.8402", value_source: "canonical", order: 0 },
+            { score_id: "brier_score", display_label: "Brier Score", value: "0.1394", value_source: "canonical", order: 1 },
+          ],
+        }}
+      />,
+    );
+
+    for (const label of ["ROC-AUC", "Brier Score"]) {
+      const score = screen.getByText(label).closest(".performance-summary__score") as HTMLElement;
+      const valueRow = score.querySelector("dd") as HTMLElement;
+      const arrows = valueRow.querySelectorAll(".performance-summary__score-orientation-arrow");
+      expect(arrows).toHaveLength(2);
+      const ddText = valueRow.textContent ?? "";
+      expect(ddText.indexOf("↑")).toBeLessThan(ddText.indexOf("↓"));
+    }
   });
 
   // Project Spec S0201: the score collection is a flat single-column stack --

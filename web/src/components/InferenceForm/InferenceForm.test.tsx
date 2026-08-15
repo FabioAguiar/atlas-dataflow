@@ -593,6 +593,87 @@ describe("InferenceForm scoped visual structure (Project Spec S0135)", () => {
   });
 });
 
+// Project Spec S0203: a select field's label shows only its configured
+// display label -- the appended "(categorical field)" suffix is removed --
+// while every other select behavior (label association, required marker,
+// options, submission serialization) stays exactly as before.
+describe("InferenceForm select field label copy (Project Spec S0203)", () => {
+  const selectContract: ContractPayload = {
+    schema_version: "1.0.0",
+    features: [
+      {
+        name: "contract_type",
+        label: "Contract Type",
+        input_type: "select",
+        optional: false,
+        display_order: 1,
+        options: [
+          { value: "month", label: "Month-to-month" },
+          { value: "year", label: "One year" },
+        ],
+      },
+      {
+        name: "payment_method",
+        label: "Payment Method",
+        input_type: "select",
+        optional: true,
+        display_order: 2,
+        options: [
+          { value: "card", label: "Card" },
+          { value: "cash", label: "Cash" },
+        ],
+      },
+    ],
+  };
+
+  it("shows only the configured display label, with no '(categorical field)' suffix, for a required and an optional select", () => {
+    render(<InferenceForm contract={selectContract} slug={slug} previewMode />);
+
+    expect(screen.getByText("Contract Type")).toBeInTheDocument();
+    expect(screen.getByText("Payment Method")).toBeInTheDocument();
+    expect(screen.queryByText(/\(categorical field\)/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the select accessible by its label, with required/optional semantics and options unchanged", () => {
+    render(<InferenceForm contract={selectContract} slug={slug} previewMode />);
+
+    const requiredSelect = screen.getByLabelText(/^Contract Type/) as HTMLSelectElement;
+    expect(requiredSelect.tagName).toBe("SELECT");
+    expect(requiredSelect).toHaveAttribute("required");
+    expect(Array.from(requiredSelect.options).map((option) => option.value)).toEqual(["month", "year"]);
+
+    const optionalSelect = screen.getByLabelText("Payment Method") as HTMLSelectElement;
+    expect(optionalSelect.tagName).toBe("SELECT");
+    expect(optionalSelect).not.toHaveAttribute("required");
+    expect(Array.from(optionalSelect.options).map((option) => option.value)).toEqual(["card", "cash"]);
+  });
+
+  it("submits the selected option's value unchanged", async () => {
+    const executeInference = vi.fn(
+      async (
+        _slug: string,
+        _payload: Record<string, string | number | boolean>,
+      ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={selectContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Contract Type/), { target: { value: "year" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenLastCalledWith(slug, { contract_type: "year", payment_method: "card" });
+  });
+});
+
 // Project Spec S0146: a rendered checkbox always represents a complete
 // two-state boolean -- checked/true and unchecked/false are both valid and
 // complete -- so a contract-required checkbox must never carry the native

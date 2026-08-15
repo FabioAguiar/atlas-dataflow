@@ -1,6 +1,6 @@
 import { Badge, Card } from "../ui";
 import { normalizeEvaluation, type NormalizedMetricKey } from "../../lib/metricsNormalization";
-import { getPerformanceMetricMetadata } from "../../lib/performanceMetricMetadata";
+import { getPerformanceMetricMetadata, type OptimizationSemantics } from "../../lib/performanceMetricMetadata";
 
 type MetricsData = Record<string, unknown>;
 
@@ -45,47 +45,60 @@ function formatScore(value: number): string {
 }
 
 /**
- * Project Spec S0200: the explanatory-only orientation for a score tile --
- * sourced exclusively from the shared performanceMetricMetadata module, so
- * public rendering can never diverge from Admin's. Renders nothing for an
- * unknown score id (no invented default direction), and never shows an
- * opposing favorable/unfavorable arrow pair for a target-based metric.
- *
- * Project Spec S0201: for a monotonic (higher/lower-is-better) score, both
- * directions render together -- an "↑ favorable"/"↓ unfavorable" pair (or
- * the reverse for lower-is-better) plus the existing "Higher/Lower is
- * better" explanatory text, so direction is never implied by a single arrow
- * or by color alone.
+ * Project Spec S0203: the monotonic ↑/↓ pair rendered directly beside the
+ * score value -- always in ↑-then-↓ order regardless of direction, with only
+ * the favorable/unfavorable color class swapped between higher-is-better and
+ * lower-is-better. The glyphs are aria-hidden because the visible "Higher is
+ * better"/"Lower is better" text in ScoreDirection carries the same meaning
+ * accessibly; no visible "favorable"/"unfavorable" word is ever rendered.
+ * Renders nothing for a target-based metric, which keeps its neutral
+ * "Closer to X is better" guidance instead.
  */
-function ScoreOrientation({ scoreId }: { scoreId: string }) {
-  const metadata = getPerformanceMetricMetadata(scoreId);
-  if (!metadata) {
+function ScoreArrows({ optimization }: { optimization: OptimizationSemantics }) {
+  if (optimization.kind === "target_is_better") {
     return null;
   }
 
-  if (metadata.optimization.kind === "target_is_better") {
+  const upIsFavorable = optimization.kind === "higher_is_better";
+  return (
+    <span className="performance-summary__score-arrows">
+      <span
+        className={`performance-summary__score-orientation-arrow performance-summary__score-orientation-arrow--${upIsFavorable ? "favorable" : "unfavorable"}`}
+        aria-hidden="true"
+      >
+        ↑
+      </span>
+      <span
+        className={`performance-summary__score-orientation-arrow performance-summary__score-orientation-arrow--${upIsFavorable ? "unfavorable" : "favorable"}`}
+        aria-hidden="true"
+      >
+        ↓
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Project Spec S0200/S0203: the explanatory-only orientation text for a
+ * score tile, sourced exclusively from the shared performanceMetricMetadata
+ * module so public rendering can never diverge from Admin's. Rendered as a
+ * secondary line below the score value, never relying on the arrow pair or
+ * color alone.
+ */
+function ScoreDirection({ optimization }: { optimization: OptimizationSemantics }) {
+  if (optimization.kind === "target_is_better") {
     return (
       <p className="performance-summary__score-orientation performance-summary__score-orientation--target">
-        <span aria-hidden="true">◎</span> Closer to {metadata.optimization.target} is better
+        <span aria-hidden="true">◎</span> Closer to {optimization.target} is better
       </p>
     );
   }
 
-  const higherIsBetter = metadata.optimization.kind === "higher_is_better";
-  const favorableArrow = higherIsBetter ? "↑" : "↓";
-  const unfavorableArrow = higherIsBetter ? "↓" : "↑";
+  const higherIsBetter = optimization.kind === "higher_is_better";
   return (
-    <div className="performance-summary__score-orientation performance-summary__score-orientation--monotonic">
-      <span className="performance-summary__score-orientation-arrow performance-summary__score-orientation-arrow--favorable">
-        <span aria-hidden="true">{favorableArrow}</span> favorable
-      </span>
-      <span className="performance-summary__score-orientation-arrow performance-summary__score-orientation-arrow--unfavorable">
-        <span aria-hidden="true">{unfavorableArrow}</span> unfavorable
-      </span>
-      <span className="performance-summary__score-orientation-label">
-        {higherIsBetter ? "Higher is better" : "Lower is better"}
-      </span>
-    </div>
+    <p className="performance-summary__score-orientation performance-summary__score-orientation--monotonic">
+      {higherIsBetter ? "Higher is better" : "Lower is better"}
+    </p>
   );
 }
 
@@ -131,6 +144,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
       <dl className="performance-summary__scores">
         {hasPublishedFocus && performanceFocus ? publishedScores!.map((score) => {
           const emphasized = score.score_id === performanceFocus.highlighted_score_id;
+          const optimization = getPerformanceMetricMetadata(score.score_id)?.optimization;
           return (
             <div
               key={score.score_id}
@@ -138,9 +152,12 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
             >
               <div className="performance-summary__score-primary">
                 <dt>{score.display_label}{emphasized && <Badge>Highlighted</Badge>}</dt>
-                <dd>{score.value}</dd>
+                <dd>
+                  {score.value}
+                  {optimization && <ScoreArrows optimization={optimization} />}
+                </dd>
               </div>
-              <ScoreOrientation scoreId={score.score_id} />
+              {optimization && <ScoreDirection optimization={optimization} />}
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );
@@ -156,6 +173,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
           ]
             .filter(Boolean)
             .join(" ");
+          const optimization = getPerformanceMetricMetadata(key)?.optimization;
 
           return (
             <div key={key} className={itemClasses}>
@@ -164,9 +182,12 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
                   {SCORE_LABELS[key]}
                   {emphasized && <Badge>Highlighted</Badge>}
                 </dt>
-                <dd>{formatScore(value)}</dd>
+                <dd>
+                  {formatScore(value)}
+                  {optimization && <ScoreArrows optimization={optimization} />}
+                </dd>
               </div>
-              <ScoreOrientation scoreId={key} />
+              {optimization && <ScoreDirection optimization={optimization} />}
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );

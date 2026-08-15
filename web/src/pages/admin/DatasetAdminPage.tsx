@@ -2223,7 +2223,7 @@ function PublicContentTab({
         </div>
         <TextField
           label="Problem summary body"
-          maxLength={300}
+          maxLength={600}
           multiline
           onChange={(value) => setField("problem_summary_body", value)}
           required
@@ -4557,14 +4557,23 @@ function DocumentationTab({
     setMode("edit");
   }
 
+  const headerAction =
+    mode === "edit" ? (
+      <button onClick={handleSave} style={actionButtonStyle} type="button">
+        Save
+      </button>
+    ) : (
+      <button onClick={handleEdit} style={secondaryButtonStyle} type="button">
+        Edit
+      </button>
+    );
+
   return (
     <div className="dataset-admin-tab-workspace dataset-admin-documentation-tab">
-      <h2 style={{ marginTop: 0 }}>Documentation</h2>
-      <p style={mutedTextStyle}>
-        Author Markdown documentation for this Dataset Detail. Save commits it to the workspace draft --
-        Publish changes still governs when it becomes public. Use standard Markdown image syntax with
-        public HTTPS raw.githubusercontent.com image URLs when the study images are hosted on GitHub.
-      </p>
+      <div className="dataset-admin-documentation-header">
+        <h2>Documentation</h2>
+        {headerAction}
+      </div>
       {mode === "edit" ? (
         <>
           <textarea

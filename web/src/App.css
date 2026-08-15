@@ -1043,6 +1043,22 @@ h1 {
   max-width: 62rem;
 }
 
+.dataset-admin-documentation-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--atlas-space-3);
+  max-width: 100%;
+}
+
+.dataset-admin-documentation-header h2 {
+  margin: 0;
+  color: var(--atlas-color-text);
+  font-size: var(--atlas-text-xl);
+  font-weight: 800;
+}
+
 .dataset-admin-documentation-textarea {
   box-sizing: border-box;
   width: 100%;

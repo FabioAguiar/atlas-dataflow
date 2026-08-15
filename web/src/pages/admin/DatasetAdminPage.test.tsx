@@ -2252,19 +2252,36 @@ describe("DatasetAdminPage", () => {
   // Project Spec S0196: the Admin Documentation tab's Save/Edit Markdown
   // authoring workflow -- a committed workspace value (ProfileDraft.
   // documentation) separate from a transient, local editing buffer.
+  //
+  // Project Spec S0202: adds a second Save/Edit action in the Documentation
+  // heading row that invokes the exact same handleSave/handleEdit as the
+  // original lower action; both action locations are exercised below.
   describe("Documentation Markdown authoring (Project Spec S0196)", () => {
     function openDocumentationTab() {
       fireEvent.click(screen.getByRole("tab", { name: "Documentation" }));
     }
 
-    it("shows a blank editor and Save when no documentation has been committed yet", async () => {
+    function documentationHeader() {
+      return document.querySelector(".dataset-admin-documentation-header") as HTMLElement;
+    }
+
+    function documentationFooter() {
+      return document.querySelector(".dataset-admin-documentation-actions") as HTMLElement;
+    }
+
+    it("shows the Documentation title, no instructional paragraph, and two Save controls (header + lower action area) when no documentation has been committed yet -- no Edit control is present (Project Spec S0202)", async () => {
       installFetchMock();
       renderAdminPage();
       await loadDraftOnly();
 
       openDocumentationTab();
+      expect(screen.getByRole("heading", { name: "Documentation" })).toBeInTheDocument();
+      expect(screen.queryByText(/Author Markdown documentation for this Dataset Detail/)).not.toBeInTheDocument();
       expect(screen.getByLabelText("Documentation Markdown")).toHaveValue("");
-      expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+
+      expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(2);
+      expect(within(documentationHeader()).getByRole("button", { name: "Save" })).toBeInTheDocument();
+      expect(within(documentationFooter()).getByRole("button", { name: "Save" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     });
 
@@ -2286,7 +2303,32 @@ describe("DatasetAdminPage", () => {
       expect(screen.getByText("No documentation has been published yet.")).toBeInTheDocument();
     });
 
-    it("Save commits the buffer, hides the textarea, renders the preview, and flips the action to Edit; Edit restores the exact source and a second Save updates the preview", async () => {
+    it("Save from the header: commits the buffer, hides the textarea, renders the preview, flips both actions to Edit, and never calls the publish endpoint (Project Spec S0202)", async () => {
+      const fetchMock = installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openDocumentationTab();
+      const textarea = screen.getByLabelText("Documentation Markdown");
+      fireEvent.change(textarea, { target: { value: "# First heading\n\nFirst body." } });
+
+      const callsBeforeSave = fetchMock.mock.calls.length;
+      fireEvent.click(within(documentationHeader()).getByRole("button", { name: "Save" }));
+
+      expect(screen.queryByLabelText("Documentation Markdown")).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "First heading" })).toBeInTheDocument();
+      expect(screen.getByText("First body.")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
+      expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+
+      expect(
+        fetchMock.mock.calls
+          .slice(callsBeforeSave)
+          .some((call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`)),
+      ).toBe(false);
+    });
+
+    it("Save from the lower action area: preserves the original S0196 round trip -- commits the buffer, flips to Edit, and a second Save updates the preview", async () => {
       installFetchMock();
       renderAdminPage();
       await loadDraftOnly();
@@ -2294,26 +2336,51 @@ describe("DatasetAdminPage", () => {
       openDocumentationTab();
       const textarea = screen.getByLabelText("Documentation Markdown");
       fireEvent.change(textarea, { target: { value: "# First heading\n\nFirst body." } });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Save" }));
 
       expect(screen.queryByLabelText("Documentation Markdown")).not.toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "First heading" })).toBeInTheDocument();
       expect(screen.getByText("First body.")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
       expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Edit" }));
       const reopenedTextarea = screen.getByLabelText("Documentation Markdown") as HTMLTextAreaElement;
       expect(reopenedTextarea).toHaveValue("# First heading\n\nFirst body.");
-      expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(2);
 
       fireEvent.change(reopenedTextarea, { target: { value: "# Second heading\n\nSecond body." } });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Save" }));
 
       expect(screen.getByRole("heading", { name: "Second heading" })).toBeInTheDocument();
       expect(screen.getByText("Second body.")).toBeInTheDocument();
       expect(screen.queryByText("First body.")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
+    });
+
+    it("both the header and lower Edit controls restore the exact committed Markdown source and return to the same edit-mode state (Project Spec S0202)", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      const committedMarkdown = "# Committed heading\n\nCommitted body.";
+
+      openDocumentationTab();
+      fireEvent.change(screen.getByLabelText("Documentation Markdown"), { target: { value: committedMarkdown } });
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Save" }));
+      expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
+
+      fireEvent.click(within(documentationHeader()).getByRole("button", { name: "Edit" }));
+      expect(screen.getByLabelText("Documentation Markdown")).toHaveValue(committedMarkdown);
+      expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(2);
+
+      // Re-save the unmodified buffer to return to preview mode, then prove
+      // the lower Edit control restores the exact same committed source and
+      // lands in the exact same observable edit-mode state as the header one.
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Save" }));
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Edit" }));
+      expect(screen.getByLabelText("Documentation Markdown")).toHaveValue(committedMarkdown);
+      expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(2);
     });
 
     it("Save alone never calls the publish endpoint -- Publish changes remains the sole publication action", async () => {
@@ -2326,7 +2393,7 @@ describe("DatasetAdminPage", () => {
         target: { value: "Body only." },
       });
       const callsBeforeSave = fetchMock.mock.calls.length;
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Save" }));
 
       expect(
         fetchMock.mock.calls
@@ -2350,7 +2417,7 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: "# Published body\n\nCarried in the payload." },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(within(documentationFooter()).getByRole("button", { name: "Save" }));
 
       expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
 
@@ -2384,7 +2451,7 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: "# Live preview body" },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(within(documentationHeader()).getByRole("button", { name: "Save" }));
 
       fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
       const detailTabs = within(screen.getByRole("tablist", { name: "Dataset detail sections" }));
@@ -2482,9 +2549,9 @@ describe("DatasetAdminPage", () => {
       // Published draft hydration restores documentation into the preview,
       // not the blank editor state.
       expect(await screen.findByRole("heading", { name: "Telco hydrated documentation" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
 
-      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: "# Unsaved edit never persisted" },
       });
@@ -2522,7 +2589,7 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: publishedMarkdown },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
       expect(screen.getByRole("heading", { name: "S0198 published heading" })).toBeInTheDocument();
 
       expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
@@ -2534,21 +2601,21 @@ describe("DatasetAdminPage", () => {
       expect(screen.getByRole("heading", { name: "S0198 published heading" })).toBeInTheDocument();
       expect(screen.getByText("S0198 published body.")).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
       const reopenedTextarea = screen.getByLabelText("Documentation Markdown") as HTMLTextAreaElement;
       expect(reopenedTextarea).toHaveValue(publishedMarkdown);
 
       // The successfully published profile is now the dirty-state baseline:
       // re-saving the identical, unmodified content leaves Publish changes
       // disabled until a real edit occurs.
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
       expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
 
-      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: `${publishedMarkdown}\n\nOne more paragraph.` },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
       expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
     });
   });
@@ -2596,7 +2663,7 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: `# Docs\n\n![Chart](${allowedImageSrc})` },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
       const img = screen.getByRole("img", { name: "Chart" });
       expect(img).toHaveAttribute("src", allowedImageSrc);
@@ -2611,7 +2678,7 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: `# Docs\n\n![Chart](${allowedImageSrc})` },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
       openLivePreviewDocumentationTab();
       const img = screen.getByRole("img", { name: "Chart" });
@@ -2627,7 +2694,7 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: `# Docs\n\n![Chart](${arbitraryHostImageSrc})` },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
       expect(screen.getByRole("heading", { name: "Docs" })).toBeInTheDocument();
       expect(screen.queryByRole("img", { name: "Chart" })).not.toBeInTheDocument();
@@ -2642,7 +2709,7 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Documentation Markdown"), {
         target: { value: `# Docs\n\n![Chart](${allowedImageSrc})` },
       });
-      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
       expect(
         fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/admin/datasets/${datasetSlug}/documentation-image`)),
@@ -4851,7 +4918,7 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByText("20 / 80")).toBeInTheDocument();
     expect(screen.getByText("0 / 120")).toBeInTheDocument();
     expect(screen.getByText("0 / 60")).toBeInTheDocument();
-    expect(screen.getByText("0 / 300")).toBeInTheDocument();
+    expect(screen.getByText("0 / 600")).toBeInTheDocument();
 
     const subtitleValue = "Predicao de churn";
     fireEvent.change(screen.getByLabelText("Subtitle"), { target: { value: subtitleValue } });
@@ -4860,7 +4927,31 @@ describe("DatasetAdminPage", () => {
 
     const summaryBodyValue = "Explains churn.";
     fireEvent.change(screen.getByLabelText("Problem summary body"), { target: { value: summaryBodyValue } });
-    expect(screen.getByText(`${summaryBodyValue.length} / 300`)).toBeInTheDocument();
+    expect(screen.getByText(`${summaryBodyValue.length} / 600`)).toBeInTheDocument();
+  });
+
+  it("exposes Problem summary body maxLength=600 and accepts a value beyond the old 300-character limit, up to the new limit, while preserving field serialization (Project Spec S0202)", async () => {
+    installFetchMock({ noExistingDraft: true });
+    renderAdminPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dataset" })).toHaveTextContent("Telco Customer Churn");
+    });
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Telco Customer Churn"));
+
+    const summaryBodyField = screen.getByLabelText("Problem summary body") as HTMLTextAreaElement;
+    expect(summaryBodyField).toHaveAttribute("maxLength", "600");
+    expect(summaryBodyField).not.toHaveAttribute("maxLength", "300");
+
+    const beyondOldLimitValue = "x".repeat(450);
+    fireEvent.change(summaryBodyField, { target: { value: beyondOldLimitValue } });
+    expect(summaryBodyField).toHaveValue(beyondOldLimitValue);
+    expect(screen.getByText(`${beyondOldLimitValue.length} / 600`)).toBeInTheDocument();
+
+    const atNewLimitValue = "y".repeat(600);
+    fireEvent.change(summaryBodyField, { target: { value: atNewLimitValue } });
+    expect(summaryBodyField).toHaveValue(atNewLimitValue);
+    expect(screen.getByText(`600 / 600`)).toBeInTheDocument();
   });
 
   it("cleans up the Public Content tab body by removing the duplicate internal heading, helper copy, and Canonical fallback control while keeping the field layout and counters intact (Project Spec S0059)", async () => {

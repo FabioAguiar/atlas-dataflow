@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "telco-customer-churn",
-  "published_at": "2026-08-13T13:56:56Z",
+  "published_at": "2026-08-13T19:34:58Z",
   "active_release_at_publish_time": "release-20260812-001",
   "profile": {
     "display": {
@@ -15,28 +15,21 @@
     },
     "performance_focus": {
       "focus_id": "overall_discrimination",
-      "highlighted_score_id": "roc_auc",
+      "highlighted_score_id": "pr_auc",
       "visible_scores": [
         {
           "score_id": "roc_auc",
           "display_label": "ROC-AUC",
-          "value": "0",
+          "value": "0.8402",
           "value_source": "manual",
           "order": 0
         },
         {
           "score_id": "pr_auc",
           "display_label": "PR-AUC",
-          "value": "0",
+          "value": "0.6413",
           "value_source": "manual",
           "order": 1
-        },
-        {
-          "score_id": "gini_coefficient",
-          "display_label": "Gini coefficient",
-          "value": "0",
-          "value_source": "manual",
-          "order": 2
         }
       ]
     },

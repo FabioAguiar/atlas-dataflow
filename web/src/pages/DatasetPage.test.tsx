@@ -645,8 +645,20 @@ describe("DatasetPage synthetic-slug rendering", () => {
     expect(await screen.findByText("Positive-class detection")).toBeInTheDocument();
     expect(screen.getByText("57.4%")).toBeInTheDocument();
     expect(screen.queryByText("AUC ROC")).not.toBeInTheDocument();
-    const scores = Array.from(container.querySelectorAll(".performance-summary__score dt"));
-    expect(scores.map((score) => score.textContent)).toEqual(["RecallHighlighted", "Precision"]);
+    const scoreTiles = Array.from(container.querySelectorAll(".performance-summary__score"));
+    expect(scoreTiles).toHaveLength(2);
+    // Project Spec S0201: only the two published scores render -- a third
+    // catalog score for the same focus (e.g. F1-score) must never be
+    // invented.
+    expect(screen.queryByText("F1-score")).not.toBeInTheDocument();
+    const scores = scoreTiles.map((tile) => tile.querySelector("dt")?.textContent);
+    expect(scores).toEqual(["RecallHighlighted", "Precision"]);
+    // Project Spec S0201: both monotonic direction arrows (favorable and
+    // unfavorable) render for each higher-is-better public score.
+    for (const tile of scoreTiles) {
+      expect(tile.querySelector(".performance-summary__score-orientation-arrow--favorable")).toHaveTextContent("↑");
+      expect(tile.querySelector(".performance-summary__score-orientation-arrow--unfavorable")).toHaveTextContent("↓");
+    }
   });
 
   it("switches from Overview to Inference and renders the split inference layout", async () => {

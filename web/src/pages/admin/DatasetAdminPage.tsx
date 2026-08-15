@@ -240,11 +240,29 @@ const PERFORMANCE_FOCUS_OPTIONS: Array<{ value: PerformanceFocusId; label: strin
   { value: "operational_decision", label: "Operational decision" },
 ];
 
-function defaultPerformanceFocus(focus_id: PerformanceFocusId = "positive_class_detection"): PerformanceFocusDraft {
-  const scores = PERFORMANCE_SCORE_CATALOG[focus_id].map(([score_id, display_label], order) => ({
-    score_id, display_label, value: "0", value_source: "manual" as const, order, visible: order < 3,
+function catalogPerformanceScores(focus_id: PerformanceFocusId): PerformanceScoreDraft[] {
+  return PERFORMANCE_SCORE_CATALOG[focus_id].map(([score_id, display_label], order) => ({
+    score_id, display_label, value: "0", value_source: "manual" as const, order, visible: false,
   }));
+}
+
+function defaultPerformanceFocus(focus_id: PerformanceFocusId = "positive_class_detection"): PerformanceFocusDraft {
+  const scores = catalogPerformanceScores(focus_id).map((score) => ({ ...score, visible: score.order < 3 }));
   return { focus_id, highlighted_score_id: scores[0]?.score_id ?? "", scores };
+}
+
+// Project Spec S0201: hydrates an already persisted/published performance_focus
+// so a catalog score absent from persisted visible_scores hydrates as
+// visible: false -- defaultPerformanceFocus's order<3 default is only for a
+// new/unconfigured focus (see emptyDraftForm/the focus-switch selector) and
+// must never contaminate an already persisted focus.
+function performanceFocusFromPersisted(focus: PerformanceFocus): PerformanceFocusDraft {
+  const publishedById = new Map(focus.visible_scores.map((score) => [score.score_id, score]));
+  const scores = catalogPerformanceScores(focus.focus_id).map((score) => {
+    const published = publishedById.get(score.score_id);
+    return published ? { ...published, visible: true } : score;
+  });
+  return { focus_id: focus.focus_id, highlighted_score_id: focus.highlighted_score_id, scores };
 }
 
 type DraftForm = {
@@ -1549,15 +1567,7 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
   }
 
   const focus = profile.performance_focus;
-  const performanceFocus = focus ? defaultPerformanceFocus(focus.focus_id) : form.performance_focus;
-  if (focus) {
-    const publishedById = new Map(focus.visible_scores.map((score) => [score.score_id, score]));
-    performanceFocus.highlighted_score_id = focus.highlighted_score_id;
-    performanceFocus.scores = performanceFocus.scores.map((score) => {
-      const published = publishedById.get(score.score_id);
-      return published ? { ...published, visible: true } : score;
-    });
-  }
+  const performanceFocus = focus ? performanceFocusFromPersisted(focus) : form.performance_focus;
   return {
     ...form,
     schema_version: profile.schema_version || form.schema_version,

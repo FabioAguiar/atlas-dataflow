@@ -45,12 +45,17 @@ function formatScore(value: number): string {
 }
 
 /**
- * Project Spec S0200: the single-line, explanatory-only orientation for a
- * score tile -- sourced exclusively from the shared performanceMetricMetadata
- * module, so public rendering can never diverge from Admin's. Renders
- * nothing for an unknown score id (no invented default direction), and never
- * shows an opposing favorable/unfavorable arrow pair for a target-based
- * metric.
+ * Project Spec S0200: the explanatory-only orientation for a score tile --
+ * sourced exclusively from the shared performanceMetricMetadata module, so
+ * public rendering can never diverge from Admin's. Renders nothing for an
+ * unknown score id (no invented default direction), and never shows an
+ * opposing favorable/unfavorable arrow pair for a target-based metric.
+ *
+ * Project Spec S0201: for a monotonic (higher/lower-is-better) score, both
+ * directions render together -- an "↑ favorable"/"↓ unfavorable" pair (or
+ * the reverse for lower-is-better) plus the existing "Higher/Lower is
+ * better" explanatory text, so direction is never implied by a single arrow
+ * or by color alone.
  */
 function ScoreOrientation({ scoreId }: { scoreId: string }) {
   const metadata = getPerformanceMetricMetadata(scoreId);
@@ -67,11 +72,20 @@ function ScoreOrientation({ scoreId }: { scoreId: string }) {
   }
 
   const higherIsBetter = metadata.optimization.kind === "higher_is_better";
+  const favorableArrow = higherIsBetter ? "↑" : "↓";
+  const unfavorableArrow = higherIsBetter ? "↓" : "↑";
   return (
-    <p className="performance-summary__score-orientation performance-summary__score-orientation--favorable">
-      <span aria-hidden="true">{higherIsBetter ? "↑" : "↓"}</span>{" "}
-      {higherIsBetter ? "Higher is better" : "Lower is better"}
-    </p>
+    <div className="performance-summary__score-orientation performance-summary__score-orientation--monotonic">
+      <span className="performance-summary__score-orientation-arrow performance-summary__score-orientation-arrow--favorable">
+        <span aria-hidden="true">{favorableArrow}</span> favorable
+      </span>
+      <span className="performance-summary__score-orientation-arrow performance-summary__score-orientation-arrow--unfavorable">
+        <span aria-hidden="true">{unfavorableArrow}</span> unfavorable
+      </span>
+      <span className="performance-summary__score-orientation-label">
+        {higherIsBetter ? "Higher is better" : "Lower is better"}
+      </span>
+    </div>
   );
 }
 
@@ -122,8 +136,10 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
               key={score.score_id}
               className={`performance-summary__score${emphasized ? " performance-summary__score--emphasized" : ""}`}
             >
-              <dt>{score.display_label}{emphasized && <Badge>Highlighted</Badge>}</dt>
-              <dd>{score.value}</dd>
+              <div className="performance-summary__score-primary">
+                <dt>{score.display_label}{emphasized && <Badge>Highlighted</Badge>}</dt>
+                <dd>{score.value}</dd>
+              </div>
               <ScoreOrientation scoreId={score.score_id} />
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
@@ -143,11 +159,13 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
 
           return (
             <div key={key} className={itemClasses}>
-              <dt>
-                {SCORE_LABELS[key]}
-                {emphasized && <Badge>Highlighted</Badge>}
-              </dt>
-              <dd>{formatScore(value)}</dd>
+              <div className="performance-summary__score-primary">
+                <dt>
+                  {SCORE_LABELS[key]}
+                  {emphasized && <Badge>Highlighted</Badge>}
+                </dt>
+                <dd>{formatScore(value)}</dd>
+              </div>
               <ScoreOrientation scoreId={key} />
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>

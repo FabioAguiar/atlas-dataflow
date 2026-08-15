@@ -1067,10 +1067,15 @@ h1 {
   margin: 0;
 }
 
+/*
+ * Project Spec S0201: a single vertical stack at every viewport width -- the
+ * previous two-column grid is intentionally gone and must not come back at
+ * desktop widths.
+ */
 .performance-summary__scores {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--atlas-space-4);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--atlas-space-3);
   margin: 0;
 }
 
@@ -1078,14 +1083,30 @@ h1 {
  * Project Spec S0124: each score is a compact bordered metric tile (not a
  * plain definition-list cell) -- semantic dt/dd ownership is unchanged, only
  * the surrounding tile chrome and the decorative rail are new.
+ *
+ * Project Spec S0201: within the single-column stack each tile lays its
+ * primary label/value out left, with the optimization orientation aligned
+ * to the right so the row reads as a compact horizontal card rather than a
+ * grid cell; the decorative rail continues to span the full tile width.
  */
 .performance-summary__score {
   display: grid;
-  gap: var(--atlas-space-1);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--atlas-space-4);
+  row-gap: 0.2rem;
   border: 1px solid var(--atlas-color-border);
   border-radius: 0.9rem;
-  padding: 0.85rem;
+  padding: 0.85rem 1rem;
   background: var(--atlas-color-surface);
+}
+
+.performance-summary__score-primary {
+  grid-column: 1;
+  grid-row: 1;
+  display: grid;
+  gap: var(--atlas-space-1);
+  min-width: 0;
 }
 
 .performance-summary__score dt {
@@ -1107,10 +1128,23 @@ h1 {
 
 .performance-summary__score-rail {
   display: block;
+  grid-column: 1 / -1;
   margin-top: 0.2rem;
   height: 0.3rem;
   border-radius: var(--atlas-radius-pill);
   background: linear-gradient(90deg, var(--atlas-color-accent-muted), var(--atlas-color-accent));
+}
+
+@media (max-width: 640px) {
+  .performance-summary__score {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .performance-summary__score-orientation {
+    grid-column: 1;
+    justify-items: start;
+    text-align: left;
+  }
 }
 
 .performance-summary__score--emphasized {
@@ -1135,21 +1169,48 @@ h1 {
 
 /*
  * Project Spec S0200: the public orientation line stays discrete -- smaller
- * than the score value, ordered after it so it never competes visually with
- * the Highlighted badge, no animation, no hardcoded semantic colors.
+ * than the score value, no animation, no hardcoded semantic colors.
+ *
+ * Project Spec S0201: aligned into the tile's right-hand column (see
+ * .performance-summary__score above) and spans both of its rows so it reads
+ * as a compact side panel next to the label/value.
  */
 .performance-summary__score-orientation {
-  margin: 0.2rem 0 0;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  margin: 0;
+  display: grid;
+  justify-items: end;
+  gap: 0.2rem;
   color: var(--atlas-color-text-subtle);
   font-size: var(--atlas-text-xs);
   font-weight: 600;
+  text-align: right;
 }
 
-.performance-summary__score-orientation--favorable {
+/*
+ * Project Spec S0201: both monotonic directions are always shown together --
+ * the favorable arrow uses the existing semantic success variable, the
+ * unfavorable arrow the existing semantic danger variable, and each carries
+ * its own "favorable"/"unfavorable" text so direction never depends on color
+ * alone.
+ */
+.performance-summary__score-orientation-arrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.performance-summary__score-orientation-arrow--favorable {
   color: var(--atlas-color-success);
+}
+
+.performance-summary__score-orientation-arrow--unfavorable {
+  color: var(--atlas-color-danger);
+}
+
+.performance-summary__score-orientation-label {
+  color: var(--atlas-color-text-subtle);
 }
 
 .performance-summary__score-orientation--target {

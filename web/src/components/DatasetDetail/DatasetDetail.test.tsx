@@ -550,6 +550,10 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     expect(within(score).getByText("Closer to 1 is better")).toBeInTheDocument();
     expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
     expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
+    // Project Spec S0201: target-based metrics never show the monotonic
+    // favorable/unfavorable arrow pair introduced for higher/lower-is-better
+    // scores.
+    expect(score.querySelectorAll(".performance-summary__score-orientation-arrow")).toHaveLength(0);
   });
 
   it("renders a neutral closer-to-0 message for Calibration Intercept, never a monotonic arrow pair", () => {
@@ -570,6 +574,7 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     expect(within(score).getByText("Closer to 0 is better")).toBeInTheDocument();
     expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
     expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
+    expect(score.querySelectorAll(".performance-summary__score-orientation-arrow")).toHaveLength(0);
   });
 
   it("renders no direction hint for an unknown score id, without throwing, while still showing label and value", () => {
@@ -644,5 +649,87 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
 
     const logLossScore = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
     expect(within(logLossScore).getByText("Lower is better")).toBeInTheDocument();
+  });
+
+  // Project Spec S0201: a monotonic public score always shows both the
+  // favorable and unfavorable direction, each carrying the correct
+  // favorable/unfavorable class and its own visible text -- direction is
+  // never implied by a single arrow or by color alone.
+  it("shows both up and down arrows, correctly classed favorable/unfavorable, for a higher-is-better score (ROC-AUC)", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "roc_auc",
+          visible_scores: [
+            { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.8402", value_source: "canonical", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("ROC-AUC").closest(".performance-summary__score") as HTMLElement;
+    const favorable = score.querySelector(".performance-summary__score-orientation-arrow--favorable")!;
+    const unfavorable = score.querySelector(".performance-summary__score-orientation-arrow--unfavorable")!;
+    expect(favorable).toHaveTextContent("↑");
+    expect(favorable).toHaveTextContent("favorable");
+    expect(unfavorable).toHaveTextContent("↓");
+    expect(unfavorable).toHaveTextContent("unfavorable");
+    expect(within(score).getByText("Higher is better")).toBeInTheDocument();
+  });
+
+  it("shows both up and down arrows, correctly classed favorable/unfavorable, for a lower-is-better score (Brier Score)", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "probability_quality",
+          highlighted_score_id: "brier_score",
+          visible_scores: [
+            { score_id: "brier_score", display_label: "Brier Score", value: "0.1394", value_source: "canonical", order: 0 },
+          ],
+        }}
+      />,
+    );
+
+    const score = screen.getByText("Brier Score").closest(".performance-summary__score") as HTMLElement;
+    const favorable = score.querySelector(".performance-summary__score-orientation-arrow--favorable")!;
+    const unfavorable = score.querySelector(".performance-summary__score-orientation-arrow--unfavorable")!;
+    expect(favorable).toHaveTextContent("↓");
+    expect(favorable).toHaveTextContent("favorable");
+    expect(unfavorable).toHaveTextContent("↑");
+    expect(unfavorable).toHaveTextContent("unfavorable");
+    expect(within(score).getByText("Lower is better")).toBeInTheDocument();
+  });
+
+  // Project Spec S0201: the score collection is a flat single-column stack --
+  // every score is a direct child of .performance-summary__scores in
+  // configured order, never grouped into row-pair wrapper elements.
+  it("renders every visible score as a direct child of the scores list, in configured order, for a single-column stack", () => {
+    const { container } = render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "roc_auc",
+          visible_scores: [
+            { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.84", value_source: "canonical", order: 0 },
+            { score_id: "pr_auc", display_label: "PR-AUC", value: "0.64", value_source: "canonical", order: 1 },
+            { score_id: "gini_coefficient", display_label: "Gini coefficient", value: "0.68", value_source: "canonical", order: 2 },
+          ],
+        }}
+      />,
+    );
+
+    const list = container.querySelector(".performance-summary__scores")!;
+    const children = Array.from(list.children);
+    expect(children).toHaveLength(3);
+    expect(children.every((child) => child.classList.contains("performance-summary__score"))).toBe(true);
+    expect(children.map((child) => child.querySelector("dt")?.childNodes[0]?.textContent)).toEqual([
+      "ROC-AUC",
+      "PR-AUC",
+      "Gini coefficient",
+    ]);
   });
 });

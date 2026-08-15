@@ -7466,3 +7466,203 @@ describe("Performance metric optimization semantics (Project Spec S0200)", () =>
     expect(previewScore.querySelectorAll(".performance-metric-orientation__arrow")).toHaveLength(0);
   });
 });
+
+// Project Spec S0201: a persisted performance_focus must rehydrate with
+// exactly its persisted visible_scores checked -- every other catalog score
+// for that focus must hydrate unchecked, never contaminated by
+// defaultPerformanceFocus's order<3 initial-selection default. Publishing an
+// intentionally reduced score selection must never resurrect a previously
+// default-visible score on rehydration, including across repeated
+// publish/rehydrate cycles.
+describe("Performance focus selection round trip and single-column score presentation (Project Spec S0201)", () => {
+  async function openMetadataCardTab() {
+    await waitFor(() => expect(screen.getByLabelText("Display title")).toHaveValue("Curated churn profile"));
+    fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+  }
+
+  function scoreCheckbox(label: string): HTMLInputElement {
+    return screen.getByRole("checkbox", { name: `Show ${label}` }) as HTMLInputElement;
+  }
+
+  it("rehydrates a persisted focus with exactly one visible score, leaving every other catalog score unchecked", async () => {
+    installFetchMock({
+      publishedSnapshotProfile: {
+        ...publicProfile,
+        performance_focus: {
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "roc_auc",
+          visible_scores: [{ score_id: "roc_auc", display_label: "ROC-AUC", value: "0.84", value_source: "manual", order: 0 }],
+        },
+      } as typeof publicProfile,
+    });
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("overall_discrimination"));
+    expect(scoreCheckbox("ROC-AUC")).toBeChecked();
+    expect(scoreCheckbox("PR-AUC")).not.toBeChecked();
+    expect(scoreCheckbox("Gini coefficient")).not.toBeChecked();
+    expect(scoreCheckbox("KS statistic")).not.toBeChecked();
+  });
+
+  it("rehydrates a persisted focus with exactly two visible scores, leaving the third default-visible catalog score (Gini) unchecked", async () => {
+    installFetchMock({
+      publishedSnapshotProfile: {
+        ...publicProfile,
+        performance_focus: {
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "roc_auc",
+          visible_scores: [
+            { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.84", value_source: "manual", order: 0 },
+            { score_id: "pr_auc", display_label: "PR-AUC", value: "0.64", value_source: "manual", order: 1 },
+          ],
+        },
+      } as typeof publicProfile,
+    });
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("overall_discrimination"));
+    expect(scoreCheckbox("ROC-AUC")).toBeChecked();
+    expect(scoreCheckbox("PR-AUC")).toBeChecked();
+    expect(scoreCheckbox("Gini coefficient")).not.toBeChecked();
+    expect(scoreCheckbox("KS statistic")).not.toBeChecked();
+  });
+
+  it("rehydrates a persisted three-score selection that skips catalog entries in between, leaving every unselected score unchecked", async () => {
+    installFetchMock({
+      publishedSnapshotProfile: {
+        ...publicProfile,
+        performance_focus: {
+          focus_id: "balanced_classification",
+          highlighted_score_id: "balanced_accuracy",
+          visible_scores: [
+            { score_id: "balanced_accuracy", display_label: "Balanced Accuracy", value: "0.79", value_source: "manual", order: 0 },
+            { score_id: "f1_score", display_label: "F1-score", value: "0.71", value_source: "manual", order: 1 },
+            { score_id: "cohens_kappa", display_label: "Cohen's Kappa", value: "0.55", value_source: "manual", order: 2 },
+          ],
+        },
+      } as typeof publicProfile,
+    });
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("balanced_classification"));
+    expect(scoreCheckbox("Balanced Accuracy")).toBeChecked();
+    expect(scoreCheckbox("F1-score")).toBeChecked();
+    expect(scoreCheckbox("Cohen's Kappa")).toBeChecked();
+    expect(scoreCheckbox("MCC")).not.toBeChecked();
+    expect(scoreCheckbox("Accuracy")).not.toBeChecked();
+    expect(scoreCheckbox("Recall")).not.toBeChecked();
+    expect(scoreCheckbox("Specificity")).not.toBeChecked();
+    expect(scoreCheckbox("G-Mean")).not.toBeChecked();
+  });
+
+  it("a new/unconfigured focus switch still uses the current default top-three visible selection", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "overall_discrimination" } });
+
+    expect(scoreCheckbox("ROC-AUC")).toBeChecked();
+    expect(scoreCheckbox("PR-AUC")).toBeChecked();
+    expect(scoreCheckbox("Gini coefficient")).toBeChecked();
+    expect(scoreCheckbox("KS statistic")).not.toBeChecked();
+  });
+
+  it("deselecting the currently highlighted score falls back to another visible score and never publishes an invisible highlighted score", async () => {
+    installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "overall_discrimination" } });
+    expect(screen.getByLabelText("Highlighted score")).toHaveValue("roc_auc");
+
+    fireEvent.click(scoreCheckbox("ROC-AUC"));
+
+    expect(scoreCheckbox("ROC-AUC")).not.toBeChecked();
+    expect(screen.getByLabelText("Highlighted score")).toHaveValue("pr_auc");
+    expect(scoreCheckbox("PR-AUC")).toBeChecked();
+  });
+
+  it("does not resurrect an unselected default score (Gini) on Publish changes, and keeps it absent across a second Publish changes cycle", async () => {
+    const fetchMock = installFetchMock();
+    renderAdminPage();
+    await openMetadataCardTab();
+
+    fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "overall_discrimination" } });
+    expect(scoreCheckbox("Gini coefficient")).toBeChecked();
+    fireEvent.click(scoreCheckbox("Gini coefficient"));
+    expect(scoreCheckbox("Gini coefficient")).not.toBeChecked();
+    expect(scoreCheckbox("ROC-AUC")).toBeChecked();
+    expect(scoreCheckbox("PR-AUC")).toBeChecked();
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    const publishButton = within(toolbar).getByRole("button", { name: "Publish changes" });
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(publishButton).toBeDisabled());
+
+    function publishCalls() {
+      return fetchMock.mock.calls.filter(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+    }
+
+    expect(publishCalls()).toHaveLength(1);
+    const firstBody = JSON.parse(String((publishCalls()[0][1] as RequestInit).body)) as {
+      performance_focus?: { visible_scores?: Array<{ score_id: string }> };
+    };
+    expect(firstBody.performance_focus?.visible_scores?.map((score) => score.score_id)).toEqual(["roc_auc", "pr_auc"]);
+
+    await waitFor(() => {
+      expect(scoreCheckbox("ROC-AUC")).toBeChecked();
+      expect(scoreCheckbox("PR-AUC")).toBeChecked();
+      expect(scoreCheckbox("Gini coefficient")).not.toBeChecked();
+    });
+
+    fireEvent.change(screen.getByLabelText("Home card description"), { target: { value: "Updated home card copy" } });
+    expect(publishButton).toBeEnabled();
+    fireEvent.click(publishButton);
+    await waitFor(() => expect(publishButton).toBeDisabled());
+
+    expect(publishCalls()).toHaveLength(2);
+    const secondBody = JSON.parse(String((publishCalls()[1][1] as RequestInit).body)) as {
+      performance_focus?: { visible_scores?: Array<{ score_id: string }> };
+    };
+    expect(secondBody.performance_focus?.visible_scores?.map((score) => score.score_id)).toEqual(["roc_auc", "pr_auc"]);
+    expect(scoreCheckbox("ROC-AUC")).toBeChecked();
+    expect(scoreCheckbox("PR-AUC")).toBeChecked();
+    expect(scoreCheckbox("Gini coefficient")).not.toBeChecked();
+  });
+
+  it("Live Preview renders only the currently committed visible scores, single-column", async () => {
+    installFetchMock({
+      publishedSnapshotProfile: {
+        ...publicProfile,
+        performance_focus: {
+          focus_id: "overall_discrimination",
+          highlighted_score_id: "roc_auc",
+          visible_scores: [
+            { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.84", value_source: "manual", order: 0 },
+            { score_id: "pr_auc", display_label: "PR-AUC", value: "0.64", value_source: "manual", order: 1 },
+          ],
+        },
+      } as typeof publicProfile,
+    });
+    renderAdminPage();
+    await openMetadataCardTab();
+    await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("overall_discrimination"));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+    const scoreTiles = document.querySelectorAll(".performance-summary__score");
+    expect(scoreTiles).toHaveLength(2);
+    expect(within(scoreTiles[0] as HTMLElement).getByText("ROC-AUC")).toBeInTheDocument();
+    expect(within(scoreTiles[1] as HTMLElement).getByText("PR-AUC")).toBeInTheDocument();
+    expect(screen.queryByText("Gini coefficient")).not.toBeInTheDocument();
+    expect(screen.queryByText("KS statistic")).not.toBeInTheDocument();
+  });
+});

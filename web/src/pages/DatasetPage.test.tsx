@@ -642,7 +642,12 @@ describe("DatasetPage synthetic-slug rendering", () => {
 
     // Project Spec S0117: metrics/context only fetch once the primary route
     // is ready -- await the first auxiliary-derived assertion.
-    expect(await screen.findByText("Positive-class detection")).toBeInTheDocument();
+    // Project Spec S0204: the same "Positive-class detection" label now
+    // renders twice -- once as the Dataset Detail header's Performance
+    // focus badge, once as the Performance Summary subtitle -- both sourced
+    // from the same shared focus label authority.
+    expect((await screen.findAllByText("Positive-class detection")).length).toBeGreaterThanOrEqual(1);
+    expect(container.querySelector(".performance-summary__focus")?.textContent).toBe("Positive-class detection");
     expect(screen.getByText("57.4%")).toBeInTheDocument();
     expect(screen.queryByText("AUC ROC")).not.toBeInTheDocument();
     const scoreTiles = Array.from(container.querySelectorAll(".performance-summary__score"));
@@ -660,7 +665,67 @@ describe("DatasetPage synthetic-slug rendering", () => {
       expect(tile.querySelector(".performance-summary__score-orientation-arrow--unfavorable")).toHaveTextContent("↓");
     }
   });
+});
 
+// Project Spec S0204: proves context.performance_focus.focus_id reaches the
+// public Dataset Detail header as the Performance focus badge, alongside
+// the existing problem-type badge, without altering score rendering.
+describe("DatasetPage Performance focus badge (Project Spec S0204)", () => {
+  it("renders both the problem-type and Performance focus badges from context", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      problem_type: "binary_classification",
+      performance_focus: {
+        focus_id: "overall_discrimination",
+        highlighted_score_id: "roc_auc",
+        visible_scores: [
+          { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.87", value_source: "canonical", order: 0 },
+        ],
+      },
+    });
+
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
+    const headerBadges = document.querySelectorAll(".dataset-detail-header__badges .atlas-badge");
+    expect(Array.from(headerBadges).map((badge) => badge.textContent)).toEqual([
+      "Binary Classification",
+      "Overall discrimination",
+    ]);
+  });
+
+  it("preserves the current single-badge header when context.performance_focus is missing", async () => {
+    installDatasetPageFetchMock({ ...contextPayload, problem_type: "binary_classification", performance_focus: null });
+
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
+    expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(1);
+  });
+
+  it("does not change score rendering when a Performance focus badge is added", async () => {
+    installDatasetPageFetchMock({
+      ...contextPayload,
+      performance_focus: {
+        focus_id: "positive_class_detection",
+        highlighted_score_id: "recall",
+        visible_scores: [
+          { score_id: "recall", display_label: "Recall", value: "57.4%", value_source: "manual", order: 0 },
+        ],
+      },
+    });
+
+    const { container } = renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("57.4%")).toBeInTheDocument();
+    expect(container.querySelectorAll(".performance-summary__score")).toHaveLength(1);
+  });
+});
+
+describe("DatasetPage Overview tabs (Project Spec S0117)", () => {
   it("switches from Overview to Inference and renders the split inference layout", async () => {
     installDatasetPageFetchMock();
 

@@ -541,6 +541,7 @@ export default function DatasetPage() {
           inferenceContent={inferenceContent}
           metadata={metadataItems}
           performanceContent={performanceContent}
+          performanceFocusId={context?.performance_focus?.focus_id}
           problemSummaryBody={problemSummaryText}
           problemSummaryTitle={problemSummaryTitle}
           targetDistributionContent={targetDistributionContent}

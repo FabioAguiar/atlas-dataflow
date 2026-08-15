@@ -3223,6 +3223,85 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByText(/derived from the Atlas dataset and model contract/i)).not.toBeInTheDocument();
   });
 
+  // Project Spec S0204: the same draft Performance focus selection projects
+  // into all three preview surfaces (Metadata & Card Home card preview,
+  // Live Preview Home Card, Live Preview Dataset Detail header) without
+  // requiring Publish changes, alongside the unchanged problem-type badge.
+  describe("Performance focus badge across preview surfaces (Project Spec S0204)", () => {
+    it("renders the selected Performance focus badge in the Metadata & Card Home card preview, alongside the problem-type badge", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
+      expect(within(previewCard).getByText("Binary Classification")).toBeInTheDocument();
+      expect(within(previewCard).getByText("Positive-class detection")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
+      expect(within(previewCard).getByText("Balanced classification")).toBeInTheDocument();
+      expect(within(previewCard).queryByText("Positive-class detection")).not.toBeInTheDocument();
+      expect(within(previewCard).getByText("Binary Classification")).toBeInTheDocument();
+    });
+
+    it("renders the selected Performance focus badge in Live Preview's Home Card", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+      fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
+
+      const homeCardPanel = screen.getByRole("article", { name: "Home Card preview" });
+      expect(within(homeCardPanel).getByText("Balanced classification")).toBeInTheDocument();
+      expect(within(homeCardPanel).getByText("Binary Classification")).toBeInTheDocument();
+    });
+
+    it("renders the selected Performance focus badge in Live Preview's Dataset Detail header", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+      fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "balanced_classification" } });
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      expect(screen.getByRole("tab", { name: "Dataset Detail", selected: true })).toBeInTheDocument();
+
+      const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
+      expect(within(headerBadges).getByText("Balanced classification")).toBeInTheDocument();
+    });
+
+    it("updates all three preview surfaces immediately when Performance focus changes, without requiring Publish changes", async () => {
+      const fetchMock = installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "probability_quality" } });
+
+      const metadataPreviewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
+      expect(within(metadataPreviewCard).getByText("Probability quality")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
+      expect(within(screen.getByRole("article", { name: "Home Card preview" })).getByText("Probability quality")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Dataset Detail" }));
+      const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
+      expect(within(headerBadges).getByText("Probability quality")).toBeInTheDocument();
+
+      expect(
+        fetchMock.mock.calls.some(
+          (call) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        ),
+      ).toBe(false);
+    });
+  });
+
   // Project Spec S0120: Dataset Detail Live Preview now renders the exact
   // shared DatasetDetailSurface (S0119) used by /dataset/:slug -- one
   // instance, its own real three-tab system (Overview/Inference/

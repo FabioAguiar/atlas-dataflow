@@ -72,6 +72,30 @@ export const PERFORMANCE_FOCUS_CATALOG = {
 
 export type PerformanceFocusId = keyof typeof PERFORMANCE_FOCUS_CATALOG;
 
+// Project Spec S0204: the single frontend authority for Performance focus
+// human labels -- consumed by DatasetAdminPage.tsx's focus selector,
+// PerformanceSummary.tsx, DatasetCard.tsx, and DatasetDetailHeader.tsx, so
+// none of them may declare a competing local focus-label map.
+const PERFORMANCE_FOCUS_LABELS: Readonly<Record<PerformanceFocusId, string>> = {
+  overall_discrimination: "Overall discrimination",
+  positive_class_detection: "Positive-class detection",
+  balanced_classification: "Balanced classification",
+  probability_quality: "Probability quality",
+  operational_decision: "Operational decision",
+};
+
+/**
+ * Looks up the deterministic human label for a known Performance focus id.
+ * Returns undefined for any id outside the closed catalog above -- an
+ * unknown/missing focus id must never receive an invented label.
+ */
+export function getPerformanceFocusLabel(focusId: string | null | undefined): string | undefined {
+  if (!focusId) {
+    return undefined;
+  }
+  return (PERFORMANCE_FOCUS_LABELS as Record<string, string>)[focusId];
+}
+
 const HIGHER_IS_BETTER_IDS: readonly string[] = [
   "roc_auc",
   "pr_auc",

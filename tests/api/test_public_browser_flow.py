@@ -69,6 +69,7 @@ _PUBLIC_HOME_LISTING_KEYS = {
     "home_card_media_ref",
     "short_description",
     "theme_preset",
+    "performance_focus_id",
 }
 
 
@@ -161,7 +162,17 @@ def test_public_listing_shape_matches_frontend_home_route_contract():
         assert isinstance(item["tags"], list)
         media_ref = item["home_card_media_ref"]
         assert media_ref is None or media_ref.startswith("/media/home-cards/")
+        assert item["performance_focus_id"] is None or isinstance(item["performance_focus_id"], str)
+        assert "highlighted_score_id" not in item
+        assert "visible_scores" not in item
     _assert_no_public_exposure(response)
+
+
+def test_public_listing_projects_published_performance_focus_id_for_telco():
+    datasets = list_datasets(registry_path=_REAL_REGISTRY_PATH)
+    telco = next((d for d in datasets if d.dataset_slug == "telco-customer-churn"), None)
+    assert telco is not None
+    assert telco.performance_focus_id == "overall_discrimination"
 
 
 def test_public_dataset_home_route_dependencies_are_frontend_compatible(tmp_path, monkeypatch):

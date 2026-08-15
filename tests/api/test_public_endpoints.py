@@ -70,6 +70,7 @@ _PUBLIC_LISTING_KEYS = {
     "home_card_media_ref",
     "short_description",
     "theme_preset",
+    "performance_focus_id",
 }
 
 _EMPTY_PUBLIC_CONTEXT_OVERLAY = {
@@ -249,6 +250,111 @@ def test_admin_dataset_listing_falls_back_to_registry_title_without_snapshot_tit
         assert len(result) == 1
         assert result[0].dataset_slug == "example-dataset"
         assert result[0].display_title == "Example Dataset"
+
+
+# ---------------------------------------------------------------------------
+# list_datasets: performance_focus_id projection (Project Spec S0204)
+# ---------------------------------------------------------------------------
+
+def _write_profile_snapshot_performance_focus(repo_root: Path, performance_focus: object) -> None:
+    snapshots_root = repo_root / "registry" / "profile-snapshots"
+    snapshots_root.mkdir(parents=True, exist_ok=True)
+    profile: dict = {}
+    if performance_focus is not None:
+        profile["performance_focus"] = performance_focus
+    snapshots_root.joinpath("example-dataset.json").write_text(
+        json.dumps({
+            "schema_version": "1.0.0",
+            "dataset_slug": "example-dataset",
+            "published_at": "2026-07-12T00:00:00Z",
+            "active_release_at_publish_time": "release-20260616-001",
+            "profile": profile,
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_list_datasets_performance_focus_id_none_without_published_snapshot():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _write_repo_registry(Path(tmp), _BASE_REGISTRY)
+        result = list_datasets(registry_path=path)
+        assert result[0].performance_focus_id is None
+
+
+def test_list_datasets_performance_focus_id_none_with_snapshot_but_no_focus():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo_root = Path(tmp)
+        path = _write_repo_registry(repo_root, _BASE_REGISTRY)
+        _write_profile_snapshot_performance_focus(repo_root, None)
+
+        result = list_datasets(registry_path=path)
+
+        assert result[0].performance_focus_id is None
+
+
+def test_list_datasets_projects_published_performance_focus_id():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo_root = Path(tmp)
+        path = _write_repo_registry(repo_root, _BASE_REGISTRY)
+        _write_profile_snapshot_performance_focus(
+            repo_root,
+            {
+                "focus_id": "overall_discrimination",
+                "highlighted_score_id": "roc_auc",
+                "visible_scores": [
+                    {"score_id": "roc_auc", "display_label": "ROC-AUC", "value": "0.9", "value_source": "manual", "order": 0},
+                ],
+            },
+        )
+
+        result = list_datasets(registry_path=path)
+
+        assert result[0].performance_focus_id == "overall_discrimination"
+
+
+def test_list_datasets_performance_focus_id_invalid_shapes_yield_none():
+    invalid_performance_focus_values = [
+        {},
+        {"not_focus_id": "x"},
+        {"focus_id": ""},
+        {"focus_id": 42},
+        {"focus_id": []},
+        {"focus_id": None},
+        "not_an_object",
+        42,
+        [],
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        repo_root = Path(tmp)
+        path = _write_repo_registry(repo_root, _BASE_REGISTRY)
+        for invalid_performance_focus in invalid_performance_focus_values:
+            _write_profile_snapshot_performance_focus(repo_root, invalid_performance_focus)
+            result = list_datasets(registry_path=path)
+            assert result[0].performance_focus_id is None
+
+
+def test_list_datasets_performance_focus_id_does_not_expose_highlighted_score_id_or_visible_scores():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo_root = Path(tmp)
+        path = _write_repo_registry(repo_root, _BASE_REGISTRY)
+        _write_profile_snapshot_performance_focus(
+            repo_root,
+            {
+                "focus_id": "positive_class_detection",
+                "highlighted_score_id": "recall",
+                "visible_scores": [
+                    {"score_id": "recall", "display_label": "Recall", "value": "0.8", "value_source": "manual", "order": 0},
+                ],
+            },
+        )
+
+        result = list_datasets(registry_path=path)
+        as_dict = result[0]._asdict()
+
+        assert as_dict["performance_focus_id"] == "positive_class_detection"
+        assert "highlighted_score_id" not in as_dict
+        assert "visible_scores" not in as_dict
+        assert set(as_dict.keys()) == _PUBLIC_LISTING_KEYS
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import {
   resolveDatasetThemePreset,
   type DatasetIconName,
 } from "../../lib/datasetPresentation";
+import { getPerformanceFocusLabel } from "../../lib/performanceMetricMetadata";
 
 type DatasetCardProps = {
   slug: string;
@@ -18,6 +19,7 @@ type DatasetCardProps = {
   domain?: string;
   tags?: string[];
   problemType?: string;
+  performanceFocusId?: string | null;
   iconOverride?: DatasetIconName;
   mediaRef?: string | null;
   themePreset?: string | null;
@@ -89,12 +91,17 @@ export default function DatasetCard({
   domain,
   tags = [],
   problemType,
+  performanceFocusId,
   iconOverride,
   mediaRef,
   themePreset,
 }: DatasetCardProps) {
   const icon = iconOverride ?? getDatasetIcon(domain, tags);
   const analysisLabel = getProblemTypeLabel(problemType);
+  // Project Spec S0204: an unknown/missing focus id must never render an
+  // invented second badge -- getPerformanceFocusLabel returns undefined for
+  // both, and this component never falls back to the raw focus id.
+  const performanceFocusLabel = getPerformanceFocusLabel(performanceFocusId);
   const safeMediaRef = isSafeHomeCardMediaReference(mediaRef) ? mediaRef : null;
   const description = presentHomeCardDescription(summary);
   const resolvedTheme = resolveDatasetThemePreset(themePreset);
@@ -119,7 +126,12 @@ export default function DatasetCard({
       )}
       <div className="dataset-card__body">
         <h3 className="dataset-card__title">{title}</h3>
-        <Badge className="dataset-card__badge">{analysisLabel}</Badge>
+        <div className="dataset-card__badges">
+          <Badge className="dataset-card__badge">{analysisLabel}</Badge>
+          {performanceFocusLabel && (
+            <Badge className="dataset-card__badge dataset-card__badge--focus">{performanceFocusLabel}</Badge>
+          )}
+        </div>
         {description && <p className="dataset-card__description">{description}</p>}
       </div>
       <span className="dataset-card__action" aria-hidden="true">

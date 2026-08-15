@@ -22,7 +22,10 @@ import FeatureImportance from "./FeatureImportance";
 import TargetDistribution from "./TargetDistribution";
 import { presentDatasetDateOnly, safePublicSourceUrl } from "../../lib/datasetPresentation";
 
-function renderHeader(metadata: DatasetDetailMetadataItem[]) {
+function renderHeader(
+  metadata: DatasetDetailMetadataItem[],
+  overrides: Partial<ComponentProps<typeof DatasetDetailHeader>> = {},
+) {
   return render(
     <MemoryRouter>
       <DatasetDetailHeader
@@ -30,6 +33,7 @@ function renderHeader(metadata: DatasetDetailMetadataItem[]) {
         datasetTitle="Synthetic Demo Dataset"
         metadata={metadata}
         subtitle="Synthetic public-safe detail subtitle."
+        {...overrides}
       />
     </MemoryRouter>,
   );
@@ -76,6 +80,59 @@ describe("DatasetDetailHeader metadata rendering (M39-03)", () => {
     expect(screen.getByRole("link", { name: "Example Org" })).toHaveAttribute("href", "https://example.org/data");
     expect(screen.getByRole("link", { name: "Example Org" })).toHaveAttribute("target", "_blank");
     expect(screen.getByRole("link", { name: "Example Org" })).toHaveAttribute("rel", "noreferrer noopener");
+  });
+});
+
+// Project Spec S0204: the Performance focus badge sits beside the existing
+// problem-type badge as one responsive badge group.
+describe("DatasetDetailHeader Performance focus badge (Project Spec S0204)", () => {
+  it("renders both the problem-type and Performance focus badges when the focus id is known", () => {
+    renderHeader([], { performanceFocusId: "overall_discrimination" });
+
+    expect(screen.getByText("Classificacao binaria")).toBeInTheDocument();
+    expect(screen.getByText("Overall discrimination")).toBeInTheDocument();
+    const badgeLabel = screen.getByText("Overall discrimination");
+    expect(badgeLabel.closest(".atlas-badge")).toBeInTheDocument();
+  });
+
+  it("uses the shared focus label authority, not an invented label from the raw id", () => {
+    renderHeader([], { performanceFocusId: "positive_class_detection" });
+    expect(screen.getByText("Positive-class detection")).toBeInTheDocument();
+    expect(screen.queryByText("positive_class_detection")).not.toBeInTheDocument();
+  });
+
+  it("omits the second badge for an unknown focus id, leaving the problem-type badge unchanged", () => {
+    renderHeader([], { performanceFocusId: "not_a_real_focus" });
+    expect(screen.getByText("Classificacao binaria")).toBeInTheDocument();
+    expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(1);
+  });
+
+  it("omits the second badge when the focus id is missing", () => {
+    renderHeader([]);
+    expect(screen.getByText("Classificacao binaria")).toBeInTheDocument();
+    expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(1);
+  });
+
+  it("renders the badge group as a responsive container beside the title", () => {
+    renderHeader([], { performanceFocusId: "overall_discrimination" });
+    const badgeGroup = document.querySelector(".dataset-detail-header__badges");
+    expect(badgeGroup).toBeInTheDocument();
+    expect(badgeGroup?.closest(".dataset-detail-header__heading")).toBeInTheDocument();
+    expect(within(badgeGroup as HTMLElement).getAllByText(/Classificacao binaria|Overall discrimination/)).toHaveLength(2);
+  });
+
+  it("renders only the problem-type badge when analysisType is absent but focus is known (no invented problem type)", () => {
+    render(
+      <MemoryRouter>
+        <DatasetDetailHeader
+          datasetTitle="Synthetic Demo Dataset"
+          metadata={[]}
+          performanceFocusId="overall_discrimination"
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Overall discrimination")).toBeInTheDocument();
+    expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(1);
   });
 });
 
@@ -130,6 +187,34 @@ describe("PerformanceSummary curated metric highlight (M39-03)", () => {
     expect(aucScore).not.toBeNull();
     expect(within(precisionScore as HTMLElement).getByText("Highlighted")).toBeInTheDocument();
     expect(aucScore).not.toHaveTextContent("Highlighted");
+  });
+});
+
+// Project Spec S0204: PerformanceSummary's focus subtitle resolves through
+// the same shared performanceMetricMetadata authority DatasetCard and
+// DatasetDetailHeader use -- it no longer owns a local focus-label map.
+describe("PerformanceSummary focus subtitle shared label authority (Project Spec S0204)", () => {
+  const publishedFocus = {
+    focus_id: "overall_discrimination" as const,
+    highlighted_score_id: "roc_auc",
+    visible_scores: [
+      { score_id: "roc_auc", display_label: "ROC-AUC", value: "0.84", value_source: "manual" as const, order: 0 },
+    ],
+  };
+
+  it("renders the shared label for a known published focus", () => {
+    render(<PerformanceSummary metrics={{}} performanceFocus={publishedFocus} />);
+    expect(screen.getByText("Overall discrimination")).toBeInTheDocument();
+  });
+
+  it("omits the focus subtitle for an unknown focus id rather than inventing a label", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={{ ...publishedFocus, focus_id: "not_a_real_focus" as unknown as typeof publishedFocus.focus_id }}
+      />,
+    );
+    expect(document.querySelector(".performance-summary__focus")).not.toBeInTheDocument();
   });
 });
 
@@ -320,6 +405,21 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
     expect(root).toBeInTheDocument();
     expect(root).toHaveAttribute("data-theme-preset", "ocean-blue");
     expect((root as HTMLElement).style.getPropertyValue("--dataset-theme-accent")).toBe("#2563eb");
+  });
+
+  // Project Spec S0204: DatasetDetailSurface owns no focus label map itself
+  // -- it only forwards performanceFocusId to DatasetDetailHeader, which
+  // resolves the label through the shared authority.
+  it("forwards performanceFocusId to the header, rendering both badges", () => {
+    renderSurface({ performanceFocusId: "overall_discrimination" });
+    expect(screen.getByText("Binary Classification")).toBeInTheDocument();
+    expect(screen.getByText("Overall discrimination")).toBeInTheDocument();
+  });
+
+  it("renders only the problem-type badge when performanceFocusId is absent", () => {
+    renderSurface();
+    expect(screen.getByText("Binary Classification")).toBeInTheDocument();
+    expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(1);
   });
 
   it("renders exactly three tabs labeled Overview, Inference and Documentation", () => {

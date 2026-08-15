@@ -1,6 +1,10 @@
 import { Badge, Card } from "../ui";
 import { normalizeEvaluation, type NormalizedMetricKey } from "../../lib/metricsNormalization";
-import { getPerformanceMetricMetadata, type OptimizationSemantics } from "../../lib/performanceMetricMetadata";
+import {
+  getPerformanceFocusLabel,
+  getPerformanceMetricMetadata,
+  type OptimizationSemantics,
+} from "../../lib/performanceMetricMetadata";
 
 type MetricsData = Record<string, unknown>;
 
@@ -30,14 +34,6 @@ const SCORE_LABELS: Record<NormalizedMetricKey, string> = {
   recall: "Recall",
   accuracy: "Accuracy",
   log_loss: "Log Loss",
-};
-
-const FOCUS_LABELS: Record<PerformanceFocus["focus_id"], string> = {
-  overall_discrimination: "Overall discrimination",
-  positive_class_detection: "Positive-class detection",
-  balanced_classification: "Balanced classification",
-  probability_quality: "Probability quality",
-  operational_decision: "Operational decision",
 };
 
 function formatScore(value: number): string {
@@ -128,6 +124,10 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
     .sort((left, right) => left.order - right.order || left.score_id.localeCompare(right.score_id));
   const hasPublishedFocus = Boolean(performanceFocus && publishedScores?.length);
   const hasAnyScore = evaluation.order.length > 0;
+  // Project Spec S0204: the shared focus label authority is the single
+  // source for this subtitle -- an unknown focus id never invents a label
+  // from the raw id, it simply omits the subtitle.
+  const focusLabel = performanceFocus ? getPerformanceFocusLabel(performanceFocus.focus_id) : undefined;
 
   if (!hasPublishedFocus && !hasAnyScore) {
     return null;
@@ -138,8 +138,8 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
   return (
     <Card className="performance-summary">
       <h3>Performance Summary</h3>
-      {hasPublishedFocus && performanceFocus && (
-        <p className="performance-summary__focus">{FOCUS_LABELS[performanceFocus.focus_id]}</p>
+      {hasPublishedFocus && focusLabel && (
+        <p className="performance-summary__focus">{focusLabel}</p>
       )}
       <dl className="performance-summary__scores">
         {hasPublishedFocus && performanceFocus ? publishedScores!.map((score) => {

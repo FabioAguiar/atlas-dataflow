@@ -37,6 +37,7 @@ type DatasetListingFixture = {
   home_card_media_ref?: string | null;
   short_description?: string | null;
   theme_preset?: string | null;
+  performance_focus_id?: string | null;
 };
 
 // Mirrors the real GET /datasets response envelope confirmed at
@@ -381,5 +382,95 @@ describe("HomePage Telco-like ready dataset listing (S0017)", () => {
 
     expect(await screen.findByText("Explicitly published Home card description")).toBeInTheDocument();
     expect(screen.queryByText(legacyFallback)).not.toBeInTheDocument();
+  });
+});
+
+// Project Spec S0204: public Home Card badge projection for
+// performance_focus_id, sourced only from the /datasets listing (never
+// derived from tags or problem_type).
+describe("HomePage Performance focus badge (Project Spec S0204)", () => {
+  it("renders both the problem-type and Performance focus badges when both are known", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "focused-dataset",
+        title: "Focused Dataset",
+        summary: "Dataset with both problem_type and performance_focus_id.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "binary_classification",
+        performance_focus_id: "overall_discrimination",
+      },
+    ]);
+
+    renderHomePage();
+
+    expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
+    expect(screen.getByText("Overall discrimination")).toBeInTheDocument();
+  });
+
+  it("preserves the original single problem-type badge when performance_focus_id is missing", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "no-focus-dataset",
+        title: "No Focus Dataset",
+        summary: "Dataset with problem_type but no performance_focus_id.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "binary_classification",
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("No Focus Dataset");
+
+    expect(screen.getByText("Binary Classification")).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-card__badges .atlas-badge")).toHaveLength(1);
+  });
+
+  it("renders no invented second badge for an unknown performance_focus_id", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "unknown-focus-dataset",
+        title: "Unknown Focus Dataset",
+        summary: "Dataset with an unrecognized performance_focus_id.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "binary_classification",
+        performance_focus_id: "not_a_real_focus",
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Unknown Focus Dataset");
+
+    expect(screen.getByText("Binary Classification")).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-card__badges .atlas-badge")).toHaveLength(1);
+  });
+
+  it("leaves other Home Card content unchanged alongside the new badge", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "focused-dataset-content",
+        title: "Focused Dataset Content",
+        summary: "Regression-proof summary text.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "binary_classification",
+        performance_focus_id: "overall_discrimination",
+      },
+    ]);
+
+    renderHomePage();
+
+    expect(await screen.findByText("Focused Dataset Content")).toBeInTheDocument();
+    expect(screen.getByText("Regression-proof summary text.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Explore dataset/ })).toHaveAttribute(
+      "href",
+      "/dataset/focused-dataset-content",
+    );
   });
 });

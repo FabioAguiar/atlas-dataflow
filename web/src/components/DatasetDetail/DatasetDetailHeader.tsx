@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Badge } from "../ui";
+import { getPerformanceFocusLabel } from "../../lib/performanceMetricMetadata";
 
 export type DatasetDetailMetadataItem = {
   label: "Source" | "Instances" | "Features" | "Target" | "Release";
@@ -12,6 +13,7 @@ type DatasetDetailHeaderProps = {
   datasetTitle: string;
   subtitle?: string;
   analysisType?: string;
+  performanceFocusId?: string | null;
   metadata: DatasetDetailMetadataItem[];
 };
 
@@ -19,8 +21,15 @@ export default function DatasetDetailHeader({
   datasetTitle,
   subtitle,
   analysisType,
+  performanceFocusId,
   metadata,
 }: DatasetDetailHeaderProps) {
+  // Project Spec S0204: an unknown/missing focus id must never render an
+  // empty or invented badge -- getPerformanceFocusLabel returns undefined
+  // for both.
+  const performanceFocusLabel = getPerformanceFocusLabel(performanceFocusId);
+  const hasBadges = Boolean(analysisType) || Boolean(performanceFocusLabel);
+
   return (
     <header className="dataset-detail-header">
       <nav className="dataset-detail-header__breadcrumb" aria-label="Breadcrumb">
@@ -31,7 +40,14 @@ export default function DatasetDetailHeader({
 
       <div className="dataset-detail-header__heading">
         <h1>{datasetTitle}</h1>
-        {analysisType && <Badge>{analysisType}</Badge>}
+        {hasBadges && (
+          <div className="dataset-detail-header__badges">
+            {analysisType && <Badge>{analysisType}</Badge>}
+            {performanceFocusLabel && (
+              <Badge className="dataset-detail-header__badge--focus">{performanceFocusLabel}</Badge>
+            )}
+          </div>
+        )}
       </div>
 
       {subtitle && <p className="dataset-detail-header__subtitle">{subtitle}</p>}

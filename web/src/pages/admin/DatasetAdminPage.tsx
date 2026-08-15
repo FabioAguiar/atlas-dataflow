@@ -61,6 +61,7 @@ import {
 } from "../../lib/datasetPresentation";
 import {
   PERFORMANCE_FOCUS_CATALOG,
+  getPerformanceFocusLabel,
   getPerformanceMetricMetadata,
 } from "../../lib/performanceMetricMetadata";
 
@@ -232,13 +233,12 @@ type PerformanceFocusDraft = {
 // Admin can never drift into a competing local catalog.
 const PERFORMANCE_SCORE_CATALOG = PERFORMANCE_FOCUS_CATALOG;
 
-const PERFORMANCE_FOCUS_OPTIONS: Array<{ value: PerformanceFocusId; label: string }> = [
-  { value: "overall_discrimination", label: "Overall discrimination" },
-  { value: "positive_class_detection", label: "Positive-class detection" },
-  { value: "balanced_classification", label: "Balanced classification" },
-  { value: "probability_quality", label: "Probability quality" },
-  { value: "operational_decision", label: "Operational decision" },
-];
+// Project Spec S0204: labels now come from the shared frontend focus-label
+// authority (lib/performanceMetricMetadata.ts) instead of a competing local
+// literal -- the selectable focus ids themselves are unchanged.
+const PERFORMANCE_FOCUS_OPTIONS: Array<{ value: PerformanceFocusId; label: string }> = (
+  Object.keys(PERFORMANCE_SCORE_CATALOG) as PerformanceFocusId[]
+).map((value) => ({ value, label: getPerformanceFocusLabel(value) ?? value }));
 
 function catalogPerformanceScores(focus_id: PerformanceFocusId): PerformanceScoreDraft[] {
   return PERFORMANCE_SCORE_CATALOG[focus_id].map(([score_id, display_label], order) => ({
@@ -4345,6 +4345,7 @@ function DatasetDetailLivePreview({
       inferenceContent={inferenceContent}
       metadata={preview.metadata}
       performanceContent={performanceContent}
+      performanceFocusId={preview.performanceFocusId}
       problemSummaryBody={preview.problemSummaryBody}
       problemSummaryTitle={preview.problemSummaryTitle}
       targetDistributionContent={targetDistributionContent}

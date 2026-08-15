@@ -83,6 +83,10 @@ type PreviewDraftForm = {
   canonical_name_fallback: boolean;
   home_card_icon: "" | "telecom" | "bank" | "generic";
   short_description: string;
+  // Project Spec S0204: the draft's current Performance focus selection --
+  // only focus_id participates in Live Preview projection here; scores and
+  // the highlighted score id remain owned by projectPerformanceFocusPreview.
+  performance_focus: { focus_id: PerformanceFocus["focus_id"] };
 };
 
 type PreviewPerformanceFocusDraft = {
@@ -99,6 +103,7 @@ export type HomeCardPreviewProps = {
   tags?: string[];
   iconOverride?: DatasetIconName;
   problemType?: string;
+  performanceFocusId?: string | null;
 };
 
 export type DatasetDetailPreview = {
@@ -108,6 +113,7 @@ export type DatasetDetailPreview = {
   metadata: DatasetDetailMetadataItem[];
   problemSummaryTitle: string;
   problemSummaryBody: string | null;
+  performanceFocusId?: string | null;
 };
 
 function contractFields(contract: PreviewContract | null): PreviewContractField[] {
@@ -140,7 +146,10 @@ function nonBlank(value: string | null | undefined): string | null {
  */
 export function projectHomeCardPreview(
   dataset: PreviewDataset | undefined,
-  form: Pick<PreviewDraftForm, "display_title" | "display_subtitle" | "short_description" | "home_card_icon">,
+  form: Pick<
+    PreviewDraftForm,
+    "display_title" | "display_subtitle" | "short_description" | "home_card_icon" | "performance_focus"
+  >,
   context: PreviewContext | null,
 ): HomeCardPreviewProps {
   const title = form.display_title.trim() || dataset?.title || dataset?.dataset_slug || "";
@@ -154,6 +163,7 @@ export function projectHomeCardPreview(
     tags: dataset?.tags ?? [],
     iconOverride: form.home_card_icon || undefined,
     problemType: context?.problem_type,
+    performanceFocusId: form.performance_focus.focus_id,
   };
 }
 
@@ -183,6 +193,7 @@ export function projectDatasetDetailPreview(
     | "source_url"
     | "release_date_label"
     | "date_format"
+    | "performance_focus"
   >,
   context: PreviewContext | null,
   contract: PreviewContract | null,
@@ -238,6 +249,7 @@ export function projectDatasetDetailPreview(
     metadata,
     problemSummaryTitle,
     problemSummaryBody,
+    performanceFocusId: form.performance_focus.focus_id,
   };
 }
 

@@ -73,6 +73,7 @@ class ListedDataset(NamedTuple):
     home_card_media_ref: str | None = None
     short_description: str | None = None
     theme_preset: str | None = None
+    performance_focus_id: str | None = None
 
 
 class AdminListedDataset(NamedTuple):
@@ -101,6 +102,7 @@ def _snapshot_overlay_fields(dataset_slug: str, repo_root: Path) -> dict:
         "home_card_media_ref": None,
         "short_description": None,
         "theme_preset": None,
+        "performance_focus_id": None,
     }
 
     try:
@@ -115,6 +117,7 @@ def _snapshot_overlay_fields(dataset_slug: str, repo_root: Path) -> dict:
     display = profile.get("display")
     home_card = profile.get("home_card")
     theme = profile.get("theme")
+    performance_focus = profile.get("performance_focus")
 
     return {
         "display_title": display.get("title") if isinstance(display, dict) else None,
@@ -125,6 +128,9 @@ def _snapshot_overlay_fields(dataset_slug: str, repo_root: Path) -> dict:
         ),
         "short_description": home_card.get("short_description") if isinstance(home_card, dict) else None,
         "theme_preset": theme.get("preset") if isinstance(theme, dict) else None,
+        "performance_focus_id": _safe_performance_focus_id(
+            performance_focus.get("focus_id") if isinstance(performance_focus, dict) else None
+        ),
     }
 
 
@@ -133,6 +139,13 @@ def _safe_home_card_media_ref(value: object) -> str | None:
     if not isinstance(value, str) or not value:
         return None
     return value if _PUBLIC_HOME_CARD_MEDIA_REF.fullmatch(value) else None
+
+
+def _safe_performance_focus_id(value: object) -> str | None:
+    """Return the published Performance focus id only when it is a non-empty string."""
+    if not isinstance(value, str) or not value:
+        return None
+    return value
 
 
 def list_datasets(registry_path: Path | None = None) -> list[ListedDataset]:
@@ -146,8 +159,12 @@ def list_datasets(registry_path: Path | None = None) -> list[ListedDataset]:
     (dataset_slug, title, summary, domain, visibility, tags) plus the
     published profile snapshot's curated overlay fields (display_title,
     display_subtitle, home_card_icon, home_card_media_ref, short_description,
-    theme_preset),
+    theme_preset, performance_focus_id),
     all None when no snapshot has been published for that dataset yet.
+    performance_focus_id (Project Spec S0204) is projected only from
+    profile.performance_focus.focus_id -- never from tags, problem_type,
+    metrics, release artifacts, or Admin draft state -- and only when it is
+    a non-empty string; no human-readable label is ever projected here.
     """
     path = registry_path if registry_path is not None else REGISTRY_PATH
     repo_root = path.parent.parent
@@ -182,6 +199,7 @@ def list_datasets(registry_path: Path | None = None) -> list[ListedDataset]:
             home_card_media_ref=overlay["home_card_media_ref"],
             short_description=overlay["short_description"],
             theme_preset=overlay["theme_preset"],
+            performance_focus_id=overlay["performance_focus_id"],
         ))
     return result
 

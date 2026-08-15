@@ -24,6 +24,7 @@ type DatasetListing = {
   short_description?: string | null;
   problem_type?: string | null;
   theme_preset?: string | null;
+  performance_focus_id?: string | null;
 };
 
 type DatasetListingResponse = {
@@ -134,6 +135,7 @@ export default function HomePage() {
                   domain={ds.domain}
                   tags={ds.tags}
                   problemType={ds.problem_type ?? undefined}
+                  performanceFocusId={ds.performance_focus_id}
                   iconOverride={resolveDatasetIcon(ds.home_card_icon, ds.domain, ds.tags)}
                   mediaRef={ds.home_card_media_ref}
                   themePreset={ds.theme_preset}

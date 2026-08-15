@@ -33,6 +33,7 @@ const draftForm = {
   canonical_name_fallback: true,
   home_card_icon: "telecom" as const,
   short_description: "Curated home card copy",
+  performance_focus: { focus_id: "overall_discrimination" as const },
 };
 
 const context = {
@@ -77,6 +78,52 @@ describe("projectHomeCardPreview", () => {
     );
 
     expect(preview.summary).toBe("Subtitle fallback");
+  });
+});
+
+// Project Spec S0204: proves both Live Preview projection functions surface
+// the current draft's Performance focus id (never a human label) so
+// DatasetCard/DatasetDetailSurface can resolve the label through the shared
+// performanceMetricMetadata authority.
+describe("Live Preview projection: Performance focus id (Project Spec S0204)", () => {
+  it("projectHomeCardPreview returns the current draft Performance focus id", () => {
+    const preview = projectHomeCardPreview(dataset, draftForm, null);
+    expect(preview.performanceFocusId).toBe("overall_discrimination");
+  });
+
+  it("projectHomeCardPreview's focus id changes deterministically with the draft", () => {
+    const preview = projectHomeCardPreview(
+      dataset,
+      { ...draftForm, performance_focus: { focus_id: "probability_quality" } },
+      null,
+    );
+    expect(preview.performanceFocusId).toBe("probability_quality");
+  });
+
+  it("projectHomeCardPreview never produces a human label, only the raw focus id", () => {
+    const preview = projectHomeCardPreview(dataset, draftForm, null);
+    expect(preview.performanceFocusId).not.toBe("Overall discrimination");
+  });
+
+  it("projectDatasetDetailPreview returns the current draft Performance focus id", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+    expect(preview.performanceFocusId).toBe("overall_discrimination");
+  });
+
+  it("projectDatasetDetailPreview's focus id changes deterministically with the draft", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      { ...draftForm, performance_focus: { focus_id: "operational_decision" } },
+      context,
+      contract,
+      metrics,
+    );
+    expect(preview.performanceFocusId).toBe("operational_decision");
+  });
+
+  it("projectDatasetDetailPreview never produces a human label, only the raw focus id", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+    expect(preview.performanceFocusId).not.toBe("Overall discrimination");
   });
 });
 

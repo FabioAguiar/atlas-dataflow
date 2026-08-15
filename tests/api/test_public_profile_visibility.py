@@ -85,6 +85,7 @@ _FIXTURE_LISTED_DATASETS = [
         domain="telco",
         visibility="public",
         tags=["telco"],
+        performance_focus_id="overall_discrimination",
     ),
     ListedDataset(
         dataset_slug="bank-marketing",
@@ -408,6 +409,10 @@ def test_list_datasets_endpoint_includes_all_when_all_visible(monkeypatch):
 
     slugs = {entry["dataset_slug"] for entry in response["datasets"]}
     assert set(_SEEDED_DATASET_SLUGS) <= slugs
+    telco = next(entry for entry in response["datasets"] if entry["dataset_slug"] == "telco-customer-churn")
+    assert telco["performance_focus_id"] == "overall_discrimination"
+    assert "highlighted_score_id" not in telco
+    assert "visible_scores" not in telco
 
 
 def test_get_dataset_returns_dataset_maintenance_when_hidden(monkeypatch):
@@ -797,6 +802,12 @@ _CURATED_OVERLAY = {
     "theme_preset": "atlas-green",
     "home_card_media_ref": None,
 }
+# Project Spec S0204: registry/list.py's _snapshot_overlay_fields now also
+# projects performance_focus_id (never reused by
+# resolve_public_presentation_overlay's own, separate superset assertions
+# below, which never gains this key).
+_EMPTY_OVERLAY_WITH_FOCUS = {**_EMPTY_OVERLAY, "performance_focus_id": None}
+_CURATED_OVERLAY_WITH_FOCUS = {**_CURATED_OVERLAY, "performance_focus_id": "positive_class_detection"}
 # M39-03: resolve_public_presentation_overlay's return shape is a superset of
 # registry/list.py's own, separate _snapshot_overlay_fields (unchanged by this
 # issue) -- these two constants must not be reused for that function's
@@ -1006,7 +1017,7 @@ def test_get_public_context_includes_curated_overlay_fields_when_published(monke
 def test_snapshot_overlay_fields_all_none_when_no_snapshot_exists():
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = Path(tmp)
-        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == _EMPTY_OVERLAY
+        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == _EMPTY_OVERLAY_WITH_FOCUS
         assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == _EMPTY_PUBLIC_PROFILE_OVERLAY
 
 
@@ -1031,7 +1042,7 @@ def test_snapshot_overlay_fields_all_none_when_only_an_unpublished_draft_exists(
         # is never reachable through this read path, regardless of its
         # content, because it is never read at all (registry/list.py and
         # public_profile_visibility.py only ever call get_snapshot).
-        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == _EMPTY_OVERLAY
+        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == _EMPTY_OVERLAY_WITH_FOCUS
         assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == _EMPTY_PUBLIC_PROFILE_OVERLAY
 
 
@@ -1079,11 +1090,12 @@ def test_snapshot_overlay_fields_returns_curated_values_when_snapshot_published(
             encoding="utf-8",
         )
 
-        # registry/list.py's _snapshot_overlay_fields is unchanged by this
-        # issue and only ever reads its own five known keys, so it must still
-        # return exactly _CURATED_OVERLAY even though the snapshot on disk
-        # now also carries the five new public-profile fields.
-        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == dict(_CURATED_OVERLAY)
+        # registry/list.py's _snapshot_overlay_fields only ever reads its own
+        # known overlay keys (Project Spec S0204 adds performance_focus_id to
+        # that set), so it must still return exactly _CURATED_OVERLAY_WITH_FOCUS
+        # even though the snapshot on disk also carries the other
+        # public-profile-only fields.
+        assert _snapshot_overlay_fields(_TARGET_SLUG, fake_repo) == dict(_CURATED_OVERLAY_WITH_FOCUS)
         assert resolve_public_presentation_overlay(_TARGET_SLUG, repo_root=fake_repo) == dict(
             _CURATED_PUBLIC_PROFILE_OVERLAY
         )

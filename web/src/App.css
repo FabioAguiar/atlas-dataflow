@@ -577,6 +577,19 @@ h1 {
   background: var(--atlas-color-accent-muted);
 }
 
+/*
+ * Project Spec S0204: scoped Home Card badge row -- problem-type and
+ * Performance focus badges sit side by side when space permits and wrap
+ * naturally at narrow card widths, without introducing a second Home Card
+ * layout or new color semantics.
+ */
+.dataset-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--atlas-space-2);
+}
+
 /* Project Spec S0117: shared public Dataset Detail access-state surface
    (maintenance / not found / unavailable), rendered by
    DatasetAccessState.tsx in place of the normal Dataset Detail content.
@@ -766,6 +779,19 @@ h1 {
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+/*
+ * Project Spec S0204: the problem-type and Performance focus badges render
+ * as one badge group -- a single flex item beside the title -- rather than
+ * two independent flex siblings competing with h1 for heading layout.
+ */
+.dataset-detail-header__badges {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--atlas-space-2);
 }
 
 .dataset-detail-header__subtitle {

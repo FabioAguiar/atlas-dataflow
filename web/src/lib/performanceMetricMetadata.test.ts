@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   PERFORMANCE_FOCUS_CATALOG,
+  getPerformanceFocusLabel,
   getPerformanceMetricMetadata,
 } from "./performanceMetricMetadata";
 
@@ -97,5 +98,35 @@ describe("performanceMetricMetadata classification (Project Spec S0200)", () => 
     expect(PERFORMANCE_FOCUS_CATALOG.probability_quality).toEqual(
       PERFORMANCE_FOCUS_CATALOG.probability_quality,
     );
+  });
+});
+
+describe("getPerformanceFocusLabel (Project Spec S0204)", () => {
+  it("gives every Performance focus id a deterministic label", () => {
+    expect(getPerformanceFocusLabel("overall_discrimination")).toBe("Overall discrimination");
+    expect(getPerformanceFocusLabel("positive_class_detection")).toBe("Positive-class detection");
+    expect(getPerformanceFocusLabel("balanced_classification")).toBe("Balanced classification");
+    expect(getPerformanceFocusLabel("probability_quality")).toBe("Probability quality");
+    expect(getPerformanceFocusLabel("operational_decision")).toBe("Operational decision");
+  });
+
+  it("returns undefined for an unknown or missing focus id", () => {
+    expect(getPerformanceFocusLabel("not_a_real_focus")).toBeUndefined();
+    expect(getPerformanceFocusLabel("")).toBeUndefined();
+    expect(getPerformanceFocusLabel(null)).toBeUndefined();
+    expect(getPerformanceFocusLabel(undefined)).toBeUndefined();
+  });
+
+  it("is deterministic across repeated lookups", () => {
+    expect(getPerformanceFocusLabel("overall_discrimination")).toBe("Overall discrimination");
+    expect(getPerformanceFocusLabel("overall_discrimination")).toBe("Overall discrimination");
+  });
+
+  it("covers every focus id declared in PERFORMANCE_FOCUS_CATALOG, and no others", () => {
+    const catalogFocusIds = Object.keys(PERFORMANCE_FOCUS_CATALOG);
+    for (const focusId of catalogFocusIds) {
+      expect(getPerformanceFocusLabel(focusId)).toBeDefined();
+    }
+    expect(catalogFocusIds).toHaveLength(5);
   });
 });

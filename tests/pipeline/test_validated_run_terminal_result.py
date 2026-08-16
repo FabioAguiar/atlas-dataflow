@@ -432,6 +432,241 @@ def test_never_calls_publisher_promote_or_writes_registry_state() -> None:
         assert substring not in code_only_source, f"forbidden call/import found: {substring}"
 
 
+# --- Project Spec S0208: strict argmax operational readiness ----------------
+
+
+def _resolved_argmax_readiness() -> dict:
+    return {
+        "operational_validity": "confirmed",
+        "decision_strategy": "argmax",
+        "operational_prediction_available": True,
+    }
+
+
+def _fail_closed_argmax_readiness() -> dict:
+    return {
+        "operational_validity": "unconfirmed",
+        "decision_strategy": "argmax",
+        "operational_prediction_available": False,
+    }
+
+
+def test_external_accepted_structure_confirmed_argmax_readiness_prediction_available_promotes(
+    tmp_path: Path,
+) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    result = materialize_terminal(
+        run_id="run-0017",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        manifest_outcome={"manifest_generated": True, "manifest_path": "governed/manifest.json"},
+        operational_readiness=_resolved_argmax_readiness(),
+        repo_root=repo_root,
+    )
+    assert result["status"] == "completed"
+    assert result["promotion_eligibility"] is True
+    assert result["operational_readiness"]["decision_strategy"] == "argmax"
+    assert "operational_threshold" not in result["operational_readiness"]
+    _validate_schema(result)
+
+
+def test_argmax_unconfirmed_validity_keeps_promotion_false(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    readiness = _resolved_argmax_readiness()
+    readiness["operational_validity"] = "unconfirmed"
+    result = materialize_terminal(
+        run_id="run-0018",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=readiness,
+        repo_root=repo_root,
+    )
+    assert result["promotion_eligibility"] is False
+    _validate_schema(result)
+
+
+def test_argmax_prediction_unavailable_keeps_promotion_false(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    readiness = _resolved_argmax_readiness()
+    readiness["operational_prediction_available"] = False
+    result = materialize_terminal(
+        run_id="run-0019",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=readiness,
+        repo_root=repo_root,
+    )
+    assert result["promotion_eligibility"] is False
+    _validate_schema(result)
+
+
+def test_argmax_rejected_structural_validation_keeps_promotion_false(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    result = materialize_terminal(
+        run_id="run-0020",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "rejected"},
+        operational_readiness=_resolved_argmax_readiness(),
+        repo_root=repo_root,
+    )
+    assert result["promotion_eligibility"] is False
+    _validate_schema(result)
+
+
+def test_argmax_no_structural_validation_checked_keeps_promotion_false(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    result = materialize_terminal(
+        run_id="run-0021",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation=None,
+        operational_readiness=_resolved_argmax_readiness(),
+        repo_root=repo_root,
+    )
+    assert result["promotion_eligibility"] is False
+    _validate_schema(result)
+
+
+def test_argmax_readiness_containing_operational_threshold_is_rejected(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    readiness = _resolved_argmax_readiness()
+    readiness["operational_threshold"] = {"status": "resolved", "value": 0.5}
+    result = materialize_terminal(
+        run_id="run-0022",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=readiness,
+        repo_root=repo_root,
+    )
+    assert result["status"] == "blocked"
+    assert result["promotion_eligibility"] is False
+    assert result["reasons"][0]["code"] == "malformed_operational_readiness"
+    _validate_schema(result)
+
+
+def test_unknown_decision_strategy_is_rejected(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    readiness = _resolved_argmax_readiness()
+    readiness["decision_strategy"] = "weighted_vote"
+    result = materialize_terminal(
+        run_id="run-0023",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=readiness,
+        repo_root=repo_root,
+    )
+    assert result["status"] == "blocked"
+    assert result["promotion_eligibility"] is False
+    assert result["reasons"][0]["code"] == "unknown_decision_strategy"
+    _validate_schema(result)
+
+
+def test_legacy_threshold_external_readiness_remains_promotable_only_with_resolved_threshold(
+    tmp_path: Path,
+) -> None:
+    """Continuity anchor: the legacy threshold-oriented branch (no
+    decision_strategy key at all) is unaffected by the Project Spec S0208
+    argmax addition -- mirrors
+    test_fully_resolved_external_readiness_with_accepted_structural_validation_is_promotable."""
+    repo_root = _isolated_repo_root(tmp_path)
+    result = materialize_terminal(
+        run_id="run-0024",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=_resolved_external_readiness(),
+        repo_root=repo_root,
+    )
+    assert result["promotion_eligibility"] is True
+    assert "decision_strategy" not in result["operational_readiness"]
+    _validate_schema(result)
+
+
+def test_legacy_unresolved_threshold_remains_non_promotable(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    result = materialize_terminal(
+        run_id="run-0025",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=_fail_closed_external_readiness(),
+        repo_root=repo_root,
+    )
+    assert result["promotion_eligibility"] is False
+    _validate_schema(result)
+
+
+def test_internal_training_not_applicable_readiness_remains_unchanged(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    result = materialize_terminal(
+        run_id="run-0026",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="atlas_internal_training",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness={
+            "operational_validity": "not_applicable",
+            "operational_threshold": {"status": "not_applicable", "value": None},
+            "operational_prediction_available": False,
+        },
+        repo_root=repo_root,
+    )
+    assert result["status"] == "completed"
+    assert result["promotion_eligibility"] is True
+    _validate_schema(result)
+
+
+def test_schema_validates_both_legacy_and_argmax_readiness_variants(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    legacy_result = materialize_terminal(
+        run_id="run-0027",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=_resolved_external_readiness(),
+        repo_root=repo_root,
+    )
+    argmax_result = materialize_terminal(
+        run_id="run-0028",
+        dataset_slug=DATASET_SLUG,
+        model_source_mode="validated_external_fitted_model",
+        status="completed",
+        durable_references=_full_durable_references(repo_root),
+        structural_validation={"validation_outcome": "accepted"},
+        operational_readiness=_resolved_argmax_readiness(),
+        repo_root=repo_root,
+    )
+    _validate_schema(legacy_result)
+    _validate_schema(argmax_result)
+
+
 def test_boundary_confirmations_always_false(tmp_path: Path) -> None:
     repo_root = _isolated_repo_root(tmp_path)
     result = materialize_terminal(

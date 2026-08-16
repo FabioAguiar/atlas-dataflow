@@ -2,12 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/external-fitted-model-materialization.schema.json",
   "title": "Atlas DataFlow External Fitted-Model Materialization Result",
-  "description": "Project Spec S0181: durable, schema-backed result of governed materialization of an already-validated external fitted model (Project Spec S0157 model_source_mode: validated_external_fitted_model) into Atlas-owned repository artifacts. Never embeds raw model bytes, secrets, notebook state, or external absolute paths. A materialized result carries exactly the fields already consumed by pipeline.generate_inference_bundle.materialize_governed_inference_bundle's external branch (Project Spec S0180), plus additional integrity/traceability fields. A blocked result never claims materialized status and always carries concrete, stable-coded blocking reasons.",
+  "description": "Project Spec S0181: durable, schema-backed result of governed materialization of an already-validated external fitted model (Project Spec S0157 model_source_mode: validated_external_fitted_model) into Atlas-owned repository artifacts. Never embeds raw model bytes, secrets, notebook state, or external absolute paths. A materialized v1 result carries exactly the fields already consumed by pipeline.generate_inference_bundle.materialize_governed_inference_bundle's external branch (Project Spec S0180), plus additional integrity/traceability fields, and remains threshold-oriented/binary. Project Spec S0208 adds a v2 profile for a governed multiclass external fitted-model handoff: v2 carries classification_evidence/decision_semantics (argmax) instead of educational_threshold/operational_threshold, while preserving the entire v1 path unchanged. A blocked result (either version) never claims materialized status and always carries concrete, stable-coded blocking reasons.",
   "type": "object",
   "required": ["schema_version", "artifact_kind", "status"],
   "oneOf": [
     { "$ref": "#/$defs/materialized_result_v1" },
-    { "$ref": "#/$defs/blocked_result_v1" }
+    { "$ref": "#/$defs/blocked_result_v1" },
+    { "$ref": "#/$defs/materialized_result_v2" },
+    { "$ref": "#/$defs/blocked_result_v2" }
   ],
   "$defs": {
     "materialized_result_v1": {
@@ -251,6 +253,269 @@
         "training_run_identity_fabricated": { "type": "boolean", "const": false },
         "external_models_created_or_recreated": { "type": "boolean", "const": false },
         "external_project_root_retained": { "type": "boolean", "const": false }
+      }
+    },
+    "materialized_result_v2": {
+      "description": "Project Spec S0208: successful multiclass external fitted-model materialization. Never contains educational_threshold or operational_threshold -- decision_semantics.strategy is always the explicitly resolved argmax discriminator.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "status",
+        "created_at",
+        "materialization_identity",
+        "model_source_mode",
+        "dataset_identity",
+        "evidence_references",
+        "evidence_hashes",
+        "model_artifact_path",
+        "model_artifact_sha256",
+        "model_state_fingerprint",
+        "runtime_compatibility",
+        "classification_evidence",
+        "decision_semantics",
+        "final_test_completion",
+        "operational_readiness",
+        "boundary_confirmations"
+      ],
+      "properties": {
+        "schema_version": { "const": "external-fitted-model-materialization.v2" },
+        "artifact_kind": { "const": "external_fitted_model_materialization_result" },
+        "status": { "const": "materialized" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "materialization_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["materialization_id", "producer"],
+          "properties": {
+            "materialization_id": { "type": "string", "minLength": 1 },
+            "producer": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Identity of the generic materializer that produced this result, e.g. pipeline.materialize_external_fitted_model."
+            }
+          }
+        },
+        "model_source_mode": { "const": "validated_external_fitted_model" },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": { "$ref": "#/$defs/dataset_slug" }
+          }
+        },
+        "evidence_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "training_parameter_record_path",
+            "training_metrics_path",
+            "model_selection_evidence_path"
+          ],
+          "description": "Atlas-owned, repository-relative references to the projected S0157/S0208 external-profile evidence artifacts this materializer wrote -- never the caller's original external source paths.",
+          "properties": {
+            "training_parameter_record_path": { "$ref": "#/$defs/safe_relative_file_path" },
+            "training_metrics_path": { "$ref": "#/$defs/safe_relative_file_path" },
+            "model_selection_evidence_path": { "$ref": "#/$defs/safe_relative_file_path" }
+          }
+        },
+        "evidence_hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "training_parameter_record_sha256",
+            "training_metrics_sha256",
+            "model_selection_evidence_sha256"
+          ],
+          "description": "SHA-256 of the Atlas-native projected evidence bytes actually written by this materializer.",
+          "properties": {
+            "training_parameter_record_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "training_metrics_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "model_selection_evidence_sha256": { "$ref": "#/$defs/sha256_hex" }
+          }
+        },
+        "model_artifact_path": { "$ref": "#/$defs/safe_relative_file_path" },
+        "model_artifact_sha256": { "$ref": "#/$defs/sha256_hex" },
+        "model_state_fingerprint": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "Semantic fingerprint of the fitted model's state, cross-checked against the corresponding external training-parameter-record and model-selection-evidence at materialization time."
+        },
+        "runtime_compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["serialization_format", "loader_strategy", "load_safety_confirmed"],
+          "description": "Load-safety/compatibility metadata carried forward for a later, separately authorized runtime binding. Never implies the model was imported or deserialized by this materializer.",
+          "properties": {
+            "serialization_format": { "type": "string", "minLength": 1 },
+            "loader_strategy": { "type": "string", "minLength": 1 },
+            "load_safety_confirmed": { "type": "boolean" }
+          }
+        },
+        "classification_evidence": {
+          "$ref": "#/$defs/multiclass_classification_evidence_v2",
+          "description": "The normalized/cross-checked multiclass classification evidence, propagated verbatim in governed order from the agreeing training-parameter-record and model-selection-evidence v2 documents."
+        },
+        "decision_semantics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy"],
+          "properties": {
+            "strategy": { "type": "string", "const": "argmax" }
+          }
+        },
+        "final_test_completion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["evaluation_count", "used_for_decision_rule_selection"],
+          "description": "Sealed single final-test completion without threshold vocabulary.",
+          "properties": {
+            "evaluation_count": { "type": "integer", "const": 1 },
+            "used_for_decision_rule_selection": { "type": "boolean", "const": false }
+          }
+        },
+        "operational_readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "educational_final_model_complete",
+            "educational_inference_demo_ready",
+            "operational_validity",
+            "decision_strategy",
+            "operational_prediction_available"
+          ],
+          "description": "Propagated fail-closed. Unresolved operational readiness never becomes an implicit promotion grant. Never contains operational_threshold.",
+          "properties": {
+            "educational_final_model_complete": { "type": "boolean" },
+            "educational_inference_demo_ready": { "type": "boolean" },
+            "operational_validity": { "type": "string", "enum": ["confirmed", "unconfirmed"] },
+            "decision_strategy": { "type": "string", "const": "argmax" },
+            "operational_prediction_available": { "type": "boolean" }
+          },
+          "allOf": [
+            {
+              "description": "operational_prediction_available = true is rejected when operational_validity is unconfirmed.",
+              "if": {
+                "properties": { "operational_prediction_available": { "const": true } },
+                "required": ["operational_prediction_available"]
+              },
+              "then": { "properties": { "operational_validity": { "const": "confirmed" } } }
+            }
+          ]
+        },
+        "boundary_confirmations": { "$ref": "#/$defs/boundary_confirmations_v2" }
+      }
+    },
+    "blocked_result_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_kind", "status", "created_at", "blocking_reasons", "boundary_confirmations"],
+      "properties": {
+        "schema_version": { "const": "external-fitted-model-materialization.v2" },
+        "artifact_kind": { "const": "external_fitted_model_materialization_result" },
+        "status": { "const": "blocked" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "materialization_identity": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["materialization_id", "producer"],
+              "properties": {
+                "materialization_id": { "type": "string", "minLength": 1 },
+                "producer": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        },
+        "dataset_identity": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["dataset_slug"],
+              "properties": { "dataset_slug": { "type": "string" } }
+            }
+          ]
+        },
+        "blocking_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "message": { "type": "string", "minLength": 1 },
+              "field": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "boundary_confirmations": { "$ref": "#/$defs/boundary_confirmations_v2" }
+      }
+    },
+    "boundary_confirmations_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0208: extends the v1 boundary confirmations with an explicit model_classes_runtime_verified confirmation -- the materializer never claims actual model.classes_ runtime verification; that is the responsibility of a later, separately authorized runtime spec.",
+      "required": [
+        "atlas_training_invoked",
+        "estimator_fit_or_fit_transform_called",
+        "model_selection_performed",
+        "threshold_optimized",
+        "inference_performed",
+        "model_bytes_imported_or_deserialized",
+        "training_run_identity_fabricated",
+        "external_models_created_or_recreated",
+        "external_project_root_retained",
+        "model_classes_runtime_verified"
+      ],
+      "properties": {
+        "atlas_training_invoked": { "type": "boolean", "const": false },
+        "estimator_fit_or_fit_transform_called": { "type": "boolean", "const": false },
+        "model_selection_performed": { "type": "boolean", "const": false },
+        "threshold_optimized": { "type": "boolean", "const": false },
+        "inference_performed": { "type": "boolean", "const": false },
+        "model_bytes_imported_or_deserialized": { "type": "boolean", "const": false },
+        "training_run_identity_fabricated": { "type": "boolean", "const": false },
+        "external_models_created_or_recreated": { "type": "boolean", "const": false },
+        "external_project_root_retained": { "type": "boolean", "const": false },
+        "model_classes_runtime_verified": { "type": "boolean", "const": false }
+      }
+    },
+    "multiclass_classification_evidence_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0208: governed multiclass classification evidence claim, propagated verbatim from the agreeing source training-parameter-record and model-selection-evidence v2 documents. Not proof from model deserialization.",
+      "required": ["problem_type", "ordered_class_ids", "probability_columns"],
+      "properties": {
+        "problem_type": {
+          "type": "string",
+          "const": "multiclass_classification"
+        },
+        "ordered_class_ids": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "probability_columns": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_id", "probability_index"],
+            "properties": {
+              "class_id": { "type": "string", "minLength": 1 },
+              "probability_index": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
       }
     },
     "dataset_slug": {

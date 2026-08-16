@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/validated-run-terminal-result.schema.json",
   "title": "Atlas DataFlow Validated-Run Terminal Result",
-  "description": "Project Spec S0181: durable, schema-backed terminal artifact recording orchestration completion/block/failure for a dataset-integration validated run, structural validation outcome, manifest outcome, operational readiness, promotion eligibility, and blocking/failure reasons. Never embeds raw model bytes, secrets, notebook state, or registry mutation. Structural validation acceptance and promotion eligibility are always kept distinct: an accepted structural validation never forces promotion_eligibility true on its own.",
+  "description": "Project Spec S0181: durable, schema-backed terminal artifact recording orchestration completion/block/failure for a dataset-integration validated run, structural validation outcome, manifest outcome, operational readiness, promotion eligibility, and blocking/failure reasons. Never embeds raw model bytes, secrets, notebook state, or registry mutation. Structural validation acceptance and promotion eligibility are always kept distinct: an accepted structural validation never forces promotion_eligibility true on its own. Project Spec S0208 adds a strict argmax operational_readiness variant (decision_strategy: argmax, no operational_threshold) alongside the legacy threshold-oriented variant (operational_threshold.status), closed and unambiguous by the presence of decision_strategy; an unknown/malformed decision_strategy fails closed.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -89,23 +89,11 @@
       ]
     },
     "operational_readiness": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["operational_validity", "operational_threshold", "operational_prediction_available"],
-      "description": "Fail-closed operational readiness summary. Absent/unknown values never resolve to an implicit promotion grant.",
-      "properties": {
-        "operational_validity": { "type": "string", "enum": ["confirmed", "unconfirmed", "not_applicable"] },
-        "operational_threshold": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["status"],
-          "properties": {
-            "status": { "type": "string", "enum": ["resolved", "unresolved", "not_applicable"] },
-            "value": { "type": ["number", "null"] }
-          }
-        },
-        "operational_prediction_available": { "type": "boolean" }
-      }
+      "description": "Fail-closed operational readiness summary. Absent/unknown values never resolve to an implicit promotion grant. Closed union of the legacy threshold-oriented variant and the Project Spec S0208 strict argmax variant; a decision_strategy that is neither omitted (legacy) nor exactly 'argmax', or a document mixing operational_threshold and decision_strategy, matches neither branch and fails closed.",
+      "oneOf": [
+        { "$ref": "#/$defs/legacy_threshold_operational_readiness" },
+        { "$ref": "#/$defs/argmax_operational_readiness" }
+      ]
     },
     "promotion_eligibility": {
       "type": "boolean",
@@ -161,7 +149,7 @@
       }
     },
     {
-      "description": "promotion_eligibility = true for a validated_external_fitted_model run requires all four operational-readiness conditions.",
+      "description": "promotion_eligibility = true for a validated_external_fitted_model run requires all readiness conditions for whichever operational_readiness variant (legacy threshold or Project Spec S0208 argmax) is actually present. There is no threshold condition in the argmax branch.",
       "if": {
         "properties": {
           "promotion_eligibility": { "const": true },
@@ -172,23 +160,65 @@
       "then": {
         "properties": {
           "operational_readiness": {
-            "type": "object",
-            "properties": {
-              "operational_validity": { "const": "confirmed" },
-              "operational_threshold": {
+            "anyOf": [
+              {
                 "type": "object",
-                "properties": { "status": { "const": "resolved" } },
-                "required": ["status"]
+                "required": ["operational_validity", "operational_threshold", "operational_prediction_available"],
+                "properties": {
+                  "operational_validity": { "const": "confirmed" },
+                  "operational_threshold": {
+                    "type": "object",
+                    "required": ["status"],
+                    "properties": { "status": { "const": "resolved" } }
+                  },
+                  "operational_prediction_available": { "const": true }
+                }
               },
-              "operational_prediction_available": { "const": true }
-            },
-            "required": ["operational_validity", "operational_threshold", "operational_prediction_available"]
+              {
+                "type": "object",
+                "required": ["operational_validity", "decision_strategy", "operational_prediction_available"],
+                "properties": {
+                  "operational_validity": { "const": "confirmed" },
+                  "decision_strategy": { "const": "argmax" },
+                  "operational_prediction_available": { "const": true }
+                }
+              }
+            ]
           }
         }
       }
     }
   ],
   "$defs": {
+    "legacy_threshold_operational_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operational_validity", "operational_threshold", "operational_prediction_available"],
+      "properties": {
+        "operational_validity": { "type": "string", "enum": ["confirmed", "unconfirmed", "not_applicable"] },
+        "operational_threshold": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "type": "string", "enum": ["resolved", "unresolved", "not_applicable"] },
+            "value": { "type": ["number", "null"] }
+          }
+        },
+        "operational_prediction_available": { "type": "boolean" }
+      }
+    },
+    "argmax_operational_readiness": {
+      "description": "Project Spec S0208: strict argmax readiness variant. Never carries operational_threshold.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operational_validity", "decision_strategy", "operational_prediction_available"],
+      "properties": {
+        "operational_validity": { "type": "string", "enum": ["confirmed", "unconfirmed"] },
+        "decision_strategy": { "type": "string", "const": "argmax" },
+        "operational_prediction_available": { "type": "boolean" }
+      }
+    },
     "dataset_slug": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"

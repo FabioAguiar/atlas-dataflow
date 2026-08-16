@@ -1233,6 +1233,23 @@ def test_resolve_external_result_semantics_model_descriptor_selected_model_id_mi
     assert exc_info.value.field == "selected_model_id"
 
 
+def test_v1_materialization_still_requires_educational_threshold_unchanged(tmp_path: Path) -> None:
+    """Continuity anchor: the binary v1 materializer path remains
+    threshold-oriented and green, untouched by the Project Spec S0208 v2
+    profile addition."""
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["educational_threshold"] = None
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["schema_version"] == "external-fitted-model-materialization.v1"
+    assert result["blocking_reasons"][0]["code"] == "missing_required_field"
+    assert result["blocking_reasons"][0]["field"] == "educational_threshold"
+
+
 def test_resolve_external_result_semantics_model_descriptor_positive_class_mismatch_blocks() -> None:
     training_record = {
         "origin": "validated_external_fitted_model",
@@ -1396,3 +1413,467 @@ def test_external_bundle_matching_positive_class_id_remains_accepted_through_ful
     assert bundle_result["status"] == "generated"
     bundle = json.loads(output_path.read_text(encoding="utf-8"))
     assert bundle["result_semantics"]["positive_class"]["class_id"] == "yes"
+
+
+# --- Project Spec S0208: multiclass external fitted-model v2 profile --------
+#
+# Uses only synthetic in-memory/tmp_path fixtures and opaque arbitrary model
+# bytes -- never a real trained model or real multiclass dataset fixture.
+
+
+def _classification_evidence_v2() -> dict:
+    return {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-a", "class-b", "class-c"],
+        "probability_columns": [
+            {"class_id": "class-a", "probability_index": 0},
+            {"class_id": "class-b", "probability_index": 1},
+            {"class_id": "class-c", "probability_index": 2},
+        ],
+    }
+
+
+def _training_parameter_record_v2(
+    *,
+    dataset_slug: str = DATASET_SLUG,
+    model_artifact_sha256: str,
+    model_family: str = "hist_gradient_boosting",
+    class_name: str = "HistGradientBoostingClassifier",
+    classification_evidence: dict | None = None,
+) -> dict:
+    return {
+        "schema_version": "training-parameter-record.external-fitted-model.v2",
+        "record_kind": "training_parameter_record",
+        "origin": "validated_external_fitted_model",
+        "producer": "dataset-study-external-producer/v1",
+        "handoff_lineage_reference": "artifacts/models/multiclass-sample/final-model-handoff.json",
+        "dataset_identity": {"dataset_slug": dataset_slug},
+        "selected_model_id": "candidate-001",
+        "model_family": model_family,
+        "estimator_identity": {"library": "scikit-learn", "class_name": class_name},
+        "hyperparameters": {"max_depth": 3, "learning_rate": 0.1},
+        "feature_order": ["feature_one", "feature_two"],
+        "preprocessing_evidence_reference": "artifacts/models/multiclass-sample/preprocessing-evidence.json",
+        "serializer_metadata_reference": "artifacts/models/multiclass-sample/serializer-metadata.json",
+        "model_artifact_reference": {
+            "path": "artifacts/models/multiclass-sample/model.joblib",
+            "sha256": model_artifact_sha256,
+        },
+        "model_state_fingerprint": MODEL_STATE_FINGERPRINT,
+        "atlas_fit_confirmation": {
+            "atlas_fit": False,
+            "atlas_tuned": False,
+            "atlas_recalibrated": False,
+            "atlas_altered": False,
+        },
+        "raw_partition_confirmation": {"raw_partitions_embedded": False},
+        "classification_evidence": (
+            classification_evidence if classification_evidence is not None else _classification_evidence_v2()
+        ),
+    }
+
+
+def _model_selection_evidence_v2(
+    *,
+    dataset_slug: str = DATASET_SLUG,
+    model_state_fingerprint: str = MODEL_STATE_FINGERPRINT,
+    classification_evidence: dict | None = None,
+) -> dict:
+    evidence = _model_selection_evidence(dataset_slug=dataset_slug, model_state_fingerprint=model_state_fingerprint)
+    evidence["schema_version"] = "model-selection-evidence.external-fitted-model.v2"
+    evidence["classification_evidence"] = (
+        classification_evidence if classification_evidence is not None else _classification_evidence_v2()
+    )
+    return evidence
+
+
+def _v2_final_test_completion() -> dict:
+    return {"evaluation_count": 1, "used_for_decision_rule_selection": False}
+
+
+def _v2_operational_readiness_fail_closed() -> dict:
+    return {
+        "educational_final_model_complete": True,
+        "educational_inference_demo_ready": True,
+        "operational_validity": "unconfirmed",
+        "decision_strategy": "argmax",
+        "operational_prediction_available": False,
+    }
+
+
+class _MulticlassSourceFixture:
+    """Builds a self-consistent set of Project Spec S0208 v2 source
+    (pre-materialization) files. Synthetic, dataset-neutral, opaque model
+    bytes only -- never a real trained model or real multiclass dataset."""
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        *,
+        dataset_slug: str = DATASET_SLUG,
+        classification_evidence: dict | None = None,
+    ) -> None:
+        self.dataset_slug = dataset_slug
+        self.source_dir = tmp_path / "external-source-v2"
+        self.model_bytes = MODEL_BYTES
+        self.model_sha256 = _sha256_bytes(self.model_bytes)
+
+        self.source_model_path = self.source_dir / "model.joblib"
+        _write_bytes(self.source_model_path, self.model_bytes)
+
+        evidence = classification_evidence if classification_evidence is not None else _classification_evidence_v2()
+        self.training_record = _training_parameter_record_v2(
+            dataset_slug=dataset_slug, model_artifact_sha256=self.model_sha256, classification_evidence=evidence
+        )
+        self.training_metrics = _training_metrics(dataset_slug=dataset_slug)
+        self.model_selection = _model_selection_evidence_v2(
+            dataset_slug=dataset_slug, classification_evidence=evidence
+        )
+
+        self.source_record_path = self.source_dir / "training-parameter-record.json"
+        self.source_metrics_path = self.source_dir / "training-metrics.json"
+        self.source_selection_path = self.source_dir / "model-selection-evidence.json"
+
+        record_bytes = _write_json(self.source_record_path, self.training_record)
+        metrics_bytes = _write_json(self.source_metrics_path, self.training_metrics)
+        selection_bytes = _write_json(self.source_selection_path, self.model_selection)
+
+        self.expected_evidence_hashes = {
+            "training_parameter_record": _sha256_bytes(record_bytes),
+            "training_metrics": _sha256_bytes(metrics_bytes),
+            "model_selection_evidence": _sha256_bytes(selection_bytes),
+        }
+
+    def kwargs(
+        self, *, repo_root: Path, output_prefix: str = "governed/external/multiclass-sample"
+    ) -> dict[str, Any]:
+        return {
+            "dataset_slug": self.dataset_slug,
+            "materialization_id": "materialization-0002",
+            "producer": "pipeline.materialize_external_fitted_model",
+            "source_model_path": self.source_model_path,
+            "expected_source_model_sha256": self.model_sha256,
+            "source_training_parameter_record_path": self.source_record_path,
+            "source_training_metrics_path": self.source_metrics_path,
+            "source_model_selection_evidence_path": self.source_selection_path,
+            "expected_evidence_hashes": dict(self.expected_evidence_hashes),
+            "runtime_compatibility": {
+                "serialization_format": "joblib",
+                "loader_strategy": "joblib_sklearn_predict",
+                "load_safety_confirmed": True,
+            },
+            "educational_threshold": None,
+            "final_test_completion": _v2_final_test_completion(),
+            "operational_readiness": _v2_operational_readiness_fail_closed(),
+            "output_model_artifact_path": f"{output_prefix}/model.bin",
+            "output_training_parameter_record_path": f"{output_prefix}/training-parameter-record.json",
+            "output_training_metrics_path": f"{output_prefix}/training-metrics.json",
+            "output_model_selection_evidence_path": f"{output_prefix}/model-selection-evidence.json",
+            "repo_root": repo_root,
+        }
+
+
+def test_v2_training_record_and_model_selection_evidence_validate_against_schema() -> None:
+    training_schema = json.loads(
+        (REPO_ROOT / "pipeline" / "training-parameter-record.schema.json").read_text(encoding="utf-8")
+    )
+    selection_schema = json.loads(
+        (REPO_ROOT / "pipeline" / "model-selection-evidence.schema.json").read_text(encoding="utf-8")
+    )
+    jsonschema.Draft202012Validator(training_schema).validate(
+        _training_parameter_record_v2(model_artifact_sha256="a" * 64)
+    )
+    jsonschema.Draft202012Validator(selection_schema).validate(_model_selection_evidence_v2())
+
+
+def test_v2_successful_materialization_is_schema_valid(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+
+    result = materialize(**fixture.kwargs(repo_root=repo_root))
+
+    assert result["status"] == "materialized"
+    assert result["schema_version"] == "external-fitted-model-materialization.v2"
+    schema = json.loads(MATERIALIZATION_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(result)
+
+
+def test_v2_result_decision_strategy_is_argmax_and_carries_ordered_classification_evidence(
+    tmp_path: Path,
+) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+
+    result = materialize(**fixture.kwargs(repo_root=repo_root))
+
+    assert result["status"] == "materialized"
+    assert result["decision_semantics"] == {"strategy": "argmax"}
+    assert result["classification_evidence"] == _classification_evidence_v2()
+    assert result["final_test_completion"] == {
+        "evaluation_count": 1,
+        "used_for_decision_rule_selection": False,
+    }
+    assert result["operational_readiness"]["decision_strategy"] == "argmax"
+
+
+def test_v2_result_contains_no_educational_threshold_or_operational_threshold(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+
+    result = materialize(**fixture.kwargs(repo_root=repo_root))
+
+    assert result["status"] == "materialized"
+    assert "educational_threshold" not in result
+    assert "operational_threshold" not in result["operational_readiness"]
+
+
+def test_v2_boundary_confirms_model_classes_runtime_verified_false(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+
+    result = materialize(**fixture.kwargs(repo_root=repo_root))
+
+    assert result["status"] == "materialized"
+    assert result["boundary_confirmations"]["model_classes_runtime_verified"] is False
+    assert all(value is False for value in result["boundary_confirmations"].values())
+
+
+def test_v2_supplying_educational_threshold_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["educational_threshold"] = {"value": 0.5, "scenario": "should_not_be_allowed"}
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["schema_version"] == "external-fitted-model-materialization.v2"
+    assert result["blocking_reasons"][0]["code"] == "unexpected_educational_threshold"
+
+
+def test_v2_mixed_v1_training_record_v2_model_selection_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    mixed_selection = _model_selection_evidence_v2(dataset_slug=fixture.dataset_slug)
+    selection_bytes = _write_json(fixture.source_selection_path, mixed_selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["schema_version"] == "external-fitted-model-materialization.v1"
+    assert result["blocking_reasons"][0]["code"] == "mixed_external_evidence_profile"
+
+
+def test_v2_mixed_v2_training_record_v1_model_selection_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    v1_selection = _model_selection_evidence(dataset_slug=fixture.dataset_slug)
+    selection_bytes = _write_json(fixture.source_selection_path, v1_selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["schema_version"] == "external-fitted-model-materialization.v2"
+    assert result["blocking_reasons"][0]["code"] == "mixed_external_evidence_profile"
+
+
+def test_v2_training_and_selection_classification_evidence_mismatch_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    mismatched = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-x", "class-y", "class-z"],
+        "probability_columns": [
+            {"class_id": "class-x", "probability_index": 0},
+            {"class_id": "class-y", "probability_index": 1},
+            {"class_id": "class-z", "probability_index": 2},
+        ],
+    }
+    selection = _model_selection_evidence_v2(dataset_slug=fixture.dataset_slug, classification_evidence=mismatched)
+    selection_bytes = _write_json(fixture.source_selection_path, selection)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "classification_evidence_mismatch"
+
+
+def test_v2_at_least_three_classes_required_by_schema(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    too_few = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-a", "class-b"],
+        "probability_columns": [
+            {"class_id": "class-a", "probability_index": 0},
+            {"class_id": "class-b", "probability_index": 1},
+        ],
+    }
+    training_record = dict(fixture.training_record)
+    training_record["classification_evidence"] = too_few
+    record_bytes = _write_json(fixture.source_record_path, training_record)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_parameter_record"] = _sha256_bytes(record_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "source_evidence_schema_invalid"
+
+
+def test_v2_duplicate_class_ids_rejected_by_schema(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    duplicate = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-a", "class-a", "class-c"],
+        "probability_columns": [
+            {"class_id": "class-a", "probability_index": 0},
+            {"class_id": "class-a", "probability_index": 1},
+            {"class_id": "class-c", "probability_index": 2},
+        ],
+    }
+    training_record = dict(fixture.training_record)
+    training_record["classification_evidence"] = duplicate
+    record_bytes = _write_json(fixture.source_record_path, training_record)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_parameter_record"] = _sha256_bytes(record_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "source_evidence_schema_invalid"
+
+
+def test_v2_duplicate_probability_indices_rejected_by_materialization(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    evidence = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-a", "class-b", "class-c"],
+        "probability_columns": [
+            {"class_id": "class-a", "probability_index": 0},
+            {"class_id": "class-b", "probability_index": 0},
+            {"class_id": "class-c", "probability_index": 2},
+        ],
+    }
+    fixture = _MulticlassSourceFixture(tmp_path, classification_evidence=evidence)
+
+    result = materialize(**fixture.kwargs(repo_root=repo_root))
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "duplicate_probability_index"
+
+
+def test_v2_non_contiguous_probability_indices_rejected(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    evidence = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-a", "class-b", "class-c"],
+        "probability_columns": [
+            {"class_id": "class-a", "probability_index": 0},
+            {"class_id": "class-b", "probability_index": 1},
+            {"class_id": "class-c", "probability_index": 4},
+        ],
+    }
+    fixture = _MulticlassSourceFixture(tmp_path, classification_evidence=evidence)
+
+    result = materialize(**fixture.kwargs(repo_root=repo_root))
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "non_contiguous_probability_index"
+
+
+def test_v2_class_probability_index_order_mismatch_rejected(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    evidence = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-a", "class-b", "class-c"],
+        "probability_columns": [
+            {"class_id": "class-b", "probability_index": 0},
+            {"class_id": "class-a", "probability_index": 1},
+            {"class_id": "class-c", "probability_index": 2},
+        ],
+    }
+    fixture = _MulticlassSourceFixture(tmp_path, classification_evidence=evidence)
+
+    result = materialize(**fixture.kwargs(repo_root=repo_root))
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "class_probability_index_order_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("model_family", "class_name"),
+    [
+        ("logistic_regression", "LogisticRegression"),
+        ("decision_tree", "DecisionTreeClassifier"),
+        ("random_forest", "RandomForestClassifier"),
+        ("hist_gradient_boosting", "HistGradientBoostingClassifier"),
+    ],
+)
+def test_v2_bounded_estimator_family_class_pairs_validate(
+    tmp_path: Path, model_family: str, class_name: str
+) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    training_record = dict(fixture.training_record)
+    training_record["model_family"] = model_family
+    training_record["estimator_identity"] = {"library": "scikit-learn", "class_name": class_name}
+    record_bytes = _write_json(fixture.source_record_path, training_record)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_parameter_record"] = _sha256_bytes(record_bytes)
+
+    model_selection = dict(fixture.model_selection)
+    model_selection["candidates"] = [
+        {
+            "candidate_id": "candidate-001",
+            "model_family": model_family,
+            "estimator_identity": {"library": "scikit-learn", "class_name": class_name},
+        }
+    ]
+    model_selection["selected_candidate"] = {"candidate_id": "candidate-001"}
+    selection_bytes = _write_json(fixture.source_selection_path, model_selection)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "materialized"
+
+
+def test_v2_cross_paired_estimator_identity_rejected_by_schema() -> None:
+    schema = json.loads(
+        (REPO_ROOT / "pipeline" / "training-parameter-record.schema.json").read_text(encoding="utf-8")
+    )
+    instance = _training_parameter_record_v2(model_artifact_sha256="a" * 64)
+    instance["model_family"] = "random_forest"
+    instance["estimator_identity"] = {"library": "scikit-learn", "class_name": "LogisticRegression"}
+
+    with pytest.raises(jsonschema.exceptions.ValidationError):
+        jsonschema.Draft202012Validator(schema).validate(instance)
+
+
+def test_v2_no_forbidden_calls_in_module_source_still_holds() -> None:
+    # Reuses the module-source forbidden-substring scan as an explicit
+    # anchor: adding the v2 profile must not introduce any of the boundary
+    # violations the materializer must never perform.
+    source = inspect.getsource(materialize_external_fitted_model)
+    forbidden_substrings = (
+        "import joblib",
+        "import sklearn",
+        "import pickle",
+        "pickle.load",
+        ".fit(",
+        ".fit_transform(",
+        ".predict(",
+        ".predict_proba(",
+        "train_from_paths",
+        "pipeline.training",
+    )
+    for substring in forbidden_substrings:
+        assert substring not in source, f"forbidden call/import found: {substring}"

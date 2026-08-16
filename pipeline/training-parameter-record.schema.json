@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-parameter-record.schema.json",
   "title": "Atlas DataFlow Training Parameter Record",
-  "description": "Two schema-version-discriminated profiles are supported: training-parameter-record.v1 (unchanged -- the reduced provenance artifact emitted by a governed M24 training run under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json, linking the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes) and training-parameter-record.external-fitted-model.v1 (Project Spec S0157, describing an already-fitted external model's parameters/provenance from a validated handoff/projection flow). Neither profile embeds raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
+  "description": "Three schema-version-discriminated profiles are supported: training-parameter-record.v1 (unchanged -- the reduced provenance artifact emitted by a governed M24 training run under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json, linking the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes), training-parameter-record.external-fitted-model.v1 (Project Spec S0157, describing an already-fitted external model's parameters/provenance from a validated handoff/projection flow, binary-classification-oriented), and training-parameter-record.external-fitted-model.v2 (Project Spec S0208, the same external-handoff profile generalized to a multiclass classification_evidence claim in place of v1's binary positive-class ownership). None of the three profiles embed raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
   "type": "object",
   "required": ["schema_version"],
   "oneOf": [
     { "$ref": "#/$defs/internal_run_record_v1" },
-    { "$ref": "#/$defs/external_fitted_model_record_v1" }
+    { "$ref": "#/$defs/external_fitted_model_record_v1" },
+    { "$ref": "#/$defs/external_fitted_model_record_v2" }
   ],
   "$defs": {
     "internal_run_record_v1": {
@@ -625,6 +626,245 @@
           "required": ["raw_partitions_embedded"],
           "properties": {
             "raw_partitions_embedded": { "type": "boolean", "const": false }
+          }
+        }
+      }
+    },
+    "external_fitted_model_record_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0208: v2 external fitted-model training-record profile. Preserves every S0157 external-handoff invariant established by v1, but carries a governed multiclass classification_evidence claim in place of v1's binary positive_class_id/positive_class_probability_index/binary_classification_evidence ownership. Never requires an Atlas training run ID, controlled-entrypoint provenance marker, or Atlas training output directory, and never embeds model bytes or raw partitions.",
+      "required": [
+        "schema_version",
+        "record_kind",
+        "origin",
+        "producer",
+        "handoff_lineage_reference",
+        "dataset_identity",
+        "selected_model_id",
+        "model_family",
+        "estimator_identity",
+        "hyperparameters",
+        "feature_order",
+        "preprocessing_evidence_reference",
+        "serializer_metadata_reference",
+        "model_artifact_reference",
+        "model_state_fingerprint",
+        "atlas_fit_confirmation",
+        "raw_partition_confirmation",
+        "classification_evidence"
+      ],
+      "allOf": [
+        { "$ref": "#/$defs/external_family_estimator_pair_v2" }
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-parameter-record.external-fitted-model.v2"
+        },
+        "record_kind": {
+          "type": "string",
+          "const": "training_parameter_record"
+        },
+        "origin": {
+          "type": "string",
+          "const": "validated_external_fitted_model"
+        },
+        "producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "handoff_lineage_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reference into the validated external handoff/projection lineage. Never an Atlas training-run path."
+        },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            }
+          }
+        },
+        "selected_model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_family": {
+          "type": "string",
+          "enum": ["logistic_regression", "decision_tree", "random_forest", "hist_gradient_boosting"],
+          "description": "Project Spec S0208: bounded external scientific candidate vocabulary, generalized from v1's single hist_gradient_boosting-only family to the same four scikit-learn family/class pairs already accepted by the external model-selection contract."
+        },
+        "estimator_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library", "class_name"],
+          "description": "Bounded structured estimator identity. Never an arbitrary module import path or callable string. The library/class_name pairing is cross-checked against model_family below.",
+          "properties": {
+            "library": { "type": "string", "enum": ["scikit-learn"] },
+            "class_name": {
+              "type": "string",
+              "enum": [
+                "LogisticRegression",
+                "DecisionTreeClassifier",
+                "RandomForestClassifier",
+                "HistGradientBoostingClassifier"
+              ]
+            }
+          }
+        },
+        "hyperparameters": {
+          "type": "object",
+          "description": "JSON-safe selected hyperparameters. Never model bytes."
+        },
+        "feature_order": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "preprocessing_evidence_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reference to preprocessing evidence. Preprocessing is never executed here."
+        },
+        "serializer_metadata_reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reference to serializer metadata from the validated handoff lineage. Never embeds model bytes."
+        },
+        "model_artifact_reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!pipeline/training-runs/)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+            },
+            "sha256": { "$ref": "#/$defs/sha256_hex" }
+          }
+        },
+        "model_state_fingerprint": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "Semantic fingerprint of the fitted model's state. Must be consistent with the same fingerprint recorded in the corresponding external model-selection-evidence and, when present, inference-bundle evidence."
+        },
+        "atlas_fit_confirmation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["atlas_fit", "atlas_tuned", "atlas_recalibrated", "atlas_altered"],
+          "description": "Explicit confirmation that Atlas did not fit, tune, recalibrate, or alter this model.",
+          "properties": {
+            "atlas_fit": { "type": "boolean", "const": false },
+            "atlas_tuned": { "type": "boolean", "const": false },
+            "atlas_recalibrated": { "type": "boolean", "const": false },
+            "atlas_altered": { "type": "boolean", "const": false }
+          }
+        },
+        "raw_partition_confirmation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["raw_partitions_embedded"],
+          "properties": {
+            "raw_partitions_embedded": { "type": "boolean", "const": false }
+          }
+        },
+        "classification_evidence": { "$ref": "#/$defs/multiclass_classification_evidence_v2" }
+      }
+    },
+    "external_family_estimator_pair_v2": {
+      "description": "Project Spec S0208: closes the v2 model_family/estimator_identity pairing so a cross-paired combination (e.g. model_family=random_forest with class_name=LogisticRegression) is rejected.",
+      "oneOf": [
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "logistic_regression" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "LogisticRegression" }
+              }
+            }
+          }
+        },
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "decision_tree" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "DecisionTreeClassifier" }
+              }
+            }
+          }
+        },
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "random_forest" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "RandomForestClassifier" }
+              }
+            }
+          }
+        },
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "hist_gradient_boosting" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "HistGradientBoostingClassifier" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "multiclass_classification_evidence_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0208: governed multiclass classification evidence claim about the external fitted model -- not proof from model deserialization. Basic types/minimums/uniqueness are enforced here; the exact class_id/probability_index sequencing (probability_columns[i].probability_index == i and probability_columns[i].class_id == ordered_class_ids[i]) is enforced defensively by the materializer.",
+      "required": ["problem_type", "ordered_class_ids", "probability_columns"],
+      "properties": {
+        "problem_type": {
+          "type": "string",
+          "const": "multiclass_classification"
+        },
+        "ordered_class_ids": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "probability_columns": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_id", "probability_index"],
+            "properties": {
+              "class_id": { "type": "string", "minLength": 1 },
+              "probability_index": { "type": "integer", "minimum": 0 }
+            }
           }
         }
       }

@@ -16,12 +16,16 @@ publisher/validate.py and publisher/manifest.py: an accepted structural
 validation never forces promotion_eligibility true on its own. For a
 validated_external_fitted_model run, promotion_eligibility can become true
 only when structural validation is accepted AND operational_validity is
-confirmed AND operational_threshold.status is resolved AND
-operational_prediction_available is true -- fail closed on every other
-combination, including when any of the four signals is simply absent. For
-every other model_source_mode (the historical atlas_internal_training
-path), promotion_eligibility mirrors the unchanged historical behavior:
-structural acceptance alone is sufficient, matching
+confirmed AND operational_prediction_available is true AND, for whichever
+normalized operational_readiness variant is present (Project Spec S0208):
+legacy threshold readiness additionally requires operational_threshold.
+status resolved, while the strict argmax readiness variant requires
+decision_strategy == "argmax" and carries no threshold condition at all --
+fail closed on every other combination, including when any required signal
+is simply absent or decision_strategy is unrecognized. For every other
+model_source_mode (the historical atlas_internal_training path),
+promotion_eligibility mirrors the unchanged historical behavior: structural
+acceptance alone is sufficient, matching
 publisher.validate._build_validation_result's non-external branch.
 
 This module never calls publisher.promote.run, never writes registry
@@ -201,11 +205,7 @@ def _normalize_manifest_outcome(manifest_outcome: Any) -> dict[str, Any] | None:
     }
 
 
-def _normalize_operational_readiness(operational_readiness: Any) -> dict[str, Any]:
-    if not isinstance(operational_readiness, dict):
-        raise TerminalResultBlocked(
-            "missing_required_field", "operational_readiness must be an object.", "operational_readiness"
-        )
+def _normalize_legacy_threshold_operational_readiness(operational_readiness: dict[str, Any]) -> dict[str, Any]:
     operational_validity = operational_readiness.get("operational_validity")
     if operational_validity not in ("confirmed", "unconfirmed", "not_applicable"):
         raise TerminalResultBlocked(
@@ -249,17 +249,77 @@ def _normalize_operational_readiness(operational_readiness: Any) -> dict[str, An
     }
 
 
+def _normalize_argmax_operational_readiness(operational_readiness: dict[str, Any]) -> dict[str, Any]:
+    """Project Spec S0208: strict argmax readiness variant. Never carries
+    operational_threshold; a caller supplying one alongside decision_strategy
+    fails closed rather than silently dropping it."""
+    if "operational_threshold" in operational_readiness:
+        raise TerminalResultBlocked(
+            "malformed_operational_readiness",
+            "operational_readiness.operational_threshold must be absent when decision_strategy is "
+            "present.",
+            "operational_readiness.operational_threshold",
+        )
+    operational_validity = operational_readiness.get("operational_validity")
+    if operational_validity not in ("confirmed", "unconfirmed"):
+        raise TerminalResultBlocked(
+            "malformed_operational_readiness",
+            "operational_readiness.operational_validity must be 'confirmed' or 'unconfirmed' for "
+            "argmax readiness.",
+            "operational_readiness.operational_validity",
+        )
+    operational_prediction_available = operational_readiness.get("operational_prediction_available")
+    if not isinstance(operational_prediction_available, bool):
+        raise TerminalResultBlocked(
+            "missing_required_field",
+            "operational_readiness.operational_prediction_available must be a boolean.",
+            "operational_readiness.operational_prediction_available",
+        )
+    return {
+        "operational_validity": operational_validity,
+        "decision_strategy": "argmax",
+        "operational_prediction_available": operational_prediction_available,
+    }
+
+
+def _normalize_operational_readiness(operational_readiness: Any) -> dict[str, Any]:
+    """Closed shape dispatch (Project Spec S0208): a decision_strategy key
+    selects the strict argmax variant and validates/returns it, rejecting
+    operational_threshold; its absence preserves the legacy threshold
+    readiness normalization unchanged. Argmax is never inferred merely from
+    a missing threshold, and an unknown decision_strategy value fails
+    closed."""
+    if not isinstance(operational_readiness, dict):
+        raise TerminalResultBlocked(
+            "missing_required_field", "operational_readiness must be an object.", "operational_readiness"
+        )
+    if "decision_strategy" in operational_readiness:
+        decision_strategy = operational_readiness.get("decision_strategy")
+        if decision_strategy != "argmax":
+            raise TerminalResultBlocked(
+                "unknown_decision_strategy",
+                f"operational_readiness.decision_strategy {decision_strategy!r} is not recognized; "
+                "only 'argmax' is supported.",
+                "operational_readiness.decision_strategy",
+            )
+        return _normalize_argmax_operational_readiness(operational_readiness)
+    return _normalize_legacy_threshold_operational_readiness(operational_readiness)
+
+
 def _compute_promotion_eligibility(
     model_source_mode: str,
     structural_validation: dict[str, Any] | None,
     operational_readiness: dict[str, Any],
 ) -> bool:
-    """Fail-closed promotion-eligibility computation (Project Spec S0181).
+    """Fail-closed promotion-eligibility computation (Project Spec S0181,
+    extended by S0208 to be decision-strategy-aware).
 
     Never returns True unless structural validation is explicitly accepted.
-    For validated_external_fitted_model, additionally requires all three
-    operational-readiness signals to be explicitly favorable. Every other
-    model_source_mode keeps the unchanged historical behavior already
+    For validated_external_fitted_model, additionally requires all
+    operational-readiness signals to be explicitly favorable for whichever
+    normalized readiness variant (legacy threshold or strict argmax) is
+    present -- there is no threshold condition in the argmax branch. Every
+    other model_source_mode keeps the unchanged historical behavior already
     established by publisher.validate._build_validation_result: structural
     acceptance alone is sufficient.
     """
@@ -267,11 +327,13 @@ def _compute_promotion_eligibility(
         return False
     if model_source_mode != _EXTERNAL_MODEL_SOURCE_MODE:
         return True
-    return (
-        operational_readiness.get("operational_validity") == "confirmed"
-        and operational_readiness.get("operational_threshold", {}).get("status") == "resolved"
-        and operational_readiness.get("operational_prediction_available") is True
-    )
+    if operational_readiness.get("operational_validity") != "confirmed":
+        return False
+    if operational_readiness.get("operational_prediction_available") is not True:
+        return False
+    if "decision_strategy" in operational_readiness:
+        return operational_readiness.get("decision_strategy") == "argmax"
+    return operational_readiness.get("operational_threshold", {}).get("status") == "resolved"
 
 
 def materialize_validated_run_terminal_result(

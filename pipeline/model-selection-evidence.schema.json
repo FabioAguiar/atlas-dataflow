@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/model-selection-evidence.schema.json",
   "title": "Atlas DataFlow Model Selection Evidence",
-  "description": "Reduced model selection evidence. Two schema-version-discriminated profiles are supported: model-selection-evidence.v1 (unchanged, produced only when a governed M24 training run evaluates multiple internal model candidates) and model-selection-evidence.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow describing an already-fitted external model's selection evidence -- never by pipeline/training.py, which never loads, fits, or selects an external model).",
+  "description": "Reduced model selection evidence. Three schema-version-discriminated profiles are supported: model-selection-evidence.v1 (unchanged, produced only when a governed M24 training run evaluates multiple internal model candidates), model-selection-evidence.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow describing an already-fitted external model's selection evidence -- never by pipeline/training.py, which never loads, fits, or selects an external model), and model-selection-evidence.external-fitted-model.v2 (Project Spec S0208, the same external profile generalized to require a governed multiclass classification_evidence claim).",
   "type": "object",
   "required": ["schema_version"],
   "oneOf": [
     { "$ref": "#/$defs/internal_run_evidence_v1" },
-    { "$ref": "#/$defs/external_fitted_model_evidence_v1" }
+    { "$ref": "#/$defs/external_fitted_model_evidence_v1" },
+    { "$ref": "#/$defs/external_fitted_model_evidence_v2" }
   ],
   "$defs": {
     "internal_run_evidence_v1": {
@@ -414,6 +415,284 @@
         },
         "evidence_policy": {
           "$ref": "#/$defs/evidence_policy"
+        }
+      }
+    },
+    "external_fitted_model_evidence_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0208: v2 external fitted-model selection evidence. Preserves every S0157 external scientific-selection discipline established by v1, plus a required top-level multiclass classification_evidence claim. Package-relative and handoff-lineage references only -- never fabricated pipeline/training-runs/** paths, since no Atlas training run produced this evidence.",
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "evidence_identity",
+        "dataset_identity",
+        "selection_protocol",
+        "selection_policy",
+        "cross_validation_summary",
+        "validation_metrics",
+        "practical_tie",
+        "candidates",
+        "selected_candidate",
+        "selection_rationale",
+        "sealed_test_confirmation",
+        "path_references",
+        "hashes",
+        "evidence_policy",
+        "classification_evidence"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "model-selection-evidence.external-fitted-model.v2"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "const": "model_selection_evidence"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evidence_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_source_mode", "producer", "handoff_lineage_reference"],
+          "properties": {
+            "model_source_mode": {
+              "type": "string",
+              "const": "validated_external_fitted_model"
+            },
+            "producer": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Identity of the external producer/pipeline that generated this evidence."
+            },
+            "handoff_lineage_reference": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reference into the validated external handoff/projection lineage this evidence was produced under. Never an Atlas training-run path."
+            }
+          }
+        },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": {
+              "$ref": "#/$defs/dataset_slug"
+            }
+          }
+        },
+        "selection_protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol_id"],
+          "properties": {
+            "protocol_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Identifier of the model-selection protocol used by the external producer (e.g. cross_validation_with_practical_tie_break)."
+            }
+          }
+        },
+        "selection_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary_metric", "ranking_direction"],
+          "properties": {
+            "primary_metric": {
+              "$ref": "#/$defs/metric_name"
+            },
+            "ranking_direction": {
+              "type": "string",
+              "enum": ["higher_is_better", "lower_is_better"]
+            }
+          }
+        },
+        "cross_validation_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["partition_role", "metric_summaries"],
+          "description": "Cross-validation may only ever use the training partition.",
+          "properties": {
+            "partition_role": {
+              "type": "string",
+              "const": "train"
+            },
+            "metric_summaries": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "mean"],
+                "properties": {
+                  "name": { "$ref": "#/$defs/metric_name" },
+                  "mean": { "type": "number" },
+                  "standard_deviation": { "type": "number", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        "validation_metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["partition_role", "metrics"],
+          "properties": {
+            "partition_role": {
+              "type": "string",
+              "const": "validation"
+            },
+            "metrics": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/metric_value" }
+            }
+          }
+        },
+        "practical_tie": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tolerance", "tie_detected", "tie_break_criteria"],
+          "description": "A practical tie must carry the numeric tolerance and unrounded evidence used to determine it -- never inferred from rounded display values.",
+          "properties": {
+            "tolerance": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "tie_detected": {
+              "type": "boolean"
+            },
+            "tie_break_criteria": {
+              "type": "array",
+              "description": "Ordered tie-break criteria actually applied. Empty when tie_detected is false.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["order", "criterion", "observed_values"],
+                "properties": {
+                  "order": { "type": "integer", "minimum": 1 },
+                  "criterion": { "$ref": "#/$defs/tie_break_criterion" },
+                  "observed_values": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["candidate_id", "value"],
+                      "properties": {
+                        "candidate_id": { "type": "string", "minLength": 1 },
+                        "value": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/external_candidate" }
+        },
+        "selected_candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["candidate_id"],
+          "description": "References a candidate_id from the candidates array by identity only -- no duplicated model_family/estimator fields here, so selected-candidate identity can never contradict its own candidate entry. Consumers must cross-check candidate_id membership against the candidates array.",
+          "properties": {
+            "candidate_id": { "type": "string", "minLength": 1 }
+          }
+        },
+        "selection_rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sealed_test_confirmation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["test_partition_role", "used_for_model_selection", "sealed_before_selection"],
+          "properties": {
+            "test_partition_role": {
+              "type": "string",
+              "const": "test"
+            },
+            "used_for_model_selection": {
+              "type": "boolean",
+              "const": false
+            },
+            "sealed_before_selection": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        },
+        "path_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_selection_evidence_reference"],
+          "properties": {
+            "model_selection_evidence_reference": {
+              "$ref": "#/$defs/package_relative_path"
+            }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "model_state_fingerprint"],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "model_state_fingerprint": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "Semantic fingerprint of the selected fitted model's state, supplied by the validated handoff lineage. Must be consistent with the same fingerprint recorded in the corresponding external training-parameter-record and, when present, inference-bundle evidence."
+            }
+          }
+        },
+        "evidence_policy": {
+          "$ref": "#/$defs/evidence_policy"
+        },
+        "classification_evidence": {
+          "$ref": "#/$defs/multiclass_classification_evidence_v2"
+        }
+      }
+    },
+    "multiclass_classification_evidence_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0208: governed multiclass classification evidence claim about the external fitted model -- not proof from model deserialization. Basic types/minimums/uniqueness are enforced here; the exact class_id/probability_index sequencing (probability_columns[i].probability_index == i and probability_columns[i].class_id == ordered_class_ids[i]) is enforced defensively by the materializer, which also requires this evidence to exactly match the corresponding training-parameter-record classification_evidence.",
+      "required": ["problem_type", "ordered_class_ids", "probability_columns"],
+      "properties": {
+        "problem_type": {
+          "type": "string",
+          "const": "multiclass_classification"
+        },
+        "ordered_class_ids": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "probability_columns": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_id", "probability_index"],
+            "properties": {
+              "class_id": { "type": "string", "minLength": 1 },
+              "probability_index": { "type": "integer", "minimum": 0 }
+            }
+          }
         }
       }
     },

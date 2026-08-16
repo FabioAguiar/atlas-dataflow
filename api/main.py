@@ -370,6 +370,11 @@ def _resolve_problem_type(dataset_slug: str) -> str | None:
     """
     try:
         resolved = resolve_dataset(dataset_slug)
+        result_contract = _project_result_contract_safely(resolved.active_release)
+        semantics = result_contract.get("semantics") if result_contract.get("status") == "available" else None
+        problem_type = semantics.get("problem_type") if isinstance(semantics, dict) else None
+        if problem_type in {"binary_classification", "multiclass_classification"}:
+            return problem_type
         context = load_public_context(resolved.active_release)
     except (DatasetUnavailableError, ReleaseUnavailableError, RegistryInvalidError, PublicContextUnavailableError):
         return None
@@ -988,7 +993,10 @@ def get_public_context(dataset_slug: str):
     except PublicContextUnavailableError:
         return public_error_response(CONTEXT_UNAVAILABLE)
 
-    overlay = resolve_public_presentation_overlay(dataset_slug)
+    result_contract = _project_result_contract_safely(resolved.active_release)
+    semantics = result_contract.get("semantics") if result_contract.get("status") == "available" else None
+    expected_problem_type = semantics.get("problem_type") if isinstance(semantics, dict) else None
+    overlay = resolve_public_presentation_overlay(dataset_slug, expected_problem_type=expected_problem_type)
     context = {**context, **overlay}
 
     return {

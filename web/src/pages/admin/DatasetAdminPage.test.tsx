@@ -46,6 +46,10 @@ function jsonResponse(body: unknown, status = 200): MockResponse {
 // case-insensitive full-document scan catches these regardless of which
 // panel/status line they might otherwise have leaked into.
 const FORBIDDEN_DRAFT_TERMS = ["draft endpoint", "profile draft model", "private/admin draft endpoint"];
+// S0213: release-governed multiclass semantics are a compatible technical
+// state; the page must never recreate a manual problem-type selector.
+const MULTICLASS_PROBLEM_TYPE_LABEL = "Multiclass Classification";
+void MULTICLASS_PROBLEM_TYPE_LABEL;
 
 function forbiddenDraftTermsPresent(): string[] {
   const text = document.body.textContent?.toLowerCase() ?? "";
@@ -3194,7 +3198,7 @@ describe("DatasetAdminPage", () => {
     expect(screen.queryByText(/selected$/)).not.toBeInTheDocument();
   });
 
-  it("renders the model-derived problem type as an ordered, locked radio group beside the Home card preview", async () => {
+  it("renders problem type as one read-only release-governed value beside the Home card preview", async () => {
     installFetchMock();
     renderAdminPage();
 
@@ -3205,27 +3209,15 @@ describe("DatasetAdminPage", () => {
     expect(screen.getByLabelText("Home card description")).toBeInTheDocument();
     expect(screen.queryByLabelText("Short Home card description")).not.toBeInTheDocument();
 
-    const problemTypeGroup = screen.getByRole("radiogroup", { name: "Problem type display" });
-    const options = within(problemTypeGroup).getAllByRole("radio") as HTMLInputElement[];
-    expect(options.map((option) => option.value)).toEqual([
-      "binary-classification",
-      "regression",
-      "multiclass-classification",
-      "time-series",
-    ]);
-    expect(options[0]).toBeChecked();
-    options.forEach((option) => expect(option).toBeDisabled());
+    const problemTypeDisplay = screen.getByLabelText("Problem type display");
+    expect(within(problemTypeDisplay).queryByRole("radio")).not.toBeInTheDocument();
 
     const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
     expect(within(previewCard).getByText("Binary Classification")).toBeInTheDocument();
     expect(within(previewCard).queryByText("Predictive Analysis")).not.toBeInTheDocument();
-    expect(within(problemTypeGroup).getByText("Binary Classification")).toBeInTheDocument();
-    expect(within(problemTypeGroup).queryByText("Selected from Atlas")).not.toBeInTheDocument();
-
-    fireEvent.click(within(problemTypeGroup).getByText("Regression"));
-    expect(options[0]).toBeChecked();
-    expect(options[1]).not.toBeChecked();
-    expect(screen.queryByText(/derived from the Atlas dataset and model contract/i)).not.toBeInTheDocument();
+    expect(within(problemTypeDisplay).getByText("Binary Classification")).toBeInTheDocument();
+    expect(within(problemTypeDisplay).getByText("Release-governed")).toBeInTheDocument();
+    expect(within(problemTypeDisplay).queryByText("Regression")).not.toBeInTheDocument();
   });
 
   // Project Spec S0204: the same draft Performance focus selection projects
@@ -3860,7 +3852,7 @@ describe("DatasetAdminPage", () => {
     // to a fixed "dd/mm/yyyy" wording is removed -- the hint now reflects
     // the actually-edited date_format, reusing the same shared
     // presentDatasetDateOnly contract the public Dataset Detail page uses.
-    expect(screen.getByText("Format: yyyy-mm-dd")).toBeInTheDocument();
+    expect(screen.getByText("yyyy-mm-dd")).toBeInTheDocument();
 
     // The draft performance-focus projection moves the highlight and public
     // presentation value before publish. This lives in the Overview tab,

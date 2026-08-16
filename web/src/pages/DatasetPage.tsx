@@ -9,7 +9,13 @@ import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
-import type { BinaryResultContract, BinaryResultPresentation } from "../components/ResultCard/types";
+import {
+  availableResultProblemType,
+  isAvailableBinaryResultContract,
+  type BinaryResultContract,
+  type ResultContract,
+  type ResultPresentation,
+} from "../components/ResultCard/types";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 import {
@@ -58,13 +64,13 @@ type PublicContextPayload = {
   theme_preset?: string | null;
   bound_predict_view_id?: string | null;
   legacy_submit_button_label?: string | null;
-  result_card?: BinaryResultPresentation | null;
+  result_card?: ResultPresentation | null;
   documentation?: { format: "markdown"; content: string } | null;
 };
 
 type ContractEnvelope = {
   contract: ContractPayload;
-  result_contract: BinaryResultContract;
+  result_contract: ResultContract;
 };
 
 type MetricsData = Record<string, unknown>;
@@ -129,11 +135,10 @@ function humanizeProblemType(problemType: string | null | undefined): string | n
  * fallback for historical releases without result semantics.
  */
 function resolveAnalysisType(
-  resultContract: BinaryResultContract | null,
+  resultContract: ResultContract | null,
   context: PublicContextPayload | null,
 ): string | null {
-  const releaseBoundProblemType =
-    resultContract?.status === "available" ? resultContract.semantics.problem_type : null;
+  const releaseBoundProblemType = availableResultProblemType(resultContract);
   return humanizeProblemType(releaseBoundProblemType) ?? humanizeProblemType(context?.problem_type) ?? null;
 }
 
@@ -434,7 +439,10 @@ export default function DatasetPage() {
     },
     {
       label: "Target",
-      value: resolveDatasetTargetDescription(resultContract, context?.prediction_target_description),
+      value: resolveDatasetTargetDescription(
+        isAvailableBinaryResultContract(resultContract) ? resultContract : null,
+        context?.prediction_target_description,
+      ),
     },
     {
       label: "Release",
@@ -463,8 +471,10 @@ export default function DatasetPage() {
           slug={slug!}
           customization={boundViewCustomization ?? undefined}
           submitButtonLabel={resolvedSubmitButtonLabel}
-          resultContract={contractState.data.result_contract}
-          resultPresentation={context?.result_card ?? undefined}
+          resultContract={isAvailableBinaryResultContract(contractState.data.result_contract)
+            ? contractState.data.result_contract
+            : { status: "unavailable", reason: "multiclass_renderer_unavailable" } satisfies BinaryResultContract}
+          resultPresentation={context?.result_card?.schema_version === "binary-result-presentation.v1" ? context.result_card : undefined}
           // Project Spec S0141: only the public Dataset Detail route opts
           // into the zero-probability initial Result Card projection -- the
           // bound Predict View route (DatasetViewPage.tsx) intentionally

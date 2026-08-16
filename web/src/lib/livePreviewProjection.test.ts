@@ -47,6 +47,32 @@ const context = {
 
 const contract = { fields: [{ name: "tenure" }, { name: "MonthlyCharges" }] };
 const metrics = { evaluation: { sample_size: 7043 } };
+const multiclassResultContract = {
+  status: "available" as const,
+  semantics: {
+    schema_version: "multiclass-result-semantics.v1" as const,
+    problem_type: "multiclass_classification" as const,
+    result_schema_version: "multiclass-classification-result.v1" as const,
+    classes: [
+      { class_id: "a", display_label: "A" },
+      { class_id: "b", display_label: "B" },
+      { class_id: "c", display_label: "C" },
+    ],
+    primary_output: "predicted_class" as const,
+    probability_output: "class_probabilities" as const,
+    decision: { strategy: "argmax" as const },
+    model_descriptor: { model_family: "random_forest", display_name: "Forest" },
+  },
+};
+
+describe("release-derived multiclass problem type", () => {
+  it("overrides historical binary context on both previews", () => {
+    expect(projectHomeCardPreview(dataset, draftForm, context, multiclassResultContract).problemType)
+      .toBe("multiclass_classification");
+    expect(projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, multiclassResultContract).analysisType)
+      .toBe("multiclass_classification");
+  });
+});
 // Project Spec S0205: the bounded public visualizations projection Instances
 // now reads from -- metrics.evaluation.sample_size above no longer feeds it.
 const visualizations = { charts: [], dataset_statistics: { instance_count: 7043 } };

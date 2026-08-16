@@ -21,11 +21,16 @@ import BinaryClassificationResult from "../../components/ResultCard/BinaryClassi
 import ResultCardShell from "../../components/ResultCard/ResultCardShell";
 import {
   GENERIC_RESULT_PRESENTATION,
+  GENERIC_MULTICLASS_RESULT_PRESENTATION,
+  availableResultProblemType,
   isAvailableBinaryResultContract,
+  isAvailableMulticlassResultContract,
   isBinaryClassificationResult,
   type BinaryResultContract,
   type BinaryResultPresentation,
   type BinaryResultSemantics,
+  type MulticlassResultSemantics,
+  type ResultPresentation,
 } from "../../components/ResultCard/types";
 import InferenceForm, {
   normalizeAdminInferenceGuidance,
@@ -186,11 +191,13 @@ type ProfileDraft = {
     bound_predict_view_id?: string | null;
   };
   result_card?: {
-    schema_version?: "binary-result-presentation.v1";
+    schema_version?: "binary-result-presentation.v1" | "multiclass-result-presentation.v1";
     positive_class_probability_label?: string;
     predicted_outcome_label?: string;
     positive_outcome_copy?: string;
     negative_outcome_copy?: string;
+    predicted_class_label?: string;
+    class_probability_distribution_label?: string;
     model_section_label?: string;
     interpretation?: {
       preset?: "risk";
@@ -287,6 +294,9 @@ type DraftForm = {
   predicted_outcome_label: string;
   positive_outcome_copy: string;
   negative_outcome_copy: string;
+  result_presentation_schema_version: "binary-result-presentation.v1" | "multiclass-result-presentation.v1";
+  predicted_class_label: string;
+  class_probability_distribution_label: string;
   // Project Spec S0110: read-only migration context only -- the Result Card
   // tab no longer renders or edits this field, and profileFromForm never
   // writes it back. Populated by formFromProfile purely so the Inference
@@ -432,7 +442,7 @@ type ContractEnvelope = {
 
 type ResultContractState =
   | { status: "idle" | "loading" }
-  | { status: "available"; semantics: BinaryResultSemantics }
+  | { status: "available"; semantics: BinaryResultSemantics | MulticlassResultSemantics }
   | { status: "unavailable"; message: string }
   | { status: "transport_failure"; message: string }
   | { status: "incompatible"; message: string };
@@ -1550,6 +1560,9 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     predicted_outcome_label: GENERIC_RESULT_PRESENTATION.predicted_outcome_label,
     positive_outcome_copy: GENERIC_RESULT_PRESENTATION.positive_outcome_copy,
     negative_outcome_copy: GENERIC_RESULT_PRESENTATION.negative_outcome_copy,
+    result_presentation_schema_version: "binary-result-presentation.v1",
+    predicted_class_label: GENERIC_MULTICLASS_RESULT_PRESENTATION.predicted_class_label,
+    class_probability_distribution_label: GENERIC_MULTICLASS_RESULT_PRESENTATION.class_probability_distribution_label,
     legacy_submit_button_label: "",
     model_section_label: GENERIC_RESULT_PRESENTATION.model_section_label,
     interpretation_preset: "risk",
@@ -1593,6 +1606,9 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     predicted_outcome_label: profile.result_card?.predicted_outcome_label ?? form.predicted_outcome_label,
     positive_outcome_copy: profile.result_card?.positive_outcome_copy ?? form.positive_outcome_copy,
     negative_outcome_copy: profile.result_card?.negative_outcome_copy ?? form.negative_outcome_copy,
+    result_presentation_schema_version: profile.result_card?.schema_version ?? form.result_presentation_schema_version,
+    predicted_class_label: profile.result_card?.predicted_class_label ?? form.predicted_class_label,
+    class_probability_distribution_label: profile.result_card?.class_probability_distribution_label ?? form.class_probability_distribution_label,
     legacy_submit_button_label: profile.result_card?.submit_button_label ?? "",
     model_section_label: profile.result_card?.model_section_label ?? form.model_section_label,
     interpretation_preset: "risk",
@@ -1674,7 +1690,12 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
   // (see contracts/dataset-public-profile.schema.json's deprecated,
   // read-only compatibility description for that field). The Inference Form
   // tab's predict-view customization is the only writer of submit copy now.
-  profile.result_card = {
+  profile.result_card = form.result_presentation_schema_version === "multiclass-result-presentation.v1" ? {
+    schema_version: "multiclass-result-presentation.v1",
+    predicted_class_label: textValue(form.predicted_class_label),
+    class_probability_distribution_label: textValue(form.class_probability_distribution_label),
+    model_section_label: textValue(form.model_section_label),
+  } : {
     schema_version: "binary-result-presentation.v1",
     positive_class_probability_label: textValue(form.positive_class_probability_label),
     predicted_outcome_label: textValue(form.predicted_outcome_label),
@@ -1931,6 +1952,9 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
     const reason = "reason" in value && typeof value.reason === "string" ? value.reason : "No result semantics are available for this release.";
     return { status: "unavailable", message: reason };
   }
+  if (isAvailableMulticlassResultContract(value)) {
+    return { status: "available", semantics: value.semantics };
+  }
   if (!isAvailableBinaryResultContract(value)) {
     return { status: "incompatible", message: "The active release result contract is missing or incompatible." };
   }
@@ -1948,7 +1972,7 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
 // InferenceForm already knows how to disable submission and render safely
 // for, exactly as the pre-existing synthetic Result Card preview did.
 function toInferenceResultContract(state: ResultContractState): BinaryResultContract {
-  if (state.status === "available") {
+  if (state.status === "available" && state.semantics.problem_type === "binary_classification") {
     return { status: "available", semantics: state.semantics };
   }
   return {
@@ -2001,7 +2025,15 @@ async function executeAdminInference(
   }
 }
 
-function presentationFromForm(form: DraftForm): BinaryResultPresentation {
+function presentationFromForm(form: DraftForm): ResultPresentation {
+  if (form.result_presentation_schema_version === "multiclass-result-presentation.v1") {
+    return {
+      schema_version: "multiclass-result-presentation.v1",
+      predicted_class_label: form.predicted_class_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.predicted_class_label,
+      class_probability_distribution_label: form.class_probability_distribution_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.class_probability_distribution_label,
+      model_section_label: form.model_section_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.model_section_label,
+    };
+  }
   return {
     schema_version: "binary-result-presentation.v1",
     positive_class_probability_label: form.positive_class_probability_label.trim() || GENERIC_RESULT_PRESENTATION.positive_class_probability_label,
@@ -2301,11 +2333,7 @@ function MetadataCardTab({
   // placeholder here rather than widening the shared lib's type.
   const authoringDataset = stateValue(readOnlyData.dataset);
   const previewDataset = authoringDataset ? { ...authoringDataset, visibility: "" } : undefined;
-  const lockedProblemType = {
-    machineId: "binary_classification",
-    optionValue: "binary-classification",
-    label: "Binary Classification",
-  } as const;
+  const problemType = availableResultProblemType(readOnlyData.resultContract);
   const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
   const [imageUploadError, setImageUploadError] = useState("");
 
@@ -2406,9 +2434,8 @@ function MetadataCardTab({
                   ...form,
                   home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
                 },
-                context
-                  ? { ...context, problem_type: lockedProblemType.machineId }
-                  : { problem_type: lockedProblemType.machineId },
+                context,
+                readOnlyData.resultContract,
               )}
               mediaRef={form.background_image_ref}
               summary={form.short_description}
@@ -2419,23 +2446,11 @@ function MetadataCardTab({
 
           <Card className="dataset-admin-config-card dataset-admin-problem-type-card">
             <div className="dataset-admin-card-heading">
-              <h2>Problem type display</h2>
+              <h2>Problem type</h2>
             </div>
-            <div aria-label="Problem type display" className="dataset-admin-problem-type-options" role="radiogroup">
-              {[
-                [lockedProblemType.optionValue, lockedProblemType.label, ""],
-                ["regression", "Regression", "Locked"],
-                ["multiclass-classification", "Multiclass Classification", "Locked"],
-                ["time-series", "Time Series", "Locked"],
-              ].map(([value, label, status], index) => (
-                <label className={["dataset-admin-problem-type-option", index === 0 ? "is-selected" : ""].filter(Boolean).join(" ")} key={value}>
-                  <input checked={index === 0} disabled name="problem-type-display" readOnly type="radio" value={value} />
-                  <span>
-                    <strong>{label}</strong>
-                    {status ? <small>{status}</small> : null}
-                  </span>
-                </label>
-              ))}
+            <div aria-label="Problem type display" className="dataset-admin-problem-type-options">
+              <strong>{problemType === "binary_classification" ? "Binary Classification" : problemType === "multiclass_classification" ? "Multiclass Classification" : "Unavailable"}</strong>
+              <small>Release-governed</small>
             </div>
           </Card>
         </div>
@@ -3399,6 +3414,8 @@ function ResultCardTab({
 }) {
   const resultContract = readOnlyData.resultContract;
   const semantics = resultContract.status === "available" ? resultContract.semantics : null;
+  const binarySemantics = semantics?.problem_type === "binary_classification" ? semantics : null;
+  const multiclassSemantics = semantics?.problem_type === "multiclass_classification" ? semantics : null;
   return (
     <TabWorkspace eyebrow="Result Card" helper="Edit public presentation labels only; model behavior remains read-only Atlas state.">
       <Card className="dataset-admin-technical-summary">
@@ -3413,14 +3430,17 @@ function ResultCardTab({
         <div className="dataset-admin-technical-grid">
           <ReadOnlyField label="Problem type" value={semantics?.problem_type ?? "Unavailable"} />
           <ReadOnlyField label="Performance focus (context only)" value={form.performance_focus.focus_id || "Unavailable"} />
-          <ReadOnlyField label="Positive class" value={semantics ? `${semantics.positive_class.class_id} — ${semantics.positive_class.event_label}` : "Unavailable"} />
+          {binarySemantics ? <ReadOnlyField label="Positive class" value={`${binarySemantics.positive_class.class_id} — ${binarySemantics.positive_class.event_label}`} /> : null}
+          {multiclassSemantics ? <ReadOnlyField label="Classes" value={`${multiclassSemantics.classes.map((item) => item.display_label).join(", ")} (${multiclassSemantics.classes.length})`} /> : null}
           <ReadOnlyField label="Primary output" value={semantics?.primary_output ?? "Unavailable"} />
-          <ReadOnlyField label="Decision threshold" value={semantics ? `${Math.round(semantics.decision.threshold * 1000) / 10}%` : "Unavailable"} />
+          {binarySemantics ? <ReadOnlyField label="Decision threshold" value={`${Math.round(binarySemantics.decision.threshold * 1000) / 10}%`} /> : null}
+          {multiclassSemantics ? <ReadOnlyField label="Probability output" value={multiclassSemantics.probability_output} /> : null}
+          {multiclassSemantics ? <ReadOnlyField label="Decision strategy" value={multiclassSemantics.decision.strategy} /> : null}
           <ReadOnlyField label="Model descriptor" value={semantics ? `${semantics.model_descriptor.display_name} (${semantics.model_descriptor.model_family})` : "Unavailable"} />
         </div>
-        {semantics ? (
+        {binarySemantics ? (
           <div className="dataset-admin-boundaries" aria-label="Governed risk band boundaries">
-            {semantics.interpretation.bands.map((band) => <span key={band.band_id}><strong>{band.band_id}</strong> {Math.round(band.lower_bound * 1000) / 10}%–{Math.round(band.upper_bound * 1000) / 10}%</span>)}
+            {binarySemantics.interpretation.bands.map((band) => <span key={band.band_id}><strong>{band.band_id}</strong> {Math.round(band.lower_bound * 1000) / 10}%–{Math.round(band.upper_bound * 1000) / 10}%</span>)}
           </div>
         ) : null}
       </Card>
@@ -3430,20 +3450,25 @@ function ResultCardTab({
             <h2>Configuration</h2>
             <p>Risk is enabled only by a compatible technical contract; other interpretations show their requirements.</p>
           </div>
-          <div className="dataset-admin-form-grid">
+          {multiclassSemantics ? <div className="dataset-admin-form-grid">
+            <TextField label="Predicted class label" onChange={(value) => setField("predicted_class_label", value)} value={form.predicted_class_label} />
+            <TextField label="Class probability distribution label" onChange={(value) => setField("class_probability_distribution_label", value)} value={form.class_probability_distribution_label} />
+            <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
+          </div> : <div className="dataset-admin-form-grid">
             <TextField label="Positive-class probability label" onChange={(value) => setField("positive_class_probability_label", value)} value={form.positive_class_probability_label} />
             <TextField label="Predicted outcome label" onChange={(value) => setField("predicted_outcome_label", value)} value={form.predicted_outcome_label} />
             <TextField label="Positive outcome copy" onChange={(value) => setField("positive_outcome_copy", value)} value={form.positive_outcome_copy} />
             <TextField label="Negative outcome copy" onChange={(value) => setField("negative_outcome_copy", value)} value={form.negative_outcome_copy} />
             <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
-          </div>
+          </div>}
+          {binarySemantics ? <>
           <label className="dataset-admin-native-select">
             <span style={labelStyle}>Badge preset</span>
             <select
-              disabled={!semantics}
+              disabled={!binarySemantics}
               onChange={() => setField("interpretation_preset", "risk")}
               style={inputStyle}
-              value={semantics ? "risk" : ""}
+              value={binarySemantics ? "risk" : ""}
             >
               <option value="">Risk unavailable</option>
               <option value="risk">Risk</option>
@@ -3451,7 +3476,7 @@ function ResultCardTab({
           </label>
           <div className="dataset-admin-result-preset-grid">
             {RESULT_PRESET_CARDS.map((preset) => {
-              const available = preset.value === "risk" && Boolean(semantics);
+              const available = preset.value === "risk" && Boolean(binarySemantics);
               const selected = available && form.interpretation_preset === "risk";
               return (
                 <button
@@ -3485,6 +3510,7 @@ function ResultCardTab({
             <TextField label="Medium label" onChange={(value) => setField("interpretation_medium", value)} value={form.interpretation_medium} />
             <TextField label="Low label" onChange={(value) => setField("interpretation_low", value)} value={form.interpretation_low} />
           </div>
+          </> : null}
         </Card>
 
         <Card className="dataset-admin-preview-card">
@@ -3492,7 +3518,7 @@ function ResultCardTab({
             <h2>Example result</h2>
             <p>Compact preview fed by the current label fields.</p>
           </div>
-          <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />
+          {multiclassSemantics ? <p role="status">Multiclass Result Card preview is unavailable until the shared renderer is introduced.</p> : <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />}
         </Card>
       </div>
     </TabWorkspace>
@@ -4327,7 +4353,9 @@ function DatasetDetailLivePreview({
       // View/customization identity changes -- never on unrelated re-renders.
       resetKey={`${selectedSlug}::${form.bound_predict_view_id}`}
       resultContract={toInferenceResultContract(readOnlyData.resultContract)}
-      resultPresentation={presentationFromForm(form)}
+      resultPresentation={form.result_presentation_schema_version === "binary-result-presentation.v1"
+        ? presentationFromForm(form) as BinaryResultPresentation
+        : undefined}
       slug={selectedSlug}
       submitButtonLabel={customizationDraft?.viewCopy.submit_button_label.trim() || undefined}
     />
@@ -4360,7 +4388,7 @@ function DatasetDetailLivePreview({
 }
 
 function ResultCardLivePreview({ form, resetKey, resultContract }: { form: DraftForm; resetKey: string; resultContract: ResultContractState }) {
-  const semantics = resultContract.status === "available" ? resultContract.semantics : null;
+  const semantics = resultContract.status === "available" && resultContract.semantics.problem_type === "binary_classification" ? resultContract.semantics : null;
   const threshold = semantics?.decision.threshold ?? 0;
   const [probability, setProbability] = useState(() => semantics ? positiveScenarioProbability(threshold) : 0);
 
@@ -4368,7 +4396,10 @@ function ResultCardLivePreview({ form, resetKey, resultContract }: { form: Draft
     setProbability(semantics ? positiveScenarioProbability(semantics.decision.threshold) : 0);
   }, [resetKey, semantics]);
 
-  const presentation = presentationFromForm(form);
+  const projectedPresentation = presentationFromForm(form);
+  const presentation = projectedPresentation.schema_version === "binary-result-presentation.v1"
+    ? projectedPresentation
+    : GENERIC_RESULT_PRESENTATION;
   const result = semantics ? projectBinaryResultPreview(semantics, presentation, probability) : null;
   const negativeProbability = semantics ? negativeScenarioProbability(threshold) : null;
 
@@ -4489,6 +4520,7 @@ function LivePreviewTab({
                   home_card_icon: form.home_card_icon as "" | "telecom" | "bank" | "generic",
                 },
                 stateValue(readOnlyData.context),
+                readOnlyData.resultContract,
               )}
               mediaRef={form.background_image_ref}
               themePreset={form.theme_preset}
@@ -5097,6 +5129,16 @@ export default function DatasetAdminPage() {
 
     return () => controller.abort();
   }, [selectedSlug, refreshRevision, authoringContextRetryNonce]);
+
+  useEffect(() => {
+    if (readOnlyData.resultContract.status !== "available") return;
+    const schemaVersion = readOnlyData.resultContract.semantics.problem_type === "multiclass_classification"
+      ? "multiclass-result-presentation.v1"
+      : "binary-result-presentation.v1";
+    setDraftForm((current) => current.result_presentation_schema_version === schemaVersion
+      ? current
+      : { ...current, result_presentation_schema_version: schemaVersion });
+  }, [readOnlyData.resultContract]);
 
   // Project Spec S0098: deterministic Dataset Admin authoring rebinding.
   // Runs only after hydration has resolved bound_predict_view_id from the

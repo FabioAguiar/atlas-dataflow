@@ -513,7 +513,7 @@ def test_context_endpoint_returns_public_context_response():
             active_release="release-20260616-001",
         )
         api_main.load_public_context = lambda active_release: context
-        api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_CONTEXT_OVERLAY)
+        api_main.resolve_public_presentation_overlay = lambda dataset_slug, expected_problem_type=None: dict(_EMPTY_PUBLIC_CONTEXT_OVERLAY)
         response = api_main.get_public_context("example-dataset")
         assert response == {
             "dataset_slug": "example-dataset",

@@ -5,6 +5,8 @@ import {
   type BinaryClassificationResult,
   type BinaryResultPresentation,
   type BinaryResultSemantics,
+  availableResultProblemType,
+  type MulticlassResultSemantics,
 } from "../components/ResultCard/types";
 import type { DatasetIconName } from "./datasetPresentation";
 import type { PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
@@ -63,7 +65,7 @@ type PreviewMetrics = Record<string, unknown>;
 // existing convention, so it never imports a page type.
 type PreviewResultContract =
   | { status: "idle" | "loading" }
-  | { status: "available"; semantics: BinaryResultSemantics }
+  | { status: "available"; semantics: BinaryResultSemantics | MulticlassResultSemantics }
   | { status: "unavailable" | "transport_failure" | "incompatible"; message?: string };
 
 // Project Spec S0120: the draft fields required to feed the shared public
@@ -154,6 +156,7 @@ export function projectHomeCardPreview(
     "display_title" | "display_subtitle" | "short_description" | "home_card_icon" | "performance_focus"
   >,
   context: PreviewContext | null,
+  resultContract?: PreviewResultContract | null,
 ): HomeCardPreviewProps {
   const title = form.display_title.trim() || dataset?.title || dataset?.dataset_slug || "";
   const summary = form.short_description.trim() || form.display_subtitle.trim() || dataset?.summary || "";
@@ -165,7 +168,7 @@ export function projectHomeCardPreview(
     domain: dataset?.domain,
     tags: dataset?.tags ?? [],
     iconOverride: form.home_card_icon || undefined,
-    problemType: context?.problem_type,
+    problemType: availableResultProblemType(resultContract) ?? context?.problem_type,
     performanceFocusId: form.performance_focus.focus_id,
   };
 }
@@ -237,7 +240,12 @@ export function projectDatasetDetailPreview(
     { label: "Features", value: fields.length ? String(fields.length) : null },
     {
       label: "Target",
-      value: resolveDatasetTargetDescription(resultContract, context?.prediction_target_description),
+      value: resolveDatasetTargetDescription(
+        resultContract?.status === "available" && resultContract.semantics.problem_type === "binary_classification"
+          ? { status: "available", semantics: resultContract.semantics }
+          : null,
+        context?.prediction_target_description,
+      ),
     },
     {
       label: "Release",
@@ -249,7 +257,7 @@ export function projectDatasetDetailPreview(
   return {
     datasetTitle,
     subtitle,
-    analysisType: context?.problem_type,
+    analysisType: availableResultProblemType(resultContract) ?? context?.problem_type,
     metadata,
     problemSummaryTitle,
     problemSummaryBody,

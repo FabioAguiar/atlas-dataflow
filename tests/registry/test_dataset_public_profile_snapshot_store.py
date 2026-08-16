@@ -195,6 +195,18 @@ def test_publish_canonicalizes_legacy_result_card_and_omits_legacy_keys(fake_rep
     assert not ({"probability_label", "model_label", "badge_preset", "badge_labels", "submit_button_label"} & card.keys())
 
 
+def test_publish_preserves_multiclass_result_presentation(fake_repo):
+    profile = _profile(result_card={
+        "schema_version": "multiclass-result-presentation.v1",
+        "predicted_class_label": "Predicted class",
+        "class_probability_distribution_label": "Class probability distribution",
+        "model_section_label": "Model",
+    })
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"] == profile["result_card"]
+
+
 def test_publish_blocks_dropping_unmigrated_legacy_submit_copy(fake_repo):
     profile = _profile(
         inference_presentation={"bound_predict_view_id": "churn-risk-overview"},

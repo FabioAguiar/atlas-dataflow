@@ -913,7 +913,7 @@ def test_get_public_context_returns_context_when_visible(monkeypatch):
     api_main.resolve_dataset_visibility = lambda dataset_slug: True
     api_main.resolve_dataset = _fixture_resolve_dataset
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
-    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
+    api_main.resolve_public_presentation_overlay = lambda dataset_slug, expected_problem_type=None: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
     _stub_snapshot_current(monkeypatch)
     try:
@@ -940,7 +940,7 @@ def test_get_public_context_overlay_fields_none_when_no_snapshot_published(monke
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
     _stub_snapshot_current(monkeypatch)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
-    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
+    api_main.resolve_public_presentation_overlay = lambda dataset_slug, expected_problem_type=None: dict(_EMPTY_PUBLIC_PROFILE_OVERLAY)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
@@ -978,7 +978,7 @@ def test_get_public_context_includes_curated_overlay_fields_when_published(monke
     monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda dataset_slug: False)
     _stub_snapshot_current(monkeypatch)
     api_main.load_public_context = lambda active_release: dict(_FAKE_CONTEXT)
-    api_main.resolve_public_presentation_overlay = lambda dataset_slug: dict(_CURATED_PUBLIC_PROFILE_OVERLAY)
+    api_main.resolve_public_presentation_overlay = lambda dataset_slug, expected_problem_type=None: dict(_CURATED_PUBLIC_PROFILE_OVERLAY)
     try:
         response = api_main.get_public_context(_TARGET_SLUG)
     finally:
@@ -1257,15 +1257,18 @@ def test_resolve_problem_type_returns_value_when_context_available(monkeypatch):
 
 def test_resolve_problem_type_none_when_context_unavailable():
     original_load_public_context = api_main.load_public_context
+    original_project = api_main._project_result_contract_safely
 
     def raise_context_unavailable(_active_release):
         raise PublicContextUnavailableError("unavailable")
 
     api_main.load_public_context = raise_context_unavailable
+    api_main._project_result_contract_safely = lambda _release: {"status": "unavailable"}
     try:
         assert api_main._resolve_problem_type(_TARGET_SLUG) is None
     finally:
         api_main.load_public_context = original_load_public_context
+        api_main._project_result_contract_safely = original_project
 
 
 def test_resolve_problem_type_none_when_dataset_unknown():
@@ -1287,11 +1290,14 @@ def test_resolve_problem_type_none_when_release_unavailable():
 
 def test_resolve_problem_type_none_when_value_not_a_string():
     original_load_public_context = api_main.load_public_context
+    original_project = api_main._project_result_contract_safely
     api_main.load_public_context = lambda active_release: {"problem_type": 123}
+    api_main._project_result_contract_safely = lambda _release: {"status": "unavailable"}
     try:
         assert api_main._resolve_problem_type(_TARGET_SLUG) is None
     finally:
         api_main.load_public_context = original_load_public_context
+        api_main._project_result_contract_safely = original_project
 
 
 def test_list_datasets_endpoint_includes_problem_type_for_every_visible_dataset(monkeypatch):

@@ -271,9 +271,10 @@
       }
     },
     "result_card": {
-      "description": "Binary Result Card presentation only. Canonical snapshots use binary-result-presentation.v1; the legacy alternative is deprecated read compatibility.",
+      "description": "Closed Result Card presentation union. Legacy input remains readable only for binary migration.",
       "oneOf": [
         {"$ref": "#/definitions/canonical_result_card"},
+        {"$ref": "#/definitions/multiclass_result_card"},
         {"$ref": "#/definitions/legacy_result_card"}
       ]
     },
@@ -289,6 +290,17 @@
         "negative_outcome_copy": {"$ref": "#/definitions/result_card_outcome_copy"},
         "model_section_label": {"$ref": "#/definitions/result_card_short_copy"},
         "interpretation": {"$ref": "#/definitions/result_card_interpretation"}
+      }
+    },
+    "multiclass_result_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "predicted_class_label", "class_probability_distribution_label", "model_section_label"],
+      "properties": {
+        "schema_version": {"const": "multiclass-result-presentation.v1"},
+        "predicted_class_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "class_probability_distribution_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "model_section_label": {"$ref": "#/definitions/result_card_short_copy"}
       }
     },
     "legacy_result_card": {

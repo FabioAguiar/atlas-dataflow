@@ -20,6 +20,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from registry.dataset_public_profile_validate import (  # noqa: E402
     normalize_binary_result_presentation,
+    normalize_multiclass_result_presentation,
+    normalize_result_presentation,
     validate_profile_references,
 )
 
@@ -294,6 +296,23 @@ def test_mixed_result_card_normalization_uses_canonical_precedence():
     assert normalized["interpretation"]["labels"] == {
         "high": "Canonical high", "medium": "Legacy medium", "low": "Low"
     }
+
+
+def test_multiclass_result_card_normalization_is_copy_only_and_idempotent():
+    normalized = normalize_multiclass_result_presentation({
+        "predicted_class_label": "  Winning class  ",
+        "class_probability_distribution_label": " ",
+        "classes": [{"class_id": "forbidden"}],
+        "threshold": 0.5,
+    })
+    assert normalized == {
+        "schema_version": "multiclass-result-presentation.v1",
+        "predicted_class_label": "Winning class",
+        "class_probability_distribution_label": "Class probability distribution",
+        "model_section_label": "Model",
+    }
+    assert normalize_result_presentation(normalized) == normalized
+    assert normalize_result_presentation(None, "multiclass_classification")["schema_version"] == "multiclass-result-presentation.v1"
 
 
 if __name__ == "__main__":

@@ -86,6 +86,20 @@ export type UnavailableBinaryResultContract = {
 
 export type BinaryResultContract = AvailableBinaryResultContract | UnavailableBinaryResultContract;
 
+export type MulticlassClassIdentity = { class_id: string; display_label: string };
+export type MulticlassResultSemantics = {
+  schema_version: "multiclass-result-semantics.v1";
+  problem_type: "multiclass_classification";
+  result_schema_version: "multiclass-classification-result.v1";
+  classes: MulticlassClassIdentity[];
+  primary_output: "predicted_class";
+  probability_output: "class_probabilities";
+  decision: { strategy: "argmax" };
+  model_descriptor: BinaryModelDescriptor;
+};
+export type AvailableMulticlassResultContract = { status: "available"; semantics: MulticlassResultSemantics };
+export type ResultContract = AvailableBinaryResultContract | AvailableMulticlassResultContract | UnavailableBinaryResultContract;
+
 /** Bounded guard for the executable public binary result-contract capability. */
 export function isAvailableBinaryResultContract(value: unknown): value is AvailableBinaryResultContract {
   if (!isRecord(value) || value.status !== "available" || !isRecord(value.semantics)) return false;
@@ -106,6 +120,25 @@ export function isAvailableBinaryResultContract(value: unknown): value is Availa
   return isModelDescriptor(semantics.model_descriptor);
 }
 
+export function isAvailableMulticlassResultContract(value: unknown): value is AvailableMulticlassResultContract {
+  if (!isRecord(value) || value.status !== "available" || !isRecord(value.semantics)) return false;
+  const semantics = value.semantics;
+  if (semantics.schema_version !== "multiclass-result-semantics.v1" || semantics.problem_type !== "multiclass_classification") return false;
+  if (semantics.result_schema_version !== "multiclass-classification-result.v1" || semantics.primary_output !== "predicted_class") return false;
+  if (semantics.probability_output !== "class_probabilities" || !Array.isArray(semantics.classes) || semantics.classes.length < 3) return false;
+  if (!semantics.classes.every(isMulticlassClassIdentity)) return false;
+  const ids = semantics.classes.map((item) => item.class_id.trim());
+  if (new Set(ids).size !== ids.length) return false;
+  if (!isRecord(semantics.decision) || semantics.decision.strategy !== "argmax") return false;
+  return isModelDescriptor(semantics.model_descriptor);
+}
+
+export function availableResultProblemType(value: unknown): "binary_classification" | "multiclass_classification" | null {
+  if (isAvailableBinaryResultContract(value)) return "binary_classification";
+  if (isAvailableMulticlassResultContract(value)) return "multiclass_classification";
+  return null;
+}
+
 /** Matches GET /datasets/{slug}/context's result_card (binary-result-presentation.v1). */
 export type BinaryResultPresentation = {
   schema_version: "binary-result-presentation.v1";
@@ -122,6 +155,21 @@ export type BinaryResultPresentation = {
       low: string;
     };
   };
+};
+
+export type MulticlassResultPresentation = {
+  schema_version: "multiclass-result-presentation.v1";
+  predicted_class_label: string;
+  class_probability_distribution_label: string;
+  model_section_label: string;
+};
+export type ResultPresentation = BinaryResultPresentation | MulticlassResultPresentation;
+
+export const GENERIC_MULTICLASS_RESULT_PRESENTATION: MulticlassResultPresentation = {
+  schema_version: "multiclass-result-presentation.v1",
+  predicted_class_label: "Predicted class",
+  class_probability_distribution_label: "Class probability distribution",
+  model_section_label: "Model",
 };
 
 /**
@@ -167,6 +215,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isClassIdentity(value: unknown): value is BinaryClassIdentity {
   return isRecord(value) && isNonEmptyString(value.class_id);
+}
+
+function isMulticlassClassIdentity(value: unknown): value is MulticlassClassIdentity {
+  return isRecord(value) && isNonEmptyString(value.class_id) && isNonEmptyString(value.display_label);
 }
 
 function isPositiveClass(value: unknown): value is BinaryPositiveClass {

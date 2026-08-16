@@ -58,6 +58,23 @@ const resultContractAvailable = {
   },
 };
 
+// S0213 regression fixture: DatasetPage accepts this structurally but keeps it
+// outside the binary-only InferenceForm result renderer until S0214.
+const multiclassResultContractAvailable = {
+  status: "available" as const,
+  semantics: {
+    schema_version: "multiclass-result-semantics.v1" as const,
+    problem_type: "multiclass_classification" as const,
+    result_schema_version: "multiclass-classification-result.v1" as const,
+    classes: ["a", "b", "c"].map((class_id) => ({ class_id, display_label: class_id.toUpperCase() })),
+    primary_output: "predicted_class" as const,
+    probability_output: "class_probabilities" as const,
+    decision: { strategy: "argmax" as const },
+    model_descriptor: { model_family: "random_forest", display_name: "Forest" },
+  },
+};
+void multiclassResultContractAvailable;
+
 const resultCardPresentation = {
   schema_version: "binary-result-presentation.v1",
   positive_class_probability_label: "Churn probability",

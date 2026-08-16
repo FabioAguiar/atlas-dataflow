@@ -71,6 +71,7 @@ PERFORMANCE_SCORE_CATALOG = {
 }
 
 BINARY_RESULT_PRESENTATION_SCHEMA_VERSION = "binary-result-presentation.v1"
+MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION = "multiclass-result-presentation.v1"
 _RESULT_CARD_FALLBACKS = {
     "positive_class_probability_label": "Positive class probability",
     "predicted_outcome_label": "Predicted outcome",
@@ -80,6 +81,11 @@ _RESULT_CARD_FALLBACKS = {
     "high": "High",
     "medium": "Medium",
     "low": "Low",
+}
+_MULTICLASS_RESULT_CARD_FALLBACKS = {
+    "predicted_class_label": "Predicted class",
+    "class_probability_distribution_label": "Class probability distribution",
+    "model_section_label": "Model",
 }
 
 
@@ -130,6 +136,31 @@ def normalize_binary_result_presentation(result_card: object) -> dict:
             "labels": {key: label(key) for key in ("high", "medium", "low")},
         },
     }
+
+
+def normalize_multiclass_result_presentation(result_card: object) -> dict:
+    """Return canonical copy-only multiclass presentation deterministically."""
+    source = result_card if isinstance(result_card, dict) else {}
+
+    def copy(key: str) -> str:
+        value = source.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else _MULTICLASS_RESULT_CARD_FALLBACKS[key]
+
+    return {
+        "schema_version": MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION,
+        **{key: copy(key) for key in _MULTICLASS_RESULT_CARD_FALLBACKS},
+    }
+
+
+def normalize_result_presentation(result_card: object, expected_problem_type: str | None = None) -> dict:
+    """Dispatch only from trusted problem type or the governed schema version."""
+    if expected_problem_type == "multiclass_classification":
+        return normalize_multiclass_result_presentation(result_card)
+    if expected_problem_type == "binary_classification":
+        return normalize_binary_result_presentation(result_card)
+    if isinstance(result_card, dict) and result_card.get("schema_version") == MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION:
+        return normalize_multiclass_result_presentation(result_card)
+    return normalize_binary_result_presentation(result_card)
 
 
 def _err(code: str, field: str | None, message: str) -> dict:

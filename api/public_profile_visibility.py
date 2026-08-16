@@ -43,7 +43,7 @@ from registry.dataset_public_profile_snapshot_store import (
     SnapshotNotFoundError,
     get_snapshot,
 )
-from registry.dataset_public_profile_validate import normalize_binary_result_presentation
+from registry.dataset_public_profile_validate import normalize_result_presentation
 from registry.list import is_dataset_needs_review
 from registry.validate import RELEASE_ID_PATTERN
 
@@ -182,7 +182,11 @@ def resolve_public_dataset_access(
     return PUBLIC_DATASET_ACCESS_READY
 
 
-def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | None = None) -> dict:
+def resolve_public_presentation_overlay(
+    dataset_slug: str,
+    repo_root: Path | None = None,
+    expected_problem_type: str | None = None,
+) -> dict:
     """
     Return the published snapshot's curated presentation fields for
     dataset_slug (display_title, display_subtitle, home_card_icon,
@@ -226,7 +230,7 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "performance_focus": None,
         "bound_predict_view_id": None,
         "legacy_submit_button_label": None,
-        "result_card": normalize_binary_result_presentation(None),
+        "result_card": normalize_result_presentation(None, expected_problem_type),
         "documentation": None,
     }
 
@@ -276,6 +280,6 @@ def resolve_public_presentation_overlay(dataset_slug: str, repo_root: Path | Non
         "legacy_submit_button_label": (
             result_card.get("submit_button_label") if isinstance(result_card, dict) else None
         ),
-        "result_card": normalize_binary_result_presentation(result_card),
+        "result_card": normalize_result_presentation(result_card, expected_problem_type),
         "documentation": _normalize_public_documentation(profile.get("documentation")),
     }

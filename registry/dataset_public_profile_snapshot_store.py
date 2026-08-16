@@ -64,7 +64,7 @@ from registry.dataset_public_profile_store import (
     validate_profile_draft,
 )
 from registry.dataset_public_profile_validate import (
-    normalize_binary_result_presentation,
+    normalize_result_presentation,
     validate_profile_references,
 )
 from registry.update import (
@@ -225,7 +225,7 @@ def _build_snapshot_candidate(
     release_date_label: str,
 ) -> dict:
     profile = {field: draft[field] for field in _PROFILE_FIELDS if field in draft}
-    profile["result_card"] = normalize_binary_result_presentation(profile.get("result_card"))
+    profile["result_card"] = normalize_result_presentation(profile.get("result_card"))
     display = profile.get("display")
     if isinstance(display, dict):
         display = dict(display)

@@ -34,7 +34,24 @@ from pathlib import Path
 
 _MANIFEST_SCHEMA_PATH = Path(__file__).parent / "dataset-integration-authoring-manifest.schema.json"
 _SEMANTIC_INTENT_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.schema.json"
+_SEMANTIC_INTENT_V2_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.v2.schema.json"
 _CAPABILITY_PROFILE_SCHEMA_PATH = Path(__file__).parent / "capability-profile.schema.json"
+
+# Closed local registry dispatching semantic-intent schema selection by the
+# artifact's own declared `schema_version` -- never by dataset slug, dataset
+# name, filesystem path naming, feature names, or model family. Unknown or
+# missing versions fail closed (see `_resolve_semantic_intent_schema`).
+_SEMANTIC_INTENT_SCHEMA_REGISTRY: dict[str, Path] = {
+    "dataset-semantic-intent.v1": _SEMANTIC_INTENT_SCHEMA_PATH,
+    "dataset-semantic-intent.v2": _SEMANTIC_INTENT_V2_SCHEMA_PATH,
+}
+
+# Architecture-level task/runtime compatibility, enforced only when a
+# semantic intent declares target_semantics -- never dataset-specific.
+_TASK_TYPE_TO_RUNTIME_MODE: dict[str, str] = {
+    "binary_classification": "single_model_binary_classification",
+    "multiclass_classification": "single_model_multiclass_classification",
+}
 
 
 def _utc_now_iso() -> str:
@@ -71,6 +88,23 @@ class AuthoringContractValidationResult:
 
 def _load_schema(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolve_semantic_intent_schema(instance: dict) -> tuple[dict | None, ValidationFailure | None]:
+    """Dispatch the semantic-intent schema by the artifact's own declared
+    `schema_version` against the closed local registry. Fails closed (no
+    schema resolved, a typed failure returned) for an unknown or missing
+    version -- never guesses a schema from dataset slug, dataset name,
+    filesystem path naming, feature names, or model family."""
+    schema_version = instance.get("schema_version")
+    schema_path = _SEMANTIC_INTENT_SCHEMA_REGISTRY.get(schema_version)
+    if schema_path is None:
+        return None, ValidationFailure(
+            code="unknown_semantic_intent_schema_version",
+            message=f"semantic-intent schema_version is unknown or unsupported: {schema_version!r}",
+            field_path="schema_version",
+        )
+    return _load_schema(schema_path), None
 
 
 def _load_instance(instance: dict | str | Path) -> tuple[dict | None, ValidationFailure | None]:
@@ -234,9 +268,13 @@ def validate_authoring_contracts(
     semantic_intent_schema_valid: bool | None = None
     semantic_intent_schema_failures: list[ValidationFailure] = []
     if semantic_intent_instance is not None:
-        semantic_intent_schema = _load_schema(_SEMANTIC_INTENT_SCHEMA_PATH)
-        semantic_intent_schema_failures = _schema_failures(semantic_intent_instance, semantic_intent_schema)
-        semantic_intent_schema_valid = not semantic_intent_schema_failures
+        semantic_intent_schema, dispatch_failure = _resolve_semantic_intent_schema(semantic_intent_instance)
+        if dispatch_failure is not None:
+            semantic_intent_schema_failures = [dispatch_failure]
+            semantic_intent_schema_valid = False
+        else:
+            semantic_intent_schema_failures = _schema_failures(semantic_intent_instance, semantic_intent_schema)
+            semantic_intent_schema_valid = not semantic_intent_schema_failures
 
     failures.extend(manifest_schema_failures)
     failures.extend(profile_schema_failures)
@@ -481,6 +519,47 @@ def validate_authoring_contracts(
                 )
             )
         # "optional": either presence or absence is valid.
+
+    # --- Governed class-declaration uniqueness (multiclass) -------------------
+    # JSON Schema uniqueItems is insufficient when two class objects share a
+    # class_id but differ in display_label -- checked independently here.
+    # Classes are never reordered or re-derived; array order as authored is
+    # preserved and treated as normative throughout.
+    if semantic_intent_instance is not None and "target_semantics" in semantic_intent_instance:
+        classes = semantic_intent_instance["target_semantics"].get("classes")
+        if classes is not None:
+            seen_class_ids: set[str] = set()
+            for class_entry in classes:
+                class_id = class_entry["class_id"]
+                if class_id in seen_class_ids:
+                    failures.append(
+                        ValidationFailure(
+                            code="duplicate_class_id",
+                            message=f"target_semantics.classes declares duplicate class_id: {class_id!r}",
+                            field_path="target_semantics.classes",
+                        )
+                    )
+                seen_class_ids.add(class_id)
+
+    # --- Task/runtime capability consistency -----------------------------------
+    # Architecture-level only, contains no dataset-specific condition. A
+    # targetless capability (no target_semantics) preserves prior behavior
+    # and is never forced into a classification task here.
+    if semantic_intent_instance is not None and "target_semantics" in semantic_intent_instance:
+        task_type = semantic_intent_instance["target_semantics"]["task_type"]
+        runtime_mode = profile_instance["prediction_runtime"]["mode"]
+        expected_runtime_mode = _TASK_TYPE_TO_RUNTIME_MODE.get(task_type)
+        if expected_runtime_mode is not None and runtime_mode != expected_runtime_mode:
+            failures.append(
+                ValidationFailure(
+                    code="task_runtime_mode_mismatch",
+                    message=(
+                        f"semantic-intent target_semantics.task_type {task_type!r} does not agree with "
+                        f"capability profile prediction_runtime.mode {runtime_mode!r}"
+                    ),
+                    field_path="target_semantics.task_type",
+                )
+            )
 
     valid = not failures
 

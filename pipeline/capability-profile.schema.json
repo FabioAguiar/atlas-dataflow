@@ -53,7 +53,7 @@
     "support_status": {
       "type": "string",
       "enum": ["current_supported", "future_architecture_probe", "requires_future_contract_evolution"],
-      "description": "Whether this capability is currently, operationally supported by Atlas end-to-end ('current_supported'), a documented architecture probe with no current implementation ('future_architecture_probe'), or a capability that needs further contract evolution before it can be supported ('requires_future_contract_evolution'). Only one profile may currently be marked 'current_supported': the binary predictive-classification profile. Regression, forecasting, clustering, and no-model/analysis-only capabilities must never be marked 'current_supported'."
+      "description": "Whether this capability is currently, operationally supported by Atlas end-to-end ('current_supported'), a documented architecture probe with no current implementation ('future_architecture_probe'), or a capability that needs further contract evolution before it can be supported ('requires_future_contract_evolution'). 'current_supported' is valid for a given capability profile only when downstream consumers (contract_derivation, assemble_candidate, and any release/publication surface) explicitly implement and validate that capability end-to-end; a capability profile document existing under this schema does not by itself make the capability operational."
     },
     "semantic_requirements": {
       "type": "object",
@@ -113,7 +113,7 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["single_model_binary_classification", "none"],
+          "enum": ["single_model_binary_classification", "single_model_multiclass_classification", "none"],
           "description": "The current, evidenced runtime prediction mode for this capability, or 'none' when prediction_runtime.applicable is false. New modes require a new capability profile version, never a dataset-specific branch."
         }
       }

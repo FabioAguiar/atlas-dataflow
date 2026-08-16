@@ -540,3 +540,317 @@ class TestAuthoringBoundaryApplicabilityOverride:
         assert "telco" not in source.lower()
         assert "dataset_slug ==" not in source
         assert 'dataset_slug == "' not in source
+
+
+SEMANTIC_INTENT_V2_SCHEMA_PATH = REPO_ROOT / "pipeline" / "dataset-semantic-intent.v2.schema.json"
+
+MULTICLASS_CLASSIFICATION_ROLES = {
+    "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
+    "semantic_intent": SEMANTIC_INTENT_BYTES,
+    "preparation_recipe": PREPARATION_RECIPE_BYTES,
+    "model_artifact": MODEL_ARTIFACT_BYTES,
+}
+
+DEFAULT_MULTICLASS_CLASSES = [
+    {"class_id": "class-a", "display_label": "Class A"},
+    {"class_id": "class-b", "display_label": "Class B"},
+    {"class_id": "class-c", "display_label": "Class C"},
+]
+
+
+def _multiclass_classification_profile() -> dict:
+    """Project Spec S0206: an additive, non-operational multiclass capability
+    profile, in-memory mirror of pipeline/capabilities/multiclass-predictive-
+    classification.v1.json, used the same way _binary_classification_profile
+    is used above -- as a synthetic, dataset-neutral fixture, not the real
+    committed file."""
+    return {
+        "schema_version": "capability-profile.v1",
+        "artifact_type": "capability_profile",
+        "capability_profile_id": "multiclass-predictive-classification",
+        "capability_profile_version": "v1",
+        "support_status": "requires_future_contract_evolution",
+        "semantic_requirements": {
+            "target_semantics_applicability": "required",
+        },
+        "artifact_roles": [
+            {"role_name": "discovery_evidence", "applicability": "required"},
+            {"role_name": "semantic_intent", "applicability": "required"},
+            {"role_name": "preparation_recipe", "applicability": "required"},
+            {"role_name": "model_artifact", "applicability": "required", "authoring_boundary_applicability": "optional"},
+            {"role_name": "visual_evidence", "applicability": "optional"},
+            {"role_name": "no_model_analysis_summary", "applicability": "forbidden"},
+        ],
+        "prediction_runtime": {
+            "applicable": True,
+            "mode": "single_model_multiclass_classification",
+        },
+        "publication": {
+            "public_prediction_capability_applicability": "optional",
+        },
+        "capability_boundary_confirmations": {
+            "dataset_specific_selector_used": False,
+            "dataset_specific_feature_names_present": False,
+            "concrete_model_hashes_present": False,
+            "model_bytes_embedded": False,
+            "release_instance_metadata_embedded": False,
+            "absolute_external_path_present": False,
+            "training_result_values_embedded": False,
+        },
+        "generated_at": "2026-08-16T00:00:00+00:00",
+    }
+
+
+def _multiclass_semantic_intent_for(
+    profile: dict,
+    *,
+    classes: list[dict] | None = None,
+    include_positive_class: bool = False,
+    omit_classes: bool = False,
+) -> dict:
+    document = {
+        "schema_version": "dataset-semantic-intent.v2",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "authoring_generation_id": "authoring-gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": profile["capability_profile_id"],
+            "capability_profile_version": profile["capability_profile_version"],
+        },
+        "field_role_decisions": [
+            {"field_name": "record_id", "role": "identifier", "include_in_features": False},
+            {"field_name": "numeric_feature", "role": "feature", "include_in_features": True},
+        ],
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-16T00:00:00+00:00",
+    }
+    target_semantics = {
+        "target_field_name": "category",
+        "task_type": "multiclass_classification",
+        "is_final_training_configuration": False,
+    }
+    if not omit_classes:
+        target_semantics["classes"] = classes if classes is not None else list(DEFAULT_MULTICLASS_CLASSES)
+    if include_positive_class:
+        target_semantics["positive_class"] = {"class_id": "class-a"}
+    document["target_semantics"] = target_semantics
+    return document
+
+
+class TestSemanticIntentSchemaVersionDispatch:
+    """Project Spec S0206: authoring_contracts dispatches semantic-intent
+    schema selection by the artifact's own declared schema_version against a
+    closed local registry, never by dataset slug/name, filesystem path
+    naming, feature names, or model family."""
+
+    def test_v2_schema_is_valid_json_schema(self):
+        schema = _load_schema(SEMANTIC_INTENT_V2_SCHEMA_PATH)
+        jsonschema.Draft202012Validator.check_schema(schema)
+
+    def test_v1_schema_dispatch_still_works(self):
+        profile = _binary_classification_profile()
+        manifest = _manifest_for(profile, roles=BINARY_CLASSIFICATION_ROLES)
+        semantic_intent = _semantic_intent_for(profile, include_target=True)
+        assert semantic_intent["schema_version"] == "dataset-semantic-intent.v1"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is True
+
+    def test_v2_schema_dispatch_works(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+        assert semantic_intent["schema_version"] == "dataset-semantic-intent.v2"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is True
+
+    def test_unknown_semantic_intent_schema_version_fails_closed(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+        semantic_intent["schema_version"] = "dataset-semantic-intent.v99"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+        assert any(failure.code == "unknown_semantic_intent_schema_version" for failure in result.failures)
+
+    def test_missing_semantic_intent_schema_version_fails_closed(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+        del semantic_intent["schema_version"]
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+        assert any(failure.code == "unknown_semantic_intent_schema_version" for failure in result.failures)
+
+
+class TestValidGenericMulticlassAuthoringContract:
+    def test_valid_multiclass_manifest_profile_and_semantic_intent_pass(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(
+            manifest, profile, semantic_intent=semantic_intent, expected_dataset_slug=DATASET_SLUG
+        )
+
+        assert result.manifest_schema_valid is True
+        assert result.semantic_intent_schema_valid is True
+        assert result.capability_profile_schema_valid is True
+        assert result.valid is True
+        assert result.failures == ()
+        assert result.capability_profile_id == "multiclass-predictive-classification"
+        assert result.capability_profile_version == "v1"
+
+    def test_class_order_is_preserved_as_authored(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        non_alphabetical_classes = [
+            {"class_id": "class-c", "display_label": "Class C"},
+            {"class_id": "class-a", "display_label": "Class A"},
+            {"class_id": "class-b", "display_label": "Class B"},
+        ]
+        semantic_intent = _multiclass_semantic_intent_for(profile, classes=non_alphabetical_classes)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.valid is True, result.failures
+        assert semantic_intent["target_semantics"]["classes"] == non_alphabetical_classes
+
+
+class TestMulticlassTargetSemanticsPositiveClassRejection:
+    def test_positive_class_on_multiclass_target_semantics_is_rejected(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile, include_positive_class=True)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+
+
+class TestMulticlassClassCountAndUniqueness:
+    def test_fewer_than_three_classes_is_rejected(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(
+            profile,
+            classes=[
+                {"class_id": "class-a", "display_label": "Class A"},
+                {"class_id": "class-b", "display_label": "Class B"},
+            ],
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+
+    def test_duplicate_class_id_is_rejected(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(
+            profile,
+            classes=[
+                {"class_id": "class-a", "display_label": "Class A"},
+                {"class_id": "class-a", "display_label": "Also labeled class A"},
+                {"class_id": "class-c", "display_label": "Class C"},
+            ],
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "duplicate_class_id" for failure in result.failures)
+
+
+class TestTaskRuntimeModeConsistency:
+    """Project Spec S0206: semantic task type and capability prediction
+    runtime mode must agree; a targetless capability's behavior is
+    unaffected (checked only when target_semantics is present)."""
+
+    def test_binary_task_with_multiclass_runtime_mode_is_rejected(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _semantic_intent_for(profile, include_target=True)
+        assert semantic_intent["target_semantics"]["task_type"] == "binary_classification"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_multiclass_task_with_binary_runtime_mode_is_rejected(self):
+        profile = _binary_classification_profile()
+        manifest = _manifest_for(profile, roles=BINARY_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["task_type"] == "multiclass_classification"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_binary_task_with_binary_runtime_mode_agrees(self):
+        profile = _binary_classification_profile()
+        manifest = _manifest_for(profile, roles=BINARY_CLASSIFICATION_ROLES)
+        semantic_intent = _semantic_intent_for(profile, include_target=True)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert not any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_multiclass_task_with_multiclass_runtime_mode_agrees(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert not any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_targetless_capability_behavior_is_unaffected(self):
+        profile = _no_model_analysis_profile()
+        manifest = _manifest_for(
+            profile,
+            roles={"discovery_evidence": DISCOVERY_EVIDENCE_BYTES, "semantic_intent": SEMANTIC_INTENT_BYTES},
+        )
+        semantic_intent = _semantic_intent_for(profile, include_target=False)
+        assert "target_semantics" not in semantic_intent
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.valid is True
+        assert not any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+
+class TestNoDatasetOrTelcoOrDryBeanConditionInMulticlassPath:
+    def test_validate_authoring_contracts_contains_no_dataset_conditional(self):
+        source = inspect.getsource(authoring_contracts.validate_authoring_contracts)
+        for forbidden in ("telco", "dry bean", "dry_bean", "drybean"):
+            assert forbidden not in source.lower()
+
+    def test_resolve_semantic_intent_schema_contains_no_dataset_conditional(self):
+        source = inspect.getsource(authoring_contracts._resolve_semantic_intent_schema)
+        for forbidden in ("telco", "dry bean", "dry_bean", "drybean", "dataset_slug"):
+            assert forbidden not in source.lower()

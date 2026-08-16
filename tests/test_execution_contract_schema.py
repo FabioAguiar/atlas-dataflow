@@ -233,6 +233,268 @@ def test_empty_ignored_columns_accepted():
 
 
 # ---------------------------------------------------------------------------
+# result_semantics closed binary/multiclass union (Project Spec S0207)
+#
+# Direct contract-level JSON-Schema coverage for the S0207 union, plus one
+# fixture materialized through the real dispatcher (mirrors
+# tests/test_contract_derivation.py's own coverage, checked here at the raw
+# schema level since this module owns contracts/execution-contract.schema.json
+# directly).
+# ---------------------------------------------------------------------------
+
+
+def _valid_binary_result_semantics() -> dict:
+    return {
+        "schema_version": "binary-result-semantics.v1",
+        "problem_type": "binary_classification",
+        "positive_class": {"class_id": "Yes", "event_label": "Churn"},
+        "primary_output": "positive_class_probability",
+        "decision": {"threshold": 0.5},
+        "interpretation": {
+            "preset": "risk",
+            "bands": [
+                {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
+                {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
+                {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
+            ],
+        },
+    }
+
+
+def _valid_multiclass_result_semantics() -> dict:
+    return {
+        "schema_version": "multiclass-result-semantics.v1",
+        "problem_type": "multiclass_classification",
+        "classes": [
+            {"class_id": "low_risk", "display_label": "Low Risk"},
+            {"class_id": "medium_risk", "display_label": "Medium Risk"},
+            {"class_id": "high_risk", "display_label": "High Risk"},
+        ],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+    }
+
+
+def test_existing_binary_result_semantics_still_validate():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["result_semantics"] = _valid_binary_result_semantics()
+    jsonschema.validate(contract, schema)
+
+
+def test_valid_multiclass_result_semantics_validate():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["result_semantics"] = _valid_multiclass_result_semantics()
+    jsonschema.validate(contract, schema)
+
+
+def test_multiclass_classes_require_at_least_three_entries():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["classes"] = result_semantics["classes"][:2]
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_multiclass_class_entries_reject_extra_properties():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["classes"][0]["extra_field"] = "not allowed"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_multiclass_positive_class_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["positive_class"] = {"class_id": "Yes", "event_label": "Churn"}
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_multiclass_threshold_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["decision"] = {"strategy": "argmax", "threshold": 0.5}
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_multiclass_interpretation_risk_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["interpretation"] = _valid_binary_result_semantics()["interpretation"]
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_multiclass_wrong_primary_output_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["primary_output"] = "positive_class_probability"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_multiclass_wrong_probability_output_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["probability_output"] = "positive_class_probability"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_multiclass_non_argmax_decision_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_multiclass_result_semantics()
+    result_semantics["decision"] = {"strategy": "max_probability"}
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_binary_contract_containing_multiclass_only_fields_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_binary_result_semantics()
+    result_semantics["classes"] = _valid_multiclass_result_semantics()["classes"]
+    result_semantics["probability_output"] = "class_probabilities"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def _synthetic_multiclass_modeling_intent() -> dict:
+    return {
+        "artifact_type": "dataset_modeling_intent",
+        "contract_version": "dataset_modeling_intent.v1",
+        "dataset_identity": {
+            "dataset_slug": "synthetic-triage",
+            "dataset_source_ref": "data/raw/synthetic-triage.csv",
+        },
+        "target_intent": {
+            "target_column": "risk_tier",
+            "task_type": "multiclass_classification",
+            "observed_labels": ["low_risk", "medium_risk", "high_risk"],
+            "positive_label_candidate": None,
+            "observed_target_distribution": {"low_risk": 500, "medium_risk": 300, "high_risk": 200},
+            "is_final_training_configuration": False,
+        },
+        "identifier_and_ignored_columns": [
+            {"name": "record_ref", "reason": "identifier_candidate_excluded_from_features"}
+        ],
+        "initial_feature_candidates": ["age", "tenure_months"],
+        "categorical_domain_intent": [],
+        "binary_result_semantics_intent": None,
+        "multiclass_result_semantics_intent": {
+            "schema_version": "multiclass_result_semantics_intent.v1",
+            "review_status": "approved",
+            "problem_type": "multiclass_classification",
+            "primary_output": "predicted_class",
+            "probability_output": "class_probabilities",
+            "decision_strategy": "argmax",
+            "review_notes": "Reviewed for S0207 schema-level fixture coverage.",
+        },
+    }
+
+
+def _synthetic_multiclass_discovery_evidence() -> dict:
+    return {
+        "schema_version": "dataset-discovery-evidence.v1",
+        "field_observations": [
+            {
+                "name": "age", "inferred_type": "integer", "null_count": 0, "null_rate": 0.0,
+                "cardinality": 40, "sample_min": 18, "sample_max": 90,
+            },
+            {
+                "name": "tenure_months", "inferred_type": "integer", "null_count": 0, "null_rate": 0.0,
+                "cardinality": 60, "sample_min": 0, "sample_max": 72,
+            },
+        ],
+        "generation_settings": {"seed": 0, "generator_version": "discovery-evidence.v1"},
+    }
+
+
+def _synthetic_semantic_intent_v2() -> dict:
+    return {
+        "schema_version": "dataset-semantic-intent.v2",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": "synthetic-triage"},
+        "authoring_generation_id": "gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": "multiclass-predictive-classification",
+            "capability_profile_version": "v1",
+        },
+        "field_role_decisions": [
+            {"field_name": "risk_tier", "role": "target", "include_in_features": False},
+        ],
+        "target_semantics": {
+            "target_field_name": "risk_tier",
+            "task_type": "multiclass_classification",
+            "classes": [
+                {"class_id": "low_risk", "display_label": "Low Risk"},
+                {"class_id": "medium_risk", "display_label": "Medium Risk"},
+                {"class_id": "high_risk", "display_label": "High Risk"},
+            ],
+            "is_final_training_configuration": False,
+        },
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-16T00:00:00+00:00",
+    }
+
+
+def test_normalized_multiclass_contract_from_approved_fixtures_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _build_execution_contract(
+        _synthetic_multiclass_modeling_intent(),
+        _synthetic_multiclass_discovery_evidence(),
+        None,
+        semantic_intent=_synthetic_semantic_intent_v2(),
+    )
+    assert "result_semantics" in contract
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v1_identity_remains_unchanged():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    jsonschema.validate(contract, schema)
+    assert contract["contract_version"] == "execution_contract.v1"
+
+
+# ---------------------------------------------------------------------------
 # Execution contract materialization tests (Project Spec S0024)
 #
 # Exercise pipeline.contract_derivation.materialize_execution_contract /

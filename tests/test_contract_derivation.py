@@ -21,7 +21,10 @@ from pipeline.contract_derivation import (
     conditional_policy_errors,
     project_execution_contract_draft,
 )
-from pipeline.discovery_evidence import build_binary_result_semantics_intent
+from pipeline.discovery_evidence import (
+    build_binary_result_semantics_intent,
+    build_multiclass_result_semantics_intent,
+)
 
 
 def _categorical_feature(values=("admin", "blue-collar", "technician"), **overrides):
@@ -730,3 +733,320 @@ def test_execution_contract_materialization_evidence_reports_materialized():
     assert materialization["bands"] == VALID_RESULT_SEMANTICS_BANDS
     assert materialization["no_defaults_inferred"] is True
     assert materialization["blocking_reasons"] == []
+
+
+# ---------------------------------------------------------------------------
+# Multiclass result semantics materialization (Project Spec S0207).
+# Fixtures are synthetic and dataset-neutral, matching the campaign-response
+# precedent established above -- no Dry Bean or other real-dataset name.
+# ---------------------------------------------------------------------------
+
+VALID_MULTICLASS_CLASSES = [
+    {"class_id": "low_risk", "display_label": "Low Risk"},
+    {"class_id": "medium_risk", "display_label": "Medium Risk"},
+    {"class_id": "high_risk", "display_label": "High Risk"},
+]
+
+
+def _approved_multiclass_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="multiclass_classification",
+        primary_output="predicted_class",
+        probability_output="class_probabilities",
+        decision_strategy="argmax",
+        review_notes="Reviewed multiclass result semantics.",
+    )
+    kwargs.update(overrides)
+    return build_multiclass_result_semantics_intent(**kwargs)
+
+
+def _valid_semantic_intent_v2(classes=None) -> dict:
+    return {
+        "schema_version": "dataset-semantic-intent.v2",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": "campaign-response"},
+        "authoring_generation_id": "gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": "multiclass-predictive-classification",
+            "capability_profile_version": "v1",
+        },
+        "field_role_decisions": [
+            {"field_name": "responded", "role": "target", "include_in_features": False},
+        ],
+        "target_semantics": {
+            "target_field_name": "responded",
+            "task_type": "multiclass_classification",
+            "classes": list(classes if classes is not None else VALID_MULTICLASS_CLASSES),
+            "is_final_training_configuration": False,
+        },
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-16T00:00:00+00:00",
+    }
+
+
+def _modeling_intent_for_multiclass_result_semantics(multiclass_result_semantics_intent=None) -> dict:
+    intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    intent["multiclass_result_semantics_intent"] = multiclass_result_semantics_intent
+    return intent
+
+
+def test_execution_contract_materializes_multiclass_result_semantics_when_approved():
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+
+    result_semantics = contract["result_semantics"]
+    assert result_semantics["schema_version"] == "multiclass-result-semantics.v1"
+    assert result_semantics["problem_type"] == "multiclass_classification"
+    assert result_semantics["primary_output"] == "predicted_class"
+    assert result_semantics["probability_output"] == "class_probabilities"
+    assert result_semantics["decision"] == {"strategy": "argmax"}
+    assert result_semantics["classes"] == VALID_MULTICLASS_CLASSES
+    for forbidden in ("positive_class", "negative_class", "threshold", "interpretation"):
+        assert forbidden not in result_semantics
+
+
+def test_execution_contract_multiclass_classes_preserve_authored_order_exactly():
+    reordered = [
+        {"class_id": "high_risk", "display_label": "High Risk"},
+        {"class_id": "low_risk", "display_label": "Low Risk"},
+        {"class_id": "medium_risk", "display_label": "Medium Risk"},
+    ]
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2(classes=reordered)
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert contract["result_semantics"]["classes"] == reordered
+
+
+def test_execution_contract_multiclass_supports_more_than_three_classes():
+    four_classes = VALID_MULTICLASS_CLASSES + [
+        {"class_id": "critical_risk", "display_label": "Critical Risk"}
+    ]
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2(classes=four_classes)
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert len(contract["result_semantics"]["classes"]) == 4
+
+
+def test_execution_contract_omits_multiclass_result_semantics_when_pending_review():
+    intent = _approved_multiclass_result_semantics_intent(review_status="pending_review")
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_multiclass_result_semantics_when_semantic_intent_missing():
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None, semantic_intent=None
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_multiclass_result_semantics_when_semantic_intent_wrong_version():
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2()
+    semantic_intent["schema_version"] = "dataset-semantic-intent.v1"
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_multiclass_result_semantics_when_wrong_task_type():
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2()
+    semantic_intent["target_semantics"]["task_type"] = "binary_classification"
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_multiclass_duplicate_class_id_fails_closed():
+    duplicated = [
+        {"class_id": "low_risk", "display_label": "Low Risk"},
+        {"class_id": "low_risk", "display_label": "Low Risk Duplicate"},
+        {"class_id": "high_risk", "display_label": "High Risk"},
+    ]
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2(classes=duplicated)
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_binary_and_multiclass_intents_together_fail_closed():
+    binary_intent = _approved_binary_result_semantics_intent()
+    multiclass_intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=binary_intent)
+    modeling_intent["multiclass_result_semantics_intent"] = multiclass_intent
+    semantic_intent = _valid_semantic_intent_v2()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_binary_intent_still_materializes_exactly_as_before():
+    intent = _approved_binary_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=intent)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    result_semantics = contract["result_semantics"]
+    assert result_semantics["schema_version"] == "binary-result-semantics.v1"
+    assert result_semantics["positive_class"] == {"class_id": "Yes", "event_label": "Responded"}
+
+
+def test_execution_contract_absence_of_both_intents_still_omits_result_semantics():
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert "result_semantics" not in contract
+
+
+def test_multiclass_result_semantics_validates_against_execution_contract_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    jsonschema.validate(contract, schema)
+
+
+def test_materialization_evidence_names_multiclass_variant_deterministically():
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2()
+    discovery_evidence = _discovery_evidence_for_result_semantics()
+    contract = _build_execution_contract(
+        modeling_intent, discovery_evidence, None, semantic_intent=semantic_intent
+    )
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        None,
+        contract,
+        execution_contract_relative_path="contracts/campaign-response/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        semantic_intent=semantic_intent,
+        generated_at="2026-08-16T00:00:00+00:00",
+    )
+    materialization = evidence["result_semantics_materialization"]
+    assert materialization["requested_variant"] == "multiclass"
+    assert materialization["materialized_schema_version"] == "multiclass-result-semantics.v1"
+    assert materialization["problem_type"] == "multiclass_classification"
+    assert materialization["status"] == "materialized"
+    assert materialization["reason"] is None
+    assert materialization["class_count"] == 3
+    assert materialization["class_ids"] == ["low_risk", "medium_risk", "high_risk"]
+
+
+def test_materialization_evidence_names_binary_variant_deterministically():
+    intent = _approved_binary_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=intent)
+    discovery_evidence = _discovery_evidence_for_result_semantics()
+    contract = _build_execution_contract(modeling_intent, discovery_evidence, None)
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        None,
+        contract,
+        execution_contract_relative_path="contracts/campaign-response/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        generated_at="2026-08-16T00:00:00+00:00",
+    )
+    materialization = evidence["result_semantics_materialization"]
+    assert materialization["requested_variant"] == "binary"
+    assert materialization["materialized_schema_version"] == "binary-result-semantics.v1"
+    assert materialization["problem_type"] == "binary_classification"
+    assert materialization["status"] == "materialized"
+
+
+def test_materialization_evidence_names_absence_of_both_intents_deterministically():
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    discovery_evidence = _discovery_evidence_for_result_semantics()
+    contract = _build_execution_contract(modeling_intent, discovery_evidence, None)
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        None,
+        contract,
+        execution_contract_relative_path="contracts/campaign-response/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        generated_at="2026-08-16T00:00:00+00:00",
+    )
+    materialization = evidence["result_semantics_materialization"]
+    assert materialization["requested_variant"] == "none"
+    assert materialization["materialized_schema_version"] is None
+    assert materialization["problem_type"] is None
+    assert materialization["status"] == "omitted"

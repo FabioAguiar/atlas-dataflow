@@ -415,6 +415,13 @@
       }
     },
     "result_semantics": {
+      "description": "Project Spec S0207: closed discriminated union of normalized machine-readable result semantics. Exactly one of binary_result_semantics (Project Spec S0108) or multiclass_result_semantics (Project Spec S0207) may match -- both definitions are additionalProperties: false with disjoint required-field shapes, so a document can never satisfy both branches or mix fields across them.",
+      "oneOf": [
+        { "$ref": "#/definitions/binary_result_semantics" },
+        { "$ref": "#/definitions/multiclass_result_semantics" }
+      ]
+    },
+    "binary_result_semantics": {
       "type": "object",
       "required": ["schema_version", "problem_type", "positive_class", "primary_output", "decision", "interpretation"],
       "additionalProperties": false,
@@ -497,6 +504,64 @@
                 }
               },
               "description": "Ordered, contiguous, non-overlapping risk bands covering [0, 1] exactly: low, medium, high, each once. Interval semantics are lower_bound <= probability < upper_bound, except the final band's upper bound 1.0 is inclusive. Full ordering/contiguity is enforced by the materialization pipeline, not by this schema alone."
+            }
+          }
+        }
+      }
+    },
+    "multiclass_result_semantics": {
+      "type": "object",
+      "required": ["schema_version", "problem_type", "classes", "primary_output", "probability_output", "decision"],
+      "additionalProperties": false,
+      "description": "Project Spec S0207: normalized machine-readable strict multiclass-result semantics materialized from a reviewed, approved multiclass_result_semantics_intent and a valid dataset-semantic-intent.v2 governed class declaration. Never defines a positive/negative class, a threshold, or a risk interpretation -- those remain exclusively binary_result_semantics concepts.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "multiclass-result-semantics.v1"
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "multiclass_classification"
+        },
+        "classes": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["class_id", "display_label"],
+            "additionalProperties": false,
+            "properties": {
+              "class_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Stable, authored identifier for this governed class, sourced only from dataset-semantic-intent.v2 target_semantics.classes."
+              },
+              "display_label": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Human-readable display label for this governed class."
+              }
+            }
+          },
+          "description": "The complete, normatively ordered set of governed classes. Array order is normative and must never be sorted or re-derived. uniqueItems is a structural safeguard only -- duplicate class_id values across otherwise-distinct objects are rejected by the materialization pipeline, not by this schema alone."
+        },
+        "primary_output": {
+          "type": "string",
+          "const": "predicted_class"
+        },
+        "probability_output": {
+          "type": "string",
+          "const": "class_probabilities"
+        },
+        "decision": {
+          "type": "object",
+          "required": ["strategy"],
+          "additionalProperties": false,
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "const": "argmax"
             }
           }
         }

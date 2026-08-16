@@ -76,7 +76,10 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.authoring_contracts import validate_authoring_contracts
-from pipeline.discovery_evidence import build_binary_result_semantics_intent
+from pipeline.discovery_evidence import (
+    build_binary_result_semantics_intent,
+    build_multiclass_result_semantics_intent,
+)
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -741,10 +744,257 @@ def _materialize_binary_result_semantics(
     return result_semantics, evidence
 
 
+# Project Spec S0207: materialize a reviewed, approved
+# multiclass_result_semantics_intent, requiring a valid dataset-semantic-
+# intent.v2 governed class declaration, into a normalized multiclass
+# result_semantics block. Mirrors _materialize_binary_result_semantics'
+# independent re-validation and "never blocks the whole contract" pattern.
+_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION = "multiclass-result-semantics.v1"
+_MULTICLASS_RESULT_SEMANTICS_MINIMUM_CLASS_COUNT = 3
+_MULTICLASS_SEMANTIC_INTENT_SCHEMA_VERSION = "dataset-semantic-intent.v2"
+_MULTICLASS_SEMANTIC_INTENT_TASK_TYPE = "multiclass_classification"
+
+
+def _validate_multiclass_classes(
+    classes: Any,
+) -> tuple[list[dict[str, str]] | None, str | None]:
+    """Defensively re-validate an ordered multiclass class declaration.
+
+    Returns `(validated_classes, None)` preserving authored order exactly,
+    or `(None, reason)`. Never trusts the schema's `uniqueItems` alone --
+    duplicate `class_id` values are rejected explicitly here, since
+    object-level uniqueness does not guarantee `class_id` uniqueness (two
+    entries could share a `class_id` with different `display_label`s).
+    """
+    if not isinstance(classes, list) or len(classes) < _MULTICLASS_RESULT_SEMANTICS_MINIMUM_CLASS_COUNT:
+        return None, (
+            "semantic_intent.target_semantics.classes must be a list with at least "
+            f"{_MULTICLASS_RESULT_SEMANTICS_MINIMUM_CLASS_COUNT} entries"
+        )
+    seen_ids: set[str] = set()
+    validated: list[dict[str, str]] = []
+    for entry in classes:
+        if not isinstance(entry, dict):
+            return None, "each semantic_intent.target_semantics.classes entry must be an object"
+        class_id = entry.get("class_id")
+        display_label = entry.get("display_label")
+        if not isinstance(class_id, str) or not class_id.strip():
+            return None, "each semantic_intent.target_semantics.classes entry requires a non-empty class_id"
+        if not isinstance(display_label, str) or not display_label.strip():
+            return None, (
+                "each semantic_intent.target_semantics.classes entry requires a non-empty display_label"
+            )
+        if class_id in seen_ids:
+            return None, f"duplicate class_id in semantic_intent.target_semantics.classes: {class_id!r}"
+        seen_ids.add(class_id)
+        validated.append({"class_id": class_id, "display_label": display_label})
+    return validated, None
+
+
+def _materialize_multiclass_result_semantics(
+    modeling_intent: dict[str, Any],
+    semantic_intent: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Return (result_semantics_or_None, materialization_evidence) for the
+    multiclass variant (Project Spec S0207).
+
+    Requires an approved, independently re-validated
+    `multiclass_result_semantics_intent` AND a valid
+    `dataset-semantic-intent.v2` declaring `task_type ==
+    "multiclass_classification"` with a governed, ordered class array.
+    Classes are sourced only from `semantic_intent.target_semantics.classes`
+    and copied in authored order -- never sorted, re-derived, or duplicated
+    from the modeling intent itself. Never raises; every rejection is a
+    normal, reportable `(None, evidence)` outcome.
+    """
+
+    def _blocked(reviewed_source_intent_present: bool, reason: str) -> tuple[None, dict[str, Any]]:
+        return None, {
+            "reviewed_source_intent_present": reviewed_source_intent_present,
+            "classes": None,
+            "class_count": None,
+            "primary_output": None,
+            "probability_output": None,
+            "decision_strategy": None,
+            "no_defaults_inferred": True,
+            "readiness": "not_materialized",
+            "blocking_reasons": [reason],
+        }
+
+    intent = modeling_intent.get("multiclass_result_semantics_intent")
+    if not isinstance(intent, dict):
+        return _blocked(
+            False, "multiclass_result_semantics_intent is absent from the dataset modeling intent"
+        )
+
+    review_status = intent.get("review_status")
+    if review_status != "approved":
+        return _blocked(
+            True,
+            f"multiclass_result_semantics_intent.review_status is {review_status!r}, "
+            "not 'approved'",
+        )
+
+    try:
+        rebuilt = build_multiclass_result_semantics_intent(
+            review_status=review_status,
+            problem_type=intent.get("problem_type"),
+            primary_output=intent.get("primary_output"),
+            probability_output=intent.get("probability_output"),
+            decision_strategy=intent.get("decision_strategy"),
+            review_notes=intent.get("review_notes"),
+        )
+    except ValueError as exc:
+        return _blocked(
+            True,
+            f"multiclass_result_semantics_intent failed independent re-validation: {exc}",
+        )
+
+    if not isinstance(semantic_intent, dict):
+        return _blocked(
+            True,
+            "multiclass materialization requires a dataset-semantic-intent.v2 semantic_intent",
+        )
+    semantic_schema_version = semantic_intent.get("schema_version")
+    if semantic_schema_version != _MULTICLASS_SEMANTIC_INTENT_SCHEMA_VERSION:
+        return _blocked(
+            True,
+            f"semantic_intent.schema_version is {semantic_schema_version!r}, not "
+            f"{_MULTICLASS_SEMANTIC_INTENT_SCHEMA_VERSION!r}",
+        )
+
+    target_semantics = semantic_intent.get("target_semantics")
+    if not isinstance(target_semantics, dict):
+        return _blocked(True, "semantic_intent.target_semantics is missing or malformed")
+    task_type = target_semantics.get("task_type")
+    if task_type != _MULTICLASS_SEMANTIC_INTENT_TASK_TYPE:
+        return _blocked(
+            True,
+            f"semantic_intent.target_semantics.task_type is {task_type!r}, not "
+            f"{_MULTICLASS_SEMANTIC_INTENT_TASK_TYPE!r}",
+        )
+
+    validated_classes, class_error = _validate_multiclass_classes(target_semantics.get("classes"))
+    if class_error:
+        return _blocked(True, class_error)
+
+    result_semantics = {
+        "schema_version": _MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": rebuilt["problem_type"],
+        "classes": [dict(entry) for entry in validated_classes],
+        "primary_output": rebuilt["primary_output"],
+        "probability_output": rebuilt["probability_output"],
+        "decision": {"strategy": rebuilt["decision_strategy"]},
+    }
+    evidence = {
+        "reviewed_source_intent_present": True,
+        "classes": [dict(entry) for entry in validated_classes],
+        "class_count": len(validated_classes),
+        "primary_output": result_semantics["primary_output"],
+        "probability_output": result_semantics["probability_output"],
+        "decision_strategy": rebuilt["decision_strategy"],
+        "no_defaults_inferred": True,
+        "readiness": "materialized",
+        "blocking_reasons": [],
+    }
+    return result_semantics, evidence
+
+
+def _result_semantics_status_and_reason(
+    intent_present: bool, readiness: str, blocking_reasons: list[str]
+) -> tuple[str, str | None]:
+    """Derive the closed-dispatch status/reason pair from one variant's own
+    readiness/blocking_reasons (Project Spec S0207 desired change L)."""
+    if not intent_present:
+        return "omitted", None
+    if readiness == "materialized":
+        return "materialized", None
+    return "rejected", "; ".join(blocking_reasons) if blocking_reasons else None
+
+
+def _materialize_result_semantics(
+    modeling_intent: dict[str, Any],
+    semantic_intent: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Closed result-semantics dispatch (Project Spec S0207).
+
+    Exactly one variant materializer may ever run per execution contract:
+    binary intent present + multiclass absent selects the binary
+    materializer; multiclass present + binary absent selects the multiclass
+    materializer; neither present omits result_semantics entirely (the
+    existing, unchanged binary-absent behavior); both present fails closed
+    with an explicit conflict rather than silently preferring either intent.
+    Never infers the variant from dataset slug or model family.
+
+    The returned evidence always preserves every existing
+    `_materialize_binary_result_semantics` evidence key verbatim (so
+    pre-S0207 callers/tests observing `result_semantics_materialization`
+    for a binary-only or absent-intent contract see identical fields), and
+    adds the common `requested_variant`/`materialized_schema_version`/
+    `problem_type`/`status`/`reason` keys on top.
+    """
+    binary_intent_present = isinstance(modeling_intent.get("binary_result_semantics_intent"), dict)
+    multiclass_intent_present = isinstance(
+        modeling_intent.get("multiclass_result_semantics_intent"), dict
+    )
+
+    if binary_intent_present and multiclass_intent_present:
+        return None, {
+            "requested_variant": "conflict",
+            "materialized_schema_version": None,
+            "problem_type": None,
+            "status": "rejected",
+            "reason": (
+                "both binary_result_semantics_intent and multiclass_result_semantics_intent "
+                "are present; only one result-semantics variant may materialize per "
+                "execution contract"
+            ),
+        }
+
+    if multiclass_intent_present:
+        result_semantics, multiclass_evidence = _materialize_multiclass_result_semantics(
+            modeling_intent, semantic_intent
+        )
+        status, reason = _result_semantics_status_and_reason(
+            True, multiclass_evidence["readiness"], multiclass_evidence["blocking_reasons"]
+        )
+        evidence = dict(multiclass_evidence)
+        evidence["class_ids"] = (
+            [entry["class_id"] for entry in multiclass_evidence["classes"]]
+            if multiclass_evidence["classes"] is not None
+            else None
+        )
+        evidence["requested_variant"] = "multiclass"
+        evidence["materialized_schema_version"] = (
+            result_semantics["schema_version"] if result_semantics else None
+        )
+        evidence["problem_type"] = result_semantics["problem_type"] if result_semantics else None
+        evidence["status"] = status
+        evidence["reason"] = reason
+        return result_semantics, evidence
+
+    # Binary intent present, or neither present -- _materialize_binary_result_semantics
+    # already reports the "absent" case on its own, unchanged from before S0207.
+    result_semantics, binary_evidence = _materialize_binary_result_semantics(modeling_intent)
+    status, reason = _result_semantics_status_and_reason(
+        binary_intent_present, binary_evidence["readiness"], binary_evidence["blocking_reasons"]
+    )
+    evidence = dict(binary_evidence)
+    evidence["requested_variant"] = "binary" if binary_intent_present else "none"
+    evidence["materialized_schema_version"] = (
+        result_semantics["schema_version"] if result_semantics else None
+    )
+    evidence["problem_type"] = result_semantics["problem_type"] if result_semantics else None
+    evidence["status"] = status
+    evidence["reason"] = reason
+    return result_semantics, evidence
+
+
 def _build_execution_contract(
     modeling_intent: dict[str, Any],
     discovery_evidence: dict[str, Any],
     preparation_recipe: dict[str, Any] | None,
+    semantic_intent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure projection of upstream artifacts into an execution_contract.v1 dict.
 
@@ -830,13 +1080,14 @@ def _build_execution_contract(
 
     seed = (discovery_evidence.get("generation_settings") or {}).get("seed")
 
-    # Project Spec S0108: materialize a reviewed, approved
-    # binary_result_semantics_intent into a normalized result_semantics
-    # block. Omitted entirely (never present-but-null) when absent, pending,
-    # or invalid -- this is what "blocks executable materialization" means
+    # Project Spec S0108/S0207: materialize a reviewed, approved binary OR
+    # multiclass result-semantics intent (never both) into a normalized
+    # result_semantics block via the closed dispatcher. Omitted entirely
+    # (never present-but-null) when absent, pending, invalid, or in
+    # conflict -- this is what "blocks executable materialization" means
     # for this optional, backward-compatible field.
-    result_semantics, _result_semantics_evidence = _materialize_binary_result_semantics(
-        modeling_intent
+    result_semantics, _result_semantics_evidence = _materialize_result_semantics(
+        modeling_intent, semantic_intent
     )
 
     contract: dict[str, Any] = {
@@ -900,6 +1151,8 @@ def _build_execution_contract_materialization_evidence(
     public_context_relative_path: str | Path | None,
     raw_dataset_relative_path: str | Path | None,
     generated_at: str | None,
+    semantic_intent: dict[str, Any] | None = None,
+    semantic_intent_relative_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Reduced evidence recording facts the schema-locked execution contract
     has no room for: source artifact references, positive-label policy,
@@ -972,11 +1225,12 @@ def _build_execution_contract_materialization_evidence(
                 {"name": entry_name, "reason": rejection_reason}
             )
 
-    # Project Spec S0108: independently re-derived (never trusted from hidden
-    # state set during _build_execution_contract), mirroring the categorical
-    # domain re-derivation convention above.
-    _result_semantics, result_semantics_evidence = _materialize_binary_result_semantics(
-        modeling_intent
+    # Project Spec S0108/S0207: independently re-derived (never trusted from
+    # hidden state set during _build_execution_contract), mirroring the
+    # categorical domain re-derivation convention above. Uses the same
+    # closed result-semantics dispatcher as _build_execution_contract.
+    _result_semantics, result_semantics_evidence = _materialize_result_semantics(
+        modeling_intent, semantic_intent
     )
 
     return {
@@ -1008,6 +1262,9 @@ def _build_execution_contract_materialization_evidence(
             ),
             "raw_dataset_ref": (
                 str(raw_dataset_relative_path) if raw_dataset_relative_path else None
+            ),
+            "semantic_intent_ref": (
+                str(semantic_intent_relative_path) if semantic_intent_relative_path else None
             ),
         },
         "target_policy": {
@@ -1048,6 +1305,8 @@ def materialize_execution_contract(
     modeling_intent_relative_path: str | Path | None = None,
     public_context_relative_path: str | Path | None = None,
     raw_dataset_relative_path: str | Path | None = None,
+    semantic_intent: dict[str, Any] | None = None,
+    semantic_intent_relative_path: str | Path | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build, schema-validate, and write the official Telco execution contract.
@@ -1065,7 +1324,7 @@ def materialize_execution_contract(
     resolved_repo_root = Path(repo_root).expanduser().resolve()
 
     execution_contract = _build_execution_contract(
-        modeling_intent, discovery_evidence, preparation_recipe
+        modeling_intent, discovery_evidence, preparation_recipe, semantic_intent=semantic_intent
     )
 
     schema_path = resolved_repo_root / "contracts" / "execution-contract.schema.json"
@@ -1095,6 +1354,8 @@ def materialize_execution_contract(
         modeling_intent_relative_path=modeling_intent_relative_path,
         public_context_relative_path=public_context_relative_path,
         raw_dataset_relative_path=raw_dataset_relative_path,
+        semantic_intent=semantic_intent,
+        semantic_intent_relative_path=semantic_intent_relative_path,
         generated_at=generated_at,
     )
 

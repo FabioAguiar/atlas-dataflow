@@ -732,6 +732,84 @@ def build_binary_result_semantics_intent(
     }
 
 
+# Project Spec S0207: a single reviewed multiclass-result semantics
+# declaration. "approved" is the only status that may be promoted into
+# execution policy by
+# contract_derivation._materialize_multiclass_result_semantics;
+# "pending_review" keeps a declaration visible as an unresolved review item
+# without ever silently materializing into executable policy. Mirrors the
+# binary_result_semantics_intent review-status vocabulary/conventions above,
+# but never owns or accepts a class list, threshold, or risk-band parameter
+# -- the governed, ordered class declaration remains exclusively owned by
+# dataset-semantic-intent.v2 and is sourced only at materialization time.
+MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION = "multiclass_result_semantics_intent.v1"
+MULTICLASS_RESULT_SEMANTICS_REVIEW_STATUSES = frozenset({"approved", "pending_review"})
+_MULTICLASS_RESULT_SEMANTICS_PROBLEM_TYPE = "multiclass_classification"
+_MULTICLASS_RESULT_SEMANTICS_PRIMARY_OUTPUT = "predicted_class"
+_MULTICLASS_RESULT_SEMANTICS_PROBABILITY_OUTPUT = "class_probabilities"
+_MULTICLASS_RESULT_SEMANTICS_DECISION_STRATEGY = "argmax"
+
+
+def build_multiclass_result_semantics_intent(
+    review_status: str,
+    problem_type: str,
+    primary_output: str,
+    probability_output: str,
+    decision_strategy: str,
+    review_notes: str | None = None,
+) -> dict[str, Any]:
+    """Build a `multiclass_result_semantics_intent.v1` reviewed declaration (Project Spec S0207).
+
+    Deliberately owns only result-behavior semantics -- no class list,
+    threshold, or risk-band parameter is ever accepted here; the governed,
+    ordered class declaration remains exclusively owned by
+    dataset-semantic-intent.v2 and is sourced only at materialization time
+    (see contract_derivation._materialize_multiclass_result_semantics). Only
+    `review_status == "approved"` may later be promoted into executable
+    execution-contract policy; `"pending_review"` keeps the declaration
+    visible as an unresolved review item and this builder still returns it
+    rather than raising, mirroring build_binary_result_semantics_intent's
+    convention. Raises ValueError on a structurally malformed declaration
+    (unknown review_status, wrong problem_type/primary_output/
+    probability_output, or a decision_strategy other than 'argmax').
+    """
+    if review_status not in MULTICLASS_RESULT_SEMANTICS_REVIEW_STATUSES:
+        raise ValueError(
+            f"review_status must be one of {sorted(MULTICLASS_RESULT_SEMANTICS_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    if problem_type != _MULTICLASS_RESULT_SEMANTICS_PROBLEM_TYPE:
+        raise ValueError(
+            f"problem_type must be exactly {_MULTICLASS_RESULT_SEMANTICS_PROBLEM_TYPE!r}, "
+            f"got {problem_type!r}"
+        )
+    if primary_output != _MULTICLASS_RESULT_SEMANTICS_PRIMARY_OUTPUT:
+        raise ValueError(
+            f"primary_output must be exactly {_MULTICLASS_RESULT_SEMANTICS_PRIMARY_OUTPUT!r}, "
+            f"got {primary_output!r}"
+        )
+    if probability_output != _MULTICLASS_RESULT_SEMANTICS_PROBABILITY_OUTPUT:
+        raise ValueError(
+            f"probability_output must be exactly {_MULTICLASS_RESULT_SEMANTICS_PROBABILITY_OUTPUT!r}, "
+            f"got {probability_output!r}"
+        )
+    if decision_strategy != _MULTICLASS_RESULT_SEMANTICS_DECISION_STRATEGY:
+        raise ValueError(
+            f"decision_strategy must be exactly {_MULTICLASS_RESULT_SEMANTICS_DECISION_STRATEGY!r}, "
+            f"got {decision_strategy!r}"
+        )
+
+    return {
+        "schema_version": MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "problem_type": problem_type,
+        "primary_output": primary_output,
+        "probability_output": probability_output,
+        "decision_strategy": decision_strategy,
+        "review_notes": review_notes,
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -765,6 +843,7 @@ def build_dataset_modeling_intent(
     reduced_discovery_evidence_ref: str | None = None,
     categorical_domain_intent: Sequence[dict[str, Any]] | None = None,
     binary_result_semantics_intent: dict[str, Any] | None = None,
+    multiclass_result_semantics_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build a `dataset_modeling_intent.v1` authoring-intent object.
@@ -835,6 +914,11 @@ def build_dataset_modeling_intent(
         "binary_result_semantics_intent": (
             dict(binary_result_semantics_intent)
             if binary_result_semantics_intent is not None
+            else None
+        ),
+        "multiclass_result_semantics_intent": (
+            dict(multiclass_result_semantics_intent)
+            if multiclass_result_semantics_intent is not None
             else None
         ),
         "modeling_intent_boundary_confirmations": dict(

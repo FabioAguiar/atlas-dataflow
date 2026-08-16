@@ -15,10 +15,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.discovery_evidence import (
+    MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     authoring_helper_evidence_policy,
     build_binary_result_semantics_intent,
     build_categorical_domain_declaration,
     build_dataset_modeling_intent,
+    build_multiclass_result_semantics_intent,
     derive_feature_candidates,
     generate_discovery_evidence,
     load_dataset_csv,
@@ -812,3 +814,100 @@ def test_modeling_intent_carries_pending_binary_result_semantics_intent_unresolv
     binary_intent = _build_binary_result_semantics_intent(review_status="pending_review")
     intent = _build_telco_shaped_modeling_intent(binary_result_semantics_intent=binary_intent)
     assert intent["binary_result_semantics_intent"]["review_status"] == "pending_review"
+
+
+# --- reviewed multiclass-result semantics intent (Project Spec S0207) ---
+
+
+def _build_multiclass_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="multiclass_classification",
+        primary_output="predicted_class",
+        probability_output="class_probabilities",
+        decision_strategy="argmax",
+        review_notes="Reviewed multiclass result semantics.",
+    )
+    kwargs.update(overrides)
+    return build_multiclass_result_semantics_intent(**kwargs)
+
+
+def test_multiclass_result_semantics_intent_approved_shape():
+    intent = _build_multiclass_result_semantics_intent()
+    assert intent["schema_version"] == MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION
+    assert intent["review_status"] == "approved"
+    assert intent["problem_type"] == "multiclass_classification"
+    assert intent["primary_output"] == "predicted_class"
+    assert intent["probability_output"] == "class_probabilities"
+    assert intent["decision_strategy"] == "argmax"
+    assert set(intent.keys()) == {
+        "schema_version",
+        "review_status",
+        "problem_type",
+        "primary_output",
+        "probability_output",
+        "decision_strategy",
+        "review_notes",
+    }
+
+
+def test_multiclass_result_semantics_intent_pending_review_is_representable_but_not_approved():
+    intent = _build_multiclass_result_semantics_intent(review_status="pending_review")
+    assert intent["review_status"] == "pending_review"
+    assert intent["review_status"] != "approved"
+
+
+def test_multiclass_result_semantics_intent_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        _build_multiclass_result_semantics_intent(review_status="candidate_only")
+
+
+def test_multiclass_result_semantics_intent_rejects_wrong_problem_type():
+    with pytest.raises(ValueError):
+        _build_multiclass_result_semantics_intent(problem_type="binary_classification")
+
+
+def test_multiclass_result_semantics_intent_rejects_wrong_primary_output():
+    with pytest.raises(ValueError):
+        _build_multiclass_result_semantics_intent(primary_output="positive_class_probability")
+
+
+def test_multiclass_result_semantics_intent_rejects_wrong_probability_output():
+    with pytest.raises(ValueError):
+        _build_multiclass_result_semantics_intent(probability_output="positive_class_probability")
+
+
+def test_multiclass_result_semantics_intent_rejects_non_argmax_decision_strategy():
+    with pytest.raises(ValueError):
+        _build_multiclass_result_semantics_intent(decision_strategy="max_probability")
+
+
+def test_multiclass_result_semantics_intent_builder_exposes_no_class_list_authority():
+    import inspect
+
+    signature = inspect.signature(build_multiclass_result_semantics_intent)
+    assert "classes" not in signature.parameters
+    assert "class_list" not in signature.parameters
+    assert "threshold" not in signature.parameters
+    assert "bands" not in signature.parameters
+    assert "positive_class_id" not in signature.parameters
+
+
+def test_modeling_intent_multiclass_result_semantics_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["multiclass_result_semantics_intent"] is None
+
+
+def test_modeling_intent_carries_multiclass_result_semantics_intent_verbatim():
+    multiclass_intent = _build_multiclass_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        multiclass_result_semantics_intent=multiclass_intent
+    )
+    assert intent["multiclass_result_semantics_intent"] == multiclass_intent
+
+
+def test_modeling_intent_existing_binary_result_semantics_behavior_unchanged_alongside_multiclass_default():
+    binary_intent = _build_binary_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(binary_result_semantics_intent=binary_intent)
+    assert intent["binary_result_semantics_intent"] == binary_intent
+    assert intent["multiclass_result_semantics_intent"] is None

@@ -18,6 +18,7 @@ import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummar
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
+import MulticlassClassificationResult from "../../components/ResultCard/MulticlassClassificationResult";
 import ResultCardShell from "../../components/ResultCard/ResultCardShell";
 import {
   GENERIC_RESULT_PRESENTATION,
@@ -27,9 +28,10 @@ import {
   isAvailableMulticlassResultContract,
   isBinaryClassificationResult,
   type BinaryResultContract,
-  type BinaryResultPresentation,
   type BinaryResultSemantics,
+  type MulticlassClassificationResult as MulticlassResultData,
   type MulticlassResultSemantics,
+  type ResultContract,
   type ResultPresentation,
 } from "../../components/ResultCard/types";
 import InferenceForm, {
@@ -1971,8 +1973,11 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
 // authoring state renders as the same "unavailable" contract the public
 // InferenceForm already knows how to disable submission and render safely
 // for, exactly as the pre-existing synthetic Result Card preview did.
-function toInferenceResultContract(state: ResultContractState): BinaryResultContract {
+function toInferenceResultContract(state: ResultContractState): ResultContract {
   if (state.status === "available" && state.semantics.problem_type === "binary_classification") {
+    return { status: "available", semantics: state.semantics };
+  }
+  if (state.status === "available" && state.semantics.problem_type === "multiclass_classification") {
     return { status: "available", semantics: state.semantics };
   }
   return {
@@ -3518,7 +3523,7 @@ function ResultCardTab({
             <h2>Example result</h2>
             <p>Compact preview fed by the current label fields.</p>
           </div>
-          {multiclassSemantics ? <p role="status">Multiclass Result Card preview is unavailable until the shared renderer is introduced.</p> : <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />}
+          {multiclassSemantics ? <MulticlassResultCardLivePreview form={form} semantics={multiclassSemantics} /> : <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />}
         </Card>
       </div>
     </TabWorkspace>
@@ -4353,9 +4358,7 @@ function DatasetDetailLivePreview({
       // View/customization identity changes -- never on unrelated re-renders.
       resetKey={`${selectedSlug}::${form.bound_predict_view_id}`}
       resultContract={toInferenceResultContract(readOnlyData.resultContract)}
-      resultPresentation={form.result_presentation_schema_version === "binary-result-presentation.v1"
-        ? presentationFromForm(form) as BinaryResultPresentation
-        : undefined}
+      resultPresentation={presentationFromForm(form)}
       slug={selectedSlug}
       submitButtonLabel={customizationDraft?.viewCopy.submit_button_label.trim() || undefined}
     />
@@ -4424,6 +4427,35 @@ function ResultCardLivePreview({ form, resetKey, resultContract }: { form: Draft
           <BinaryClassificationResult presentation={presentation} result={result} />
         </ResultCardShell>
       ) : <ResultCardShell state="unavailable" />}
+    </div>
+  );
+}
+
+function MulticlassResultCardLivePreview({ form, semantics }: { form: DraftForm; semantics: MulticlassResultSemantics }) {
+  const classes = semantics.classes;
+  const validClasses = classes.length >= 3
+    && classes.every((entry) => entry.class_id.trim() && entry.display_label.trim())
+    && new Set(classes.map((entry) => entry.class_id)).size === classes.length;
+  if (!validClasses) return <p role="status">Result Card preview is unavailable for this result contract.</p>;
+
+  const remainder = 0.4 / (classes.length - 1);
+  const result: MulticlassResultData = {
+    schema_version: "multiclass-classification-result.v1",
+    problem_type: "multiclass_classification",
+    predicted_class: classes[0],
+    class_probabilities: classes.map((entry, index) => ({ ...entry, probability: index === 0 ? 0.6 : remainder })),
+    decision: { strategy: "argmax" },
+    model_descriptor: semantics.model_descriptor,
+  };
+  const projected = presentationFromForm(form);
+  const presentation = projected.schema_version === "multiclass-result-presentation.v1"
+    ? projected : GENERIC_MULTICLASS_RESULT_PRESENTATION;
+  return (
+    <div className="dataset-admin-result-preview">
+      <p style={mutedTextStyle}>Illustrative preview only — no inference request is executed or probabilities persisted.</p>
+      <ResultCardShell state="initial">
+        <MulticlassClassificationResult result={result} presentation={presentation} />
+      </ResultCardShell>
     </div>
   );
 }

@@ -56,6 +56,23 @@ export type BinaryClassificationResult = {
   model_descriptor: BinaryModelDescriptor;
 };
 
+export type MulticlassClassProbability = {
+  class_id: string;
+  display_label: string;
+  probability: number;
+};
+
+export type MulticlassClassificationResult = {
+  schema_version: "multiclass-classification-result.v1";
+  problem_type: "multiclass_classification";
+  predicted_class: MulticlassClassIdentity;
+  class_probabilities: MulticlassClassProbability[];
+  decision: { strategy: "argmax" };
+  model_descriptor: BinaryModelDescriptor;
+};
+
+export type ClassificationResult = BinaryClassificationResult | MulticlassClassificationResult;
+
 /** Matches GET /datasets/{slug}/contract's result_contract.semantics (no band_id selection yet). */
 export type BinaryResultSemantics = {
   schema_version: string;
@@ -221,6 +238,13 @@ function isMulticlassClassIdentity(value: unknown): value is MulticlassClassIden
   return isRecord(value) && isNonEmptyString(value.class_id) && isNonEmptyString(value.display_label);
 }
 
+function isMulticlassClassProbability(value: unknown): value is MulticlassClassProbability {
+  return isRecord(value)
+    && isNonEmptyString(value.class_id)
+    && isNonEmptyString(value.display_label)
+    && isUnitInterval(value.probability);
+}
+
 function isPositiveClass(value: unknown): value is BinaryPositiveClass {
   return isRecord(value) && isNonEmptyString(value.class_id) && isNonEmptyString(value.event_label);
 }
@@ -336,4 +360,56 @@ export function isBinaryClassificationResult(value: unknown): value is BinaryCla
   if (!isModelDescriptor(value.model_descriptor)) return false;
 
   return true;
+}
+
+const MULTICLASS_SUM_TOLERANCE = 1e-6;
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === keys.length && actual.every((key, index) => key === [...keys].sort()[index]);
+}
+
+export function isMulticlassClassificationResult(value: unknown): value is MulticlassClassificationResult {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    "schema_version", "problem_type", "predicted_class", "class_probabilities", "decision", "model_descriptor",
+  ])) return false;
+  if (value.schema_version !== "multiclass-classification-result.v1" || value.problem_type !== "multiclass_classification") return false;
+  if (!isRecord(value.predicted_class) || !hasExactKeys(value.predicted_class, ["class_id", "display_label"]) || !isMulticlassClassIdentity(value.predicted_class)) return false;
+  if (!Array.isArray(value.class_probabilities) || value.class_probabilities.length < 3) return false;
+
+  const probabilities = value.class_probabilities;
+  if (!probabilities.every((entry) =>
+    isRecord(entry)
+    && hasExactKeys(entry, ["class_id", "display_label", "probability"])
+    && isMulticlassClassProbability(entry)
+  )) return false;
+  const ids = probabilities.map((entry) => entry.class_id.trim());
+  if (new Set(ids).size !== ids.length) return false;
+  if (Math.abs(probabilities.reduce((sum, entry) => sum + entry.probability, 0) - 1) > MULTICLASS_SUM_TOLERANCE) return false;
+  if (!isRecord(value.decision) || !hasExactKeys(value.decision, ["strategy"]) || value.decision.strategy !== "argmax") return false;
+  if (!isRecord(value.model_descriptor) || !hasExactKeys(value.model_descriptor, ["model_family", "display_name"]) || !isModelDescriptor(value.model_descriptor)) return false;
+
+  const predictedClass = value.predicted_class as MulticlassClassIdentity;
+  const predictedMatches = probabilities.filter((entry) => entry.class_id === predictedClass.class_id);
+  if (predictedMatches.length !== 1 || predictedMatches[0].display_label !== predictedClass.display_label) return false;
+  const maximum = Math.max(...probabilities.map((entry) => entry.probability));
+  return probabilities.find((entry) => entry.probability === maximum)?.class_id === predictedClass.class_id;
+}
+
+export function resultForContract(resultContract: unknown, result: unknown): ClassificationResult | null {
+  if (isAvailableBinaryResultContract(resultContract)) {
+    return isBinaryClassificationResult(result) ? result : null;
+  }
+  if (!isAvailableMulticlassResultContract(resultContract) || !isMulticlassClassificationResult(result)) return null;
+  const classes = resultContract.semantics.classes;
+  if (classes.length !== result.class_probabilities.length) return null;
+  if (!classes.every((classIdentity, index) =>
+    classIdentity.class_id === result.class_probabilities[index].class_id
+    && classIdentity.display_label === result.class_probabilities[index].display_label
+  )) return null;
+  const expectedModel = resultContract.semantics.model_descriptor;
+  return expectedModel.model_family === result.model_descriptor.model_family
+    && expectedModel.display_name === result.model_descriptor.display_name
+    ? result
+    : null;
 }

@@ -12,7 +12,6 @@ import InferenceForm, { ContractPayload, PredictViewCustomization } from "../com
 import {
   availableResultProblemType,
   isAvailableBinaryResultContract,
-  type BinaryResultContract,
   type ResultContract,
   type ResultPresentation,
 } from "../components/ResultCard/types";
@@ -375,7 +374,7 @@ export default function DatasetPage() {
         return res.json() as Promise<{
           dataset_slug: string;
           contract: ContractPayload;
-          result_contract: BinaryResultContract;
+          result_contract: ResultContract;
         }>;
       })
       .then((data) => {
@@ -471,10 +470,8 @@ export default function DatasetPage() {
           slug={slug!}
           customization={boundViewCustomization ?? undefined}
           submitButtonLabel={resolvedSubmitButtonLabel}
-          resultContract={isAvailableBinaryResultContract(contractState.data.result_contract)
-            ? contractState.data.result_contract
-            : { status: "unavailable", reason: "multiclass_renderer_unavailable" } satisfies BinaryResultContract}
-          resultPresentation={context?.result_card?.schema_version === "binary-result-presentation.v1" ? context.result_card : undefined}
+          resultContract={contractState.data.result_contract}
+          resultPresentation={context?.result_card ?? undefined}
           // Project Spec S0141: only the public Dataset Detail route opts
           // into the zero-probability initial Result Card projection -- the
           // bound Predict View route (DatasetViewPage.tsx) intentionally

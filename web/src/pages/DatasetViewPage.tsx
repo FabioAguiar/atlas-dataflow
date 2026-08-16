@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import DatasetAccessState, { classifyDatasetAccessError } from "../components/DatasetDetail/DatasetAccessState";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
-import type { BinaryResultContract, BinaryResultPresentation } from "../components/ResultCard/types";
+import type { ResultContract, ResultPresentation } from "../components/ResultCard/types";
 import LoadingState from "../components/LoadingState/LoadingState";
 import ErrorState from "../components/ErrorState/ErrorState";
 
@@ -38,12 +38,12 @@ type SectionState<T> =
 // surface as DatasetPage.
 type PublicContextOverlay = {
   legacy_submit_button_label?: string | null;
-  result_card?: BinaryResultPresentation | null;
+  result_card?: ResultPresentation | null;
 };
 
 type ContractEnvelope = {
   contract: ContractPayload;
-  result_contract: BinaryResultContract;
+  result_contract: ResultContract;
 };
 
 export default function DatasetViewPage() {
@@ -120,7 +120,7 @@ export default function DatasetViewPage() {
         return res.json() as Promise<{
           dataset_slug: string;
           contract: ContractPayload;
-          result_contract: BinaryResultContract;
+          result_contract: ResultContract;
         }>;
       })
       .then((data) => {

@@ -1,14 +1,17 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import ResultCardShell from "../ResultCard/ResultCardShell";
 import BinaryClassificationResult from "../ResultCard/BinaryClassificationResult";
+import MulticlassClassificationResult from "../ResultCard/MulticlassClassificationResult";
 import {
+  GENERIC_MULTICLASS_RESULT_PRESENTATION,
   GENERIC_RESULT_PRESENTATION,
   isAvailableBinaryResultContract,
-  isBinaryClassificationResult,
+  isAvailableMulticlassResultContract,
   projectBinaryClassificationResult,
-  type BinaryClassificationResult as BinaryClassificationResultData,
-  type BinaryResultContract,
-  type BinaryResultPresentation,
+  resultForContract,
+  type ClassificationResult,
+  type ResultContract,
+  type ResultPresentation,
 } from "../ResultCard/types";
 
 export type FeatureOption = {
@@ -145,7 +148,7 @@ export type PredictViewCustomization = {
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
-  | { status: "success"; data: BinaryClassificationResultData }
+  | { status: "success"; data: ClassificationResult }
   | { status: "error"; message: string };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -423,14 +426,14 @@ type Props = {
    * An absent or "unavailable" contract disables submission -- this
    * component never assumes availability by default.
    */
-  resultContract?: BinaryResultContract;
+  resultContract?: ResultContract;
   /**
    * Project Spec S0112: the published Result Card presentation copy from
    * GET /datasets/{slug}/context's canonical result_card. A missing or
    * malformed value safely falls back to GENERIC_RESULT_PRESENTATION rather
    * than removing the form.
    */
-  resultPresentation?: BinaryResultPresentation;
+  resultPresentation?: ResultPresentation;
   /**
    * Project Spec S0141: probability in the inclusive interval [0, 1] for a
    * local, presentation-only initial Result Card projection rendered before
@@ -689,8 +692,13 @@ export default function InferenceForm({
     normalizeAdminInferenceGuidance(adminInferenceGuidance, contract.features)
       .map((entry) => [entry.field_name, entry]),
   );
-  const contractAvailable = !previewMode && isAvailableBinaryResultContract(resultContract);
-  const effectivePresentation = resultPresentation ?? GENERIC_RESULT_PRESENTATION;
+  const binaryContractAvailable = isAvailableBinaryResultContract(resultContract);
+  const multiclassContractAvailable = isAvailableMulticlassResultContract(resultContract);
+  const contractAvailable = !previewMode && (binaryContractAvailable || multiclassContractAvailable);
+  const effectiveBinaryPresentation = resultPresentation?.schema_version === "binary-result-presentation.v1"
+    ? resultPresentation : GENERIC_RESULT_PRESENTATION;
+  const effectiveMulticlassPresentation = resultPresentation?.schema_version === "multiclass-result-presentation.v1"
+    ? resultPresentation : GENERIC_MULTICLASS_RESULT_PRESENTATION;
 
   // Project Spec S0141: the local zero-probability initial projection is
   // built through the same shared technical-result boundary the real
@@ -698,7 +706,7 @@ export default function InferenceForm({
   // vocabulary -- and only ever computed while contractAvailable (so it can
   // never be requested for an unavailable/malformed contract).
   const initialResult =
-    contractAvailable && typeof initialResultProbability === "number" && resultContract?.status === "available"
+    binaryContractAvailable && typeof initialResultProbability === "number"
       ? projectBinaryClassificationResult(resultContract.semantics, initialResultProbability)
       : null;
 
@@ -785,8 +793,9 @@ export default function InferenceForm({
     }
 
     if (outcome.ok) {
-      if (isBinaryClassificationResult(outcome.result)) {
-        setSubmission({ status: "success", data: outcome.result });
+      const normalizedResult = resultForContract(resultContract, outcome.result);
+      if (normalizedResult) {
+        setSubmission({ status: "success", data: normalizedResult });
         onLifecycleEvent?.({ type: "succeeded" });
       } else {
         // Malformed success payload: never falls back to a legacy
@@ -882,7 +891,7 @@ export default function InferenceForm({
       {!previewMode && !contractAvailable && <ResultCardShell state="unavailable" />}
       {!previewMode && contractAvailable && submission.status === "idle" && initialResult && (
         <ResultCardShell state="initial">
-          <BinaryClassificationResult result={initialResult} presentation={effectivePresentation} />
+          <BinaryClassificationResult result={initialResult} presentation={effectiveBinaryPresentation} />
         </ResultCardShell>
       )}
       {!previewMode && contractAvailable && submission.status === "idle" && !initialResult && (
@@ -896,7 +905,11 @@ export default function InferenceForm({
       )}
       {!previewMode && contractAvailable && submission.status === "success" && (
         <ResultCardShell state="success">
-          <BinaryClassificationResult result={submission.data} presentation={effectivePresentation} />
+          {submission.data.problem_type === "binary_classification" ? (
+            <BinaryClassificationResult result={submission.data} presentation={effectiveBinaryPresentation} />
+          ) : (
+            <MulticlassClassificationResult result={submission.data} presentation={effectiveMulticlassPresentation} />
+          )}
         </ResultCardShell>
       )}
     </section>

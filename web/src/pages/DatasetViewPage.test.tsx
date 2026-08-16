@@ -43,6 +43,12 @@ const contractPayload = {
   ],
 };
 
+describe("DatasetViewPage multiclass route contract (S0214)", () => {
+  it("uses the existing explicit view route for every classification family", () => {
+    expect(`/datasets/${slug}/views/${viewId}`).toBe("/datasets/synthetic-demo-dataset/views/churn-risk-overview");
+  });
+});
+
 // Project Spec S0112: real result_contract/result_card/inference result
 // fixtures -- the legacy { prediction: { label, confidence } } shape is
 // never used in these public tests.

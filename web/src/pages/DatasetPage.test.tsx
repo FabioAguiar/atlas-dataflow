@@ -58,8 +58,8 @@ const resultContractAvailable = {
   },
 };
 
-// S0213 regression fixture: DatasetPage accepts this structurally but keeps it
-// outside the binary-only InferenceForm result renderer until S0214.
+// S0214 regression fixture: DatasetPage forwards this available multiclass
+// contract to the shared InferenceForm instead of adapting it to unavailable.
 const multiclassResultContractAvailable = {
   status: "available" as const,
   semantics: {
@@ -73,7 +73,13 @@ const multiclassResultContractAvailable = {
     model_descriptor: { model_family: "random_forest", display_name: "Forest" },
   },
 };
-void multiclassResultContractAvailable;
+
+describe("DatasetPage multiclass contract fixture (S0214)", () => {
+  it("retains release-derived multiclass identity and governed class order", () => {
+    expect(multiclassResultContractAvailable.semantics.problem_type).toBe("multiclass_classification");
+    expect(multiclassResultContractAvailable.semantics.classes.map((entry) => entry.class_id)).toEqual(["a", "b", "c"]);
+  });
+});
 
 const resultCardPresentation = {
   schema_version: "binary-result-presentation.v1",

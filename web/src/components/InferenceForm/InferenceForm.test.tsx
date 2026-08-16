@@ -10,7 +10,7 @@ import InferenceForm, {
   type InferenceExecutionResult,
   type InferenceLifecycleEvent,
 } from "./InferenceForm";
-import type { BinaryResultContract, BinaryResultPresentation } from "../ResultCard/types";
+import type { BinaryResultContract, BinaryResultPresentation, ResultContract } from "../ResultCard/types";
 
 type MockResponse = {
   ok: boolean;
@@ -103,6 +103,53 @@ const validResult = {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+describe("InferenceForm multiclass result dispatch (S0214)", () => {
+  const multiclassContract: ResultContract = {
+    status: "available",
+    semantics: {
+      schema_version: "multiclass-result-semantics.v1",
+      problem_type: "multiclass_classification",
+      result_schema_version: "multiclass-classification-result.v1",
+      classes: ["a", "b", "c"].map((class_id) => ({ class_id, display_label: `Class ${class_id.toUpperCase()}` })),
+      primary_output: "predicted_class",
+      probability_output: "class_probabilities",
+      decision: { strategy: "argmax" },
+      model_descriptor: { model_family: "fixture", display_name: "Fixture model" },
+    },
+  };
+  const multiclassResult = {
+    schema_version: "multiclass-classification-result.v1",
+    problem_type: "multiclass_classification",
+    predicted_class: { class_id: "b", display_label: "Class B" },
+    class_probabilities: [
+      { class_id: "a", display_label: "Class A", probability: 0.2 },
+      { class_id: "b", display_label: "Class B", probability: 0.6 },
+      { class_id: "c", display_label: "Class C", probability: 0.2 },
+    ],
+    decision: { strategy: "argmax" },
+    model_descriptor: { model_family: "fixture", display_name: "Fixture model" },
+  };
+
+  it("renders a contract-matched multiclass result and emits success", async () => {
+    const events: InferenceLifecycleEvent[] = [];
+    render(<InferenceForm contract={contract} slug={slug} resultContract={multiclassContract}
+      executeInference={async () => ({ ok: true, result: multiclassResult })}
+      onLifecycleEvent={(event) => events.push(event)} initialResultProbability={0} />);
+    expect(screen.getByText("Submit the form to see the prediction.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findAllByText("Class B")).toHaveLength(2);
+    expect(screen.getAllByText("60%")).toHaveLength(2);
+    expect(events).toEqual([{ type: "started" }, { type: "succeeded" }]);
+  });
+
+  it("fails safely when the response family does not match", async () => {
+    render(<InferenceForm contract={contract} slug={slug} resultContract={multiclassContract}
+      executeInference={async () => ({ ok: true, result: validResult })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
 });
 
 describe("InferenceForm private numeric guidance (Project Spec S0148)", () => {

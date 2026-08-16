@@ -1737,6 +1737,94 @@ h1 {
   margin: var(--atlas-space-1) 0 0;
 }
 
+.multiclass-classification-result {
+  display: grid;
+  gap: var(--atlas-space-5);
+}
+
+.multiclass-classification-result__prediction,
+.multiclass-classification-result__distribution,
+.multiclass-classification-result__model {
+  display: grid;
+  gap: var(--atlas-space-2);
+}
+
+.multiclass-classification-result__label {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.multiclass-classification-result__prediction-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--atlas-space-3);
+  margin: 0;
+  color: var(--atlas-color-text);
+  font-size: var(--atlas-text-xl);
+  font-weight: 700;
+}
+
+.multiclass-classification-result__prediction-value strong {
+  color: var(--atlas-color-accent-strong);
+  font-size: var(--atlas-text-2xl);
+}
+
+.multiclass-probability-list {
+  display: grid;
+  gap: var(--atlas-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.multiclass-probability-list__item {
+  display: grid;
+  gap: var(--atlas-space-1);
+}
+
+.multiclass-probability-list__copy {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--atlas-space-3);
+  color: var(--atlas-color-text);
+  overflow-wrap: anywhere;
+}
+
+.multiclass-probability-list__track {
+  height: 0.5rem;
+  border-radius: var(--atlas-radius-pill);
+  background: var(--atlas-color-surface-muted);
+  overflow: hidden;
+}
+
+.multiclass-probability-list__bar {
+  display: block;
+  width: var(--multiclass-probability, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--atlas-color-accent);
+}
+
+.multiclass-classification-result__model-value {
+  margin: 0;
+  color: var(--atlas-color-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .multiclass-classification-result__prediction-value {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--atlas-space-1);
+  }
+}
+
 @media (max-width: 767px) {
   .dataset-detail-header__metadata {
     display: block;

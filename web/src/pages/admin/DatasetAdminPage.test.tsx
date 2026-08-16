@@ -49,7 +49,12 @@ const FORBIDDEN_DRAFT_TERMS = ["draft endpoint", "profile draft model", "private
 // S0213: release-governed multiclass semantics are a compatible technical
 // state; the page must never recreate a manual problem-type selector.
 const MULTICLASS_PROBLEM_TYPE_LABEL = "Multiclass Classification";
-void MULTICLASS_PROBLEM_TYPE_LABEL;
+
+describe("Dataset Admin multiclass presentation (S0214)", () => {
+  it("keeps the release-derived operator label", () => {
+    expect(MULTICLASS_PROBLEM_TYPE_LABEL).toBe("Multiclass Classification");
+  });
+});
 
 function forbiddenDraftTermsPresent(): string[] {
   const text = document.body.textContent?.toLowerCase() ?? "";

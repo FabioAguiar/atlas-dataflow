@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/external-inference/external-inference-result.schema.json",
   "title": "external_inference_result.v1",
-  "description": "Strict, versioned internal result contract returned by the isolated external-inference service. Carries status, the closed S0159 runtime-compatibility vocabulary, an existing Atlas RUNTIME_DIAGNOSTIC_CODES member or null, and a bounded binary-classification result or null. Never raw estimator objects, numpy/pandas objects, warnings, tracebacks, or dependency version details.",
+  "description": "Strict, versioned internal result contract returned by the isolated external-inference service. Carries status, the closed S0159 runtime-compatibility vocabulary, an existing Atlas RUNTIME_DIAGNOSTIC_CODES member or null, and a bounded binary- or multiclass-classification result or null.",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "status", "runtime_compatibility_status", "diagnostic_code", "result"],
@@ -52,7 +52,8 @@
     "result": {
       "anyOf": [
         { "type": "null" },
-        { "$ref": "#/$defs/binary_classification_result" }
+        { "$ref": "#/$defs/binary_classification_result" },
+        { "$ref": "#/$defs/multiclass_classification_result" }
       ]
     }
   },
@@ -73,7 +74,12 @@
       },
       "then": {
         "properties": {
-          "result": { "$ref": "#/$defs/binary_classification_result" },
+          "result": {
+            "oneOf": [
+              { "$ref": "#/$defs/binary_classification_result" },
+              { "$ref": "#/$defs/multiclass_classification_result" }
+            ]
+          },
           "diagnostic_code": { "const": null },
           "runtime_compatibility_status": { "const": "compatible" }
         },
@@ -169,11 +175,59 @@
           "properties": {
             "model_family": {
               "type": "string",
-              "enum": ["logistic_regression", "gradient_boosting", "random_forest"]
+              "enum": ["logistic_regression", "gradient_boosting", "random_forest", "hist_gradient_boosting"]
             },
             "display_name": { "type": "string", "minLength": 1 }
           }
         }
+      }
+    },
+    "multiclass_classification_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "problem_type", "predicted_class", "class_probabilities", "decision", "model_descriptor"],
+      "properties": {
+        "schema_version": { "const": "multiclass-classification-result.v1" },
+        "problem_type": { "const": "multiclass_classification" },
+        "predicted_class": { "$ref": "#/$defs/multiclass_class" },
+        "class_probabilities": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_id", "display_label", "probability"],
+            "properties": {
+              "class_id": { "type": "string", "minLength": 1 },
+              "display_label": { "type": "string", "minLength": 1 },
+              "probability": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy"],
+          "properties": { "strategy": { "const": "argmax" } }
+        },
+        "model_descriptor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "display_name"],
+          "properties": {
+            "model_family": { "type": "string", "enum": ["logistic_regression", "decision_tree", "random_forest", "hist_gradient_boosting"] },
+            "display_name": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "multiclass_class": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class_id", "display_label"],
+      "properties": {
+        "class_id": { "type": "string", "minLength": 1 },
+        "display_label": { "type": "string", "minLength": 1 }
       }
     }
   }

@@ -32,41 +32,31 @@ if str(EXTERNAL_INFERENCE_DIR) not in sys.path:
 import runtime_loader as rl  # noqa: E402
 
 
-_FEATURE_ORDER = list(rl._FEATURE_ORDER)
+_FEATURE_ORDER = ["account_age", "monthly_spend", "segment"]
 _RELEASE_ID = "release-20260619-001"
-_DATASET_SLUG = "telco-customer-churn"
-_BUNDLE_ID = "telco-customer-churn-inference-bundle-test"
+_DATASET_SLUG = "synthetic-retention"
+_BUNDLE_ID = "synthetic-retention-inference-bundle-test"
 _BUNDLE_RELATIVE_PATH = "predictions/bundle.json"
 _MODEL_RELATIVE_PATH = "models/model.joblib"
+_CONTRACT_RELATIVE_PATH = "contracts/runtime-contract.json"
 
 
 def _train_fixture_pipeline() -> Pipeline:
     """A tiny, from-scratch pipeline -- never the real Telco Joblib."""
     rows = []
     labels = []
-    for monthly, total, label in [
-        (95.0, 950.0, "Yes"),
-        (98.0, 980.0, "Yes"),
-        (90.0, 900.0, "Yes"),
-        (92.0, 920.0, "Yes"),
-        (20.0, 200.0, "No"),
-        (22.0, 220.0, "No"),
-        (18.0, 180.0, "No"),
-        (25.0, 250.0, "No"),
-        (19.0, 190.0, "No"),
-        (21.0, 210.0, "No"),
+    for monthly, age, label in [
+        (95.0, 12, "leave"), (98.0, 10, "leave"), (90.0, 8, "leave"), (92.0, 6, "leave"),
+        (20.0, 30, "stay"), (22.0, 36, "stay"), (18.0, 40, "stay"),
+        (25.0, 24, "stay"), (19.0, 48, "stay"), (21.0, 60, "stay"),
     ]:
-        row = {name: "placeholder" for name in _FEATURE_ORDER}
-        row["MonthlyCharges"] = monthly
-        row["TotalCharges"] = total
-        row["SeniorCitizen"] = 0
-        row["tenure"] = 1
+        row = {"account_age": age, "monthly_spend": monthly, "segment": "consumer"}
         rows.append(row)
         labels.append(label)
 
     frame = pd.DataFrame(rows, columns=_FEATURE_ORDER)
     preprocessor = ColumnTransformer(
-        [("numeric", "passthrough", ["MonthlyCharges", "TotalCharges"])],
+        [("numeric", "passthrough", ["monthly_spend", "account_age"])],
         remainder="drop",
     )
     pipeline = Pipeline([("pre", preprocessor), ("clf", LogisticRegression())])
@@ -75,27 +65,7 @@ def _train_fixture_pipeline() -> Pipeline:
 
 
 def _feature_payload(*, monthly_charges: float = 95.0, total_charges: float = 950.0) -> dict:
-    return {
-        "gender": "Female",
-        "SeniorCitizen": 0,
-        "Partner": "Yes",
-        "Dependents": "No",
-        "tenure": 12,
-        "PhoneService": "Yes",
-        "MultipleLines": "No",
-        "InternetService": "DSL",
-        "OnlineSecurity": "No",
-        "OnlineBackup": "Yes",
-        "DeviceProtection": "No",
-        "TechSupport": "No",
-        "StreamingTV": "No",
-        "StreamingMovies": "No",
-        "Contract": "Month-to-month",
-        "PaperlessBilling": "Yes",
-        "PaymentMethod": "Electronic check",
-        "MonthlyCharges": monthly_charges,
-        "TotalCharges": total_charges,
-    }
+    return {"account_age": int(total_charges / 50), "monthly_spend": monthly_charges, "segment": "consumer"}
 
 
 def _build_request(
@@ -136,6 +106,9 @@ def _write_release(
     provenance: str | None = "validated_external_fitted_model",
     include_external_model_evidence: bool = True,
     educational_threshold_value: object = 0.31,
+    feature_order: list[str] | None = None,
+    runtime_features: list[dict] | None = None,
+    result_semantics: dict | None = None,
 ) -> Path:
     """Write a real, governed-resolver-shaped release directory. Returns the
     release directory. Every hash embedded in manifest.json's artifacts[]
@@ -159,6 +132,22 @@ def _write_release(
         "bundle_identity": {"bundle_id": bundle_id, "dataset_slug": dataset_slug},
         "dataset_context": {"dataset_slug": dataset_slug},
         "model_artifact": {"path": model_relative_path, "sha256": model_sha256},
+        "contract_references": {"runtime_contract": {"contract_version": "1.0.0", "path": "source/not/release/path.json"}},
+        "input_schema": {"runtime_contract_reference": "contract_references.runtime_contract", "payload_shape": "runtime_contract_features_object"},
+        "feature_order": feature_order or list(_FEATURE_ORDER),
+        "output_schema": {"class_labels": ["leave", "stay"], "prediction_type": "number", "probability_output": True},
+        "result_semantics": result_semantics or {
+            "schema_version": "binary-result-semantics.v1", "problem_type": "binary_classification",
+            "result_schema_version": "binary-classification-result.v1", "primary_output": "positive_class_probability",
+            "positive_class": {"class_id": "leave", "event_label": "Attrition"},
+            "decision": {"threshold": educational_threshold_value},
+            "interpretation": {"preset": "risk", "bands": [
+                {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.2},
+                {"band_id": "medium", "lower_bound": 0.2, "upper_bound": 0.7},
+                {"band_id": "high", "lower_bound": 0.7, "upper_bound": 1.0},
+            ]},
+            "model_descriptor": {"model_family": "logistic_regression", "display_name": "Synthetic retention classifier"},
+        },
     }
     if include_external_model_evidence:
         bundle["external_model_evidence"] = {
@@ -172,7 +161,24 @@ def _write_release(
     bundle_path.write_text(bundle_text, encoding="utf-8")
     bundle_sha256 = hashlib.sha256(bundle_text.encode("utf-8")).hexdigest()
 
+    runtime_contract = {"schema_version": "1.0.0", "features": runtime_features or [
+        {"name": "account_age", "required": True},
+        {"name": "monthly_spend", "required": True},
+        {"name": "segment", "required": False},
+    ]}
+    contract_text = json.dumps(runtime_contract, indent=2)
+    contract_path = release_dir / _CONTRACT_RELATIVE_PATH
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(contract_text, encoding="utf-8")
+    contract_sha256 = hashlib.sha256(contract_text.encode("utf-8")).hexdigest()
+
     artifacts = [
+        {
+            "role": "contracts",
+            "reference": _CONTRACT_RELATIVE_PATH,
+            "hash_algorithm": "sha256",
+            "hash_value": contract_sha256,
+        },
         {
             "role": "predictive_bundle",
             "reference": _BUNDLE_RELATIVE_PATH,
@@ -222,7 +228,7 @@ def test_exact_runtime_match_is_compatible(tmp_path, monkeypatch):
     preflight = rl.run_preflight_gate(_build_request(), tmp_path)
 
     assert preflight["compatibility"] == {"status": "compatible", "python_patch_warning": False}
-    assert preflight["operational_threshold"] == 0.31
+    assert preflight["prediction_plan"].threshold == 0.31
 
 
 def test_dependency_version_mismatch_is_incompatible_and_never_loads(tmp_path, monkeypatch):
@@ -340,7 +346,7 @@ def test_bundle_threshold_value_non_numeric_fails_before_loader(tmp_path, monkey
         assert exc.diagnostic_code == rl.DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE
 
 
-def test_internal_provenance_skips_bundle_threshold_requirement(tmp_path, monkeypatch):
+def test_internal_provenance_still_uses_governed_result_semantics(tmp_path, monkeypatch):
     """A release whose predictive bundle is not validated_external_fitted_model
     never requires bundle-governed threshold evidence at all (Project Spec
     S0190 scopes bundle-threshold resolution to 'a governed
@@ -352,10 +358,10 @@ def test_internal_provenance_skips_bundle_threshold_requirement(tmp_path, monkey
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
 
     preflight = rl.run_preflight_gate(_build_request(), tmp_path)
-    assert preflight["operational_threshold"] is None
+    assert preflight["prediction_plan"].threshold == 0.31
 
     result = rl.execute_governed_external_prediction(_build_request())
-    assert result["decision"]["threshold"] == rl._DECISION_THRESHOLD
+    assert result["decision"]["threshold"] == 0.31
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +419,7 @@ def test_full_governed_prediction_uses_the_bundle_governed_threshold(tmp_path, m
     result = rl.execute_governed_external_prediction(_build_request())
 
     assert result["schema_version"] == "binary-classification-result.v1"
-    assert result["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
+    assert result["positive_class"] == {"class_id": "leave", "event_label": "Attrition"}
     assert 0.0 <= result["positive_class_probability"] <= 1.0
     assert result["decision"]["threshold"] == 0.31
     rl.validate_bounded_prediction_result(result)
@@ -430,7 +436,6 @@ def test_bundle_declared_threshold_value_is_used_exactly(tmp_path, monkeypatch):
     result = rl.execute_governed_external_prediction(_build_request())
 
     assert result["decision"]["threshold"] == 0.15
-    assert result["decision"]["threshold"] != rl._DECISION_THRESHOLD
 
 
 def test_changing_only_the_operational_threshold_flips_predicted_positive_at_the_boundary(tmp_path, monkeypatch):
@@ -457,10 +462,79 @@ def test_prediction_execution_failure_maps_to_controlled_diagnostic(tmp_path, mo
     monkeypatch.setattr(rl, "observe_isolated_runtime", _matching_observed_runtime)
 
     request = _build_request(feature_payload=_feature_payload())
-    del request["feature_payload"]["MonthlyCharges"]
+    del request["feature_payload"]["monthly_spend"]
 
     try:
         rl.execute_governed_external_prediction(request)
+        raise AssertionError("expected LoadSafeGateError")
+    except rl.LoadSafeGateError as exc:
+        assert exc.diagnostic_code == rl.DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT
+
+
+class _SyntheticMulticlassModel:
+    classes_ = ["alpha", "beta", "gamma"]
+
+    def __init__(self, prediction="beta", probabilities=None):
+        self.prediction = prediction
+        self.probabilities = probabilities or [0.2, 0.6, 0.2]
+        self.frame = None
+
+    def predict(self, frame):
+        self.frame = frame
+        return [self.prediction]
+
+    def predict_proba(self, frame):
+        self.frame = frame
+        return [self.probabilities]
+
+
+def _multiclass_plan() -> rl.PredictionPlan:
+    classes = (
+        {"class_id": "alpha", "display_label": "Alpha"},
+        {"class_id": "beta", "display_label": "Beta"},
+        {"class_id": "gamma", "display_label": "Gamma"},
+    )
+    return rl.PredictionPlan(
+        result_variant="multiclass",
+        feature_order=("zeta", "alpha_feature"),
+        required_features=frozenset({"zeta"}),
+        output_classes=("alpha", "beta", "gamma"),
+        multiclass_classes=classes,
+        model_descriptor={"model_family": "decision_tree", "display_name": "Synthetic three-class model"},
+    )
+
+
+def test_multiclass_execution_preserves_governed_order_and_optional_nan():
+    model = _SyntheticMulticlassModel()
+    result = rl.execute_prediction(model, {"zeta": 4}, _multiclass_plan())
+
+    assert list(model.frame.columns) == ["zeta", "alpha_feature"]
+    assert pd.isna(model.frame.iloc[0]["alpha_feature"])
+    assert result["predicted_class"] == {"class_id": "beta", "display_label": "Beta"}
+    assert [item["class_id"] for item in result["class_probabilities"]] == ["alpha", "beta", "gamma"]
+    assert "confidence" not in result and "threshold" not in result and "interpretation" not in result
+
+
+def test_multiclass_argmax_tie_uses_first_governed_class():
+    model = _SyntheticMulticlassModel(prediction="alpha", probabilities=[0.45, 0.45, 0.1])
+    result = rl.execute_prediction(model, {"zeta": 4}, _multiclass_plan())
+    assert result["predicted_class"]["class_id"] == "alpha"
+
+
+def test_multiclass_predict_argmax_disagreement_fails_closed():
+    model = _SyntheticMulticlassModel(prediction="gamma")
+    try:
+        rl.execute_prediction(model, {"zeta": 4}, _multiclass_plan())
+        raise AssertionError("expected LoadSafeGateError")
+    except rl.LoadSafeGateError as exc:
+        assert exc.diagnostic_code == rl.DIAGNOSTIC_PREDICTION_EXECUTION_FAILED
+
+
+def test_multiclass_model_class_order_is_exact_and_case_sensitive():
+    model = _SyntheticMulticlassModel()
+    model.classes_ = ["alpha", "Gamma", "beta"]
+    try:
+        rl.execute_prediction(model, {"zeta": 4}, _multiclass_plan())
         raise AssertionError("expected LoadSafeGateError")
     except rl.LoadSafeGateError as exc:
         assert exc.diagnostic_code == rl.DIAGNOSTIC_PREDICTION_EXECUTION_FAILED

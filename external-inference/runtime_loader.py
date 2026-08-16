@@ -7,13 +7,14 @@ resolution remains confined beneath MODEL_ROOT and deserialization happens
 only after release, bundle, trust, integrity, and exact-compatibility gates pass.
 
 Deliberately self-contained: this image does not share code with the Atlas
-api image (different Python runtime, different dependency pins), so the
-binary-classification-result shaping logic here is a bounded, single-model
-reimplementation rather than an import from runtime/inference.py.
+api image (different Python runtime, different dependency pins), so its
+bounded binary/multiclass result shaping remains local rather than importing
+from runtime/inference.py.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -70,54 +71,21 @@ RUNTIME_DIAGNOSTIC_CODES = frozenset(
     }
 )
 
-_FEATURE_ORDER = (
-    "gender",
-    "SeniorCitizen",
-    "Partner",
-    "Dependents",
-    "tenure",
-    "PhoneService",
-    "MultipleLines",
-    "InternetService",
-    "OnlineSecurity",
-    "OnlineBackup",
-    "DeviceProtection",
-    "TechSupport",
-    "StreamingTV",
-    "StreamingMovies",
-    "Contract",
-    "PaperlessBilling",
-    "PaymentMethod",
-    "MonthlyCharges",
-    "TotalCharges",
-)
-
-_RISK_BANDS = (
-    {"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35},
-    {"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65},
-    {"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0},
-)
-_POSITIVE_CLASS = {"class_id": "Yes", "event_label": "Churn"}
-_NEGATIVE_CLASS_ID = "No"
-# Sourced from the trusted external producer's own declared, explicitly
-# non-operational "educational_threshold" (inference-bundle.json,
-# threshold_scenario "minimum_recall_0_80", selected on the validation
-# partition) -- never fabricated.
-#
-# Project Spec S0190 (restoring the pre-S0189 behavior this constant always
-# had): this is the fallback threshold used only for a release this
-# isolated service loads without validated_external_fitted_model
-# provenance. For that provenance, `_resolve_bundle_governed_threshold`
-# below reads the equivalent educational_threshold value directly from the
-# release's own already hash-verified predictive bundle instead of this
-# hardcoded duplicate, and fails closed before deserialization when that
-# bundle evidence is missing or invalid.
-_DECISION_THRESHOLD = 0.2577809673219062
-_MODEL_DESCRIPTOR = {
-    "model_family": "gradient_boosting",
-    "display_name": "Governed isolated gradient boosting classifier",
-}
 _PROBABILITY_SUM_TOLERANCE = 1e-6
+
+
+@dataclass(frozen=True)
+class PredictionPlan:
+    result_variant: str
+    feature_order: tuple[str, ...]
+    required_features: frozenset[str]
+    output_classes: tuple[str, ...]
+    model_descriptor: Mapping[str, str]
+    positive_class: Mapping[str, str] | None = None
+    negative_class_id: str | None = None
+    threshold: float | None = None
+    risk_bands: tuple[Mapping[str, Any], ...] = ()
+    multiclass_classes: tuple[Mapping[str, str], ...] = ()
 
 _BINARY_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -186,6 +154,16 @@ _BINARY_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
                     "type": "array",
                     "minItems": 3,
                     "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["band_id", "lower_bound", "upper_bound"],
+                        "properties": {
+                            "band_id": {"type": "string", "enum": ["low", "medium", "high"]},
+                            "lower_bound": {"type": "number", "minimum": 0, "maximum": 1},
+                            "upper_bound": {"type": "number", "minimum": 0, "maximum": 1},
+                        },
+                    },
                 },
             },
         },
@@ -196,8 +174,43 @@ _BINARY_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
             "properties": {
                 "model_family": {
                     "type": "string",
-                    "enum": ["logistic_regression", "gradient_boosting", "random_forest"],
+                    "enum": ["logistic_regression", "gradient_boosting", "random_forest", "hist_gradient_boosting"],
                 },
+                "display_name": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
+
+_MULTICLASS_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["schema_version", "problem_type", "predicted_class", "class_probabilities", "decision", "model_descriptor"],
+    "properties": {
+        "schema_version": {"const": "multiclass-classification-result.v1"},
+        "problem_type": {"const": "multiclass_classification"},
+        "predicted_class": {
+            "type": "object", "additionalProperties": False,
+            "required": ["class_id", "display_label"],
+            "properties": {"class_id": {"type": "string", "minLength": 1}, "display_label": {"type": "string", "minLength": 1}},
+        },
+        "class_probabilities": {
+            "type": "array", "minItems": 3,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["class_id", "display_label", "probability"],
+                "properties": {
+                    "class_id": {"type": "string", "minLength": 1},
+                    "display_label": {"type": "string", "minLength": 1},
+                    "probability": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+            },
+        },
+        "decision": {"type": "object", "additionalProperties": False, "required": ["strategy"], "properties": {"strategy": {"const": "argmax"}}},
+        "model_descriptor": {
+            "type": "object", "additionalProperties": False, "required": ["model_family", "display_name"],
+            "properties": {
+                "model_family": {"type": "string", "enum": ["logistic_regression", "decision_tree", "random_forest", "hist_gradient_boosting"]},
                 "display_name": {"type": "string", "minLength": 1},
             },
         },
@@ -703,37 +716,164 @@ def _verify_declared_hash(path: Path, declaration: Mapping[str, Any], *, diagnos
         raise LoadSafeGateError("Governed artifact hash does not match.", diagnostic_code=diagnostic_code)
 
 
-def _resolve_bundle_governed_threshold(bundle: Mapping[str, Any]) -> float:
-    """Resolve the operational decisioning threshold directly from the
-    already hash-verified predictive bundle delivered with a governed
-    validated_external_fitted_model release (Project Spec S0190). Runs
-    entirely before model deserialization -- by the time this is called,
-    `load_governed_release` has already verified the bundle's declared
-    hash. No run-owned operational-readiness decision artifact is required
-    or consulted; the retired Project Spec S0189 decision gate no longer
-    applies. Reuses the closed, unchanged, eight-value
-    RUNTIME_DIAGNOSTIC_CODES vocabulary (S0160/G0001): missing or invalid
-    bundle threshold evidence maps to INFERENCE_BUNDLE_UNAVAILABLE."""
-    external_evidence = bundle.get("external_model_evidence")
-    threshold_decl = (
-        external_evidence.get("educational_threshold") if isinstance(external_evidence, Mapping) else None
-    )
-    if not isinstance(threshold_decl, Mapping):
-        raise LoadSafeGateError(
-            "Governed predictive bundle threshold evidence is unavailable.",
-            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
-        )
-    threshold_value = threshold_decl.get("value")
+def _bundle_error(message: str) -> LoadSafeGateError:
+    return LoadSafeGateError(message, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+
+
+def _nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _validate_model_descriptor(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping) or not _nonempty_string(value.get("model_family")) or not _nonempty_string(value.get("display_name")):
+        raise _bundle_error("Governed model descriptor is invalid.")
+    return {"model_family": value["model_family"], "display_name": value["display_name"]}
+
+
+def _validate_risk_bands(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, list) or len(value) != 3:
+        raise _bundle_error("Governed binary risk bands are invalid.")
+    bands: list[Mapping[str, Any]] = []
+    expected_ids = ("low", "medium", "high")
+    previous_upper = 0.0
+    for index, item in enumerate(value):
+        lower = item.get("lower_bound") if isinstance(item, Mapping) else None
+        upper = item.get("upper_bound") if isinstance(item, Mapping) else None
+        if (
+            not isinstance(item, Mapping)
+            or item.get("band_id") != expected_ids[index]
+            or not isinstance(lower, (int, float)) or isinstance(lower, bool)
+            or not isinstance(upper, (int, float)) or isinstance(upper, bool)
+            or not math.isfinite(float(lower)) or not math.isfinite(float(upper))
+            or float(lower) != previous_upper or not float(lower) < float(upper) <= 1.0
+        ):
+            raise _bundle_error("Governed binary risk bands are invalid.")
+        bands.append({"band_id": expected_ids[index], "lower_bound": float(lower), "upper_bound": float(upper)})
+        previous_upper = float(upper)
+    if previous_upper != 1.0:
+        raise _bundle_error("Governed binary risk bands do not cover the probability range.")
+    return tuple(bands)
+
+
+def _validate_binary_plan(bundle: Mapping[str, Any], common: dict[str, Any]) -> PredictionPlan:
+    semantics = bundle.get("result_semantics")
+    output = bundle.get("output_schema")
     if (
-        not isinstance(threshold_value, (int, float))
-        or isinstance(threshold_value, bool)
-        or not (0.0 <= float(threshold_value) <= 1.0)
+        not isinstance(semantics, Mapping)
+        or semantics.get("schema_version") != "binary-result-semantics.v1"
+        or semantics.get("problem_type") != "binary_classification"
+        or semantics.get("result_schema_version") != "binary-classification-result.v1"
+        or semantics.get("primary_output") != "positive_class_probability"
+        or not isinstance(output, Mapping)
+        or output.get("probability_output") is not True
     ):
-        raise LoadSafeGateError(
-            "Governed predictive bundle threshold value is invalid.",
-            diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE,
-        )
-    return float(threshold_value)
+        raise _bundle_error("Governed binary result semantics are invalid.")
+    labels = output.get("class_labels")
+    positive = semantics.get("positive_class")
+    decision = semantics.get("decision")
+    interpretation = semantics.get("interpretation")
+    threshold = decision.get("threshold") if isinstance(decision, Mapping) else None
+    if (
+        not isinstance(labels, list) or len(labels) != 2 or len(set(labels)) != 2
+        or not all(_nonempty_string(item) for item in labels)
+        or not isinstance(positive, Mapping) or not _nonempty_string(positive.get("class_id")) or not _nonempty_string(positive.get("event_label"))
+        or positive.get("class_id") not in labels
+        or not isinstance(threshold, (int, float)) or isinstance(threshold, bool) or not 0.0 <= float(threshold) <= 1.0
+        or not isinstance(interpretation, Mapping) or interpretation.get("preset") != "risk"
+    ):
+        raise _bundle_error("Governed binary result semantics are invalid.")
+    if bundle.get("model_provenance_origin") == "validated_external_fitted_model":
+        evidence = bundle.get("external_model_evidence")
+        educational = evidence.get("educational_threshold") if isinstance(evidence, Mapping) else None
+        if not isinstance(educational, Mapping) or educational.get("value") != threshold:
+            raise _bundle_error("External binary threshold evidence disagrees with result semantics.")
+    negative = next(label for label in labels if label != positive["class_id"])
+    return PredictionPlan(
+        result_variant="binary", output_classes=tuple(labels),
+        model_descriptor=_validate_model_descriptor(semantics.get("model_descriptor")),
+        positive_class={"class_id": positive["class_id"], "event_label": positive["event_label"]},
+        negative_class_id=negative, threshold=float(threshold),
+        risk_bands=_validate_risk_bands(interpretation.get("bands")), **common,
+    )
+
+
+def _validate_multiclass_plan(bundle: Mapping[str, Any], common: dict[str, Any]) -> PredictionPlan:
+    semantics = bundle.get("result_semantics")
+    output = bundle.get("output_schema")
+    classes = semantics.get("classes") if isinstance(semantics, Mapping) else None
+    if (
+        not isinstance(semantics, Mapping)
+        or semantics.get("schema_version") != "multiclass-result-semantics.v1"
+        or semantics.get("problem_type") != "multiclass_classification"
+        or semantics.get("result_schema_version") != "multiclass-classification-result.v1"
+        or semantics.get("primary_output") != "predicted_class"
+        or semantics.get("probability_output") != "class_probabilities"
+        or not isinstance(semantics.get("decision"), Mapping) or semantics["decision"].get("strategy") != "argmax"
+        or not isinstance(classes, list) or len(classes) < 3
+        or not isinstance(output, Mapping) or output.get("prediction_type") != "string" or output.get("probability_output") is not True
+    ):
+        raise _bundle_error("Governed multiclass result semantics are invalid.")
+    normalized_classes: list[Mapping[str, str]] = []
+    for item in classes:
+        if not isinstance(item, Mapping) or not _nonempty_string(item.get("class_id")) or not _nonempty_string(item.get("display_label")):
+            raise _bundle_error("Governed multiclass classes are invalid.")
+        normalized_classes.append({"class_id": item["class_id"], "display_label": item["display_label"]})
+    class_ids = [item["class_id"] for item in normalized_classes]
+    if len(set(class_ids)) != len(class_ids) or output.get("class_labels") != class_ids:
+        raise _bundle_error("Governed multiclass class order is inconsistent.")
+    if bundle.get("model_provenance_origin") == "validated_external_fitted_model":
+        evidence = bundle.get("external_model_evidence")
+        classification = evidence.get("classification_evidence") if isinstance(evidence, Mapping) else None
+        columns = classification.get("probability_columns") if isinstance(classification, Mapping) else None
+        if (
+            not isinstance(evidence, Mapping) or "educational_threshold" in evidence or "threshold" in evidence
+            or not isinstance(classification, Mapping) or classification.get("problem_type") != "multiclass_classification"
+            or classification.get("ordered_class_ids") != class_ids
+            or not isinstance(columns, list) or len(columns) != len(class_ids)
+            or any(not isinstance(column, Mapping) or column.get("probability_index") != index or column.get("class_id") != class_ids[index] for index, column in enumerate(columns))
+            or not isinstance(evidence.get("decision_semantics"), Mapping) or evidence["decision_semantics"].get("strategy") != "argmax"
+            or not isinstance(evidence.get("readiness"), Mapping) or evidence["readiness"].get("decision_strategy") != "argmax"
+        ):
+            raise _bundle_error("External multiclass class evidence is inconsistent.")
+    return PredictionPlan(
+        result_variant="multiclass", output_classes=tuple(class_ids), multiclass_classes=tuple(normalized_classes),
+        model_descriptor=_validate_model_descriptor(semantics.get("model_descriptor")), **common,
+    )
+
+
+def _build_prediction_plan(bundle: Mapping[str, Any], runtime_contract: Mapping[str, Any]) -> PredictionPlan:
+    input_schema = bundle.get("input_schema")
+    contract_references = bundle.get("contract_references")
+    runtime_reference = contract_references.get("runtime_contract") if isinstance(contract_references, Mapping) else None
+    features = runtime_contract.get("features")
+    feature_order = bundle.get("feature_order")
+    if (
+        not isinstance(input_schema, Mapping) or input_schema.get("runtime_contract_reference") != "contract_references.runtime_contract"
+        or not isinstance(runtime_reference, Mapping) or runtime_contract.get("schema_version") != runtime_reference.get("contract_version")
+        or not isinstance(feature_order, list) or not feature_order or not all(_nonempty_string(item) for item in feature_order) or len(set(feature_order)) != len(feature_order)
+        or not isinstance(features, list) or not features
+    ):
+        raise _bundle_error("Bundle input declarations are invalid.")
+    required: set[str] = set()
+    contract_names: list[str] = []
+    for feature in features:
+        name = feature.get("name") if isinstance(feature, Mapping) else None
+        required_value = feature.get("required", True) if isinstance(feature, Mapping) else None
+        if not _nonempty_string(name) or not isinstance(required_value, bool):
+            raise _bundle_error("Runtime Contract feature metadata is invalid.")
+        contract_names.append(name)
+        if required_value:
+            required.add(name)
+    if len(set(contract_names)) != len(contract_names) or set(feature_order) != set(contract_names):
+        raise _bundle_error("Bundle and Runtime Contract feature sets are inconsistent.")
+    common = {"feature_order": tuple(feature_order), "required_features": frozenset(required)}
+    semantics = bundle.get("result_semantics")
+    pair = (semantics.get("schema_version"), semantics.get("problem_type")) if isinstance(semantics, Mapping) else (None, None)
+    if pair == ("binary-result-semantics.v1", "binary_classification"):
+        return _validate_binary_plan(bundle, common)
+    if pair == ("multiclass-result-semantics.v1", "multiclass_classification"):
+        return _validate_multiclass_plan(bundle, common)
+    raise _bundle_error("Governed result semantics variant is unavailable.")
 
 
 def load_governed_release(request: Mapping[str, Any], releases_root: Path | None = None) -> dict:
@@ -754,9 +894,11 @@ def load_governed_release(request: Mapping[str, Any], releases_root: Path | None
 
     bundle_decl = _artifact_declaration(manifest, "predictive_bundle")
     model_decl = _artifact_declaration(manifest, "model_artifact")
+    contract_decl = _artifact_declaration(manifest, "contracts")
     bundle_path = _confined_path(root, release_dir, bundle_decl.get("reference"), diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
     model_path = _confined_path(root, release_dir, model_decl.get("reference"), diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE)
-    if not bundle_path.is_file() or not model_path.is_file():
+    contract_path = _confined_path(root, release_dir, contract_decl.get("reference"), diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    if not bundle_path.is_file() or not model_path.is_file() or not contract_path.is_file():
         raise LoadSafeGateError("Governed release artifact is unavailable.", diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_UNAVAILABLE)
     _verify_declared_hash(bundle_path, bundle_decl, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
     bundle = _load_json(bundle_path, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
@@ -773,21 +915,17 @@ def load_governed_release(request: Mapping[str, Any], releases_root: Path | None
         or bundle_model.get("sha256") != model_decl.get("hash_value")
     ):
         raise LoadSafeGateError("Predictive bundle identity is stale or inconsistent.", diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE, runtime_compatibility_status="stale_bundle_reference")
+    _verify_declared_hash(contract_path, contract_decl, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    runtime_contract = _load_json(contract_path, diagnostic_code=DIAGNOSTIC_INFERENCE_BUNDLE_UNAVAILABLE)
+    prediction_plan = _build_prediction_plan(bundle, runtime_contract)
     _verify_declared_hash(model_path, model_decl, diagnostic_code=DIAGNOSTIC_MODEL_ARTIFACT_HASH_MISMATCH)
-
-    # Project Spec S0190: for a validated external fitted-model release, the
-    # operational decisioning threshold is resolved directly from the
-    # already hash-verified predictive bundle -- entirely before model
-    # deserialization -- and is what `execute_prediction` uses.
-    operational_threshold: float | None = None
-    if bundle.get("model_provenance_origin") == "validated_external_fitted_model":
-        operational_threshold = _resolve_bundle_governed_threshold(bundle)
 
     return {
         "manifest": manifest,
         "bundle": bundle,
+        "runtime_contract": runtime_contract,
         "model_path": model_path,
-        "operational_threshold": operational_threshold,
+        "prediction_plan": prediction_plan,
     }
 
 
@@ -901,8 +1039,8 @@ def _normalize_class_id(value: Any) -> str:
     return str(value).strip().lower()
 
 
-def _resolve_band(probability: float) -> str:
-    for band in _RISK_BANDS:
+def _resolve_band(probability: float, bands: tuple[Mapping[str, Any], ...]) -> str:
+    for band in bands:
         if band["lower_bound"] <= probability < band["upper_bound"] or (
             band["upper_bound"] == 1.0 and probability == 1.0
         ):
@@ -913,7 +1051,27 @@ def _resolve_band(probability: float) -> str:
     )
 
 
-def execute_prediction(model: Any, feature_payload: Mapping[str, Any], operational_threshold: float) -> dict:
+def _validate_probabilities(raw_row: Any, expected_count: int) -> list[float]:
+    try:
+        row = list(raw_row)
+    except TypeError as exc:
+        raise LoadSafeGateError("Prediction execution failed.", diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED) from exc
+    if expected_count < 2 or len(row) != expected_count:
+        raise LoadSafeGateError("Prediction execution failed.", diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED)
+    probabilities: list[float] = []
+    for value in row:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise LoadSafeGateError("Prediction execution failed.", diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED)
+        numeric = float(value)
+        if not math.isfinite(numeric) or not 0.0 <= numeric <= 1.0:
+            raise LoadSafeGateError("Prediction execution failed.", diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED)
+        probabilities.append(numeric)
+    if abs(sum(probabilities) - 1.0) > _PROBABILITY_SUM_TOLERANCE:
+        raise LoadSafeGateError("Prediction execution failed.", diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED)
+    return probabilities
+
+
+def execute_prediction(model: Any, feature_payload: Mapping[str, Any], plan: PredictionPlan) -> dict:
     try:
         import pandas as pd
     except ImportError as exc:
@@ -922,15 +1080,23 @@ def execute_prediction(model: Any, feature_payload: Mapping[str, Any], operation
             diagnostic_code=DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
         ) from exc
 
+    if set(feature_payload) - set(plan.feature_order):
+        raise LoadSafeGateError(
+            "Request payload contains an undeclared feature.",
+            diagnostic_code=DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT,
+        )
     row: dict[str, Any] = {}
-    for feature_name in _FEATURE_ORDER:
-        if feature_name not in feature_payload:
+    for feature_name in plan.feature_order:
+        if feature_name in feature_payload:
+            row[feature_name] = feature_payload[feature_name]
+        elif feature_name in plan.required_features:
             raise LoadSafeGateError(
-                "Prediction execution failed.",
-                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+                "Request payload is missing a required feature.",
+                diagnostic_code=DIAGNOSTIC_RUNTIME_INPUT_CONTRACT_INCONSISTENT,
             )
-        row[feature_name] = feature_payload[feature_name]
-    frame = pd.DataFrame([row], columns=list(_FEATURE_ORDER))
+        else:
+            row[feature_name] = float("nan")
+    frame = pd.DataFrame([row], columns=list(plan.feature_order))
 
     predict = getattr(model, "predict", None)
     predict_proba = getattr(model, "predict_proba", None)
@@ -958,74 +1124,77 @@ def execute_prediction(model: Any, feature_payload: Mapping[str, Any], operation
             diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
         ) from exc
 
-    if len(predicted_values) != 1 or len(proba_rows) != 1 or len(proba_rows[0]) != 2:
+    if len(predicted_values) != 1 or len(proba_rows) != 1:
         raise LoadSafeGateError(
             "Prediction execution failed.",
             diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
         )
 
     model_classes = _resolve_model_classes(model)
-    unique_model_classes = list(dict.fromkeys(_normalize_class_id(c) for c in model_classes))
-    if len(unique_model_classes) != 2:
+    class_probabilities = _validate_probabilities(proba_rows[0], len(plan.output_classes))
+
+    if plan.result_variant == "multiclass":
+        actual_classes = [str(value).strip() for value in model_classes]
+        if (
+            len(actual_classes) != len(plan.output_classes)
+            or any(not value for value in actual_classes)
+            or len(set(actual_classes)) != len(actual_classes)
+            or tuple(actual_classes) != plan.output_classes
+        ):
+            raise LoadSafeGateError("Prediction execution failed.", diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED)
+        argmax_index = max(range(len(class_probabilities)), key=class_probabilities.__getitem__)
+        predicted_class_id = str(predicted_values[0]).strip()
+        if predicted_class_id != plan.output_classes[argmax_index]:
+            raise LoadSafeGateError("Prediction execution failed.", diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED)
+        result = {
+            "schema_version": "multiclass-classification-result.v1",
+            "problem_type": "multiclass_classification",
+            "predicted_class": dict(plan.multiclass_classes[argmax_index]),
+            "class_probabilities": [
+                {**dict(class_metadata), "probability": class_probabilities[index]}
+                for index, class_metadata in enumerate(plan.multiclass_classes)
+            ],
+            "decision": {"strategy": "argmax"},
+            "model_descriptor": dict(plan.model_descriptor),
+        }
+        validate_bounded_prediction_result(result)
+        return result
+
+    normalized_model_classes = [_normalize_class_id(value) for value in model_classes]
+    normalized_governed_classes = [_normalize_class_id(value) for value in plan.output_classes]
+    if len(model_classes) != 2 or len(set(normalized_model_classes)) != 2 or set(normalized_model_classes) != set(normalized_governed_classes):
         raise LoadSafeGateError(
             "Prediction execution failed.",
             diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
         )
-
-    positive_normalized = _normalize_class_id(_POSITIVE_CLASS["class_id"])
-    if positive_normalized not in unique_model_classes:
-        raise LoadSafeGateError(
-            "Prediction execution failed.",
-            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
-        )
-    positive_index = [_normalize_class_id(c) for c in model_classes].index(positive_normalized)
-
-    proba_row = proba_rows[0]
-    class_probabilities: list[float] = []
-    for value in proba_row:
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise LoadSafeGateError(
-                "Prediction execution failed.",
-                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
-            )
-        numeric = float(value)
-        if not math.isfinite(numeric) or not 0.0 <= numeric <= 1.0:
-            raise LoadSafeGateError(
-                "Prediction execution failed.",
-                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
-            )
-        class_probabilities.append(numeric)
-    if abs(sum(class_probabilities) - 1.0) > _PROBABILITY_SUM_TOLERANCE:
-        raise LoadSafeGateError(
-            "Prediction execution failed.",
-            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
-        )
-
+    assert plan.positive_class is not None and plan.negative_class_id is not None and plan.threshold is not None
+    positive_normalized = _normalize_class_id(plan.positive_class["class_id"])
+    positive_index = normalized_model_classes.index(positive_normalized)
     positive_class_probability = class_probabilities[positive_index]
-    predicted_positive = positive_class_probability >= operational_threshold
-    predicted_class_id = _POSITIVE_CLASS["class_id"] if predicted_positive else _NEGATIVE_CLASS_ID
-    band_id = _resolve_band(positive_class_probability)
+    predicted_positive = positive_class_probability >= plan.threshold
+    predicted_class_id = plan.positive_class["class_id"] if predicted_positive else plan.negative_class_id
+    band_id = _resolve_band(positive_class_probability, plan.risk_bands)
 
     result = {
         "schema_version": "binary-classification-result.v1",
         "problem_type": "binary_classification",
         "predicted_class": {"class_id": predicted_class_id},
-        "positive_class": dict(_POSITIVE_CLASS),
+        "positive_class": dict(plan.positive_class),
         "positive_class_probability": positive_class_probability,
         "class_probabilities": [
             {"class_id": str(model_classes[0]), "probability": class_probabilities[0]},
             {"class_id": str(model_classes[1]), "probability": class_probabilities[1]},
         ],
         "decision": {
-            "threshold": operational_threshold,
+            "threshold": plan.threshold,
             "predicted_positive": bool(predicted_positive),
         },
         "interpretation": {
             "preset": "risk",
             "band_id": band_id,
-            "bands": [dict(band) for band in _RISK_BANDS],
+            "bands": [dict(band) for band in plan.risk_bands],
         },
-        "model_descriptor": dict(_MODEL_DESCRIPTOR),
+        "model_descriptor": dict(plan.model_descriptor),
     }
 
     validate_bounded_prediction_result(result)
@@ -1036,7 +1205,8 @@ def validate_bounded_prediction_result(result: Mapping[str, Any]) -> None:
     import jsonschema
 
     try:
-        jsonschema.validate(result, _BINARY_CLASSIFICATION_RESULT_SCHEMA)
+        schema = _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA if result.get("problem_type") == "multiclass_classification" else _BINARY_CLASSIFICATION_RESULT_SCHEMA
+        jsonschema.validate(result, schema)
     except jsonschema.ValidationError as exc:
         raise LoadSafeGateError(
             "Bounded prediction result failed schema validation.",
@@ -1049,21 +1219,6 @@ def execute_governed_external_prediction(request: Mapping[str, Any]) -> dict:
 
     preflight = run_preflight_gate(request)
     try:
-        # For a validated_external_fitted_model release,
-        # load_governed_release() has already resolved and verified a
-        # bundle-governed operational_threshold here -- or raised before
-        # this point if it could not (missing/invalid bundle threshold
-        # evidence always fails closed before deserialization for that
-        # release class). For any other provenance, operational_threshold
-        # is None and this service's historical threshold applies,
-        # matching "internal/legacy provenance: behavior remains unchanged".
-        operational_threshold = preflight.get("operational_threshold")
-        if (
-            not isinstance(operational_threshold, (int, float))
-            or isinstance(operational_threshold, bool)
-            or not (0.0 <= float(operational_threshold) <= 1.0)
-        ):
-            operational_threshold = _DECISION_THRESHOLD
         model = invoke_allowlisted_loader(preflight["model_path"])
         feature_payload = request.get("feature_payload")
         if not isinstance(feature_payload, dict):
@@ -1071,7 +1226,7 @@ def execute_governed_external_prediction(request: Mapping[str, Any]) -> dict:
                 "Prediction execution failed.",
                 diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
             )
-        return execute_prediction(model, feature_payload, float(operational_threshold))
+        return execute_prediction(model, feature_payload, preflight["prediction_plan"])
     except LoadSafeGateError as exc:
         # Steps 11-14 only ever run after the preflight gate (steps 1-10)
         # already established "compatible" -- a failure here is never a

@@ -1684,9 +1684,16 @@ def test_public_visualizations_endpoint_returns_ready_payload_for_new_promoted_r
 
         response = api_main.get_public_visualizations("example-dataset")
 
+        # Project Spec S0205: the historical prepared_dataset row_count
+        # (7043) agrees with the artifact's own Target Distribution total
+        # (5174 + 1869), so the bounded dataset_statistics.instance_count
+        # projection now accompanies the unchanged canonical charts.
         assert response == {
             "dataset_slug": "example-dataset",
-            "visualizations": {"charts": _S0128_VALID_ARTIFACT["charts"]},
+            "visualizations": {
+                "charts": _S0128_VALID_ARTIFACT["charts"],
+                "dataset_statistics": {"instance_count": 7043},
+            },
         }
 
 
@@ -1790,9 +1797,16 @@ def test_public_visualizations_endpoint_returns_ready_payload_for_external_fitte
 
         response = api_main.get_public_visualizations("example-dataset")
 
+        # Project Spec S0205: the current Telco-style external_prepared_dataset
+        # profile derives instance_count by summing its own validated Target
+        # Distribution counts (5174 + 1869 = 7043) -- the canonical charts
+        # remain byte-identical to the pre-S0205 projection.
         assert response == {
             "dataset_slug": "example-dataset",
-            "visualizations": {"charts": _S0193_VALID_EXTERNAL_ARTIFACT["charts"]},
+            "visualizations": {
+                "charts": _S0193_VALID_EXTERNAL_ARTIFACT["charts"],
+                "dataset_statistics": {"instance_count": 7043},
+            },
         }
 
 
@@ -1818,6 +1832,314 @@ def test_public_visualizations_loader_external_profile_never_exposes_provenance_
         assert "external_evidence_sha256" not in serialized
         assert "hist_gradient_boosting" not in serialized
         assert "dataset_identity" not in serialized
+
+
+# ---------------------------------------------------------------------------
+# S0205: dataset instances public authority and projection -- the bounded
+# dataset_statistics.instance_count derivation added to the public
+# visualizations loader.
+# ---------------------------------------------------------------------------
+
+
+def _s0205_write_visualizations(releases_root: Path, release_name: str, artifact: dict) -> Path:
+    release_dir = releases_root / release_name
+    _s0101_write_artifact_file(release_dir, "visualizations/visualizations.json", artifact)
+    _s0101_write_release(
+        release_dir,
+        artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+    )
+    return release_dir
+
+
+def _s0205_historical_artifact(*, row_count, target_distribution_data) -> dict:
+    method = {"population_kind": "prepared_dataset", "target_column": "Churn"}
+    if row_count is not None:
+        method["row_count"] = row_count
+    return {
+        "schema_version": "analytical-visualizations.v1",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-07-21T12:47:21Z",
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": "Churn",
+                "y_label": "Rows",
+                "data": target_distribution_data,
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": [{"name": "tenure", "value": 0.4}, {"name": "Contract", "value": 0.3}],
+            },
+        ],
+        "target_distribution_method": method,
+    }
+
+
+def _s0205_external_artifact(*, target_distribution_data, method_override=None) -> dict:
+    method = (
+        method_override
+        if method_override is not None
+        else {"population_kind": "external_prepared_dataset", "target_column": "Churn"}
+    )
+    artifact = {
+        "schema_version": "analytical-visualizations.external-fitted-model.v1",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-08-12T12:00:00Z",
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": "Churn",
+                "y_label": "Rows",
+                "data": target_distribution_data,
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": [{"name": "tenure", "value": 0.4}, {"name": "Contract", "value": 0.3}],
+            },
+        ],
+    }
+    if method is not None:
+        artifact["target_distribution_method"] = method
+    return artifact
+
+
+def test_public_visualizations_loader_historical_matching_row_count_projects_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-001",
+            _s0205_historical_artifact(
+                row_count=7043,
+                target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-001", releases_root=releases_root)
+
+        assert projection["dataset_statistics"] == {"instance_count": 7043}
+
+
+def test_public_visualizations_loader_historical_row_count_chart_mismatch_no_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-002",
+            _s0205_historical_artifact(
+                # Declared row_count disagrees with the chart's own total
+                # (5174 + 1869 = 7043) -- the disagreement itself is the
+                # blocking condition, never resolved by trusting either side.
+                row_count=9999,
+                target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-002", releases_root=releases_root)
+
+        assert "dataset_statistics" not in projection
+        assert projection["charts"]
+
+
+def test_public_visualizations_loader_historical_zero_row_count_no_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-003",
+            _s0205_historical_artifact(
+                row_count=0,
+                target_distribution_data=[{"name": "No", "value": 0}, {"name": "Yes", "value": 0}],
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-003", releases_root=releases_root)
+
+        assert "dataset_statistics" not in projection
+
+
+def test_public_visualizations_loader_historical_non_integer_row_count_no_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-004",
+            _s0205_historical_artifact(
+                row_count=7043.5,
+                target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-004", releases_root=releases_root)
+
+        assert "dataset_statistics" not in projection
+        assert projection["charts"]
+
+
+def test_public_visualizations_loader_external_valid_counts_projects_summed_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-005",
+            _s0205_external_artifact(
+                target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-005", releases_root=releases_root)
+
+        assert projection["dataset_statistics"] == {"instance_count": 7043}
+
+
+def test_public_visualizations_loader_external_fractional_count_no_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-006",
+            _s0205_external_artifact(
+                # Finite and non-negative (so the canonical chart itself
+                # stays valid and keeps rendering) but not integer-like --
+                # never an authority for a whole-number population count.
+                target_distribution_data=[{"name": "No", "value": 5174.5}, {"name": "Yes", "value": 1869}],
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-006", releases_root=releases_root)
+
+        assert "dataset_statistics" not in projection
+        assert projection["charts"]
+
+
+def test_public_visualizations_loader_missing_population_kind_no_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-007",
+            _s0205_external_artifact(
+                target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+                method_override={"target_column": "Churn"},
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-007", releases_root=releases_root)
+
+        assert "dataset_statistics" not in projection
+        assert projection["charts"]
+
+
+def test_public_visualizations_loader_wrong_population_kind_no_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-008",
+            _s0205_external_artifact(
+                target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+                method_override={"population_kind": "synthetic_sample", "target_column": "Churn"},
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-008", releases_root=releases_root)
+
+        assert "dataset_statistics" not in projection
+        assert projection["charts"]
+
+
+def test_public_visualizations_loader_negative_target_distribution_value_degrades_to_unavailable():
+    # A negative Target Distribution value already fails the pre-existing
+    # canonical chart validation (Project Spec S0128) -- the whole artifact
+    # degrades to unavailable exactly as before, so no instance_count is
+    # ever produced from it.
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-009",
+            _s0205_external_artifact(
+                target_distribution_data=[{"name": "No", "value": -5174}, {"name": "Yes", "value": 1869}],
+            ),
+        )
+
+        raised = False
+        try:
+            api_main.load_public_visualizations("release-s0205-009", releases_root=releases_root)
+        except api_main.PublicVisualizationsUnavailableError:
+            raised = True
+        assert raised
+
+
+def test_public_visualizations_loader_non_finite_target_distribution_value_degrades_to_unavailable():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-010",
+            _s0205_external_artifact(
+                target_distribution_data=[
+                    {"name": "No", "value": float("inf")},
+                    {"name": "Yes", "value": 1869},
+                ],
+            ),
+        )
+
+        raised = False
+        try:
+            api_main.load_public_visualizations("release-s0205-010", releases_root=releases_root)
+        except api_main.PublicVisualizationsUnavailableError:
+            raised = True
+        assert raised
+
+
+def test_public_visualizations_loader_feature_importance_never_affects_instance_count():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        artifact = _s0205_external_artifact(
+            target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+        )
+        # A large, unrelated feature_importance total must never leak into
+        # or influence the derived dataset population count.
+        artifact["charts"][1]["data"] = [{"name": "tenure", "value": 999999}]
+        _s0205_write_visualizations(releases_root, "release-s0205-011", artifact)
+
+        projection = api_main.load_public_visualizations("release-s0205-011", releases_root=releases_root)
+
+        assert projection["dataset_statistics"] == {"instance_count": 7043}
+
+
+def test_public_visualizations_loader_dataset_statistics_never_exposes_internal_method_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(
+            releases_root,
+            "release-s0205-012",
+            _s0205_historical_artifact(
+                row_count=7043,
+                target_distribution_data=[{"name": "No", "value": 5174}, {"name": "Yes", "value": 1869}],
+            ),
+        )
+
+        projection = api_main.load_public_visualizations("release-s0205-012", releases_root=releases_root)
+
+        assert set(projection["dataset_statistics"].keys()) == {"instance_count"}
+        serialized = json.dumps(projection)
+        assert "target_distribution_method" not in serialized
+        assert "population_kind" not in serialized
+        assert "prepared_dataset" not in serialized
 
 
 def test_public_visualizations_endpoint_invalid_artifact_degrades_to_bounded_unavailable(monkeypatch):
@@ -1892,7 +2214,7 @@ def test_public_visualizations_loader_filters_internal_keys():
             "release-s0128-004", releases_root=releases_root
         )
 
-        assert set(projection.keys()) == {"charts"}
+        assert set(projection.keys()) == {"charts", "dataset_statistics"}
         assert projection["charts"] == _S0128_VALID_ARTIFACT["charts"]
 
 

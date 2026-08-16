@@ -93,13 +93,19 @@ function getProblemSummaryText(context: PublicContextPayload | null): string | n
     || nonBlank(context?.summary);
 }
 
-function extractInstanceCount(metrics: MetricsData): string | null {
-  const evaluation = metrics["evaluation"];
-  if (evaluation && typeof evaluation === "object") {
-    const sampleSize = (evaluation as Record<string, unknown>)["sample_size"];
-    if (typeof sampleSize === "number" && Number.isFinite(sampleSize)) {
-      return sampleSize.toLocaleString();
-    }
+/**
+ * Project Spec S0205: Instances now reads the bounded prepared-dataset
+ * population the public visualizations projection derived
+ * (visualizations.dataset_statistics.instance_count) instead of
+ * metrics.evaluation.sample_size (a held-out evaluation split size, not the
+ * full dataset population). This extractor only verifies the already-derived
+ * count's shape and formats it for display -- it never sums chart values
+ * itself.
+ */
+function extractInstanceCount(visualizations: VisualizationsPayload | null): string | null {
+  const count = visualizations?.dataset_statistics?.instance_count;
+  if (typeof count === "number" && Number.isFinite(count) && Number.isInteger(count) && count > 0) {
+    return count.toLocaleString();
   }
   return null;
 }
@@ -413,14 +419,14 @@ export default function DatasetPage() {
   const sourceName = nonBlank(context?.source_name);
   const sourceHref = sourceName ? safePublicSourceUrl(context?.source_url) : null;
   const release = presentDatasetDateOnly(context?.release_date_label, context?.date_format);
-  const instanceCount = metricsState.status === "ready" ? extractInstanceCount(metricsState.data) : null;
+  const instanceCount =
+    visualizationsState.status === "ready" ? extractInstanceCount(visualizationsState.data) : null;
 
   const metadataItems: DatasetDetailMetadataItem[] = [
     { label: "Source", value: sourceName, href: sourceHref ?? undefined },
     {
       label: "Instances",
       value: instanceCount,
-      hint: instanceCount ? "Evaluation split" : undefined,
     },
     {
       label: "Features",

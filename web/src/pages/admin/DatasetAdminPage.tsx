@@ -4276,6 +4276,11 @@ function DatasetDetailLivePreview({
     previewContract,
     metrics,
     readOnlyData.resultContract,
+    // Project Spec S0205: the same already-loaded, bounded visualizations
+    // payload TargetDistribution/FeatureImportance below already render --
+    // never a second, additional request for Live Preview's own Instances
+    // authority.
+    visualizations,
   );
 
   const performanceContent = (

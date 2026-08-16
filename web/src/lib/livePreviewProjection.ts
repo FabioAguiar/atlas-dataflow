@@ -120,13 +120,16 @@ function contractFields(contract: PreviewContract | null): PreviewContractField[
   return contract?.fields ?? contract?.inputs ?? contract?.input_schema?.fields ?? [];
 }
 
-function extractInstanceCount(metrics: PreviewMetrics | null): string | null {
-  const evaluation = metrics?.["evaluation"];
-  if (evaluation && typeof evaluation === "object") {
-    const sampleSize = (evaluation as Record<string, unknown>)["sample_size"];
-    if (typeof sampleSize === "number" && Number.isFinite(sampleSize)) {
-      return sampleSize.toLocaleString();
-    }
+/**
+ * Project Spec S0205: mirrors DatasetPage.tsx's own bounded extractor --
+ * Instances reads the already-loaded visualizations projection's
+ * dataset_statistics.instance_count, never metrics.evaluation.sample_size
+ * and never a sum over chart values.
+ */
+function extractInstanceCount(visualizations: VisualizationsPayload | null): string | null {
+  const count = visualizations?.dataset_statistics?.instance_count;
+  if (typeof count === "number" && Number.isFinite(count) && Number.isInteger(count) && count > 0) {
+    return count.toLocaleString();
   }
   return null;
 }
@@ -199,6 +202,7 @@ export function projectDatasetDetailPreview(
   contract: PreviewContract | null,
   metrics: PreviewMetrics | null,
   resultContract?: PreviewResultContract | null,
+  visualizations?: VisualizationsPayload | null,
 ): DatasetDetailPreview {
   const datasetTitle =
     nonBlank(form.display_title) ||
@@ -229,7 +233,7 @@ export function projectDatasetDetailPreview(
 
   const metadata: DatasetDetailMetadataItem[] = [
     { label: "Source", value: sourceName, href: sourceHref ?? undefined },
-    { label: "Instances", value: extractInstanceCount(metrics) },
+    { label: "Instances", value: extractInstanceCount(visualizations ?? null) },
     { label: "Features", value: fields.length ? String(fields.length) : null },
     {
       label: "Target",

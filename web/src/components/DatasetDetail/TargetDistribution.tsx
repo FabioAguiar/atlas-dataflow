@@ -17,6 +17,14 @@ export type VisualizationChart = {
 
 export type VisualizationsPayload = {
   charts?: VisualizationChart[];
+  // Project Spec S0205: a bounded dataset-population statistic the public
+  // visualizations projection may carry alongside charts. TargetDistribution
+  // never reads or derives this itself -- it exists here only because this
+  // module owns the shared VisualizationsPayload type both DatasetPage.tsx
+  // and livePreviewProjection.ts consume.
+  dataset_statistics?: {
+    instance_count?: number;
+  };
 };
 
 type TargetDistributionProps = {

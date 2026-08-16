@@ -323,6 +323,11 @@ function installFetchMock(
     // resource's prediction_target_description independently of the shared
     // default ("Customer churn"). Pass null to omit the field entirely.
     predictionTargetDescriptionOverride?: string | null;
+    // Project Spec S0205: overrides the authoring-context visualizations
+    // resource's data payload independently of the shared stateless default
+    // ({}, which carries no dataset_statistics and no charts) -- used only
+    // by the Dataset Detail Live Preview Instances metadata contract below.
+    visualizationsOverride?: Record<string, unknown>;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -450,7 +455,7 @@ function installFetchMock(
         status: "ready",
         data: { evaluation: { metrics: options.metricsOverride ?? { auc_roc: 0.93, accuracy: 0.86 } } },
       },
-      visualizations: { status: "ready", data: {} },
+      visualizations: { status: "ready", data: options.visualizationsOverride ?? {} },
       views: options.viewsResourceUnavailable
         ? {
             status: "unavailable",
@@ -3706,6 +3711,75 @@ describe("DatasetAdminPage", () => {
 
       await waitFor(() => expect(screen.getByText("Target").nextElementSibling).toHaveTextContent("Pending"));
       expect(screen.queryByText("Customer churn (churn/retained)")).not.toBeInTheDocument();
+    });
+  });
+
+  // Project Spec S0205: the Dataset Detail Live Preview Instances metadata
+  // now reads the same already-loaded, bounded authoring-context
+  // visualizations resource TargetDistribution/FeatureImportance already
+  // render from (readOnlyData.visualizations, converted through
+  // toVisualizationsPayload) -- never metrics, never a second request, and
+  // never a manual authoring input.
+  describe("Dataset Detail Live Preview Instances metadata (Project Spec S0205)", () => {
+    it("renders Instances from the current visualizations resource's dataset_statistics.instance_count without an Evaluation split hint, needing no publish action", async () => {
+      const fetchMock = installFetchMock({
+        visualizationsOverride: { charts: [], dataset_statistics: { instance_count: 7043 } },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      const instancesRow = screen.getByText("Instances").closest(".dataset-detail-header__metadata-item");
+      expect(instancesRow).not.toBeNull();
+      expect(within(instancesRow as HTMLElement).getByText("7,043")).toBeInTheDocument();
+      expect(within(instancesRow as HTMLElement).queryByText("Evaluation split")).not.toBeInTheDocument();
+      expect(screen.queryByText("Evaluation split")).not.toBeInTheDocument();
+
+      // No additional request beyond the single authoring-context envelope
+      // this preview already loads everything from.
+      expect(
+        fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${datasetSlug}/visualizations`)),
+      ).toBe(false);
+    });
+
+    it("renders Pending (a null value) when the visualizations resource carries no dataset_statistics", async () => {
+      installFetchMock({ visualizationsOverride: { charts: [] } });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      const instancesRow = screen.getByText("Instances").closest(".dataset-detail-header__metadata-item");
+      expect(instancesRow).not.toBeNull();
+      expect(within(instancesRow as HTMLElement).getByText("Pending")).toBeInTheDocument();
+    });
+
+    it("never sums Target Distribution chart values into Instances", async () => {
+      installFetchMock({
+        visualizationsOverride: {
+          charts: [
+            {
+              id: "target_distribution",
+              title: "target distribution",
+              type: "bar",
+              data: [
+                { name: "No", value: 5174 },
+                { name: "Yes", value: 1869 },
+              ],
+            },
+          ],
+        },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      const instancesRow = screen.getByText("Instances").closest(".dataset-detail-header__metadata-item");
+      expect(instancesRow).not.toBeNull();
+      expect(within(instancesRow as HTMLElement).getByText("Pending")).toBeInTheDocument();
+      expect(screen.queryByText("7,043")).not.toBeInTheDocument();
     });
   });
 

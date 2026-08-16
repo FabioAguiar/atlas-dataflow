@@ -38,6 +38,13 @@ _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
 _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND = "analytical_visualizations"
 _REQUIRED_CHART_IDS = ("target_distribution", "feature_importance")
 _MAX_CHART_DATA_POINTS = 64
+_TARGET_DISTRIBUTION_CHART_ID = "target_distribution"
+
+# Project Spec S0205: population_kind identities the bounded dataset-
+# population derivation accepts as an instance-count authority. Any other
+# (or missing) population_kind never produces dataset_statistics.
+_HISTORICAL_POPULATION_KIND = "prepared_dataset"
+_EXTERNAL_POPULATION_KIND = "external_prepared_dataset"
 
 _INTERNAL_KEYS = {
     "artifact",
@@ -163,6 +170,71 @@ def _canonical_public_charts(visualizations: Any) -> list[dict[str, Any]] | None
     return canonical_charts
 
 
+def _is_integer_like_non_negative_number(value: Any) -> bool:
+    if not _is_finite_non_negative_number(value):
+        return False
+    return isinstance(value, int) or value.is_integer()
+
+
+def _integer_population_total(points: list[dict[str, Any]]) -> int | None:
+    """Sums a canonical Target Distribution chart's own point values into a
+    single population total, requiring every value to be integer-like and
+    non-negative first. Returns None (never a fabricated/partial total) the
+    moment any point fails that requirement, or when the total is not
+    strictly positive."""
+    total = 0
+    for point in points:
+        value = point.get("value")
+        if not _is_integer_like_non_negative_number(value):
+            return None
+        total += int(value)
+    return total if total > 0 else None
+
+
+def _target_distribution_points(canonical_charts: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    for chart in canonical_charts:
+        if chart.get("id") == _TARGET_DISTRIBUTION_CHART_ID:
+            return chart.get("data")
+    return None
+
+
+def _dataset_statistics(
+    visualizations: dict[str, Any],
+    canonical_charts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Project Spec S0205: derives a bounded dataset_statistics.instance_count
+    only from the canonical Target Distribution the public chart projection
+    already validated -- never from feature_importance, metrics, model-card
+    text, or any other field. Returns None whenever the declared population
+    kind is missing/unrecognized, or the count inputs cannot be safely
+    proven (never a partial/best-guess total)."""
+    method = visualizations.get("target_distribution_method")
+    if not isinstance(method, dict):
+        return None
+    population_kind = method.get("population_kind")
+
+    points = _target_distribution_points(canonical_charts)
+    if points is None:
+        return None
+
+    if population_kind == _HISTORICAL_POPULATION_KIND:
+        row_count = method.get("row_count")
+        if not isinstance(row_count, int) or isinstance(row_count, bool) or row_count <= 0:
+            return None
+        chart_total = _integer_population_total(points)
+        if chart_total is None or chart_total != row_count:
+            return None
+        return {"instance_count": row_count}
+
+    if population_kind == _EXTERNAL_POPULATION_KIND:
+        chart_total = _integer_population_total(points)
+        if chart_total is None:
+            return None
+        return {"instance_count": chart_total}
+
+    return None
+
+
 def _safe_projection(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -227,7 +299,17 @@ def load_public_visualizations(
             "Visualizations are not available for this release."
         )
 
-    projection = _safe_projection({"charts": canonical_charts})
+    # Project Spec S0205: a bounded dataset-population derivation, added only
+    # when the governed artifact safely proves the total dataset population
+    # through its own canonical Target Distribution. The internal
+    # target_distribution_method block itself is never exposed -- only the
+    # derived instance_count integer.
+    payload: dict[str, Any] = {"charts": canonical_charts}
+    dataset_statistics = _dataset_statistics(visualizations, canonical_charts)
+    if dataset_statistics is not None:
+        payload["dataset_statistics"] = dataset_statistics
+
+    projection = _safe_projection(payload)
     if not isinstance(projection, dict):
         raise PublicVisualizationsUnavailableError(
             "Visualizations are not available for this release."

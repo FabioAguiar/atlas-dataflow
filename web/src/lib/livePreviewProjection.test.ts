@@ -47,6 +47,9 @@ const context = {
 
 const contract = { fields: [{ name: "tenure" }, { name: "MonthlyCharges" }] };
 const metrics = { evaluation: { sample_size: 7043 } };
+// Project Spec S0205: the bounded public visualizations projection Instances
+// now reads from -- metrics.evaluation.sample_size above no longer feeds it.
+const visualizations = { charts: [], dataset_statistics: { instance_count: 7043 } };
 
 describe("projectHomeCardPreview", () => {
   it("passes problemType from the loaded public context into the Home card props", () => {
@@ -403,8 +406,16 @@ describe("projectDatasetDetailPreview: Release date", () => {
 });
 
 describe("projectDatasetDetailPreview: remaining metadata", () => {
-  it("keeps Instances, Features and Target metadata from technical context/contract/metrics", () => {
-    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+  it("keeps Instances, Features and Target metadata from technical context/contract/visualizations", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      context,
+      contract,
+      metrics,
+      undefined,
+      visualizations,
+    );
     expect(preview.metadata).toEqual([
       { label: "Source", value: "Atlas Release Registry", href: "https://example.org/registry" },
       { label: "Instances", value: "7,043" },
@@ -412,6 +423,84 @@ describe("projectDatasetDetailPreview: remaining metadata", () => {
       { label: "Target", value: "Customer churn" },
       { label: "Release", value: "2026-07-04", hint: "yyyy-mm-dd" },
     ]);
+  });
+});
+
+// Project Spec S0205: Instances now reads the bounded public visualizations
+// projection's dataset_statistics.instance_count -- never
+// metrics.evaluation.sample_size, and never a sum over chart values.
+describe("projectDatasetDetailPreview: Instances metadata (Project Spec S0205)", () => {
+  it("reads Instances from visualizations.dataset_statistics.instance_count, ignoring a conflicting metrics.evaluation.sample_size", () => {
+    const conflictingMetrics = { evaluation: { sample_size: 999 } };
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      context,
+      contract,
+      conflictingMetrics,
+      undefined,
+      visualizations,
+    );
+    expect(preview.metadata.find((item) => item.label === "Instances")?.value).toBe("7,043");
+  });
+
+  it("renders Pending (a null value) when visualizations carries no dataset_statistics", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      context,
+      contract,
+      metrics,
+      undefined,
+      { charts: [] },
+    );
+    expect(preview.metadata.find((item) => item.label === "Instances")?.value).toBeNull();
+  });
+
+  it("renders Pending when no visualizations payload is provided at all", () => {
+    const preview = projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics);
+    expect(preview.metadata.find((item) => item.label === "Instances")?.value).toBeNull();
+  });
+
+  it("never sums Target Distribution chart values -- only an already-declared dataset_statistics.instance_count is used", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      context,
+      contract,
+      metrics,
+      undefined,
+      {
+        charts: [
+          {
+            id: "target_distribution",
+            title: "target distribution",
+            type: "bar" as const,
+            data: [
+              { name: "No", value: 5174 },
+              { name: "Yes", value: 1869 },
+            ],
+          },
+        ],
+      },
+    );
+    expect(preview.metadata.find((item) => item.label === "Instances")?.value).toBeNull();
+  });
+
+  it("leaves Source/Features/Target/Release metadata unaffected", () => {
+    const preview = projectDatasetDetailPreview(
+      dataset,
+      draftForm,
+      context,
+      contract,
+      metrics,
+      undefined,
+      visualizations,
+    );
+    expect(preview.metadata.find((item) => item.label === "Source")?.value).toBe("Atlas Release Registry");
+    expect(preview.metadata.find((item) => item.label === "Features")?.value).toBe("2");
+    expect(preview.metadata.find((item) => item.label === "Target")?.value).toBe("Customer churn");
+    expect(preview.metadata.find((item) => item.label === "Release")?.value).toBe("2026-07-04");
   });
 });
 

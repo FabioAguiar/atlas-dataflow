@@ -117,8 +117,13 @@ const metricsPayload = {
   evaluation: { sample_size: 1234 },
 };
 
+// Project Spec S0205: dataset_statistics.instance_count is the bounded
+// public visualizations projection's own Instances authority -- kept on
+// this shared fixture so every existing test using it still renders a
+// stable Instances value without individually opting in.
 const visualizationsPayload = {
   charts: [],
+  dataset_statistics: { instance_count: 1234 },
 };
 
 const contractPayload = {
@@ -1798,8 +1803,12 @@ describe("DatasetPage metrics/analysis/target projection (Project Spec S0127)", 
     expect(within(targetRow as HTMLElement).getByText("Pending")).toBeInTheDocument();
   });
 
-  it("renders the Instances metadata with an evaluation-split hint, distinguishing a valid zero sample size from missing data", async () => {
-    const zeroSampleMetrics = {
+  // Project Spec S0205: Instances now reads the bounded public
+  // visualizations projection's dataset_statistics.instance_count -- never
+  // metrics.evaluation.sample_size (a held-out evaluation split size, not
+  // the dataset population) -- and never shows an "Evaluation split" hint.
+  it("renders the Instances metadata from visualizations.dataset_statistics, ignoring metrics.evaluation.sample_size entirely", async () => {
+    const irrelevantZeroSampleMetrics = {
       evaluation: {
         split_name: "evaluation",
         sample_size: 0,
@@ -1814,10 +1823,13 @@ describe("DatasetPage metrics/analysis/target projection (Project Spec S0127)", 
         return jsonResponse({ dataset_slug: slug, context: contextPayload });
       }
       if (url.endsWith(`/datasets/${slug}/metrics`)) {
-        return jsonResponse({ dataset_slug: slug, metrics: zeroSampleMetrics });
+        return jsonResponse({ dataset_slug: slug, metrics: irrelevantZeroSampleMetrics });
       }
       if (url.endsWith(`/datasets/${slug}/visualizations`)) {
-        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+        return jsonResponse({
+          dataset_slug: slug,
+          visualizations: { charts: [], dataset_statistics: { instance_count: 2500 } },
+        });
       }
       if (url.endsWith(`/datasets/${slug}/contract`)) {
         return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
@@ -1833,8 +1845,43 @@ describe("DatasetPage metrics/analysis/target projection (Project Spec S0127)", 
 
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
 
-    expect(await screen.findByText("0")).toBeInTheDocument();
-    expect(screen.getByText("Evaluation split")).toBeInTheDocument();
+    expect(await screen.findByText("2,500")).toBeInTheDocument();
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+    expect(screen.queryByText("Evaluation split")).not.toBeInTheDocument();
+  });
+
+  it("degrades Instances to Pending when visualizations carries no dataset_statistics, even when metrics has a sample size", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: s0127MetricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: { charts: [] } });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({ dataset_slug: slug, contract: contractPayload, result_contract: resultContractAvailable });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByText("AUC ROC");
+
+    const instancesRow = screen.getByText("Instances").closest(".dataset-detail-header__metadata-item");
+    expect(instancesRow).not.toBeNull();
+    expect(within(instancesRow as HTMLElement).getByText("Pending")).toBeInTheDocument();
+    expect(screen.queryByText("2,114")).not.toBeInTheDocument();
+    expect(screen.queryByText("Evaluation split")).not.toBeInTheDocument();
   });
 });
 
@@ -1909,6 +1956,9 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
         ],
       },
     ],
+    // Project Spec S0205: the bounded dataset-population derivation the real
+    // Telco release's Target Distribution (5,174 + 1,869) projects.
+    dataset_statistics: { instance_count: 7043 },
   };
 
   const telcoContractPayload = {
@@ -1939,7 +1989,7 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
   function installTelcoFetchMock(
     overrides: {
       visualizationsStatus?: number;
-      visualizationsPayload?: typeof telcoVisualizationsPayload;
+      visualizationsPayload?: Partial<typeof telcoVisualizationsPayload>;
     } = {},
   ) {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -2000,9 +2050,12 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     // (see the synthetic-slug test above for the same rule).
     expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
     expect(screen.getByText("Churn (Yes/No)")).toBeInTheDocument();
-    // Instances metadata reads metrics.evaluation.sample_size (the real
-    // release's held-out test split size), not the full 7,043-row dataset.
-    expect(await screen.findByText("1,408")).toBeInTheDocument();
+    // Project Spec S0205: Instances reads the bounded public visualizations
+    // projection's dataset_statistics.instance_count (the full dataset
+    // population), never metrics.evaluation.sample_size (the held-out test
+    // split size, 1,408 in this fixture, which must never appear here).
+    expect(await screen.findByText("7,043")).toBeInTheDocument();
+    expect(screen.queryByText("1,408")).not.toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
 
     // Project Spec S0138: the ready Overview tabpanel owns exactly its four
@@ -2083,7 +2136,15 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     renderTelcoDatasetPage();
 
     expect(await screen.findByRole("heading", { name: "Telco Customer Churn", level: 1 })).toBeInTheDocument();
-    expect(await screen.findByText("1,408")).toBeInTheDocument();
+    // Project Spec S0205: this malformed payload carries no dataset_statistics
+    // at all, so Instances safely degrades to Pending -- it never falls back
+    // to metrics.evaluation.sample_size (1,408 in this fixture).
+    const instancesRow = (await screen.findByText("Instances")).closest(
+      ".dataset-detail-header__metadata-item",
+    );
+    expect(instancesRow).not.toBeNull();
+    expect(within(instancesRow as HTMLElement).getByText("Pending")).toBeInTheDocument();
+    expect(screen.queryByText("1,408")).not.toBeInTheDocument();
 
     expect((await screen.findAllByText("Visualization not generated")).length).toBe(2);
     expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(2);
@@ -2109,7 +2170,15 @@ describe("DatasetPage Telco-like ready payload rendering (S0017)", () => {
     // visualizations failed independently -- one section's unavailability
     // must not block the rest of the page. Metrics only fetches once the
     // primary route is ready (Project Spec S0117).
-    expect(await screen.findByText("1,408")).toBeInTheDocument();
+    expect(await screen.findByText("Accuracy")).toBeInTheDocument();
+
+    // Project Spec S0205: Instances is now itself sourced from the failed
+    // visualizations resource, so it safely degrades to Pending rather than
+    // falling back to metrics.evaluation.sample_size (1,408 in this fixture).
+    const instancesRow = screen.getByText("Instances").closest(".dataset-detail-header__metadata-item");
+    expect(instancesRow).not.toBeNull();
+    expect(within(instancesRow as HTMLElement).getByText("Pending")).toBeInTheDocument();
+    expect(screen.queryByText("1,408")).not.toBeInTheDocument();
 
     expect((await screen.findAllByText("Visualization not generated")).length).toBe(2);
     expect(screen.getAllByText("This visualization has not been generated yet for this release.")).toHaveLength(2);

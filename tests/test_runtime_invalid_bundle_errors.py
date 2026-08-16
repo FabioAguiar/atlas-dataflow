@@ -822,3 +822,394 @@ def test_governed_inference_bundle_blocked_when_prepared_candidate_not_produced(
     assert result["status"] == "blocked"
     assert any("prepared_candidate.produced" in reason for reason in result["blocking_reasons"])
     assert not (repo_root / "contracts/telco-customer-churn/inference-bundle.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0210: dataset-neutral, fake-model synthetic multiclass
+# execution edge cases, mirroring the S0109 binary fake-model technique above
+# (_FakeBinaryModel / _s0109_execute) via loader_strategies, to exercise
+# malformed predict()/predict_proba() shapes, model-class-identity mismatches,
+# output-schema/external-evidence cross-checks, and closed result-semantics
+# dispatch deterministically -- without any real scikit-learn estimator (that
+# path is covered end-to-end in tests/test_local_inference_smoke.py).
+# ---------------------------------------------------------------------------
+
+
+class _FakeMulticlassModel:
+    def __init__(self, classes, predict_return, predict_proba_return):
+        self.classes_ = classes
+        self._predict_return = predict_return
+        self._predict_proba_return = predict_proba_return
+
+    def predict(self, _row):
+        return self._predict_return
+
+    def predict_proba(self, _row):
+        return self._predict_proba_return
+
+
+_S0210_GOVERNED_CLASSES = [
+    {"class_id": "setosa", "display_label": "Setosa"},
+    {"class_id": "versicolor", "display_label": "Versicolor"},
+    {"class_id": "virginica", "display_label": "Virginica"},
+]
+_S0210_GOVERNED_CLASS_IDS = [entry["class_id"] for entry in _S0210_GOVERNED_CLASSES]
+
+
+def _s0210_multiclass_declaration(
+    *,
+    classes: list[dict[str, str]] | None = None,
+    class_labels: list[str] | None = None,
+    prediction_type: str = "string",
+    probability_output: bool = True,
+    model_family: str = "logistic_regression",
+    schema_version: str = "multiclass-result-semantics.v1",
+    problem_type: str = "multiclass_classification",
+    extra_semantics_fields: dict[str, Any] | None = None,
+    include_external_evidence: bool = False,
+    model_provenance_origin: str = "validated_external_fitted_model",
+    external_ordered_class_ids: list[str] | None = None,
+    external_probability_columns: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    governed_classes = classes if classes is not None else _S0210_GOVERNED_CLASSES
+    governed_class_ids = [entry["class_id"] for entry in governed_classes]
+
+    result_semantics: dict[str, Any] = {
+        "schema_version": schema_version,
+        "problem_type": problem_type,
+        "result_schema_version": "multiclass-classification-result.v1",
+        "classes": [dict(entry) for entry in governed_classes],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": {"model_family": model_family, "display_name": "Logistic Regression"},
+    }
+    if extra_semantics_fields:
+        result_semantics.update(extra_semantics_fields)
+
+    declaration: dict[str, Any] = {
+        "feature_order": ["sepal_length"],
+        "runtime_execution": {
+            "loader_strategy": "fake_multiclass_model",
+            "serialization_format": "fake",
+        },
+        "model_artifact": {"path": "models/model.json"},
+        "output_schema": {
+            "class_labels": class_labels if class_labels is not None else list(governed_class_ids),
+            "prediction_type": prediction_type,
+            "probability_output": probability_output,
+        },
+        "result_semantics": result_semantics,
+    }
+
+    if include_external_evidence:
+        declaration["model_provenance_origin"] = model_provenance_origin
+        declaration["external_model_evidence"] = {
+            "origin": "validated_external_fitted_model",
+            "model_family": model_family,
+            "classification_evidence": {
+                "problem_type": "multiclass_classification",
+                "ordered_class_ids": (
+                    external_ordered_class_ids
+                    if external_ordered_class_ids is not None
+                    else list(governed_class_ids)
+                ),
+                "probability_columns": (
+                    external_probability_columns
+                    if external_probability_columns is not None
+                    else [
+                        {"class_id": class_id, "probability_index": index}
+                        for index, class_id in enumerate(governed_class_ids)
+                    ]
+                ),
+            },
+            "decision_semantics": {"strategy": "argmax"},
+            "readiness": {"decision_strategy": "argmax"},
+        }
+
+    return declaration
+
+
+def _s0210_execute(tmp_path: Path, declaration: dict[str, Any], model: _FakeMulticlassModel):
+    release_root = tmp_path / "release-s0210-edge"
+    _write_json(release_root / "predictions" / "bundle.json", declaration)
+    _write_json(release_root / "models" / "model.json", {"placeholder": True})
+
+    def _load_declaration(path: Path) -> dict[str, Any]:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _load_fake_model(_path: Path, _declaration: Mapping[str, Any]):
+        return model
+
+    return execute_prediction(
+        {"path": str(release_root)},
+        {"sepal_length": 5.1},
+        manifest={"artifacts": [{"role": "predictive_bundle", "reference": "predictions/bundle.json"}]},
+        bundle_loader=_load_declaration,
+        loader_strategies={"fake_multiclass_model": _load_fake_model},
+        supported_serialization_formats=["fake"],
+    )
+
+
+def test_s0210_multiclass_execution_valid_governed_order_and_argmax(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["versicolor"],
+        predict_proba_return=[[0.2, 0.5, 0.3]],
+    )
+    result = _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)["result"]
+
+    assert result["schema_version"] == "multiclass-classification-result.v1"
+    assert result["problem_type"] == "multiclass_classification"
+    assert [p["class_id"] for p in result["class_probabilities"]] == _S0210_GOVERNED_CLASS_IDS
+    assert [p["probability"] for p in result["class_probabilities"]] == [0.2, 0.5, 0.3]
+    assert result["predicted_class"] == {"class_id": "versicolor", "display_label": "Versicolor"}
+    assert result["decision"] == {"strategy": "argmax"}
+    assert result["model_descriptor"] == {
+        "model_family": "logistic_regression",
+        "display_name": "Logistic Regression",
+    }
+    assert {p["class_id"] for p in result["class_probabilities"]} == set(_S0210_GOVERNED_CLASS_IDS)
+
+
+def test_s0210_reordered_model_classes_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["versicolor", "setosa", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.5, 0.2, 0.3]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_case_changed_model_class_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "Versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_blank_model_class_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "   ", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_duplicate_model_class_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "setosa", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_missing_model_classes_rejected(tmp_path: Path) -> None:
+    class _NoClassesModel:
+        def predict(self, _row):
+            return ["setosa"]
+
+        def predict_proba(self, _row):
+            return [[0.6, 0.2, 0.2]]
+
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), _NoClassesModel())
+
+
+def test_s0210_wrong_predict_proba_class_count_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.5, 0.5]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_multiple_probability_rows_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2], [0.1, 0.1, 0.8]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_negative_probability_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[-0.1, 0.6, 0.5]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_out_of_range_probability_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[1.5, -0.3, -0.2]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_non_finite_probability_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[float("nan"), 0.5, 0.5]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_probability_sum_mismatch_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.5, 0.5, 0.5]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_malformed_predict_output_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa", "versicolor"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_predict_class_outside_governed_set_rejected(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["unknown_species"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_predict_argmax_disagreement_rejected(tmp_path: Path) -> None:
+    # argmax is "setosa" (0.6) but predict() disagrees with "versicolor".
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["versicolor"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleExecutionError):
+        _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)
+
+
+def test_s0210_tie_selects_first_governed_maximum(tmp_path: Path) -> None:
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.4, 0.4, 0.2]],
+    )
+    result = _s0210_execute(tmp_path, _s0210_multiclass_declaration(), model)["result"]
+    assert result["predicted_class"]["class_id"] == "setosa"
+
+
+def test_s0210_output_schema_class_label_order_mismatch_rejected(tmp_path: Path) -> None:
+    declaration = _s0210_multiclass_declaration(class_labels=["versicolor", "setosa", "virginica"])
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleValidationError):
+        _s0210_execute(tmp_path, declaration, model)
+
+
+def test_s0210_output_schema_probability_output_false_rejected(tmp_path: Path) -> None:
+    declaration = _s0210_multiclass_declaration(probability_output=False)
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleValidationError):
+        _s0210_execute(tmp_path, declaration, model)
+
+
+def test_s0210_output_schema_prediction_type_not_string_rejected(tmp_path: Path) -> None:
+    declaration = _s0210_multiclass_declaration(prediction_type="boolean")
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleValidationError):
+        _s0210_execute(tmp_path, declaration, model)
+
+
+def test_s0210_external_evidence_ordered_class_mismatch_rejected(tmp_path: Path) -> None:
+    declaration = _s0210_multiclass_declaration(
+        include_external_evidence=True,
+        external_ordered_class_ids=["versicolor", "setosa", "virginica"],
+    )
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleValidationError):
+        _s0210_execute(tmp_path, declaration, model)
+
+
+def test_s0210_external_evidence_probability_index_mismatch_rejected(tmp_path: Path) -> None:
+    declaration = _s0210_multiclass_declaration(
+        include_external_evidence=True,
+        external_probability_columns=[
+            {"class_id": "setosa", "probability_index": 1},
+            {"class_id": "versicolor", "probability_index": 0},
+            {"class_id": "virginica", "probability_index": 2},
+        ],
+    )
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleValidationError):
+        _s0210_execute(tmp_path, declaration, model)
+
+
+def test_s0210_multiclass_threshold_field_rejected(tmp_path: Path) -> None:
+    declaration = _s0210_multiclass_declaration(extra_semantics_fields={"threshold": 0.5})
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleValidationError):
+        _s0210_execute(tmp_path, declaration, model)
+
+
+def test_s0210_unknown_result_semantics_variant_rejected(tmp_path: Path) -> None:
+    declaration = _s0210_multiclass_declaration(
+        schema_version="quaternary-result-semantics.v1",
+        problem_type="quaternary_classification",
+    )
+    model = _FakeMulticlassModel(
+        classes=["setosa", "versicolor", "virginica"],
+        predict_return=["setosa"],
+        predict_proba_return=[[0.6, 0.2, 0.2]],
+    )
+    with pytest.raises(BundleValidationError):
+        _s0210_execute(tmp_path, declaration, model)

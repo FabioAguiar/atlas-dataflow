@@ -9,6 +9,7 @@ this runtime boundary.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,6 +104,27 @@ _GOVERNED_RESULT_MODEL_FAMILIES = (
     "gradient_boosting",
     "random_forest",
     "hist_gradient_boosting",
+)
+
+# Project Spec S0210: the closed set of governed multiclass result model
+# families -- the four Project Spec S0208/S0209 external fitted-model v2
+# estimator families. Multiclass has no internal Atlas training source, so
+# this is disjoint from (though it overlaps with) _GOVERNED_RESULT_MODEL_FAMILIES.
+_GOVERNED_MULTICLASS_MODEL_FAMILIES = (
+    "logistic_regression",
+    "decision_tree",
+    "random_forest",
+    "hist_gradient_boosting",
+)
+
+# Project Spec S0210: deterministic, repository-local resolution for the
+# persisted multiclass-classification-result.v1 schema. Never resolved from
+# request data, bundle metadata, dataset metadata, or the network -- mirrors
+# how _BINARY_CLASSIFICATION_RESULT_SCHEMA is always available in-process,
+# except this schema is real, persisted JSON (not a Python literal) so it can
+# be shared with tooling outside this module without duplication.
+_MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parent.parent / "contracts" / "multiclass-classification-result.schema.json"
 )
 
 # In-memory JSON Schema for binary-classification-result.v1. Deliberately not
@@ -421,7 +443,9 @@ def execute_prediction(
     ``prediction_executor`` override is given, this is the real production
     path: the bundle-declared loader strategy is used to deserialize the
     release-local model, and a full S0108/S0109 binary-classification result
-    is resolved and returned under ``{"result": ...}``.
+    or S0210 multiclass-classification result (governed by the bundle's
+    declared result-semantics variant) is resolved and returned under
+    ``{"result": ...}``.
 
     A caller-supplied ``prediction_executor`` always takes precedence and
     preserves the original generic/legacy envelope (``{"prediction": ...}``),
@@ -456,7 +480,7 @@ def execute_prediction(
 
     if loader_strategies is not None and prediction_executor is None:
         return {
-            "result": _execute_binary_prediction(
+            "result": _execute_governed_prediction(
                 adapter, validated_payload, runtime_feature_metadata
             )
         }
@@ -488,6 +512,63 @@ def validate_binary_classification_result(result: Mapping[str, Any]) -> None:
         raise BundleValidationError(
             "invalid_binary_classification_result",
             "Binary classification result failed schema validation.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+
+
+def _load_multiclass_classification_result_schema() -> dict[str, Any]:
+    """Deterministic, repository-local schema load. Fails closed (sanitized)
+    on a missing, unreadable, or invalid schema file -- never falls back to
+    an invented default and never resolves the path from caller-supplied
+    data."""
+
+    try:
+        raw = _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_PATH.read_text(encoding="utf-8")
+        schema = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise BundleValidationError(
+            "multiclass_classification_result_schema_unavailable",
+            "Multiclass classification result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+
+    if not isinstance(schema, Mapping):
+        raise BundleValidationError(
+            "multiclass_classification_result_schema_unavailable",
+            "Multiclass classification result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        )
+
+    return schema
+
+
+def validate_multiclass_classification_result(result: Mapping[str, Any]) -> None:
+    """Strictly validate a serialized result against multiclass-classification-result.v1.
+
+    Exposed as a public defense-in-depth validator, mirroring
+    ``validate_binary_classification_result``. The schema is read from the
+    single repository-owned persisted artifact
+    (``contracts/multiclass-classification-result.schema.json``) rather than
+    duplicated as a second independent in-memory JSON Schema literal.
+    """
+
+    schema = _load_multiclass_classification_result_schema()
+    try:
+        jsonschema.validate(result, schema)
+    except jsonschema.ValidationError as exc:
+        raise BundleValidationError(
+            "invalid_multiclass_classification_result",
+            "Multiclass classification result failed schema validation.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+    except jsonschema.SchemaError as exc:
+        raise BundleValidationError(
+            "multiclass_classification_result_schema_unavailable",
+            "Multiclass classification result schema is unavailable.",
             field="result",
             diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
         ) from exc
@@ -542,14 +623,42 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
     Never deserializes the model and never executes inference -- only
     validates already-loaded bundle JSON metadata. Returns either
     ``{"status": "available", "semantics": {...}}`` or
-    ``{"status": "unavailable", "reason": "binary_result_semantics_unavailable"}``.
-    Historical/incompatible bundles never receive invented defaults.
+    ``{"status": "unavailable", "reason": "binary_result_semantics_unavailable"}``
+    (the reason string is preserved verbatim across binary and multiclass for
+    caller compatibility -- api/main.py's own fallback hardcodes the same
+    literal string). Historical/incompatible bundles never receive invented
+    defaults. Project Spec S0210: variant-aware via the same closed
+    result-semantics discriminators used by execution dispatch; multiclass
+    never loads model bytes or exposes external evidence.
     """
 
     try:
-        semantics = _validate_result_semantics(declaration)
+        variant = _resolve_result_semantics_variant(declaration)
+        if variant == "binary":
+            semantics = _validate_binary_result_semantics(declaration)
+        else:
+            semantics = _validate_multiclass_result_semantics(declaration)
     except BundleValidationError:
         return {"status": "unavailable", "reason": "binary_result_semantics_unavailable"}
+
+    if variant == "binary":
+        return {
+            "status": "available",
+            "semantics": {
+                "schema_version": semantics["schema_version"],
+                "problem_type": semantics["problem_type"],
+                "result_schema_version": semantics["result_schema_version"],
+                "primary_output": semantics["primary_output"],
+                "positive_class": dict(semantics["positive_class"]),
+                "negative_class": dict(semantics["negative_class"]),
+                "decision": dict(semantics["decision"]),
+                "interpretation": {
+                    "preset": semantics["interpretation"]["preset"],
+                    "bands": [dict(band) for band in semantics["interpretation"]["bands"]],
+                },
+                "model_descriptor": dict(semantics["model_descriptor"]),
+            },
+        }
 
     return {
         "status": "available",
@@ -557,14 +666,10 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
             "schema_version": semantics["schema_version"],
             "problem_type": semantics["problem_type"],
             "result_schema_version": semantics["result_schema_version"],
+            "classes": [dict(class_entry) for class_entry in semantics["classes"]],
             "primary_output": semantics["primary_output"],
-            "positive_class": dict(semantics["positive_class"]),
-            "negative_class": dict(semantics["negative_class"]),
+            "probability_output": semantics["probability_output"],
             "decision": dict(semantics["decision"]),
-            "interpretation": {
-                "preset": semantics["interpretation"]["preset"],
-                "bands": [dict(band) for band in semantics["interpretation"]["bands"]],
-            },
             "model_descriptor": dict(semantics["model_descriptor"]),
         },
     }
@@ -575,7 +680,7 @@ def _execute_binary_prediction(
     validated_payload: Mapping[str, Any],
     runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    semantics = _validate_result_semantics(adapter.declaration)
+    semantics = _validate_binary_result_semantics(adapter.declaration)
 
     row = _build_ordered_row(
         adapter.metadata.feature_order, validated_payload, runtime_feature_metadata
@@ -650,7 +755,7 @@ def _execute_binary_prediction(
         )
 
     positive_index = [_normalize_class_id(c) for c in model_classes].index(positive_normalized)
-    class_probabilities = _validate_probabilities(proba_row)
+    class_probabilities = _validate_probabilities(proba_row, expected_count=2)
     positive_class_probability = class_probabilities[positive_index]
 
     threshold = semantics["decision"]["threshold"]
@@ -687,6 +792,99 @@ def _execute_binary_prediction(
     }
 
     validate_binary_classification_result(result)
+    return result
+
+
+def _execute_multiclass_prediction(
+    adapter: RuntimeBundleAdapter,
+    validated_payload: Mapping[str, Any],
+    runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Project Spec S0210: the multiclass counterpart to
+    ``_execute_binary_prediction``. Reuses ``_build_ordered_row`` (Section G)
+    -- never a separate multiclass input contract or feature-form policy."""
+
+    semantics = _validate_multiclass_result_semantics(adapter.declaration)
+    governed_classes = semantics["classes"]
+    governed_class_ids = [entry["class_id"] for entry in governed_classes]
+
+    row = _build_ordered_row(
+        adapter.metadata.feature_order, validated_payload, runtime_feature_metadata
+    )
+
+    model = adapter.bundle
+    predict = getattr(model, "predict", None)
+    predict_proba = getattr(model, "predict_proba", None)
+    if not callable(predict) or not callable(predict_proba):
+        raise BundleExecutionError(
+            "Inference model does not expose a multiclass prediction interface.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    try:
+        raw_prediction = predict(row)
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
+    predicted_values = _as_flat_list(raw_prediction)
+    if len(predicted_values) != 1:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    try:
+        raw_proba = predict_proba(row)
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
+    proba_rows = _as_matrix(raw_proba)
+    if len(proba_rows) != 1:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+    proba_row = proba_rows[0]
+
+    model_classes = _resolve_model_classes(model)
+    _validate_multiclass_model_classes(model_classes, governed_class_ids)
+
+    class_probabilities = _validate_probabilities(proba_row, expected_count=len(governed_class_ids))
+
+    argmax_index = _derive_argmax_index(class_probabilities)
+    argmax_class = governed_classes[argmax_index]
+
+    predicted_raw_class = _project_multiclass_class_id(predicted_values[0])
+    if predicted_raw_class != argmax_class["class_id"]:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    result: dict[str, Any] = {
+        "schema_version": "multiclass-classification-result.v1",
+        "problem_type": "multiclass_classification",
+        "predicted_class": {
+            "class_id": argmax_class["class_id"],
+            "display_label": argmax_class["display_label"],
+        },
+        "class_probabilities": [
+            {
+                "class_id": governed_classes[index]["class_id"],
+                "display_label": governed_classes[index]["display_label"],
+                "probability": class_probabilities[index],
+            }
+            for index in range(len(governed_classes))
+        ],
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": dict(semantics["model_descriptor"]),
+    }
+
+    validate_multiclass_classification_result(result)
     return result
 
 
@@ -1074,7 +1272,60 @@ def _is_string_sequence(value: Any) -> bool:
     )
 
 
-def _validate_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]:
+def _resolve_result_semantics_variant(declaration: Mapping[str, Any]) -> str:
+    """Project Spec S0210: closed result-semantics dispatch resolver.
+
+    Dispatches only from the governed discriminator pairs declared on
+    ``result_semantics`` itself (``binary-result-semantics.v1`` +
+    ``binary_classification``, or ``multiclass-result-semantics.v1`` +
+    ``multiclass_classification``) -- never from dataset slug, number of
+    classes, model family alone, or feature names. Unknown/malformed
+    semantics fail closed with ``BundleValidationError`` rather than
+    returning an unrecognized variant string.
+    """
+
+    semantics = declaration.get("result_semantics")
+    if not isinstance(semantics, Mapping):
+        raise BundleValidationError(
+            "missing_result_semantics",
+            "Inference bundle result semantics are not defined.",
+            field="result_semantics",
+        )
+
+    schema_version = semantics.get("schema_version")
+    problem_type = semantics.get("problem_type")
+    if schema_version == "binary-result-semantics.v1" and problem_type == "binary_classification":
+        return "binary"
+    if schema_version == "multiclass-result-semantics.v1" and problem_type == "multiclass_classification":
+        return "multiclass"
+
+    raise BundleValidationError(
+        "unsupported_result_semantics_variant",
+        "Inference bundle result semantics variant is unsupported.",
+        field="result_semantics.schema_version",
+    )
+
+
+def _execute_governed_prediction(
+    adapter: RuntimeBundleAdapter,
+    validated_payload: Mapping[str, Any],
+    runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """Project Spec S0210: closed governed production execution dispatch.
+
+    binary semantics -> the existing, unchanged ``_execute_binary_prediction``.
+    multiclass semantics -> the new ``_execute_multiclass_prediction``.
+    Unknown semantics fail closed via ``_resolve_result_semantics_variant``
+    raising before either branch is reached.
+    """
+
+    variant = _resolve_result_semantics_variant(adapter.declaration)
+    if variant == "binary":
+        return _execute_binary_prediction(adapter, validated_payload, runtime_feature_metadata)
+    return _execute_multiclass_prediction(adapter, validated_payload, runtime_feature_metadata)
+
+
+def _validate_binary_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]:
     """Strictly validate the S0108 result_semantics block. Never invents defaults."""
 
     semantics = declaration.get("result_semantics")
@@ -1312,6 +1563,320 @@ def _resolve_binary_class_identities(
     }
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0210: strict multiclass result_semantics validation, the
+# multiclass counterpart to _validate_binary_result_semantics above. Never
+# defines a positive/negative class, a threshold, or a risk interpretation --
+# those remain exclusively binary_result_semantics concepts.
+# ---------------------------------------------------------------------------
+
+_MULTICLASS_FORBIDDEN_SEMANTICS_KEYS = (
+    "positive_class",
+    "negative_class",
+    "threshold",
+    "interpretation",
+    "risk",
+    "confidence",
+    "predicted_positive",
+    "positive_class_probability",
+)
+
+
+def _validate_multiclass_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """Strictly validate the S0209/S0210 multiclass result_semantics block.
+
+    Never invents defaults. Also cross-checks the bundle's declared
+    ``output_schema`` (Section D) and, when the bundle declares an external
+    fitted-model provenance, the S0209 external v2 classification evidence
+    (Section E) -- both are bundle-level JSON metadata checks that never
+    require loading the model.
+    """
+
+    semantics = declaration.get("result_semantics")
+    if not isinstance(semantics, Mapping):
+        raise BundleValidationError(
+            "missing_result_semantics",
+            "Inference bundle multiclass result semantics are not defined.",
+            field="result_semantics",
+        )
+
+    if semantics.get("schema_version") != "multiclass-result-semantics.v1":
+        raise BundleValidationError(
+            "invalid_result_semantics_schema_version",
+            "Inference bundle result semantics schema version is unsupported.",
+            field="result_semantics.schema_version",
+        )
+    if semantics.get("problem_type") != "multiclass_classification":
+        raise BundleValidationError(
+            "invalid_result_semantics_problem_type",
+            "Inference bundle problem type is not multiclass classification.",
+            field="result_semantics.problem_type",
+        )
+    if semantics.get("result_schema_version") != "multiclass-classification-result.v1":
+        raise BundleValidationError(
+            "invalid_result_semantics_result_schema_version",
+            "Inference bundle result schema version is unsupported.",
+            field="result_semantics.result_schema_version",
+        )
+    if semantics.get("primary_output") != "predicted_class":
+        raise BundleValidationError(
+            "invalid_result_semantics_primary_output",
+            "Inference bundle primary output is not predicted_class.",
+            field="result_semantics.primary_output",
+        )
+    if semantics.get("probability_output") != "class_probabilities":
+        raise BundleValidationError(
+            "invalid_result_semantics_probability_output",
+            "Inference bundle probability output is not class_probabilities.",
+            field="result_semantics.probability_output",
+        )
+
+    for forbidden_key in _MULTICLASS_FORBIDDEN_SEMANTICS_KEYS:
+        if forbidden_key in semantics:
+            raise BundleValidationError(
+                "multiclass_result_semantics_forbidden_field",
+                "Inference bundle multiclass result semantics declares a binary-only field.",
+                field=f"result_semantics.{forbidden_key}",
+            )
+
+    decision = semantics.get("decision")
+    if (
+        not isinstance(decision, Mapping)
+        or decision.get("strategy") != "argmax"
+        or set(decision.keys()) != {"strategy"}
+    ):
+        raise BundleValidationError(
+            "invalid_multiclass_decision",
+            "Inference bundle multiclass decision strategy is invalid.",
+            field="result_semantics.decision",
+        )
+
+    classes = _validate_multiclass_governed_classes(semantics.get("classes"))
+
+    model_descriptor = semantics.get("model_descriptor")
+    if not isinstance(model_descriptor, Mapping):
+        raise BundleValidationError(
+            "missing_model_descriptor",
+            "Inference bundle model descriptor is not defined.",
+            field="result_semantics.model_descriptor",
+        )
+    model_family = model_descriptor.get("model_family")
+    display_name = model_descriptor.get("display_name")
+    if model_family not in _GOVERNED_MULTICLASS_MODEL_FAMILIES:
+        raise BundleValidationError(
+            "invalid_model_family",
+            "Inference bundle model family is invalid.",
+            field="result_semantics.model_descriptor.model_family",
+        )
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise BundleValidationError(
+            "invalid_model_display_name",
+            "Inference bundle model display name is not defined.",
+            field="result_semantics.model_descriptor.display_name",
+        )
+
+    governed_class_ids = [entry["class_id"] for entry in classes]
+    _cross_check_multiclass_output_schema(declaration, governed_class_ids)
+    _cross_check_multiclass_external_evidence(declaration, governed_class_ids)
+
+    return {
+        "schema_version": semantics["schema_version"],
+        "problem_type": semantics["problem_type"],
+        "result_schema_version": semantics["result_schema_version"],
+        "primary_output": semantics["primary_output"],
+        "probability_output": semantics["probability_output"],
+        "classes": classes,
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": {"model_family": model_family, "display_name": display_name},
+    }
+
+
+def _validate_multiclass_governed_classes(classes: Any) -> list[dict[str, str]]:
+    if not isinstance(classes, Sequence) or isinstance(classes, (str, bytes)) or len(classes) < 3:
+        raise BundleValidationError(
+            "invalid_multiclass_classes",
+            "Inference bundle governed multiclass classes are invalid.",
+            field="result_semantics.classes",
+        )
+
+    parsed: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for entry in classes:
+        if not isinstance(entry, Mapping):
+            raise BundleValidationError(
+                "invalid_multiclass_classes",
+                "Inference bundle governed multiclass classes are invalid.",
+                field="result_semantics.classes",
+            )
+        class_id = entry.get("class_id")
+        display_label = entry.get("display_label")
+        if not isinstance(class_id, str) or not class_id.strip():
+            raise BundleValidationError(
+                "invalid_multiclass_class_id",
+                "Inference bundle governed multiclass class id is blank.",
+                field="result_semantics.classes",
+            )
+        if not isinstance(display_label, str) or not display_label.strip():
+            raise BundleValidationError(
+                "invalid_multiclass_display_label",
+                "Inference bundle governed multiclass display label is blank.",
+                field="result_semantics.classes",
+            )
+        if class_id in seen_ids:
+            raise BundleValidationError(
+                "duplicate_multiclass_class_id",
+                "Inference bundle governed multiclass class id is duplicated.",
+                field="result_semantics.classes",
+            )
+        seen_ids.add(class_id)
+        parsed.append({"class_id": class_id, "display_label": display_label})
+
+    return parsed
+
+
+def _cross_check_multiclass_output_schema(
+    declaration: Mapping[str, Any], governed_class_ids: Sequence[str]
+) -> None:
+    """Section D: exact ordered equality against the bundle output schema.
+
+    Never compares class order as a set.
+    """
+
+    output_schema = declaration.get("output_schema")
+    if not isinstance(output_schema, Mapping):
+        raise BundleValidationError(
+            "missing_output_schema",
+            "Inference bundle output schema is not defined.",
+            field="output_schema",
+        )
+
+    class_labels = output_schema.get("class_labels")
+    if not isinstance(class_labels, Sequence) or isinstance(class_labels, (str, bytes)):
+        raise BundleValidationError(
+            "invalid_output_schema_class_labels",
+            "Inference bundle output schema class labels are invalid.",
+            field="output_schema.class_labels",
+        )
+    projected_labels = [str(label).strip() for label in class_labels]
+    if projected_labels != list(governed_class_ids):
+        raise BundleValidationError(
+            "multiclass_output_schema_class_order_mismatch",
+            "Inference bundle output schema class label order does not match governed classes.",
+            field="output_schema.class_labels",
+        )
+
+    if output_schema.get("prediction_type") != "string":
+        raise BundleValidationError(
+            "invalid_output_schema_prediction_type",
+            "Inference bundle output schema prediction type must be string for multiclass results.",
+            field="output_schema.prediction_type",
+        )
+    if output_schema.get("probability_output") is not True:
+        raise BundleValidationError(
+            "invalid_output_schema_probability_output",
+            "Inference bundle output schema must declare probability_output=true for multiclass results.",
+            field="output_schema.probability_output",
+        )
+
+
+def _cross_check_multiclass_external_evidence(
+    declaration: Mapping[str, Any], governed_class_ids: Sequence[str]
+) -> None:
+    """Section E: only applies when the bundle declares S0209 external v2
+    provenance. Historical/internal bundles (no ``model_provenance_origin``,
+    or ``atlas_internal_training``) skip this check entirely -- multiclass
+    has no internal Atlas training source, but this cross-check itself must
+    remain opt-in on the declared provenance, never assumed."""
+
+    if declaration.get("model_provenance_origin") != "validated_external_fitted_model":
+        return
+
+    evidence = declaration.get("external_model_evidence")
+    if not isinstance(evidence, Mapping):
+        raise BundleValidationError(
+            "missing_external_model_evidence",
+            "Inference bundle external model evidence is not defined.",
+            field="external_model_evidence",
+        )
+
+    for forbidden_key in ("educational_threshold", "operational_threshold"):
+        if forbidden_key in evidence:
+            raise BundleValidationError(
+                "multiclass_external_evidence_forbidden_field",
+                "Inference bundle external model evidence declares a binary-only field.",
+                field=f"external_model_evidence.{forbidden_key}",
+            )
+
+    classification_evidence = evidence.get("classification_evidence")
+    if not isinstance(classification_evidence, Mapping):
+        raise BundleValidationError(
+            "missing_multiclass_classification_evidence",
+            "Inference bundle multiclass classification evidence is not defined.",
+            field="external_model_evidence.classification_evidence",
+        )
+    if classification_evidence.get("problem_type") != "multiclass_classification":
+        raise BundleValidationError(
+            "invalid_multiclass_classification_evidence_problem_type",
+            "Inference bundle external classification evidence problem type is invalid.",
+            field="external_model_evidence.classification_evidence.problem_type",
+        )
+
+    ordered_class_ids = classification_evidence.get("ordered_class_ids")
+    if not isinstance(ordered_class_ids, Sequence) or isinstance(ordered_class_ids, (str, bytes)):
+        raise BundleValidationError(
+            "multiclass_external_evidence_class_order_mismatch",
+            "Inference bundle external classification evidence class order is invalid.",
+            field="external_model_evidence.classification_evidence.ordered_class_ids",
+        )
+    if list(ordered_class_ids) != list(governed_class_ids):
+        raise BundleValidationError(
+            "multiclass_external_evidence_class_order_mismatch",
+            "Inference bundle external classification evidence class order does not match governed classes.",
+            field="external_model_evidence.classification_evidence.ordered_class_ids",
+        )
+
+    probability_columns = classification_evidence.get("probability_columns")
+    if not isinstance(probability_columns, Sequence) or isinstance(probability_columns, (str, bytes)):
+        raise BundleValidationError(
+            "invalid_multiclass_probability_columns",
+            "Inference bundle external probability columns are invalid.",
+            field="external_model_evidence.classification_evidence.probability_columns",
+        )
+    if len(probability_columns) != len(governed_class_ids):
+        raise BundleValidationError(
+            "multiclass_external_evidence_probability_column_count_mismatch",
+            "Inference bundle external probability column count does not match governed class count.",
+            field="external_model_evidence.classification_evidence.probability_columns",
+        )
+    for index, (column, class_id) in enumerate(zip(probability_columns, governed_class_ids)):
+        if (
+            not isinstance(column, Mapping)
+            or column.get("probability_index") != index
+            or column.get("class_id") != class_id
+        ):
+            raise BundleValidationError(
+                "multiclass_external_evidence_probability_index_mismatch",
+                "Inference bundle external probability column index does not match governed class order.",
+                field=f"external_model_evidence.classification_evidence.probability_columns[{index}]",
+            )
+
+    decision_semantics = evidence.get("decision_semantics")
+    if not isinstance(decision_semantics, Mapping) or decision_semantics.get("strategy") != "argmax":
+        raise BundleValidationError(
+            "invalid_multiclass_external_decision_semantics",
+            "Inference bundle external decision semantics strategy is invalid.",
+            field="external_model_evidence.decision_semantics.strategy",
+        )
+
+    readiness = evidence.get("readiness")
+    if not isinstance(readiness, Mapping) or readiness.get("decision_strategy") != "argmax":
+        raise BundleValidationError(
+            "invalid_multiclass_external_readiness_decision_strategy",
+            "Inference bundle external readiness decision strategy is invalid.",
+            field="external_model_evidence.readiness.decision_strategy",
+        )
+
+
 def _build_ordered_row(
     feature_order: Sequence[str],
     validated_payload: Mapping[str, Any],
@@ -1410,6 +1975,47 @@ def _normalize_class_id(value: Any) -> str:
     return str(value).strip().lower()
 
 
+def _project_multiclass_class_id(value: Any) -> str:
+    """Section J: strict multiclass class-id projection. Never lowercases,
+    case-folds, or sorts -- deliberately distinct from ``_normalize_class_id``,
+    which remains exclusively the binary identity-resolution helper."""
+
+    return str(value).strip()
+
+
+def _validate_multiclass_model_classes(
+    model_classes: Sequence[Any], governed_class_ids: Sequence[str]
+) -> list[str]:
+    """Section J: verify the actual model.classes_ sequence exactly equals
+    the governed class order -- case-sensitive, no reordering tolerance."""
+
+    projected = [_project_multiclass_class_id(value) for value in model_classes]
+    if len(projected) != len(governed_class_ids):
+        raise BundleExecutionError("Inference model does not expose the governed multiclass class count.")
+    if any(not class_id for class_id in projected):
+        raise BundleExecutionError("Inference model exposes a blank class label.")
+    if len(set(projected)) != len(projected):
+        raise BundleExecutionError("Inference model exposes duplicate class labels.")
+    if projected != list(governed_class_ids):
+        raise BundleExecutionError(
+            "Inference model class order does not match the governed multiclass class order."
+        )
+    return projected
+
+
+def _derive_argmax_index(probabilities: Sequence[float]) -> int:
+    """Section K: deterministic argmax. A tie selects the first maximum in
+    governed class order (strict ``>`` never replaces an earlier best)."""
+
+    best_index = 0
+    best_value = probabilities[0]
+    for index in range(1, len(probabilities)):
+        if probabilities[index] > best_value:
+            best_value = probabilities[index]
+            best_index = index
+    return best_index
+
+
 def _as_flat_list(value: Any) -> list[Any]:
     try:
         return list(value)
@@ -1437,8 +2043,20 @@ def _as_matrix(value: Any) -> list[list[Any]]:
     return matrix
 
 
-def _validate_probabilities(proba_row: Sequence[Any]) -> list[float]:
-    if len(proba_row) != 2:
+def _validate_probabilities(proba_row: Sequence[Any], *, expected_count: int) -> list[float]:
+    """Generalized over the caller-supplied ``expected_count`` (Section H).
+
+    Binary continues to call this with ``expected_count=2``; multiclass calls
+    it with the governed class count. The existing probability-sum tolerance
+    is unchanged.
+    """
+
+    if expected_count < 2:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+    if len(proba_row) != expected_count:
         raise BundleExecutionError(
             "Prediction execution failed.",
             diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,

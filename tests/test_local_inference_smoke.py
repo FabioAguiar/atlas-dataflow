@@ -26,6 +26,7 @@ from runtime.inference import (
     load_runtime_bundle_adapter,
     project_result_contract,
     validate_binary_classification_result,
+    validate_multiclass_classification_result,
 )
 
 import joblib
@@ -1520,3 +1521,182 @@ def test_s0152_current_telco_contract_omitted_total_charges_materializes_and_exe
     assert result["schema_version"] == "binary-classification-result.v1"
     assert result["predicted_class"]["class_id"] in {"No", "Yes"}
     validate_binary_classification_result(result)
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0210: release-bound multiclass prediction execution smoke
+# test, mirroring the S0109 real-model technique above
+# (_s0109_train_pipeline / _s0109_write_isolated_release /
+# _S0109_LOADER_STRATEGIES) with a real, deterministic, fitted scikit-learn
+# LogisticRegression exercised through the real joblib_sklearn_predict loader
+# and the real execute_prediction() production loader-strategy branch. This
+# synthetic smoke is not the external scientific study and not a governed
+# real dataset integration -- no real multiclass release is activated.
+# ---------------------------------------------------------------------------
+
+_S0210_SMOKE_FEATURE_ORDER = ["measurement"]
+_S0210_SMOKE_CLASS_IDS = ["Class-A", "Class-B", "Class-C"]
+
+
+def _s0210_train_multiclass_pipeline() -> Pipeline:
+    # Three well-separated numeric clusters so the fitted estimator's
+    # classes_ order is deterministic (LogisticRegression sorts classes_
+    # alphabetically, which already matches the governed order below) and so
+    # predictions are unambiguous without depending on solver randomness.
+    X = pd.DataFrame(
+        {"measurement": [1, 2, 3, 4, 20, 21, 22, 23, 40, 41, 42, 43]}
+    )
+    y = ["Class-A"] * 4 + ["Class-B"] * 4 + ["Class-C"] * 4
+    pipeline = Pipeline([("clf", LogisticRegression())])
+    pipeline.fit(X, y)
+    return pipeline
+
+
+def _s0210_multiclass_result_semantics() -> dict[str, Any]:
+    return {
+        "schema_version": "multiclass-result-semantics.v1",
+        "problem_type": "multiclass_classification",
+        "result_schema_version": "multiclass-classification-result.v1",
+        "classes": [
+            {"class_id": "Class-A", "display_label": "Class A"},
+            {"class_id": "Class-B", "display_label": "Class B"},
+            {"class_id": "Class-C", "display_label": "Class C"},
+        ],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": {"model_family": "logistic_regression", "display_name": "Logistic Regression"},
+    }
+
+
+def _s0210_write_isolated_multiclass_release(tmp_path: Path, *, pipeline: Pipeline) -> Path:
+    release_root = tmp_path / "release-s0210-smoke"
+    models_dir = release_root / "models"
+    predictions_dir = release_root / "predictions"
+    models_dir.mkdir(parents=True)
+    predictions_dir.mkdir(parents=True)
+
+    model_path = models_dir / "model.pkl"
+    joblib.dump(pipeline, model_path)
+    model_sha256 = _sha256_bytes(model_path.read_bytes())
+
+    bundle: dict[str, Any] = {
+        "contract_version": "inference_bundle.v1",
+        "feature_order": list(_S0210_SMOKE_FEATURE_ORDER),
+        "runtime_execution": {
+            "loader_strategy": "joblib_sklearn_predict",
+            "serialization_format": "joblib",
+            "prediction_interface": "predict",
+            "model_family": "logistic_regression",
+        },
+        "model_artifact": {"path": "models/model.pkl", "sha256": model_sha256},
+        "output_schema": {
+            "class_labels": list(_S0210_SMOKE_CLASS_IDS),
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "probability_output": True,
+        },
+        "result_semantics": _s0210_multiclass_result_semantics(),
+    }
+    _write_json(predictions_dir / "bundle.json", bundle)
+    _write_json(
+        release_root / "manifest.json",
+        {
+            "schema_version": "release-manifest.v1",
+            "artifacts": [
+                {"role": "predictive_bundle", "reference": "predictions/bundle.json"},
+            ],
+        },
+    )
+    return release_root
+
+
+def test_s0210_real_joblib_loader_end_to_end_multiclass_prediction(tmp_path: Path) -> None:
+    pipeline = _s0210_train_multiclass_pipeline()
+    # Governed bundle order matches the real fitted estimator's classes_
+    # order -- the strict Section J model-class-order check must accept this
+    # exactly, proving real production-shaped multiclass execution works.
+    assert list(pipeline.named_steps["clf"].classes_) == _S0210_SMOKE_CLASS_IDS
+
+    release_root = _s0210_write_isolated_multiclass_release(tmp_path, pipeline=pipeline)
+    manifest = json.loads((release_root / "manifest.json").read_text(encoding="utf-8"))
+    declaration = json.loads((release_root / "predictions" / "bundle.json").read_text(encoding="utf-8"))
+
+    # project_result_contract() projects multiclass semantics without ever
+    # loading the model artifact.
+    projected_contract = project_result_contract(declaration)
+    assert projected_contract["status"] == "available"
+    assert projected_contract["semantics"]["classes"] == [
+        {"class_id": "Class-A", "display_label": "Class A"},
+        {"class_id": "Class-B", "display_label": "Class B"},
+        {"class_id": "Class-C", "display_label": "Class C"},
+    ]
+    assert projected_contract["semantics"]["primary_output"] == "predicted_class"
+    assert projected_contract["semantics"]["probability_output"] == "class_probabilities"
+    assert projected_contract["semantics"]["decision"] == {"strategy": "argmax"}
+
+    with _expect_known_joblib_numpy_pickle_deprecation():
+        result = execute_prediction(
+            {"path": str(release_root), "artifacts": manifest["artifacts"]},
+            {"measurement": 41},
+            manifest=manifest,
+            bundle_loader=_s0109_bundle_loader,
+            loader_strategies=_S0109_LOADER_STRATEGIES,
+            supported_serialization_formats=["joblib"],
+        )["result"]
+
+    assert result["schema_version"] == "multiclass-classification-result.v1"
+    assert result["problem_type"] == "multiclass_classification"
+
+    # Every governed class appears exactly once, in governed order (never
+    # probability-sorted).
+    assert [p["class_id"] for p in result["class_probabilities"]] == _S0210_SMOKE_CLASS_IDS
+    assert {p["class_id"] for p in result["class_probabilities"]} == set(_S0210_SMOKE_CLASS_IDS)
+
+    total_probability = sum(p["probability"] for p in result["class_probabilities"])
+    assert abs(total_probability - 1.0) < 1e-6
+
+    probability_by_class = {p["class_id"]: p["probability"] for p in result["class_probabilities"]}
+    assert result["predicted_class"]["class_id"] == max(probability_by_class, key=probability_by_class.get)
+    assert result["predicted_class"]["class_id"] == "Class-C"
+    assert result["decision"] == {"strategy": "argmax"}
+    assert result["model_descriptor"] == {
+        "model_family": "logistic_regression",
+        "display_name": "Logistic Regression",
+    }
+
+    # No confidence/threshold/risk/positive-class fields anywhere.
+    for forbidden_key in ("threshold", "confidence", "interpretation", "risk", "positive_class"):
+        assert forbidden_key not in result
+
+    # Defense-in-depth re-validation, matching the runtime's own pre-return
+    # schema validation pass.
+    validate_multiclass_classification_result(result)
+
+    # model.predict() (the consistency check, Section L) must agree with the
+    # returned argmax-derived prediction -- proving no inference-time refit
+    # occurred and the same loaded model instance was used throughout.
+    raw_predict = pipeline.predict(pd.DataFrame([{"measurement": 41}]))
+    assert list(raw_predict) == [result["predicted_class"]["class_id"]]
+
+
+def test_s0210_project_result_contract_unavailable_for_incomplete_multiclass_semantics(
+    tmp_path: Path,
+) -> None:
+    declaration = {
+        "output_schema": {
+            "class_labels": _S0210_SMOKE_CLASS_IDS,
+            "prediction_type": "string",
+            "probability_output": True,
+        },
+        "result_semantics": {
+            "schema_version": "multiclass-result-semantics.v1",
+            "problem_type": "multiclass_classification",
+            # result_schema_version, classes, primary_output,
+            # probability_output, decision, model_descriptor all omitted --
+            # historical/invalid semantics must stay safely unavailable, with
+            # no invented defaults.
+        },
+    }
+    result = project_result_contract(declaration)
+    assert result == {"status": "unavailable", "reason": "binary_result_semantics_unavailable"}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/contracts/multiclass-classification-result.schema.json",
+  "title": "multiclass-classification-result.v1",
+  "description": "Project Spec S0210: strict persisted schema for a governed internal multiclass runtime prediction result. Mirrors contracts/execution-contract.schema.json's multiclass_result_semantics plus a deterministic per-prediction argmax decision and ordered class probability distribution. Never defines a positive/negative class, a threshold, a risk interpretation, or a confidence field -- those remain exclusively binary-classification-result.v1 concepts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "problem_type",
+    "predicted_class",
+    "class_probabilities",
+    "decision",
+    "model_descriptor"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "multiclass-classification-result.v1"
+    },
+    "problem_type": {
+      "type": "string",
+      "const": "multiclass_classification"
+    },
+    "predicted_class": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class_id", "display_label"],
+      "properties": {
+        "class_id": { "type": "string", "minLength": 1 },
+        "display_label": { "type": "string", "minLength": 1 }
+      }
+    },
+    "class_probabilities": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["class_id", "display_label", "probability"],
+        "properties": {
+          "class_id": { "type": "string", "minLength": 1 },
+          "display_label": { "type": "string", "minLength": 1 },
+          "probability": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "description": "The complete, normatively ordered set of governed classes with their resolved probabilities. Array order is normative (governed class order) and must never be persisted sorted by probability."
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy"],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "const": "argmax"
+        }
+      }
+    },
+    "model_descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_family", "display_name"],
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "logistic_regression",
+            "decision_tree",
+            "random_forest",
+            "hist_gradient_boosting"
+          ],
+          "description": "Bounded to the four Project Spec S0208/S0209 external fitted-model v2 estimator families -- multiclass has no internal Atlas training source."
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

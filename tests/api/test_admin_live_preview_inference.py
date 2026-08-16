@@ -516,7 +516,7 @@ def test_private_admin_route_surfaces_inference_bundle_unavailable_diagnostic(mo
 def test_private_admin_route_surfaces_result_validation_failed_diagnostic(monkeypatch, tmp_path):
     _install_real_model_dependencies(monkeypatch, tmp_path)
 
-    def _raise_result_validation_failed(_result):
+    def _raise_result_validation_failed(_result, _expected_result_contract):
         raise BundleValidationError(
             "invalid_binary_classification_result",
             "Binary classification result failed schema validation.",
@@ -524,7 +524,7 @@ def test_private_admin_route_surfaces_result_validation_failed_diagnostic(monkey
             diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
         )
 
-    monkeypatch.setattr(api_main, "validate_binary_classification_result", _raise_result_validation_failed)
+    monkeypatch.setattr(api_main, "validate_inference_result", _raise_result_validation_failed)
 
     status_code, body, response_text = _post_json(f"/admin/datasets/{DATASET_SLUG}/inference", _VALID_PAYLOAD)
 

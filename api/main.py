@@ -48,8 +48,8 @@ from runtime.inference import (  # noqa: E402
     load_inference_bundle,
     load_joblib_sklearn_model,
     project_result_contract,
-    validate_binary_classification_result,
 )
+from inference_result_dispatch import validate_inference_result  # noqa: E402
 from external_inference_client import (  # noqa: E402
     execute_external_inference,
 )
@@ -649,6 +649,7 @@ def _execute_via_external_inference_service(
     *,
     bundle_identity: dict,
     runtime_profile: dict,
+    expected_result_contract: dict,
     include_runtime_diagnostic: bool,
 ):
     """S0161: delegates to the isolated external-inference service.
@@ -665,6 +666,7 @@ def _execute_via_external_inference_service(
             release_id=active_release,
             bundle_identity=bundle_identity,
             runtime_profile=runtime_profile,
+            expected_result_contract=expected_result_contract,
         )
     except InferenceRuntimeError as exc:
         return _inference_failure_response(
@@ -817,6 +819,16 @@ def _execute_governed_inference(
             bundle_loader=_load_bundle,
         )
         declaration = loaded_bundle.bundle if isinstance(loaded_bundle.bundle, dict) else manifest
+        projected_result_contract = project_result_contract(declaration)
+        expected_result_contract = projected_result_contract.get("semantics")
+        if (
+            projected_result_contract.get("status") != "available"
+            or not isinstance(expected_result_contract, dict)
+        ):
+            raise InferenceRuntimeError(
+                "Inference result contract is unavailable.",
+                diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+            )
         strategy, runtime_profile, _runtime_execution = _resolve_runtime_dispatch(declaration)
     except InferenceRuntimeError as exc:
         return _inference_failure_response(
@@ -846,6 +858,7 @@ def _execute_governed_inference(
                 "dataset_slug": dataset_context.get("dataset_slug"),
             },
             runtime_profile=runtime_profile,
+            expected_result_contract=expected_result_contract,
             include_runtime_diagnostic=include_runtime_diagnostic,
         )
 
@@ -878,7 +891,7 @@ def _execute_governed_inference(
         )
 
     try:
-        validate_binary_classification_result(result)
+        validate_inference_result(result, expected_result_contract)
     except InferenceRuntimeError as exc:
         return _inference_failure_response(
             diagnostic_code=exc.diagnostic_code,

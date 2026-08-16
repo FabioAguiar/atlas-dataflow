@@ -2686,6 +2686,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
     try:
@@ -2694,13 +2695,13 @@ def test_real_route_select_projected_categorical_value_domain_validation():
             active_release="release-m32-03-select-path-fixture",
         )
         api_main.load_contract = lambda _active_release: _M32_SELECT_PATH_RUNTIME_CONTRACT
+        api_main.project_result_contract = lambda _declaration: {
+            "status": "available", "semantics": _S0109_RESULT_SEMANTICS
+        }
 
         with tempfile.TemporaryDirectory() as releases_root:
             release_dir = Path(releases_root) / "release-m32-03-select-path-fixture"
-            release_dir.mkdir(parents=True)
-            (release_dir / "manifest.json").write_text(
-                json.dumps({"artifacts": []}), encoding="utf-8"
-            )
+            _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
             api_main._inference_releases_root = lambda: Path(releases_root)
             api_main.execute_prediction = lambda *_args, **_kwargs: {
                 "result": _S0109_VALID_BINARY_RESULT
@@ -2736,6 +2737,7 @@ def test_real_route_select_projected_categorical_value_domain_validation():
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
 
@@ -2791,6 +2793,7 @@ def test_real_route_passes_contract_derived_runtime_feature_metadata_and_omits_o
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
     captured_calls = []
@@ -2800,13 +2803,13 @@ def test_real_route_passes_contract_derived_runtime_feature_metadata_and_omits_o
             active_release="release-s0152-optional-feature-fixture",
         )
         api_main.load_contract = lambda _active_release: _S0152_RUNTIME_CONTRACT
+        api_main.project_result_contract = lambda _declaration: {
+            "status": "available", "semantics": _S0109_RESULT_SEMANTICS
+        }
 
         with tempfile.TemporaryDirectory() as releases_root:
             release_dir = Path(releases_root) / "release-s0152-optional-feature-fixture"
-            release_dir.mkdir(parents=True)
-            (release_dir / "manifest.json").write_text(
-                json.dumps({"artifacts": []}), encoding="utf-8"
-            )
+            _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
             api_main._inference_releases_root = lambda: Path(releases_root)
 
             def _capture_execute_prediction(*args, **kwargs):
@@ -2841,6 +2844,7 @@ def test_real_route_passes_contract_derived_runtime_feature_metadata_and_omits_o
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
 
@@ -2933,8 +2937,16 @@ _S0156_RUNTIME_CONTRACT = {
 
 def _s0156_fixture_release(releases_root: str, release_id: str) -> None:
     release_dir = Path(releases_root) / release_id
-    release_dir.mkdir(parents=True)
-    (release_dir / "manifest.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+    _s0109_write_release_with_bundle(release_dir, _s0212_binary_fixture_manifest())
+
+
+def _s0212_binary_fixture_manifest() -> dict:
+    return {
+        "artifacts": [],
+        "runtime_execution": {"execution_strategy": "in_process"},
+        "output_schema": {"class_labels": ["No", "Yes"]},
+        "result_semantics": _S0109_RESULT_SEMANTICS,
+    }
 
 
 def test_real_route_conditional_blank_field_materializes_declared_constant_before_execution():
@@ -2947,6 +2959,7 @@ def test_real_route_conditional_blank_field_materializes_declared_constant_befor
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
     captured_calls = []
@@ -2956,6 +2969,9 @@ def test_real_route_conditional_blank_field_materializes_declared_constant_befor
             active_release="release-s0156-conditional-fixture",
         )
         api_main.load_contract = lambda _active_release: _S0156_RUNTIME_CONTRACT
+        api_main.project_result_contract = lambda _declaration: {
+            "status": "available", "semantics": _S0109_RESULT_SEMANTICS
+        }
 
         with tempfile.TemporaryDirectory() as releases_root:
             _s0156_fixture_release(releases_root, "release-s0156-conditional-fixture")
@@ -2983,6 +2999,7 @@ def test_real_route_conditional_blank_field_materializes_declared_constant_befor
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
 
@@ -3038,6 +3055,7 @@ def test_real_route_unknown_open_categorical_value_is_accepted_and_preserved_unc
     original_resolve_dataset = api_main.resolve_dataset
     original_load_contract = api_main.load_contract
     original_execute_prediction = api_main.execute_prediction
+    original_project_result_contract = api_main.project_result_contract
     original_releases_root = api_main._inference_releases_root
     original_snapshot_readiness = _install_snapshot_ready_stub()
     captured_calls = []
@@ -3047,6 +3065,9 @@ def test_real_route_unknown_open_categorical_value_is_accepted_and_preserved_unc
             active_release="release-s0156-open-categorical-fixture",
         )
         api_main.load_contract = lambda _active_release: _S0156_RUNTIME_CONTRACT
+        api_main.project_result_contract = lambda _declaration: {
+            "status": "available", "semantics": _S0109_RESULT_SEMANTICS
+        }
 
         with tempfile.TemporaryDirectory() as releases_root:
             _s0156_fixture_release(releases_root, "release-s0156-open-categorical-fixture")
@@ -3074,6 +3095,7 @@ def test_real_route_unknown_open_categorical_value_is_accepted_and_preserved_unc
         api_main.resolve_dataset = original_resolve_dataset
         api_main.load_contract = original_load_contract
         api_main.execute_prediction = original_execute_prediction
+        api_main.project_result_contract = original_project_result_contract
         api_main._inference_releases_root = original_releases_root
         _restore_snapshot_ready_stub(original_snapshot_readiness)
 
@@ -3570,6 +3592,66 @@ def test_result_contract_projection_never_invokes_model_loader():
             _restore_snapshot_ready_stub(original_snapshot_readiness)
             api_main._inference_releases_root = original_releases_root
             api_main._INFERENCE_LOADER_STRATEGIES["joblib_sklearn_predict"] = original_loader
+
+
+def test_get_contract_projects_ordered_multiclass_semantics_without_model_loading():
+    semantics = {
+        "schema_version": "multiclass-result-semantics.v1",
+        "problem_type": "multiclass_classification",
+        "result_schema_version": "multiclass-classification-result.v1",
+        "classes": [
+            {"class_id": "z", "display_label": "Zulu"},
+            {"class_id": "a", "display_label": "Alpha"},
+            {"class_id": "m", "display_label": "Mike"},
+        ],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": {"model_family": "decision_tree", "display_name": "Tree"},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        release_dir = releases_root / "release-s0212-multiclass"
+        _s0109_write_release_with_bundle(
+            release_dir,
+            {
+                "feature_order": ["age"],
+                "output_schema": {
+                    "class_labels": ["z", "a", "m"],
+                    "prediction_type": "string",
+                    "probability_output": True,
+                },
+                "result_semantics": semantics,
+            },
+        )
+
+        original_resolve_dataset = api_main.resolve_dataset
+        original_load_public_contract = api_main.load_public_contract
+        original_releases_root = api_main._inference_releases_root
+        original_model_loader = api_main.load_joblib_sklearn_model
+        original_snapshot_readiness = _install_snapshot_ready_stub()
+        try:
+            api_main.resolve_dataset = lambda dataset_slug: SimpleNamespace(
+                dataset_slug=dataset_slug, active_release="release-s0212-multiclass"
+            )
+            api_main.load_public_contract = lambda _active_release: {"features": []}
+            api_main._inference_releases_root = lambda: releases_root
+            api_main.load_joblib_sklearn_model = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("GET /contract loaded model bytes")
+            )
+
+            response = api_main.get_public_contract("example-dataset")
+
+            assert response["result_contract"] == {"status": "available", "semantics": semantics}
+            assert [item["class_id"] for item in response["result_contract"]["semantics"]["classes"]] == [
+                "z", "a", "m"
+            ]
+        finally:
+            api_main.resolve_dataset = original_resolve_dataset
+            api_main.load_public_contract = original_load_public_contract
+            api_main._inference_releases_root = original_releases_root
+            api_main.load_joblib_sklearn_model = original_model_loader
+            _restore_snapshot_ready_stub(original_snapshot_readiness)
 
 
 def test_public_contract_loader_rejects_reference_escaping_release_directory():

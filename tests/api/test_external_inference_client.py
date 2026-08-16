@@ -25,14 +25,25 @@ _RUNTIME_PROFILE = {
         "dependencies": {"joblib": "1.5.3", "pandas": "3.0.3", "scikit_learn": "1.9.0"},
     }
 }
+_BINARY_EXPECTED_RESULT_CONTRACT = {
+    "schema_version": "binary-result-semantics.v1",
+    "problem_type": "binary_classification",
+    "result_schema_version": "binary-classification-result.v1",
+}
+_MULTICLASS_EXPECTED_RESULT_CONTRACT = {
+    "schema_version": "multiclass-result-semantics.v1",
+    "problem_type": "multiclass_classification",
+    "result_schema_version": "multiclass-classification-result.v1",
+}
 
 
-def _execute(feature_payload):
+def _execute(feature_payload, *, expected_result_contract=_BINARY_EXPECTED_RESULT_CONTRACT):
     return client.execute_external_inference(
         feature_payload,
         release_id=_RELEASE_ID,
         bundle_identity=_BUNDLE_IDENTITY,
         runtime_profile=_RUNTIME_PROFILE,
+        expected_result_contract=expected_result_contract,
     )
 
 
@@ -58,6 +69,21 @@ def _valid_result() -> dict:
             ],
         },
         "model_descriptor": {"model_family": "gradient_boosting", "display_name": "External Telco Gradient Boosting"},
+    }
+
+
+def _valid_multiclass_result() -> dict:
+    return {
+        "schema_version": "multiclass-classification-result.v1",
+        "problem_type": "multiclass_classification",
+        "predicted_class": {"class_id": "b", "display_label": "B"},
+        "class_probabilities": [
+            {"class_id": "a", "display_label": "A", "probability": 0.1},
+            {"class_id": "b", "display_label": "B", "probability": 0.7},
+            {"class_id": "c", "display_label": "C", "probability": 0.2},
+        ],
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": {"model_family": "decision_tree", "display_name": "Tree"},
     }
 
 
@@ -124,6 +150,7 @@ def test_request_is_constructed_only_from_atlas_controlled_identity(monkeypatch)
     assert captured["url"] == "http://external-inference:8100/predict"
     body = captured["body"]
     assert set(body.keys()) == {"contract_version", "release_identity", "bundle_identity", "expected_runtime", "feature_payload"}
+    assert "expected_result_contract" not in body
     assert body["contract_version"] == "external_inference_request.v1"
     assert body["release_identity"] == {"release_id": _RELEASE_ID}
     assert body["bundle_identity"] == _BUNDLE_IDENTITY
@@ -228,6 +255,34 @@ def test_ok_status_with_invalid_result_shape_is_rejected(monkeypatch):
         assert exc.diagnostic_code == client.DIAGNOSTIC_RESULT_VALIDATION_FAILED
 
 
+def test_multiclass_success_and_cross_family_results_are_contract_aware(monkeypatch):
+    def install(result):
+        _install_urlopen(
+            monkeypatch,
+            response_body=json.dumps({
+                "contract_version": "external_inference_result.v1",
+                "status": "ok",
+                "runtime_compatibility_status": "compatible",
+                "diagnostic_code": None,
+                "result": result,
+            }).encode("utf-8"),
+        )
+
+    install(_valid_multiclass_result())
+    assert _execute({}, expected_result_contract=_MULTICLASS_EXPECTED_RESULT_CONTRACT) == _valid_multiclass_result()
+
+    for result, expected in (
+        (_valid_result(), _MULTICLASS_EXPECTED_RESULT_CONTRACT),
+        (_valid_multiclass_result(), _BINARY_EXPECTED_RESULT_CONTRACT),
+    ):
+        install(result)
+        try:
+            _execute({}, expected_result_contract=expected)
+            raise AssertionError("expected InferenceRuntimeError")
+        except InferenceRuntimeError as exc:
+            assert exc.diagnostic_code == client.DIAGNOSTIC_RESULT_VALIDATION_FAILED
+
+
 def test_ok_status_without_compatible_runtime_status_is_rejected(monkeypatch):
     _install_urlopen(
         monkeypatch,
@@ -284,9 +339,11 @@ def test_api_main_delegates_to_the_external_client_for_the_isolated_loader_strat
         {"MonthlyCharges": 10.0},
         bundle_identity=_BUNDLE_IDENTITY,
         runtime_profile=_RUNTIME_PROFILE,
+        expected_result_contract=_BINARY_EXPECTED_RESULT_CONTRACT,
         include_runtime_diagnostic=False,
     )
 
     assert response == {"dataset_slug": "telco-customer-churn", "result": _valid_result()}
     assert calls[0][0] == {"MonthlyCharges": 10.0}
     assert calls[0][1]["release_id"] == "release-controlled"
+    assert calls[0][1]["expected_result_contract"] == _BINARY_EXPECTED_RESULT_CONTRACT

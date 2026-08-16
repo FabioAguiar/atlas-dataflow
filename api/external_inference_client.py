@@ -22,8 +22,8 @@ from runtime.inference import (
     DIAGNOSTIC_RUNTIME_DEPENDENCY_UNAVAILABLE,
     InferenceRuntimeError,
     RUNTIME_DIAGNOSTIC_CODES,
-    validate_binary_classification_result,
 )
+from inference_result_dispatch import validate_inference_result
 
 # S0160/G0001 naming_vocabulary: the manifest-declared loader-strategy value
 # api/main.py checks for before delegating to this client, instead of the
@@ -97,12 +97,13 @@ def execute_external_inference(
     release_id: str,
     bundle_identity: Mapping[str, Any],
     runtime_profile: Mapping[str, Any],
+    expected_result_contract: Mapping[str, Any],
     base_url: str | None = None,
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> dict:
     """Calls the isolated service's POST /predict and returns its validated result.
 
-    Returns the binary-classification-result.v1 object on success. Raises
+    Returns a governed binary or multiclass classification result on success. Raises
     ExternalInferenceClientError on any failure -- connection/timeout,
     malformed response, or a runtime-incompatible/failed result reported by
     the isolated service itself.
@@ -141,10 +142,12 @@ def execute_external_inference(
             diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
         ) from exc
 
-    return _interpret_response(parsed)
+    return _interpret_response(parsed, expected_result_contract=expected_result_contract)
 
 
-def _interpret_response(parsed: Any) -> dict:
+def _interpret_response(
+    parsed: Any, *, expected_result_contract: Mapping[str, Any]
+) -> dict:
     if not isinstance(parsed, Mapping) or parsed.get("contract_version") != "external_inference_result.v1":
         raise ExternalInferenceClientError(
             "External inference service response was invalid.",
@@ -192,5 +195,5 @@ def _interpret_response(parsed: Any) -> dict:
     # before responding; re-validate here against the same Atlas schema
     # before trusting the result any further.
     result_dict = dict(result)
-    validate_binary_classification_result(result_dict)
+    validate_inference_result(result_dict, expected_result_contract)
     return result_dict

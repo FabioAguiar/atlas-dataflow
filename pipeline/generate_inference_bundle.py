@@ -1049,11 +1049,13 @@ _EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION = "training-metrics.external-fitted-mo
 _EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION = "model-selection-evidence.external-fitted-model.v1"
 
 # Project Spec S0209: multiclass (v2) external fitted-model bundle profile.
-# The common training-metrics.external-fitted-model.v1 schema remains valid
-# and read-only for both v1 and v2 until a later metric-semantics spec.
 _EXTERNAL_MATERIALIZATION_SCHEMA_VERSION_V2 = "external-fitted-model-materialization.v2"
 _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION_V2 = "training-parameter-record.external-fitted-model.v2"
 _EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION_V2 = "model-selection-evidence.external-fitted-model.v2"
+# Project Spec S0215: training_metrics now also carries a v2 (multiclass)
+# profile, required alongside a v2 materialization result -- never mixed
+# with the v1 binary metrics profile.
+_EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION_V2 = "training-metrics.external-fitted-model.v2"
 MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION = "multiclass-result-semantics.v1"
 MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_VERSION = "multiclass-classification-result.v1"
 # Project Spec S0208's bounded v2 external estimator identity vocabulary --
@@ -1303,10 +1305,13 @@ def _build_external_bundle(
             f"training_parameter_record must declare {expected_record_version!r}.",
             field="evidence_references.training_parameter_record_path",
         )
-    if training_metrics.get("schema_version") != _EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION:
+    expected_training_metrics_version = (
+        _EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION_V2 if is_v2 else _EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION
+    )
+    if training_metrics.get("schema_version") != expected_training_metrics_version:
         raise BundleGenerationError(
             "invalid_external_evidence_profile",
-            f"training_metrics must declare {_EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION!r}.",
+            f"training_metrics must declare {expected_training_metrics_version!r}.",
             field="evidence_references.training_metrics_path",
         )
 

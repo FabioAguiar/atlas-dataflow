@@ -17,6 +17,7 @@ import DatasetDocumentation from "../../components/DatasetDetail/DatasetDocument
 import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
+import ConfusionMatrix from "../../components/DatasetDetail/ConfusionMatrix";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../../components/ResultCard/MulticlassClassificationResult";
 import ResultCardShell from "../../components/ResultCard/ResultCardShell";
@@ -68,8 +69,11 @@ import {
 } from "../../lib/datasetPresentation";
 import {
   PERFORMANCE_FOCUS_CATALOG,
+  getApplicablePerformanceFocusIds,
   getPerformanceFocusLabel,
   getPerformanceMetricMetadata,
+  isPerformanceScoreApplicable,
+  type ProblemType,
 } from "../../lib/performanceMetricMetadata";
 
 // Curator-facing labels for Atlas's full controlled icon bank (see
@@ -255,7 +259,25 @@ function catalogPerformanceScores(focus_id: PerformanceFocusId): PerformanceScor
   }));
 }
 
-function defaultPerformanceFocus(focus_id: PerformanceFocusId = "positive_class_detection"): PerformanceFocusDraft {
+function defaultPerformanceFocus(
+  focus_id: PerformanceFocusId = "positive_class_detection",
+  problemType?: ProblemType,
+): PerformanceFocusDraft {
+  // Project Spec S0215: for a multiclass release, the first three
+  // multiclass-applicable catalog scores (not the raw first three catalog
+  // rows, which may include binary-only ids) become the default visible
+  // set -- binary callers (problemType omitted) are unaffected.
+  if (problemType === "multiclass_classification") {
+    const applicableIds = catalogPerformanceScores(focus_id)
+      .filter((score) => isPerformanceScoreApplicable(score.score_id, "multiclass_classification"))
+      .map((score) => score.score_id);
+    const defaultVisible = new Set(applicableIds.slice(0, 3));
+    const scores = catalogPerformanceScores(focus_id).map((score) => ({
+      ...score,
+      visible: defaultVisible.has(score.score_id),
+    }));
+    return { focus_id, highlighted_score_id: scores.find((score) => score.visible)?.score_id ?? "", scores };
+  }
   const scores = catalogPerformanceScores(focus_id).map((score) => ({ ...score, visible: score.order < 3 }));
   return { focus_id, highlighted_score_id: scores[0]?.score_id ?? "", scores };
 }
@@ -2342,6 +2364,35 @@ function MetadataCardTab({
   const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
   const [imageUploadError, setImageUploadError] = useState("");
 
+  // Project Spec S0215: when the release-governed problem type is
+  // multiclass_classification and the currently selected Performance focus
+  // is one of the binary-only foci (overall_discrimination,
+  // positive_class_detection, operational_decision), it can never be shown
+  // or selected for a multiclass release -- switch to the governed
+  // multiclass default (balanced_classification) instead of silently
+  // presenting an incompatible focus. When problem type is binary or
+  // unavailable, this never fires, preserving current binary-compatible
+  // draft behavior exactly.
+  useEffect(() => {
+    if (problemType !== "multiclass_classification") {
+      return;
+    }
+    if (!getApplicablePerformanceFocusIds("multiclass_classification").includes(form.performance_focus.focus_id)) {
+      setField("performance_focus", defaultPerformanceFocus("balanced_classification", "multiclass_classification"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [problemType, form.performance_focus.focus_id]);
+
+  // Project Spec S0215: the selector offers only the supported multiclass
+  // focus set for a multiclass release; binary or unavailable problem type
+  // preserves the existing full-catalog behavior exactly.
+  const performanceFocusOptions =
+    problemType === "multiclass_classification"
+      ? PERFORMANCE_FOCUS_OPTIONS.filter((option) =>
+          getApplicablePerformanceFocusIds("multiclass_classification").includes(option.value),
+        )
+      : PERFORMANCE_FOCUS_OPTIONS;
+
   function uploadHomeCardImage(file: File | undefined) {
     if (!file) return;
     setImageUploadError("");
@@ -2412,18 +2463,27 @@ function MetadataCardTab({
             <FormRow htmlFor="performance-focus" label="Performance focus">
               <select
                 id="performance-focus"
-                onChange={(event) => setField("performance_focus", defaultPerformanceFocus(event.target.value as PerformanceFocusId))}
+                onChange={(event) =>
+                  setField(
+                    "performance_focus",
+                    defaultPerformanceFocus(event.target.value as PerformanceFocusId, problemType ?? undefined),
+                  )
+                }
                 style={inputStyle}
                 value={form.performance_focus.focus_id}
               >
-                {PERFORMANCE_FOCUS_OPTIONS.map(({ value, label }) => (
+                {performanceFocusOptions.map(({ value, label }) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
                 ))}
               </select>
             </FormRow>
-            <PerformanceFocusBuilder focus={form.performance_focus} onChange={(focus) => setField("performance_focus", focus)} />
+            <PerformanceFocusBuilder
+              focus={form.performance_focus}
+              onChange={(focus) => setField("performance_focus", focus)}
+              problemType={problemType ?? undefined}
+            />
           </Card>
         </div>
 
@@ -2503,8 +2563,24 @@ function PerformanceMetricOrientation({ scoreId }: { scoreId: string }) {
   );
 }
 
-function PerformanceFocusBuilder({ focus, onChange }: { focus: PerformanceFocusDraft; onChange: (focus: PerformanceFocusDraft) => void }) {
-  const visibleScores = focus.scores.filter((score) => score.visible);
+function PerformanceFocusBuilder({
+  focus,
+  onChange,
+  problemType,
+}: {
+  focus: PerformanceFocusDraft;
+  onChange: (focus: PerformanceFocusDraft) => void;
+  problemType?: ProblemType;
+}) {
+  // Project Spec S0215: for a multiclass release, only multiclass-applicable
+  // scores are shown/selectable here. focus.scores itself is never mutated
+  // -- a binary-only score's persisted value/visibility is preserved (not
+  // destroyed) should the release problem type later revert to binary.
+  const renderedScores =
+    problemType === "multiclass_classification"
+      ? focus.scores.filter((score) => isPerformanceScoreApplicable(score.score_id, "multiclass_classification"))
+      : focus.scores;
+  const visibleScores = renderedScores.filter((score) => score.visible);
   const highlighted = visibleScores.find((score) => score.score_id === focus.highlighted_score_id);
 
   function updateScore(scoreId: string, update: Partial<PerformanceScoreDraft>) {
@@ -2545,7 +2621,7 @@ function PerformanceFocusBuilder({ focus, onChange }: { focus: PerformanceFocusD
         <strong>Scores shown on Dataset Detail</strong>
       </div>
       <div className="performance-focus-builder__scores">
-        {focus.scores.map((score) => (
+        {renderedScores.map((score) => (
           <div className={`performance-focus-builder__score${score.visible ? " is-selected" : ""}`} key={score.score_id}>
             <label>
               <input
@@ -4318,10 +4394,18 @@ function DatasetDetailLivePreview({
     <PerformanceSummary
       metrics={metrics ?? {}}
       performanceFocus={projectPerformanceFocusPreview(form.performance_focus)}
+      // Project Spec S0215: the same release-derived problem type already
+      // established by S0213 -- never dataset slug or editable profile
+      // fields.
+      problemType={availableResultProblemType(readOnlyData.resultContract)}
     />
   );
   const targetDistributionContent = <TargetDistribution visualizations={visualizations} />;
   const featureImportanceContent = <FeatureImportance visualizations={visualizations} />;
+  // Project Spec S0215: Admin Live Preview reuses the exact same shared
+  // ConfusionMatrix renderer, fed by the same already-loaded visualizations
+  // payload above -- it never synthesizes or edits matrix data itself.
+  const confusionMatrixContent = <ConfusionMatrix visualizations={visualizations} />;
 
   // Project Spec S0143: the Dataset Detail Live Preview Inference tab now
   // owns one real, executable InferenceForm lifecycle -- the same
@@ -4374,6 +4458,7 @@ function DatasetDetailLivePreview({
   return (
     <DatasetDetailSurface
       analysisType={preview.analysisType}
+      confusionMatrixContent={confusionMatrixContent}
       datasetSubtitle={preview.subtitle}
       datasetTitle={preview.datasetTitle}
       documentationContent={documentationContent}

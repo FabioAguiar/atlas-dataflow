@@ -504,7 +504,7 @@
           "required": ["primary_metric", "ranking_direction"],
           "properties": {
             "primary_metric": {
-              "$ref": "#/$defs/metric_name"
+              "$ref": "#/$defs/multiclass_metric_name_v2"
             },
             "ranking_direction": {
               "type": "string",
@@ -530,7 +530,7 @@
                 "additionalProperties": false,
                 "required": ["name", "mean"],
                 "properties": {
-                  "name": { "$ref": "#/$defs/metric_name" },
+                  "name": { "$ref": "#/$defs/multiclass_metric_name_v2" },
                   "mean": { "type": "number" },
                   "standard_deviation": { "type": "number", "minimum": 0 }
                 }
@@ -550,7 +550,7 @@
             "metrics": {
               "type": "array",
               "minItems": 1,
-              "items": { "$ref": "#/$defs/metric_value" }
+              "items": { "$ref": "#/$defs/multiclass_metric_value_v2" }
             }
           }
         },
@@ -663,6 +663,28 @@
         "classification_evidence": {
           "$ref": "#/$defs/multiclass_classification_evidence_v2"
         }
+      }
+    },
+    "multiclass_metric_name_v2": {
+      "type": "string",
+      "description": "Project Spec S0215: bounded explicit multiclass aggregate metric vocabulary, distinct from the shared binary-era metric_name enum below -- never f1/precision/recall, which are ambiguous under multi-way averaging.",
+      "enum": [
+        "accuracy",
+        "balanced_accuracy",
+        "f1_macro",
+        "f1_weighted",
+        "precision_macro",
+        "recall_macro",
+        "log_loss"
+      ]
+    },
+    "multiclass_metric_value_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "$ref": "#/$defs/multiclass_metric_name_v2" },
+        "value": { "type": "number" }
       }
     },
     "multiclass_classification_evidence_v2": {

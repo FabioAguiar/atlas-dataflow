@@ -478,6 +478,10 @@ _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION = "training-parameter-record.externa
 _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION_V2 = "training-parameter-record.external-fitted-model.v2"
 _TRAINING_METRICS_INTERNAL_VERSION = "training-metrics.v1"
 _TRAINING_METRICS_EXTERNAL_VERSION = "training-metrics.external-fitted-model.v1"
+# Project Spec S0215: the v2 (multiclass) external fitted-model training
+# record now pairs with a dedicated v2 training-metrics profile -- never
+# coerced to v1.
+_TRAINING_METRICS_EXTERNAL_VERSION_V2 = "training-metrics.external-fitted-model.v2"
 _EXTERNAL_MODEL_SOURCE_STAGE = "manual_governed_input"
 
 
@@ -536,10 +540,10 @@ def _resolve_training_provenance(
     through to its pre-existing fixed governance values exactly as before
     S0180 (which never inspected this file's content for this role at all).
     Only once external is confirmed does training_metrics get cross-checked
-    and required to agree (the same v1 metrics schema is required for both
-    v1 and v2 training records, per Project Spec S0209); a mismatch raises
-    ValueError, the same failure convention this function's caller already
-    uses.
+    and required to agree: Project Spec S0215 pairs a v1 training record
+    with v1 metrics and a v2 (multiclass) training record with v2 metrics --
+    never mixed; a mismatch raises ValueError, the same failure convention
+    this function's caller already uses.
     """
     training_record_path = repo_root / artifact_references["training_parameter_record"]
     record_version = _read_declared_contract_version(training_record_path)
@@ -550,12 +554,17 @@ def _resolve_training_provenance(
     ):
         return "M24", False, None, None
 
+    expected_metrics_version = (
+        _TRAINING_METRICS_EXTERNAL_VERSION_V2
+        if record_version == _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION_V2
+        else _TRAINING_METRICS_EXTERNAL_VERSION
+    )
     training_metrics_path = repo_root / artifact_references["training_metrics"]
     metrics_version = _read_declared_contract_version(training_metrics_path)
-    if metrics_version != _TRAINING_METRICS_EXTERNAL_VERSION:
+    if metrics_version != expected_metrics_version:
         raise ValueError(
             "training_metrics contract_version does not agree with training_parameter_record "
-            f"provenance: expected {_TRAINING_METRICS_EXTERNAL_VERSION!r}, got {metrics_version!r}"
+            f"provenance: expected {expected_metrics_version!r}, got {metrics_version!r}"
         )
 
     return _EXTERNAL_MODEL_SOURCE_STAGE, True, record_version, metrics_version

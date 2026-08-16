@@ -1390,6 +1390,80 @@ h1 {
 }
 
 /*
+ * Project Spec S0215: normalized multiclass confusion matrix. Percentage
+ * text is always the primary channel in every cell; the accent-intensity
+ * background (driven by --confusion-matrix-cell-intensity, set inline per
+ * cell) is a secondary visual enhancement only, never the sole signal.
+ */
+.dataset-detail-visualization--confusion-matrix .confusion-matrix__caption {
+  margin: 0;
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+}
+
+.confusion-matrix__scroll {
+  overflow-x: auto;
+}
+
+.confusion-matrix__table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 22rem;
+}
+
+.confusion-matrix__table th,
+.confusion-matrix__table td {
+  border: 1px solid var(--atlas-color-border);
+  padding: var(--atlas-space-2) var(--atlas-space-3);
+  text-align: center;
+  font-size: var(--atlas-text-sm);
+}
+
+.confusion-matrix__table thead th {
+  color: var(--atlas-color-text-muted);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.confusion-matrix__table tbody th {
+  color: var(--atlas-color-text);
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.confusion-matrix__corner {
+  text-align: left;
+}
+
+.confusion-matrix__axis-label {
+  display: block;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 500;
+}
+
+.confusion-matrix__axis-label--column {
+  text-align: right;
+}
+
+.confusion-matrix__table td {
+  color: var(--atlas-color-text);
+  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--dataset-theme-accent) calc(var(--confusion-matrix-cell-intensity, 0) * 85%),
+    var(--atlas-color-surface)
+  );
+}
+
+.confusion-matrix__legend {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+}
+
+/*
  * Project Spec S0112: shared public inference surface -- owned by
  * InferenceForm.tsx itself so both /dataset/:slug and
  * /dataset/:slug/view/:viewId render identical structure. One column on

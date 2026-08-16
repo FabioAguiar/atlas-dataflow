@@ -25,6 +25,18 @@ export type VisualizationsPayload = {
   dataset_statistics?: {
     instance_count?: number;
   };
+  // Project Spec S0215: a bounded normalized multiclass confusion matrix the
+  // public visualizations projection may carry alongside charts, present
+  // only for a valid multiclass (v2) release. TargetDistribution never reads
+  // this itself -- it lives on the shared payload type (independent of the
+  // charts array) so ConfusionMatrix.tsx, DatasetPage.tsx, and
+  // livePreviewProjection.ts can all consume it without a competing type.
+  confusion_matrix?: {
+    ordered_class_ids?: string[];
+    matrix?: number[][];
+    row_axis?: string;
+    column_axis?: string;
+  };
 };
 
 type TargetDistributionProps = {

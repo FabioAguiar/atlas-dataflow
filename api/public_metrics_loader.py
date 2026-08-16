@@ -44,12 +44,23 @@ _METRIC_ALIASES: dict[str, str] = {
     "recall": "recall",
     "accuracy": "accuracy",
     "log_loss": "log_loss",
+    # Project Spec S0215: explicit multiclass aggregate metric ids, each
+    # projected 1:1 -- never aliased into the ambiguous binary-era
+    # f1_score/precision/recall ids, since those erase averaging semantics.
+    "balanced_accuracy": "balanced_accuracy",
+    "f1_macro": "f1_macro",
+    "f1_weighted": "f1_weighted",
+    "precision_macro": "precision_macro",
+    "recall_macro": "recall_macro",
 }
 
 # Project Spec S0191: schema_version discriminator for the external
 # fitted-model training-metrics profile, dispatched on explicitly (never by
 # loose shape matching).
 _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION = "training-metrics.external-fitted-model.v1"
+# Project Spec S0215: the multiclass (v2) external fitted-model
+# training-metrics profile, dispatched on explicitly alongside v1.
+_EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION_V2 = "training-metrics.external-fitted-model.v2"
 
 # Top-level keys that are never themselves metric declarations, used only
 # by the bounded flat top-level fallback (case 3 below) to avoid mistaking
@@ -307,9 +318,112 @@ def _project_external_fitted_model_metrics(payload: dict) -> dict:
     }
 
 
+def _project_bounded_per_class_metrics(per_class_metrics: Any, ordered_class_ids: Any) -> list[dict] | None:
+    """Project Spec S0215 Desired Change N: bounded per-class public
+    projection for external metrics v2 only. Returns None (omitted from the
+    public response entirely) unless every entry is well-typed, every
+    numeric bound is satisfied, class ids are unique, and their order/
+    coverage agrees exactly with classification_evidence.ordered_class_ids
+    -- never evidence paths, producer identity, raw rows, or raw
+    probabilities."""
+    if not isinstance(per_class_metrics, list) or not isinstance(ordered_class_ids, list):
+        return None
+    if not ordered_class_ids or len(per_class_metrics) != len(ordered_class_ids):
+        return None
+
+    projected: list[dict] = []
+    seen_class_ids: set[str] = set()
+    for position, entry in enumerate(per_class_metrics):
+        if not isinstance(entry, dict):
+            return None
+        class_id = entry.get("class_id")
+        if not isinstance(class_id, str) or not class_id or class_id != ordered_class_ids[position]:
+            return None
+        if class_id in seen_class_ids:
+            return None
+        seen_class_ids.add(class_id)
+
+        precision = entry.get("precision")
+        recall = entry.get("recall")
+        f1 = entry.get("f1")
+        support = entry.get("support")
+        if not all(_is_valid_numeric(value) and 0.0 <= value <= 1.0 for value in (precision, recall, f1)):
+            return None
+        if isinstance(support, bool) or not isinstance(support, int) or support < 0:
+            return None
+
+        projected.append(
+            {
+                "class_id": class_id,
+                "precision": float(precision),
+                "recall": float(recall),
+                "f1": float(f1),
+                "support": support,
+            }
+        )
+    return projected
+
+
+def _project_external_fitted_model_metrics_v2(payload: dict) -> dict:
+    """Project Spec S0215: public projector for
+    training-metrics.external-fitted-model.v2 (multiclass). Mirrors the v1
+    partition-selection discipline (completed final_test_evaluation when
+    present, otherwise validation_evaluation; cross_validation_summary is
+    never selected) and additionally projects a bounded per_class_metrics
+    array (Desired Change N) when the selected partition carries one that
+    exactly agrees with classification_evidence.ordered_class_ids --
+    omitted entirely otherwise, never fabricated. The external schema does
+    not designate a primary metric, so primary_metric_id is never
+    fabricated and remains None."""
+    final_test = payload.get("final_test_evaluation")
+    validation = payload.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    split_name = None
+    sample_size = None
+    entries: list[tuple[Any, Any, bool]] = []
+    per_class_metrics_source = None
+    if isinstance(selected, dict):
+        split_name = _optional_str(selected.get("partition_role"))
+        sample_size = _optional_int(selected.get("row_count"))
+        raw_metrics = selected.get("metrics")
+        if isinstance(raw_metrics, list):
+            entries = [
+                (item.get("name"), item.get("value"), False)
+                for item in raw_metrics
+                if isinstance(item, dict)
+            ]
+        per_class_metrics_source = selected.get("per_class_metrics")
+
+    metrics, metric_order = _project_metric_entries(entries)
+
+    classification_evidence = payload.get("classification_evidence")
+    ordered_class_ids = (
+        classification_evidence.get("ordered_class_ids") if isinstance(classification_evidence, dict) else None
+    )
+    projected_per_class_metrics = _project_bounded_per_class_metrics(per_class_metrics_source, ordered_class_ids)
+
+    evaluation: dict[str, Any] = {
+        "split_name": split_name,
+        "sample_size": sample_size,
+        "primary_metric_id": None,
+        "metrics": metrics,
+        "metric_order": metric_order,
+    }
+    if projected_per_class_metrics is not None:
+        evaluation["per_class_metrics"] = projected_per_class_metrics
+    return {"evaluation": evaluation}
+
+
 def _project_public_metrics(payload: dict) -> dict:
     if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION:
         return _project_external_fitted_model_metrics(payload)
+    if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION_V2:
+        return _project_external_fitted_model_metrics_v2(payload)
     metrics_block = payload.get("metrics")
     if isinstance(metrics_block, dict) and isinstance(metrics_block.get("primary_metric"), dict):
         return _project_training_metrics_v1(payload)

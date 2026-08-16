@@ -3304,6 +3304,110 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0215: multiclass Performance focus authoring must never
+  // default to or offer positive_class_detection, and must filter the
+  // selectable score catalog to the multiclass-compatible subset.
+  describe("multiclass Performance focus authoring (Project Spec S0215)", () => {
+    const multiclassResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "multiclass-result-semantics.v1",
+        problem_type: "multiclass_classification",
+        result_schema_version: "multiclass-classification-result.v1",
+        primary_output: "predicted_class",
+        probability_output: "class_probabilities",
+        classes: [
+          { class_id: "class-a", display_label: "Class A" },
+          { class_id: "class-b", display_label: "Class B" },
+          { class_id: "class-c", display_label: "Class C" },
+        ],
+        decision: { strategy: "argmax" },
+        model_descriptor: { model_family: "model", display_name: "Model" },
+      },
+    };
+
+    it("defaults to balanced_classification, not positive_class_detection, for a multiclass release", async () => {
+      installFetchMock({ resultContractOverride: multiclassResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("balanced_classification"));
+    });
+
+    it("does not offer overall_discrimination, positive_class_detection, or operational_decision in the selector for a multiclass release", async () => {
+      installFetchMock({ resultContractOverride: multiclassResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      const select = await screen.findByLabelText("Performance focus");
+      await waitFor(() => expect(select).toHaveValue("balanced_classification"));
+      const optionLabels = within(select)
+        .getAllByRole("option")
+        .map((option) => option.textContent);
+      expect(optionLabels).toEqual(["Balanced classification", "Probability quality"]);
+      expect(optionLabels).not.toContain("Positive-class detection");
+      expect(optionLabels).not.toContain("Overall discrimination");
+      expect(optionLabels).not.toContain("Operational decision");
+    });
+
+    it("only shows multiclass-applicable scores for balanced_classification, never f1_score/recall/etc.", async () => {
+      installFetchMock({ resultContractOverride: multiclassResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("balanced_classification"));
+      expect(screen.getByLabelText("Show Balanced Accuracy")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show F1 Macro")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show F1 Weighted")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show Precision Macro")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show Recall Macro")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show Accuracy")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Show F1-score")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Recall")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Specificity")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Cohen's Kappa")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show G-Mean")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show MCC")).not.toBeInTheDocument();
+    });
+
+    it("only shows log_loss for probability_quality when switched to for a multiclass release", async () => {
+      installFetchMock({ resultContractOverride: multiclassResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("balanced_classification"));
+      fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "probability_quality" } });
+
+      expect(screen.getByLabelText("Show Log Loss")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Brier Score")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Calibration Error")).not.toBeInTheDocument();
+    });
+
+    it("preserves the full binary catalog and default when the release is binary", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      expect(screen.getByLabelText("Performance focus")).toHaveValue("positive_class_detection");
+      const optionLabels = within(screen.getByLabelText("Performance focus"))
+        .getAllByRole("option")
+        .map((option) => option.textContent);
+      expect(optionLabels).toEqual([
+        "Overall discrimination",
+        "Positive-class detection",
+        "Balanced classification",
+        "Probability quality",
+        "Operational decision",
+      ]);
+      expect(screen.getByLabelText("Show F1-score")).toBeInTheDocument();
+    });
+  });
+
   // Project Spec S0120: Dataset Detail Live Preview now renders the exact
   // shared DatasetDetailSurface (S0119) used by /dataset/:slug -- one
   // instance, its own real three-tab system (Overview/Inference/

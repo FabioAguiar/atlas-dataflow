@@ -1536,6 +1536,223 @@ def test_public_metrics_loader_external_fitted_model_omits_internal_evidence_fie
             assert internal_marker not in serialized
 
 
+# --- Project Spec S0215: explicit training-metrics.external-fitted-model.v2
+# (multiclass) public projector -----------------------------------------------
+
+_S0215_ORDERED_CLASS_IDS = ["class-a", "class-b", "class-c"]
+
+
+def _s0215_external_metrics_v2_payload(
+    *,
+    include_final_test: bool = False,
+    final_test_completed: bool = True,
+    validation_metrics: list | None = None,
+    final_test_metrics: list | None = None,
+    validation_per_class_metrics: list | None = None,
+    ordered_class_ids: list | None = None,
+) -> dict:
+    class_ids = ordered_class_ids if ordered_class_ids is not None else _S0215_ORDERED_CLASS_IDS
+    payload: dict = {
+        "schema_version": "training-metrics.external-fitted-model.v2",
+        "artifact_kind": "training_metrics",
+        "created_at": "2026-08-01T00:00:00Z",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": "sample-multiclass-dataset",
+        },
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": class_ids,
+        },
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "used_for_fitting": True,
+            "used_for_model_selection": True,
+            "used_for_decision_rule_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            # Never the public holdout evaluation -- distinct value from
+            # validation/test below so a leak is caught deterministically.
+            "metrics": [{"name": "accuracy", "value": 0.99}],
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "used_for_fitting": False,
+            "used_for_model_selection": True,
+            "used_for_decision_rule_selection": False,
+            "sealed_before_finalization": False,
+            "row_count": 500,
+            "metrics": (
+                validation_metrics
+                if validation_metrics is not None
+                else [
+                    {"name": "accuracy", "value": 0.80},
+                    {"name": "f1_macro", "value": 0.75},
+                ]
+            ),
+        },
+    }
+    if validation_per_class_metrics is not None:
+        payload["validation_evaluation"]["per_class_metrics"] = validation_per_class_metrics
+    if include_final_test:
+        payload["final_test_evaluation"] = {
+            "partition_role": "test",
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_decision_rule_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": True,
+            "completed": final_test_completed,
+            "evaluation_count": 1 if final_test_completed else 0,
+            "metrics": (
+                (final_test_metrics if final_test_metrics is not None else [{"name": "accuracy", "value": 0.77}])
+                if final_test_completed
+                else []
+            ),
+        }
+        if final_test_completed:
+            payload["final_test_evaluation"]["row_count"] = 300
+    return payload
+
+
+def test_public_metrics_loader_v2_uses_validation_when_final_test_absent():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0215-001", _s0215_external_metrics_v2_payload())
+        metrics = api_main.load_public_metrics("release-s0215-001", releases_root=releases_root)
+        evaluation = metrics["evaluation"]
+        assert evaluation["split_name"] == "validation"
+        assert evaluation["sample_size"] == 500
+        assert evaluation["primary_metric_id"] is None
+        assert evaluation["metrics"] == {"accuracy": 0.80, "f1_macro": 0.75}
+
+
+def test_public_metrics_loader_v2_prefers_completed_final_test():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0215-002",
+            _s0215_external_metrics_v2_payload(
+                include_final_test=True,
+                final_test_completed=True,
+                final_test_metrics=[{"name": "balanced_accuracy", "value": 0.74}],
+            ),
+        )
+        metrics = api_main.load_public_metrics("release-s0215-002", releases_root=releases_root)
+        evaluation = metrics["evaluation"]
+        assert evaluation["split_name"] == "test"
+        assert evaluation["sample_size"] == 300
+        assert evaluation["metrics"] == {"balanced_accuracy": 0.74}
+
+
+def test_public_metrics_loader_v2_cross_validation_never_exposed():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0215-003", _s0215_external_metrics_v2_payload())
+        metrics = api_main.load_public_metrics("release-s0215-003", releases_root=releases_root)
+        assert metrics["evaluation"]["metrics"]["accuracy"] == 0.80
+
+
+def test_public_metrics_loader_v2_ambiguous_aggregate_ids_never_produced():
+    """The v2 explicit multiclass aggregate ids are never aliased into the
+    ambiguous binary-era f1_score/precision/recall ids."""
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0215-004",
+            _s0215_external_metrics_v2_payload(
+                validation_metrics=[
+                    {"name": "f1_macro", "value": 0.75},
+                    {"name": "f1_weighted", "value": 0.76},
+                    {"name": "precision_macro", "value": 0.70},
+                    {"name": "recall_macro", "value": 0.71},
+                    {"name": "balanced_accuracy", "value": 0.72},
+                    {"name": "log_loss", "value": 0.31},
+                ]
+            ),
+        )
+        evaluation = api_main.load_public_metrics("release-s0215-004", releases_root=releases_root)["evaluation"]
+        assert evaluation["metrics"] == {
+            "f1_macro": 0.75,
+            "f1_weighted": 0.76,
+            "precision_macro": 0.70,
+            "recall_macro": 0.71,
+            "balanced_accuracy": 0.72,
+            "log_loss": 0.31,
+        }
+        assert "f1_score" not in evaluation["metrics"]
+        assert "precision" not in evaluation["metrics"]
+        assert "recall" not in evaluation["metrics"]
+
+
+def test_public_metrics_loader_v2_projects_bounded_per_class_metrics_when_valid():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0215-005",
+            _s0215_external_metrics_v2_payload(
+                validation_per_class_metrics=[
+                    {"class_id": "class-a", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+                    {"class_id": "class-b", "precision": 0.6, "recall": 0.5, "f1": 0.55, "support": 8},
+                    {"class_id": "class-c", "precision": 0.9, "recall": 0.85, "f1": 0.87, "support": 12},
+                ]
+            ),
+        )
+        evaluation = api_main.load_public_metrics("release-s0215-005", releases_root=releases_root)["evaluation"]
+        assert evaluation["per_class_metrics"] == [
+            {"class_id": "class-a", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+            {"class_id": "class-b", "precision": 0.6, "recall": 0.5, "f1": 0.55, "support": 8},
+            {"class_id": "class-c", "precision": 0.9, "recall": 0.85, "f1": 0.87, "support": 12},
+        ]
+
+
+def test_public_metrics_loader_v2_omits_per_class_metrics_when_absent():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0215-006", _s0215_external_metrics_v2_payload())
+        evaluation = api_main.load_public_metrics("release-s0215-006", releases_root=releases_root)["evaluation"]
+        assert "per_class_metrics" not in evaluation
+
+
+def test_public_metrics_loader_v2_omits_per_class_metrics_when_class_order_disagrees():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0215-007",
+            _s0215_external_metrics_v2_payload(
+                validation_per_class_metrics=[
+                    {"class_id": "class-b", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+                    {"class_id": "class-a", "precision": 0.6, "recall": 0.5, "f1": 0.55, "support": 8},
+                    {"class_id": "class-c", "precision": 0.9, "recall": 0.85, "f1": 0.87, "support": 12},
+                ]
+            ),
+        )
+        evaluation = api_main.load_public_metrics("release-s0215-007", releases_root=releases_root)["evaluation"]
+        assert "per_class_metrics" not in evaluation
+
+
+def test_public_metrics_loader_v2_omits_internal_evidence_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(releases_root, "release-s0215-008", _s0215_external_metrics_v2_payload())
+        metrics = api_main.load_public_metrics("release-s0215-008", releases_root=releases_root)
+        serialized = json.dumps(metrics)
+        for internal_marker in (
+            "evidence_identity",
+            "cross_validation_summary",
+            "used_for_fitting",
+            "sealed_before_finalization",
+            "artifact_kind",
+            "created_at",
+            "sample-multiclass-dataset",
+        ):
+            assert internal_marker not in serialized
+
+
 def test_real_release_dataset_home_model_card_payload_shape():
     for resolved in _real_release_dataset_pairs():
         model_card = api_main.load_public_model_card(
@@ -2140,6 +2357,129 @@ def test_public_visualizations_loader_dataset_statistics_never_exposes_internal_
         assert "target_distribution_method" not in serialized
         assert "population_kind" not in serialized
         assert "prepared_dataset" not in serialized
+
+
+# --- Project Spec S0215: analytical-visualizations.external-fitted-model.v2
+# (multiclass) confusion_matrix public projection --------------------------
+
+_S0215_ORDERED_MATRIX_CLASS_IDS = ["class-a", "class-b", "class-c"]
+
+
+def _s0215_identity_matrix() -> list[list[float]]:
+    return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _s0215_v2_visualizations_artifact(
+    *, confusion_matrix: dict | None = None, dataset_slug: str = "sample-multiclass"
+) -> dict:
+    artifact = dict(_S0193_VALID_EXTERNAL_ARTIFACT)
+    artifact["schema_version"] = "analytical-visualizations.external-fitted-model.v2"
+    artifact["dataset_identity"] = {"dataset_slug": dataset_slug}
+    artifact["external_materialization_provenance"] = {
+        "model_family": "decision_tree",
+        "external_evidence_reference": "artifacts/sample-multiclass/analytical-visual-evidence.json",
+        "external_evidence_sha256": "a" * 64,
+    }
+    artifact["feature_importance_method"] = {
+        **_S0193_VALID_EXTERNAL_ARTIFACT["feature_importance_method"],
+        "model_family": "decision_tree",
+    }
+    artifact["confusion_matrix"] = confusion_matrix or {
+        "ordered_class_ids": list(_S0215_ORDERED_MATRIX_CLASS_IDS),
+        "matrix": _s0215_identity_matrix(),
+        "row_axis": "true_class",
+        "column_axis": "predicted_class",
+    }
+    return artifact
+
+
+def test_public_visualizations_loader_v2_projects_confusion_matrix_for_valid_artifact():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(releases_root, "release-s0215-001", _s0215_v2_visualizations_artifact())
+
+        projection = api_main.load_public_visualizations("release-s0215-001", releases_root=releases_root)
+
+        assert projection["confusion_matrix"] == {
+            "ordered_class_ids": _S0215_ORDERED_MATRIX_CLASS_IDS,
+            "matrix": _s0215_identity_matrix(),
+            "row_axis": "true_class",
+            "column_axis": "predicted_class",
+        }
+        # Charts remain projected identically to v1.
+        assert [chart["id"] for chart in projection["charts"]] == ["target_distribution", "feature_importance"]
+
+
+def test_public_visualizations_loader_v1_response_never_has_confusion_matrix():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0101_write_artifact_file(
+            releases_root / "release-s0215-002", "visualizations/visualizations.json", _S0193_VALID_EXTERNAL_ARTIFACT
+        )
+        _s0101_write_release(
+            releases_root / "release-s0215-002",
+            artifacts=[{"role": "visualizations", "reference": "visualizations/visualizations.json"}],
+        )
+
+        projection = api_main.load_public_visualizations("release-s0215-002", releases_root=releases_root)
+
+        assert "confusion_matrix" not in projection
+
+
+def test_public_visualizations_loader_v2_omits_confusion_matrix_when_row_not_normalized():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        artifact = _s0215_v2_visualizations_artifact(
+            confusion_matrix={
+                "ordered_class_ids": list(_S0215_ORDERED_MATRIX_CLASS_IDS),
+                "matrix": [[0.5, 0.2, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                "row_axis": "true_class",
+                "column_axis": "predicted_class",
+            }
+        )
+        _s0205_write_visualizations(releases_root, "release-s0215-003", artifact)
+
+        projection = api_main.load_public_visualizations("release-s0215-003", releases_root=releases_root)
+
+        assert "confusion_matrix" not in projection
+        # Charts still project even when the matrix is invalid.
+        assert projection["charts"]
+
+
+def test_public_visualizations_loader_v2_omits_confusion_matrix_when_shape_wrong():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        artifact = _s0215_v2_visualizations_artifact(
+            confusion_matrix={
+                "ordered_class_ids": list(_S0215_ORDERED_MATRIX_CLASS_IDS),
+                "matrix": [[1.0, 0.0], [0.0, 1.0]],
+                "row_axis": "true_class",
+                "column_axis": "predicted_class",
+            }
+        )
+        _s0205_write_visualizations(releases_root, "release-s0215-004", artifact)
+
+        projection = api_main.load_public_visualizations("release-s0215-004", releases_root=releases_root)
+
+        assert "confusion_matrix" not in projection
+
+
+def test_public_visualizations_loader_v2_confusion_matrix_never_exposes_source_paths():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(releases_root, "release-s0215-005", _s0215_v2_visualizations_artifact())
+
+        projection = api_main.load_public_visualizations("release-s0215-005", releases_root=releases_root)
+
+        serialized = json.dumps(projection)
+        for internal_marker in (
+            "external_evidence_reference",
+            "external_evidence_sha256",
+            "external_materialization_provenance",
+            "model_source_mode",
+            "sample-multiclass",
+        ):
+            assert internal_marker not in serialized
 
 
 def test_public_visualizations_endpoint_invalid_artifact_degrades_to_bounded_unavailable(monkeypatch):

@@ -957,7 +957,9 @@ def validate_candidate(
             _external_predictive_bundle_compatibility(json_artifacts.get("predictive_bundle"))
         )
         rejection_reasons.extend(
-            _external_metrics_public_projection_check(json_artifacts.get("metrics"))
+            _external_metrics_public_projection_check(
+                json_artifacts.get("metrics"), json_artifacts.get("predictive_bundle")
+            )
         )
         rejection_reasons.extend(
             _external_visualizations_provenance_compatibility(
@@ -1160,11 +1162,29 @@ def _predictive_bundle_promotion_readiness(predictive_bundle_data: dict | None) 
 # that isolation; the bounded alias set below intentionally mirrors (not
 # imports) that module's public metric vocabulary.
 _EXTERNAL_METRICS_SCHEMA_VERSION = "training-metrics.external-fitted-model.v1"
+# Project Spec S0215: the multiclass metrics profile paired with a
+# multiclass predictive bundle -- never mixed with the binary v1 profile.
+_EXTERNAL_METRICS_SCHEMA_VERSION_V2 = "training-metrics.external-fitted-model.v2"
+# Project Spec S0215: the multiclass visualizations profile, required
+# alongside a multiclass predictive bundle -- never mixed with the binary
+# v1 profile.
+_EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION_V2 = "analytical-visualizations.external-fitted-model.v2"
+_EXTERNAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
+    _EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION,
+    _EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION_V2,
+)
 _PUBLIC_PROJECTABLE_METRIC_ALIASES = frozenset({
     "roc_auc", "auc_roc", "auc",
     "f1", "f1_score",
     "pr_auc", "average_precision",
     "precision", "recall", "accuracy", "log_loss",
+})
+# Project Spec S0215 Desired Change L: bounded explicit multiclass aggregate
+# metric vocabulary for the v2 metrics public-projection gate -- never the
+# ambiguous binary-era f1/precision/recall ids.
+_PUBLIC_PROJECTABLE_MULTICLASS_METRIC_IDS = frozenset({
+    "accuracy", "balanced_accuracy", "f1_macro", "f1_weighted",
+    "precision_macro", "recall_macro", "log_loss",
 })
 
 
@@ -1349,21 +1369,52 @@ def _external_multiclass_predictive_bundle_compatibility(
     return []
 
 
-def _external_metrics_public_projection_check(metrics_data: dict | None) -> list[dict]:
+def _external_metrics_public_projection_check(
+    metrics_data: dict | None, predictive_bundle_data: dict | None = None
+) -> list[dict]:
     """Require a validated_external_fitted_model candidate's metrics
-    artifact to be training-metrics.external-fitted-model.v1 and to contain
-    at least one metric id that the closed public projection can expose
-    from its selected public evaluation partition (completed
-    final_test_evaluation when present, otherwise validation_evaluation --
-    never cross_validation_summary)."""
+    artifact to declare a metrics schema profile compatible with the
+    predictive bundle's own problem type, and to contain at least one metric
+    id that the closed public projection can expose from its selected public
+    evaluation partition (completed final_test_evaluation when present,
+    otherwise validation_evaluation -- never cross_validation_summary).
+    per_class_metrics is never treated as a substitute for a required
+    aggregate evaluation metric.
+
+    Project Spec S0215 adds the v2 multiclass metrics profile: a binary
+    predictive bundle must pair with v1 metrics (a v2 pairing is rejected as
+    a new, previously-unreachable combination); a multiclass predictive
+    bundle accepts the new v2 metrics profile (using the bounded explicit
+    multiclass aggregate vocabulary) as well as the pre-S0215 v1 profile it
+    was historically paired with, so an already-accepted legacy multiclass
+    candidate does not regress."""
     if not isinstance(metrics_data, dict):
         return []
 
-    if metrics_data.get("schema_version") != _EXTERNAL_METRICS_SCHEMA_VERSION:
+    result_semantics = (
+        predictive_bundle_data.get("result_semantics") if isinstance(predictive_bundle_data, dict) else None
+    )
+    is_multiclass = (
+        isinstance(result_semantics, dict)
+        and result_semantics.get("problem_type") == "multiclass_classification"
+    )
+    declared_schema_version = metrics_data.get("schema_version")
+    allowed_schema_versions = (
+        (_EXTERNAL_METRICS_SCHEMA_VERSION, _EXTERNAL_METRICS_SCHEMA_VERSION_V2)
+        if is_multiclass
+        else (_EXTERNAL_METRICS_SCHEMA_VERSION,)
+    )
+    allowed_metric_ids = (
+        _PUBLIC_PROJECTABLE_MULTICLASS_METRIC_IDS
+        if declared_schema_version == _EXTERNAL_METRICS_SCHEMA_VERSION_V2
+        else _PUBLIC_PROJECTABLE_METRIC_ALIASES
+    )
+
+    if declared_schema_version not in allowed_schema_versions:
         return [_safe_rejection_reason(
             "incomplete_required_artifact",
             "Validated external fitted-model candidate metrics artifact does not declare "
-            f"{_EXTERNAL_METRICS_SCHEMA_VERSION!r}.",
+            f"one of {allowed_schema_versions!r}.",
             "metrics",
             "external_metrics_schema_version_missing",
         )]
@@ -1385,7 +1436,7 @@ def _external_metrics_public_projection_check(metrics_data: dict | None) -> list
             name = item.get("name")
             if (
                 isinstance(name, str)
-                and name.strip().lower() in _PUBLIC_PROJECTABLE_METRIC_ALIASES
+                and name.strip().lower() in allowed_metric_ids
                 and _is_finite_numeric(item.get("value"))
             ):
                 has_projectable_metric = True
@@ -1415,8 +1466,30 @@ def _external_visualizations_provenance_compatibility(
 ) -> list[dict]:
     if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
         return []
-    if visualizations_data.get("schema_version") != _EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION:
+    declared_visualizations_version = visualizations_data.get("schema_version")
+    if declared_visualizations_version not in _EXTERNAL_VISUALIZATIONS_SCHEMA_VERSIONS:
         return []
+
+    # Project Spec S0215 Desired Change: the visualizations profile version
+    # must agree with the predictive bundle's own problem type -- a v2
+    # (multiclass) visualizations artifact paired with a binary bundle, or
+    # vice versa, is rejected as a version mismatch.
+    result_semantics = predictive_bundle_data.get("result_semantics")
+    is_multiclass = (
+        isinstance(result_semantics, dict)
+        and result_semantics.get("problem_type") == "multiclass_classification"
+    )
+    expected_visualizations_version = (
+        _EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION_V2 if is_multiclass else _EXTERNAL_VISUALIZATIONS_SCHEMA_VERSION
+    )
+    if declared_visualizations_version != expected_visualizations_version:
+        return [_safe_rejection_reason(
+            "visualizations_provenance_mismatch",
+            "Validated external fitted-model visualizations schema profile does not match the "
+            "predictive bundle's problem type.",
+            "visualizations",
+            "visualizations_version_mismatch",
+        )]
 
     bundle_dataset_slug = _first_nested(predictive_bundle_data, (("dataset_context", "dataset_slug"),))
     visualizations_dataset_slug = _first_nested(

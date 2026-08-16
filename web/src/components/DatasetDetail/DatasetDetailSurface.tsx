@@ -18,6 +18,10 @@ export type DatasetDetailSurfaceProps = {
   performanceContent: ReactNode;
   targetDistributionContent: ReactNode;
   featureImportanceContent: ReactNode;
+  // Project Spec S0215: an optional, bounded normalized confusion matrix
+  // surface, rendered only for a multiclass release -- omitted entirely
+  // (never a placeholder) keeps binary Dataset Detail visually unchanged.
+  confusionMatrixContent?: ReactNode;
   inferenceContent: ReactNode;
   documentationContent?: ReactNode;
 };
@@ -38,6 +42,7 @@ export default function DatasetDetailSurface({
   performanceContent,
   targetDistributionContent,
   featureImportanceContent,
+  confusionMatrixContent,
   inferenceContent,
   documentationContent,
 }: DatasetDetailSurfaceProps) {
@@ -56,6 +61,7 @@ export default function DatasetDetailSurface({
         {performanceContent}
         {targetDistributionContent}
         {featureImportanceContent}
+        {confusionMatrixContent}
       </div>
     </div>
   );

@@ -674,7 +674,9 @@ def test_v2_external_training_record_is_classified_as_external_provenance(tmp_pa
     record_path = tmp_path / "governed" / "training-parameter-record.json"
     _write_schema_version_fixture(record_path, "training-parameter-record.external-fitted-model.v2")
     metrics_path = tmp_path / "governed" / "training-metrics.json"
-    _write_schema_version_fixture(metrics_path, "training-metrics.external-fitted-model.v1")
+    # Project Spec S0215: a v2 (multiclass) training record now pairs with
+    # v2 training-metrics, not the v1 binary metrics profile.
+    _write_schema_version_fixture(metrics_path, "training-metrics.external-fitted-model.v2")
 
     stage, is_external, record_version, metrics_version = assemble_candidate._resolve_training_provenance(
         {
@@ -687,7 +689,26 @@ def test_v2_external_training_record_is_classified_as_external_provenance(tmp_pa
     assert is_external is True
     assert stage == assemble_candidate._EXTERNAL_MODEL_SOURCE_STAGE
     assert record_version == "training-parameter-record.external-fitted-model.v2"
-    assert metrics_version == "training-metrics.external-fitted-model.v1"
+    assert metrics_version == "training-metrics.external-fitted-model.v2"
+
+
+def test_v2_training_record_with_v1_training_metrics_rejects(tmp_path):
+    """Project Spec S0215: mixing a v2 (multiclass) training record with the
+    v1 binary metrics profile must fail closed, not silently accept the
+    stale pairing."""
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.external-fitted-model.v2")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.external-fitted-model.v1")
+
+    with pytest.raises(ValueError, match="training_metrics contract_version"):
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )
 
 
 def test_v1_external_training_record_still_classified_as_external_provenance(tmp_path):

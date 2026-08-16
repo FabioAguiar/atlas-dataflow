@@ -3,7 +3,9 @@ import { normalizeEvaluation, type NormalizedMetricKey } from "../../lib/metrics
 import {
   getPerformanceFocusLabel,
   getPerformanceMetricMetadata,
+  isPerformanceScoreApplicable,
   type OptimizationSemantics,
+  type ProblemType,
 } from "../../lib/performanceMetricMetadata";
 
 type MetricsData = Record<string, unknown>;
@@ -24,6 +26,13 @@ type PerformanceSummaryProps = {
   metrics: MetricsData;
   emphasizedMetricKey?: string | null;
   performanceFocus?: PerformanceFocus | null;
+  /**
+   * Project Spec S0215: release-governed problem type. Optional and
+   * bounded -- omitted or unrecognized values preserve the historical
+   * binary-compatible rendering exactly. Never derived from dataset slug or
+   * editable profile fields.
+   */
+  problemType?: ProblemType | null;
 };
 
 const SCORE_LABELS: Record<NormalizedMetricKey, string> = {
@@ -34,6 +43,13 @@ const SCORE_LABELS: Record<NormalizedMetricKey, string> = {
   recall: "Recall",
   accuracy: "Accuracy",
   log_loss: "Log Loss",
+  // Project Spec S0215: explicit multiclass aggregate labels -- never
+  // relabeled as the ambiguous binary-era f1_score/precision/recall above.
+  balanced_accuracy: "Balanced Accuracy",
+  f1_macro: "F1 Macro",
+  f1_weighted: "F1 Weighted",
+  precision_macro: "Precision Macro",
+  recall_macro: "Recall Macro",
 };
 
 function formatScore(value: number): string {
@@ -117,13 +133,30 @@ function resolveEmphasizedScore(
   return primaryMetricId ?? order[0] ?? null;
 }
 
-export default function PerformanceSummary({ metrics, emphasizedMetricKey, performanceFocus }: PerformanceSummaryProps) {
+export default function PerformanceSummary({
+  metrics,
+  emphasizedMetricKey,
+  performanceFocus,
+  problemType,
+}: PerformanceSummaryProps) {
   const evaluation = normalizeEvaluation(metrics);
+  const isMulticlass = problemType === "multiclass_classification";
+  // Project Spec S0215: for a multiclass release, never present an
+  // ambiguous binary-only published score id (f1_score, precision, recall,
+  // specificity, g_mean, ...) as multiclass-compatible -- even if it was
+  // persisted by Admin before the release became multiclass. Binary
+  // rendering is completely unaffected.
   const publishedScores = performanceFocus?.visible_scores
+    .filter((score) => !isMulticlass || isPerformanceScoreApplicable(score.score_id, "multiclass_classification"))
     .slice()
     .sort((left, right) => left.order - right.order || left.score_id.localeCompare(right.score_id));
   const hasPublishedFocus = Boolean(performanceFocus && publishedScores?.length);
-  const hasAnyScore = evaluation.order.length > 0;
+  // Project Spec S0215: the canonical fallback path also only renders
+  // recognized explicit multiclass ids for a multiclass release.
+  const fallbackOrder = isMulticlass
+    ? evaluation.order.filter((key) => isPerformanceScoreApplicable(key, "multiclass_classification"))
+    : evaluation.order;
+  const hasAnyScore = fallbackOrder.length > 0;
   // Project Spec S0204: the shared focus label authority is the single
   // source for this subtitle -- an unknown focus id never invents a label
   // from the raw id, it simply omits the subtitle.
@@ -133,7 +166,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
     return null;
   }
 
-  const resolvedEmphasis = resolveEmphasizedScore(emphasizedMetricKey, evaluation.order, evaluation.primaryMetricId);
+  const resolvedEmphasis = resolveEmphasizedScore(emphasizedMetricKey, fallbackOrder, evaluation.primaryMetricId);
 
   return (
     <Card className="performance-summary">
@@ -161,7 +194,7 @@ export default function PerformanceSummary({ metrics, emphasizedMetricKey, perfo
               <span className="performance-summary__score-rail" aria-hidden="true" />
             </div>
           );
-        }) : evaluation.order.map((key) => {
+        }) : fallbackOrder.map((key) => {
           const value = evaluation.scores[key];
           if (value === undefined) {
             return null;

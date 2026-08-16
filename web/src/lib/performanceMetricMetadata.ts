@@ -47,6 +47,12 @@ export const PERFORMANCE_FOCUS_CATALOG = {
     ["specificity", "Specificity"],
     ["cohens_kappa", "Cohen's Kappa"],
     ["g_mean", "G-Mean"],
+    // Project Spec S0215: explicit multiclass aggregate score ids -- distinct
+    // from f1_score/recall above, never collapsed into them.
+    ["f1_macro", "F1 Macro"],
+    ["f1_weighted", "F1 Weighted"],
+    ["precision_macro", "Precision Macro"],
+    ["recall_macro", "Recall Macro"],
   ],
   probability_quality: [
     ["log_loss", "Log Loss"],
@@ -118,6 +124,12 @@ const HIGHER_IS_BETTER_IDS: readonly string[] = [
   "gain_at_k",
   "expected_profit",
   "net_benefit",
+  // Project Spec S0215: explicit multiclass aggregate scores are all
+  // higher-is-better.
+  "f1_macro",
+  "f1_weighted",
+  "precision_macro",
+  "recall_macro",
 ];
 
 const LOWER_IS_BETTER_IDS: readonly string[] = [
@@ -186,4 +198,77 @@ const METRIC_METADATA: ReadonlyMap<string, PerformanceMetricMetadata> = (() => {
  */
 export function getPerformanceMetricMetadata(scoreId: string): PerformanceMetricMetadata | undefined {
   return METRIC_METADATA.get(scoreId);
+}
+
+// Project Spec S0215: problem-type applicability metadata for the first
+// governed multiclass score surface. overall_discrimination,
+// positive_class_detection, and operational_decision remain binary-only --
+// they encode positive-class/ranking/cost semantics that have no governed
+// multiclass meaning yet. balanced_classification and probability_quality
+// apply to both problem types, but individual scores within them are
+// further filtered by MULTICLASS_COMPATIBLE_SCORE_IDS below, since not
+// every score in those two foci is multiclass-compatible.
+
+export type ProblemType = "binary_classification" | "multiclass_classification";
+
+const FOCUS_PROBLEM_TYPES: Readonly<Record<PerformanceFocusId, readonly ProblemType[]>> = {
+  overall_discrimination: ["binary_classification"],
+  positive_class_detection: ["binary_classification"],
+  balanced_classification: ["binary_classification", "multiclass_classification"],
+  probability_quality: ["binary_classification", "multiclass_classification"],
+  operational_decision: ["binary_classification"],
+};
+
+// Project Spec S0215: the bounded set of score ids compatible with a
+// multiclass problem type. The legacy ambiguous ids (f1_score, precision,
+// recall, specificity, g_mean, ...) are never included here, even though
+// they belong to a focus that is otherwise multiclass-applicable --
+// averaging semantics are erased by those ids under multi-way
+// classification. Calibration/Brier metrics are not yet marked
+// multiclass-compatible until their multiclass semantics are separately
+// governed.
+const MULTICLASS_COMPATIBLE_SCORE_IDS: ReadonlySet<string> = new Set([
+  "accuracy",
+  "balanced_accuracy",
+  "f1_macro",
+  "f1_weighted",
+  "precision_macro",
+  "recall_macro",
+  "log_loss",
+]);
+
+/** Whether a Performance focus applies to the given problem type. */
+export function isPerformanceFocusApplicable(focusId: string, problemType: ProblemType): boolean {
+  const applicable = (FOCUS_PROBLEM_TYPES as Record<string, readonly ProblemType[]>)[focusId];
+  return applicable ? applicable.includes(problemType) : false;
+}
+
+/**
+ * Whether an individual score id applies to the given problem type. Every
+ * binary-classification score id remains applicable unchanged (preserves
+ * historical Admin/public behavior exactly); for multiclass_classification
+ * only the bounded MULTICLASS_COMPATIBLE_SCORE_IDS set is applicable.
+ */
+export function isPerformanceScoreApplicable(scoreId: string, problemType: ProblemType): boolean {
+  if (problemType === "binary_classification") {
+    return true;
+  }
+  return MULTICLASS_COMPATIBLE_SCORE_IDS.has(scoreId);
+}
+
+/** The Performance focus ids applicable to the given problem type, in catalog order. */
+export function getApplicablePerformanceFocusIds(problemType: ProblemType): PerformanceFocusId[] {
+  return (Object.keys(PERFORMANCE_FOCUS_CATALOG) as PerformanceFocusId[]).filter((focusId) =>
+    isPerformanceFocusApplicable(focusId, problemType),
+  );
+}
+
+/** The [score_id, display_label] entries of a focus applicable to the given problem type, in catalog order. */
+export function getApplicableScoresForFocus(
+  focusId: PerformanceFocusId,
+  problemType: ProblemType,
+): ReadonlyArray<readonly [string, string]> {
+  return PERFORMANCE_FOCUS_CATALOG[focusId].filter(([scoreId]) =>
+    isPerformanceScoreApplicable(scoreId, problemType),
+  );
 }

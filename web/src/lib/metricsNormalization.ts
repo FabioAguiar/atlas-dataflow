@@ -5,7 +5,15 @@ export type NormalizedMetricKey =
   | "precision"
   | "recall"
   | "accuracy"
-  | "log_loss";
+  | "log_loss"
+  // Project Spec S0215: explicit multiclass aggregate ids -- distinct from
+  // the binary-era f1_score/precision/recall above, never collapsed into
+  // them.
+  | "balanced_accuracy"
+  | "f1_macro"
+  | "f1_weighted"
+  | "precision_macro"
+  | "recall_macro";
 
 export type NormalizedMetrics = Partial<Record<NormalizedMetricKey, number>>;
 
@@ -24,6 +32,11 @@ const KNOWN_METRIC_KEYS: NormalizedMetricKey[] = [
   "recall",
   "accuracy",
   "log_loss",
+  "balanced_accuracy",
+  "f1_macro",
+  "f1_weighted",
+  "precision_macro",
+  "recall_macro",
 ];
 
 const METRIC_ALIASES: Record<NormalizedMetricKey, string[]> = {
@@ -34,6 +47,13 @@ const METRIC_ALIASES: Record<NormalizedMetricKey, string[]> = {
   recall: ["recall"],
   accuracy: ["accuracy"],
   log_loss: ["log_loss"],
+  // Project Spec S0215: each explicit multiclass aggregate id is projected
+  // 1:1 -- never aliased into an ambiguous binary-era id.
+  balanced_accuracy: ["balanced_accuracy"],
+  f1_macro: ["f1_macro"],
+  f1_weighted: ["f1_weighted"],
+  precision_macro: ["precision_macro"],
+  recall_macro: ["recall_macro"],
 };
 
 function readScore(source: Record<string, unknown>, aliases: string[]): number | null {

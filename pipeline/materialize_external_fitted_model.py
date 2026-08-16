@@ -53,6 +53,10 @@ MODEL_SOURCE_MODE = "validated_external_fitted_model"
 _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION = "training-parameter-record.external-fitted-model.v1"
 _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION_V2 = "training-parameter-record.external-fitted-model.v2"
 _TRAINING_METRICS_EXTERNAL_VERSION = "training-metrics.external-fitted-model.v1"
+# Project Spec S0215: v2 (multiclass) training-metrics profile, required
+# alongside a v2 training_parameter_record/model_selection_evidence pairing
+# -- never mixed with the v1 binary metrics profile.
+_TRAINING_METRICS_EXTERNAL_VERSION_V2 = "training-metrics.external-fitted-model.v2"
 _MODEL_SELECTION_EVIDENCE_EXTERNAL_VERSION = "model-selection-evidence.external-fitted-model.v1"
 _MODEL_SELECTION_EVIDENCE_EXTERNAL_VERSION_V2 = "model-selection-evidence.external-fitted-model.v2"
 
@@ -335,6 +339,38 @@ def _validate_multiclass_classification_evidence(evidence: dict[str, Any], label
             )
 
 
+def _validate_multiclass_per_class_metrics(
+    per_class_metrics: Any, ordered_class_ids: list[str], label: str
+) -> None:
+    """Project Spec S0215: defensive Python-level validation that a
+    training_metrics per_class_metrics array, when present, exactly agrees
+    with the governed ordered_class_ids in length, uniqueness, and
+    positional order -- never silently sorted or re-derived."""
+    if per_class_metrics is None:
+        return
+    if not isinstance(per_class_metrics, list) or len(per_class_metrics) != len(ordered_class_ids):
+        raise MaterializationBlocked(
+            "per_class_metrics_class_count_mismatch",
+            f"{label} must contain exactly one entry per governed class.",
+            label,
+        )
+    class_ids = [entry.get("class_id") if isinstance(entry, dict) else None for entry in per_class_metrics]
+    if len(set(class_ids)) != len(class_ids):
+        raise MaterializationBlocked(
+            "duplicate_per_class_metric_class_id",
+            f"{label}[].class_id values must be unique.",
+            label,
+        )
+    for position, class_id in enumerate(class_ids):
+        if class_id != ordered_class_ids[position]:
+            raise MaterializationBlocked(
+                "per_class_metrics_class_order_mismatch",
+                f"{label}[{position}].class_id must equal ordered_class_ids[{position}] "
+                f"({ordered_class_ids[position]!r}), matching governed class order exactly.",
+                f"{label}[{position}].class_id",
+            )
+
+
 def materialize_external_fitted_model(
     *,
     dataset_slug: str,
@@ -508,10 +544,25 @@ def materialize_external_fitted_model(
             )
         is_v2 = resolved_schema_version == SCHEMA_VERSION_V2
 
-        if training_metrics.get("schema_version") != _TRAINING_METRICS_EXTERNAL_VERSION:
+        # Project Spec S0215: training_metrics version dispatch follows the
+        # same v1/v2 pairing discipline already established for
+        # model_selection_evidence below -- never mixed with the training
+        # record's own resolved profile.
+        training_metrics_version = training_metrics.get("schema_version")
+        expected_training_metrics_version = (
+            _TRAINING_METRICS_EXTERNAL_VERSION_V2 if is_v2 else _TRAINING_METRICS_EXTERNAL_VERSION
+        )
+        if training_metrics_version != expected_training_metrics_version:
+            known_training_metrics_versions = (
+                _TRAINING_METRICS_EXTERNAL_VERSION,
+                _TRAINING_METRICS_EXTERNAL_VERSION_V2,
+            )
             raise MaterializationBlocked(
-                "invalid_external_evidence_profile",
-                f"training_metrics must declare {_TRAINING_METRICS_EXTERNAL_VERSION!r}.",
+                "mixed_external_evidence_profile"
+                if training_metrics_version in known_training_metrics_versions
+                else "invalid_external_evidence_profile",
+                f"training_metrics must declare {expected_training_metrics_version!r} to match "
+                f"training_parameter_record's {training_record_version!r} profile.",
                 "training_metrics.schema_version",
             )
 
@@ -618,6 +669,33 @@ def materialize_external_fitted_model(
                     "model_selection_evidence.classification_evidence.",
                     "classification_evidence",
                 )
+
+            # Project Spec S0215 Desired Change H: cross-check the training
+            # metrics' own governed class authority against the same
+            # training_parameter_record/model_selection_evidence ordered
+            # class ids -- never sorted or re-derived -- then validate any
+            # completed per-class metrics against that same ordered list.
+            ordered_class_ids = record_classification_evidence.get("ordered_class_ids")
+            metrics_classification_evidence = _require_mapping(
+                training_metrics.get("classification_evidence"),
+                "training_metrics.classification_evidence",
+            )
+            if metrics_classification_evidence.get("ordered_class_ids") != ordered_class_ids:
+                raise MaterializationBlocked(
+                    "classification_evidence_mismatch",
+                    "training_metrics.classification_evidence.ordered_class_ids does not exactly "
+                    "match training_parameter_record.classification_evidence.ordered_class_ids.",
+                    "training_metrics.classification_evidence.ordered_class_ids",
+                )
+            for partition_key in ("validation_evaluation", "final_test_evaluation"):
+                partition = training_metrics.get(partition_key)
+                if isinstance(partition, dict):
+                    _validate_multiclass_per_class_metrics(
+                        partition.get("per_class_metrics"),
+                        ordered_class_ids,
+                        f"training_metrics.{partition_key}.per_class_metrics",
+                    )
+
             normalized_classification_evidence = record_classification_evidence
 
             if educational_threshold is not None:

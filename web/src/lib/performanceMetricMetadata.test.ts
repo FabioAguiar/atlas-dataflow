@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   PERFORMANCE_FOCUS_CATALOG,
+  getApplicablePerformanceFocusIds,
+  getApplicableScoresForFocus,
   getPerformanceFocusLabel,
   getPerformanceMetricMetadata,
+  isPerformanceFocusApplicable,
+  isPerformanceScoreApplicable,
 } from "./performanceMetricMetadata";
 
 const HIGHER_IS_BETTER_IDS = [
@@ -28,6 +32,11 @@ const HIGHER_IS_BETTER_IDS = [
   "gain_at_k",
   "expected_profit",
   "net_benefit",
+  // Project Spec S0215: explicit multiclass aggregate score ids.
+  "f1_macro",
+  "f1_weighted",
+  "precision_macro",
+  "recall_macro",
 ];
 
 const LOWER_IS_BETTER_IDS = [
@@ -128,5 +137,92 @@ describe("getPerformanceFocusLabel (Project Spec S0204)", () => {
       expect(getPerformanceFocusLabel(focusId)).toBeDefined();
     }
     expect(catalogFocusIds).toHaveLength(5);
+  });
+});
+
+describe("problem-type applicability (Project Spec S0215)", () => {
+  it("marks overall_discrimination, positive_class_detection, and operational_decision binary-only", () => {
+    for (const focusId of ["overall_discrimination", "positive_class_detection", "operational_decision"] as const) {
+      expect(isPerformanceFocusApplicable(focusId, "binary_classification")).toBe(true);
+      expect(isPerformanceFocusApplicable(focusId, "multiclass_classification")).toBe(false);
+    }
+  });
+
+  it("marks balanced_classification and probability_quality applicable to both problem types", () => {
+    for (const focusId of ["balanced_classification", "probability_quality"] as const) {
+      expect(isPerformanceFocusApplicable(focusId, "binary_classification")).toBe(true);
+      expect(isPerformanceFocusApplicable(focusId, "multiclass_classification")).toBe(true);
+    }
+  });
+
+  it("returns false for an unknown focus id", () => {
+    expect(isPerformanceFocusApplicable("not_a_real_focus", "multiclass_classification")).toBe(false);
+  });
+
+  it("every binary-classification score id remains applicable, unchanged", () => {
+    for (const entries of Object.values(PERFORMANCE_FOCUS_CATALOG)) {
+      for (const [scoreId] of entries) {
+        expect(isPerformanceScoreApplicable(scoreId, "binary_classification")).toBe(true);
+      }
+    }
+  });
+
+  it("marks the explicit multiclass aggregate ids and log_loss multiclass-compatible", () => {
+    for (const scoreId of [
+      "accuracy",
+      "balanced_accuracy",
+      "f1_macro",
+      "f1_weighted",
+      "precision_macro",
+      "recall_macro",
+      "log_loss",
+    ]) {
+      expect(isPerformanceScoreApplicable(scoreId, "multiclass_classification")).toBe(true);
+    }
+  });
+
+  it("never marks the legacy ambiguous binary ids multiclass-compatible", () => {
+    for (const scoreId of ["f1_score", "precision", "recall", "specificity", "g_mean", "mcc", "cohens_kappa"]) {
+      expect(isPerformanceScoreApplicable(scoreId, "multiclass_classification")).toBe(false);
+    }
+  });
+
+  it("does not yet mark calibration/Brier metrics multiclass-compatible", () => {
+    for (const scoreId of [
+      "brier_score",
+      "calibration_error",
+      "calibration_slope",
+      "calibration_intercept",
+      "expected_calibration_error",
+    ]) {
+      expect(isPerformanceScoreApplicable(scoreId, "multiclass_classification")).toBe(false);
+    }
+  });
+
+  it("getApplicablePerformanceFocusIds returns only balanced_classification and probability_quality for multiclass", () => {
+    expect(getApplicablePerformanceFocusIds("multiclass_classification")).toEqual([
+      "balanced_classification",
+      "probability_quality",
+    ]);
+  });
+
+  it("getApplicablePerformanceFocusIds returns every focus id for binary", () => {
+    expect(getApplicablePerformanceFocusIds("binary_classification")).toEqual(
+      Object.keys(PERFORMANCE_FOCUS_CATALOG),
+    );
+  });
+
+  it("getApplicableScoresForFocus filters balanced_classification to the multiclass-compatible subset", () => {
+    const scores = getApplicableScoresForFocus("balanced_classification", "multiclass_classification");
+    const scoreIds = scores.map(([scoreId]) => scoreId);
+    expect(scoreIds).toEqual(["balanced_accuracy", "accuracy", "f1_macro", "f1_weighted", "precision_macro", "recall_macro"]);
+    expect(scoreIds).not.toContain("f1_score");
+    expect(scoreIds).not.toContain("recall");
+  });
+
+  it("getApplicableScoresForFocus returns the full focus catalog entries unchanged for binary", () => {
+    expect(getApplicableScoresForFocus("balanced_classification", "binary_classification")).toEqual(
+      PERFORMANCE_FOCUS_CATALOG.balanced_classification,
+    );
   });
 });

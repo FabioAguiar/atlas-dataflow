@@ -6,11 +6,16 @@
   "oneOf": [
     { "$ref": "#/$defs/legacy_v1" },
     { "$ref": "#/$defs/governed_v2" },
-    { "$ref": "#/$defs/external_fitted_model_v1" }
+    { "$ref": "#/$defs/external_fitted_model_v1" },
+    { "$ref": "#/$defs/external_fitted_model_v2" }
   ],
   "$defs": {
     "external_model_family": {
       "enum": ["hist_gradient_boosting", "gradient_boosting", "random_forest", "logistic_regression"]
+    },
+    "external_model_family_v2": {
+      "description": "Project Spec S0215: the multiclass v2 external visualizations profile pairs with the same bounded S0208 estimator family vocabulary as training-parameter-record.external-fitted-model.v2 -- decision_tree in place of v1's gradient_boosting.",
+      "enum": ["hist_gradient_boosting", "decision_tree", "random_forest", "logistic_regression"]
     },
     "identifier": {
       "type": "string",
@@ -196,6 +201,97 @@
           }
         },
         "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
+      }
+    },
+    "external_fitted_model_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_kind", "model_source_mode", "created_at", "dataset_identity", "external_materialization_provenance", "charts", "target_distribution_method", "feature_importance_method", "confusion_matrix", "evidence_policy"],
+      "description": "Project Spec S0215: multiclass v2 external visualizations profile. Preserves every S0193/S0194 binary discipline established by v1 (Target Distribution and Feature Importance charts, the same evidence_policy) and additionally requires a governed normalized confusion matrix. This profile never embeds raw predictions, raw probabilities, or model bytes, and the materializer that produces it never recomputes confusion-matrix science or deserializes the model.",
+      "properties": {
+        "schema_version": { "const": "analytical-visualizations.external-fitted-model.v2" },
+        "artifact_kind": { "const": "analytical_visualizations" },
+        "model_source_mode": { "const": "validated_external_fitted_model" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug"],
+          "properties": {
+            "dataset_slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
+          }
+        },
+        "external_materialization_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "external_evidence_reference", "external_evidence_sha256"],
+          "properties": {
+            "model_family": { "$ref": "#/$defs/external_model_family_v2" },
+            "external_evidence_reference": { "$ref": "#/$defs/safe_relative_reference" },
+            "external_evidence_sha256": { "$ref": "#/$defs/sha256" },
+            "visual_evidence_origin": { "enum": ["external_evidence_index", "atlas_reference_derivation"] }
+          }
+        },
+        "charts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/legacy_chart" },
+          "allOf": [
+            { "contains": { "properties": { "id": { "const": "target_distribution" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "feature_importance" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 }
+          ]
+        },
+        "target_distribution_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["population_kind", "source", "target_column"],
+          "properties": {
+            "population_kind": { "const": "external_prepared_dataset" },
+            "source": { "type": "string", "minLength": 1 },
+            "target_column": { "type": "string", "minLength": 1 }
+          }
+        },
+        "feature_importance_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "source", "method", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
+          "properties": {
+            "model_family": { "$ref": "#/$defs/external_model_family_v2" },
+            "source": { "type": "string", "minLength": 1 },
+            "method": { "type": "string", "minLength": 1 },
+            "total_source_feature_count": { "type": "integer", "minimum": 1 },
+            "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
+            "public_row_limit": { "const": 10 }
+          }
+        },
+        "confusion_matrix": { "$ref": "#/$defs/normalized_confusion_matrix" },
+        "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
+      }
+    },
+    "normalized_confusion_matrix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ordered_class_ids", "matrix", "row_axis", "column_axis"],
+      "description": "Project Spec S0215: a governed, row-normalized multiclass confusion matrix -- rows are true classes, columns are predicted classes, in the same governed class order carried by the S0208 external classification evidence family. Every cell is a finite fraction in [0,1]; each true-class row sums to 1 within a strict tolerance enforced by validating code alongside this schema (JSON Schema alone cannot express a cross-cell sum constraint). Never raw prediction counts or row-level data.",
+      "properties": {
+        "ordered_class_ids": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "matrix": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "items": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "row_axis": { "const": "true_class" },
+        "column_axis": { "const": "predicted_class" }
       }
     },
     "governed_v2": {

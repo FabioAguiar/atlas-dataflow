@@ -1101,7 +1101,7 @@ def _multiclass_predictive_bundle_overrides(
 
 def _multiclass_metrics_overrides() -> dict:
     return {
-        "schema_version": "training-metrics.external-fitted-model.v1",
+        "schema_version": "training-metrics.external-fitted-model.v2",
         "evidence_identity": {
             "model_source_mode": "validated_external_fitted_model",
             "dataset_slug": DATASET_SLUG,
@@ -1225,6 +1225,253 @@ def test_multiclass_bundle_containing_educational_threshold_rejects(tmp_path):
 
     assert result["valid"] is False
     assert "external_multiclass_threshold_present" in _rejection_safe_details(result)
+
+
+def test_multiclass_bundle_with_legacy_v1_metrics_still_accepted(tmp_path):
+    """Project Spec S0215: a multiclass predictive bundle historically paired
+    with the shared v1 metrics profile (before v2 existed) must continue to
+    be accepted -- the new v2 profile is additive, not a breaking
+    requirement for already-valid legacy multiclass candidates."""
+    v1_metrics = {
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": DATASET_SLUG,
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "metrics": [{"name": "accuracy", "value": 0.7}],
+        },
+    }
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(),
+            "metrics": v1_metrics,
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert "external_metrics_schema_version_missing" not in _rejection_safe_details(result)
+
+
+def test_multiclass_bundle_with_v2_metrics_accepted_using_multiclass_vocabulary(tmp_path):
+    """Project Spec S0215: a multiclass predictive bundle paired with the new
+    v2 metrics profile is accepted, and its public projectability is judged
+    using the bounded explicit multiclass aggregate vocabulary (e.g.
+    balanced_accuracy), not the shared binary aliases."""
+    v2_metrics = {
+        "schema_version": "training-metrics.external-fitted-model.v2",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": DATASET_SLUG,
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "metrics": [{"name": "balanced_accuracy", "value": 0.72}],
+        },
+    }
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(),
+            "metrics": v2_metrics,
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+
+
+def _external_visualizations_v1_payload() -> dict:
+    return {
+        "schema_version": "analytical-visualizations.external-fitted-model.v1",
+        "artifact_kind": "analytical_visualizations",
+        "model_source_mode": "validated_external_fitted_model",
+        "created_at": "2026-06-19T00:00:00Z",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "external_materialization_provenance": {
+            "model_family": "hist_gradient_boosting",
+            "external_evidence_reference": "artifacts/example/analytical-visual-evidence.json",
+            "external_evidence_sha256": "a" * 64,
+        },
+        "charts": [
+            {
+                "id": "target_distribution", "title": "Target Distribution", "type": "bar",
+                "x_label": "Churn", "y_label": "Count",
+                "data": [{"name": "No", "value": 3}, {"name": "Yes", "value": 1}],
+            },
+            {
+                "id": "feature_importance", "title": "Feature Importance", "type": "bar",
+                "x_label": "Feature", "y_label": "Importance",
+                "data": [{"name": "example_feature", "value": 1.0}],
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "external_prepared_dataset",
+            "source": "external_prepared_evaluation_population",
+            "target_column": "Churn",
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "external_validated_fitted_model",
+            "method": "permutation_importance",
+            "total_source_feature_count": 1,
+            "omitted_source_feature_count": 0,
+            "public_row_limit": 10,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True, "raw_runtime_prohibited": True, "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True, "raw_dataset_embedded": False, "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False, "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False, "reduced_and_sanitized": True,
+        },
+    }
+
+
+def _external_visualizations_v2_payload() -> dict:
+    payload = _external_visualizations_v1_payload()
+    payload["schema_version"] = "analytical-visualizations.external-fitted-model.v2"
+    payload["external_materialization_provenance"]["model_family"] = "decision_tree"
+    payload["feature_importance_method"]["model_family"] = "decision_tree"
+    payload["confusion_matrix"] = {
+        "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+        "matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        "row_axis": "true_class",
+        "column_axis": "predicted_class",
+    }
+    return payload
+
+
+def test_multiclass_bundle_with_v1_visualizations_rejects(tmp_path):
+    """Project Spec S0215: a multiclass predictive bundle paired with the
+    binary v1 visualizations profile must fail closed as a version
+    mismatch. The visualizations artifact is written directly (bypassing
+    _artifact_payload's legacy-shape merge, which the external profile's
+    additionalProperties: false rejects) so it is a pure external v1
+    instance."""
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+    _write_json(candidate_dir / _role_path("visualizations"), _external_visualizations_v1_payload())
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "visualizations_version_mismatch" in _rejection_safe_details(result)
+
+
+def test_multiclass_bundle_with_v2_visualizations_accepted(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+    _write_json(candidate_dir / _role_path("visualizations"), _external_visualizations_v2_payload())
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert "visualizations_version_mismatch" not in _rejection_safe_details(result)
+
+
+def test_binary_bundle_with_v2_visualizations_rejects(tmp_path):
+    """Project Spec S0215: a binary predictive bundle paired with the new
+    v2 (multiclass) visualizations profile must fail closed as a version
+    mismatch."""
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": {
+                "model_provenance_origin": "validated_external_fitted_model",
+                "result_semantics": {
+                    "schema_version": "binary-result-semantics.v1",
+                    "problem_type": "binary_classification",
+                    "decision": {"threshold": 0.25},
+                },
+                "external_model_evidence": {
+                    "origin": "validated_external_fitted_model",
+                    "educational_threshold": {"value": 0.25},
+                    "readiness": {
+                        "operational_validity": "unconfirmed",
+                        "operational_threshold": {"status": "unresolved", "value": None},
+                        "operational_prediction_available": False,
+                    },
+                },
+            },
+            "metrics": {
+                "schema_version": "training-metrics.external-fitted-model.v1",
+                "evidence_identity": {
+                    "model_source_mode": "validated_external_fitted_model",
+                    "dataset_slug": DATASET_SLUG,
+                },
+                "validation_evaluation": {
+                    "partition_role": "validation",
+                    "metrics": [{"name": "roc_auc", "value": 0.80}],
+                },
+            },
+        },
+    )
+    _write_json(candidate_dir / _role_path("visualizations"), _external_visualizations_v2_payload())
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "visualizations_version_mismatch" in _rejection_safe_details(result)
+
+
+def test_binary_bundle_with_v2_metrics_rejects(tmp_path):
+    """Project Spec S0215: a binary predictive bundle must continue to
+    require the v1 metrics profile -- pairing it with the new v2 multiclass
+    metrics profile must fail closed."""
+    v2_metrics = {
+        "schema_version": "training-metrics.external-fitted-model.v2",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": DATASET_SLUG,
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "metrics": [{"name": "accuracy", "value": 0.7}],
+        },
+    }
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": {
+                "model_provenance_origin": "validated_external_fitted_model",
+                "result_semantics": {
+                    "schema_version": "binary-result-semantics.v1",
+                    "problem_type": "binary_classification",
+                    "decision": {"threshold": 0.25},
+                },
+                "external_model_evidence": {
+                    "origin": "validated_external_fitted_model",
+                    "educational_threshold": {"value": 0.25},
+                    "readiness": {
+                        "operational_validity": "unconfirmed",
+                        "operational_threshold": {"status": "unresolved", "value": None},
+                        "operational_prediction_available": False,
+                    },
+                },
+            },
+            "metrics": v2_metrics,
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "external_metrics_schema_version_missing" in _rejection_safe_details(result)
 
 
 def test_binary_threshold_compatibility_remains_unchanged_after_multiclass_dispatch(tmp_path):

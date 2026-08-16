@@ -40,10 +40,20 @@ from typing import Any
 
 MODEL_SOURCE_MODE = "validated_external_fitted_model"
 VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.external-fitted-model.v1"
+# Project Spec S0215: the multiclass v2 external visualizations profile,
+# selected exclusively by the caller's materialization_result.schema_version
+# -- never dataset_slug or model family alone.
+VISUALIZATIONS_SCHEMA_VERSION_V2 = "analytical-visualizations.external-fitted-model.v2"
+MATERIALIZATION_SCHEMA_VERSION_V2 = "external-fitted-model-materialization.v2"
 ARTIFACT_KIND = "analytical_visualizations"
 
 _MODEL_FAMILIES = ("hist_gradient_boosting", "gradient_boosting", "random_forest", "logistic_regression")
+# Project Spec S0215: the v2 (multiclass) bounded estimator family vocabulary
+# mirrors training-parameter-record.external-fitted-model.v2's S0208 set --
+# decision_tree in place of v1's gradient_boosting.
+_MODEL_FAMILIES_V2 = ("hist_gradient_boosting", "decision_tree", "random_forest", "logistic_regression")
 _PUBLIC_ROW_LIMIT = 10
+_CONFUSION_MATRIX_ROW_SUM_TOLERANCE = 1e-6
 
 # Project Spec S0194: the visual-evidence origin this artifact's
 # external_evidence_reference/external_evidence_sha256 actually describe --
@@ -250,6 +260,75 @@ def _chart_data_points(rows: Any, field: str, *, max_items: int | None = None) -
     return points
 
 
+def _finite_unit_interval(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0.0 <= value <= 1.0
+    )
+
+
+def _validate_and_normalize_confusion_matrix(
+    source: Any, ordered_class_ids: list[str], field: str
+) -> list[list[float]]:
+    """Project Spec S0215: structurally validate a caller-supplied
+    normalized confusion matrix against the governed ordered_class_ids
+    (already cross-checked against the materialization result's own
+    classification_evidence by the caller) -- never recomputed, never
+    re-derived from raw predictions. Requires an exact NxN shape matching
+    the governed class count, finite cell values in [0,1], and every
+    true-class row to sum to 1 within a strict tolerance."""
+    matrix_source = _require_mapping(source, field)
+    evidence_class_ids = matrix_source.get("ordered_class_ids")
+    if evidence_class_ids != ordered_class_ids:
+        raise VisualizationsMaterializationBlocked(
+            "confusion_matrix_class_order_mismatch",
+            f"{field}.ordered_class_ids must exactly match the governed materialization "
+            "classification_evidence.ordered_class_ids.",
+            f"{field}.ordered_class_ids",
+        )
+
+    class_count = len(ordered_class_ids)
+    rows = matrix_source.get("matrix")
+    if not isinstance(rows, list) or len(rows) != class_count:
+        raise VisualizationsMaterializationBlocked(
+            "confusion_matrix_shape_invalid",
+            f"{field}.matrix must contain exactly {class_count} rows.",
+            f"{field}.matrix",
+        )
+
+    normalized_rows: list[list[float]] = []
+    for row_index, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != class_count:
+            raise VisualizationsMaterializationBlocked(
+                "confusion_matrix_shape_invalid",
+                f"{field}.matrix[{row_index}] must contain exactly {class_count} entries.",
+                f"{field}.matrix[{row_index}]",
+            )
+        normalized_row: list[float] = []
+        row_sum = 0.0
+        for column_index, cell in enumerate(row):
+            if not _finite_unit_interval(cell):
+                raise VisualizationsMaterializationBlocked(
+                    "confusion_matrix_cell_invalid",
+                    f"{field}.matrix[{row_index}][{column_index}] must be a finite number in [0,1].",
+                    f"{field}.matrix[{row_index}][{column_index}]",
+                )
+            normalized_row.append(float(cell))
+            row_sum += float(cell)
+        if abs(row_sum - 1.0) > _CONFUSION_MATRIX_ROW_SUM_TOLERANCE:
+            raise VisualizationsMaterializationBlocked(
+                "confusion_matrix_row_not_normalized",
+                f"{field}.matrix[{row_index}] (true class {ordered_class_ids[row_index]!r}) must "
+                f"sum to 1 within {_CONFUSION_MATRIX_ROW_SUM_TOLERANCE}.",
+                f"{field}.matrix[{row_index}]",
+            )
+        normalized_rows.append(normalized_row)
+
+    return normalized_rows
+
+
 def materialize_external_analytical_visualizations(
     *,
     dataset_slug: str,
@@ -314,6 +393,11 @@ def materialize_external_analytical_visualizations(
                 f"materialization_result.model_source_mode must be {MODEL_SOURCE_MODE!r}.",
                 "materialization_result.model_source_mode",
             )
+        # Project Spec S0215: the materialization result's own schema_version
+        # is the sole discriminator between the historical binary v1 profile
+        # and the new multiclass v2 profile -- never dataset_slug or model
+        # family alone.
+        is_v2 = materialization_result.get("schema_version") == MATERIALIZATION_SCHEMA_VERSION_V2
 
         materialization_dataset_slug = _require_mapping(
             materialization_result.get("dataset_identity"), "materialization_result.dataset_identity"
@@ -377,10 +461,11 @@ def materialize_external_analytical_visualizations(
                 "training_parameter_record",
             )
         record_model_family = training_record.get("model_family")
-        if record_model_family not in _MODEL_FAMILIES:
+        allowed_model_families = _MODEL_FAMILIES_V2 if is_v2 else _MODEL_FAMILIES
+        if record_model_family not in allowed_model_families:
             raise VisualizationsMaterializationBlocked(
                 "invalid_model_family",
-                f"training_parameter_record.model_family must be one of {list(_MODEL_FAMILIES)!r}.",
+                f"training_parameter_record.model_family must be one of {list(allowed_model_families)!r}.",
                 "training_parameter_record.model_family",
             )
 
@@ -446,13 +531,44 @@ def materialize_external_analytical_visualizations(
             max_items=_PUBLIC_ROW_LIMIT,
         )
 
+        confusion_matrix: dict[str, Any] | None = None
+        if is_v2:
+            # Project Spec S0215: the governed class order is the
+            # materialization result's own classification_evidence -- never
+            # re-derived, never accepted from the caller's visual evidence
+            # alone. Absent/malformed classification_evidence or matrix
+            # evidence blocks before any output is written.
+            classification_evidence = _require_mapping(
+                materialization_result.get("classification_evidence"),
+                "materialization_result.classification_evidence",
+            )
+            ordered_class_ids = classification_evidence.get("ordered_class_ids")
+            if not isinstance(ordered_class_ids, list) or len(ordered_class_ids) < 3:
+                raise VisualizationsMaterializationBlocked(
+                    "missing_required_field",
+                    "materialization_result.classification_evidence.ordered_class_ids must "
+                    "contain at least 3 class ids.",
+                    "materialization_result.classification_evidence.ordered_class_ids",
+                )
+            normalized_matrix = _validate_and_normalize_confusion_matrix(
+                external_visual_evidence.get("confusion_matrix"),
+                ordered_class_ids,
+                "external_visual_evidence.confusion_matrix",
+            )
+            confusion_matrix = {
+                "ordered_class_ids": list(ordered_class_ids),
+                "matrix": normalized_matrix,
+                "row_axis": "true_class",
+                "column_axis": "predicted_class",
+            }
+
         output_resolved = _safe_repo_relative_path(
             output_visualizations_path, "output_visualizations_path", resolved_repo_root
         )
 
         now = _utc_now_iso()
         artifact: dict[str, Any] = {
-            "schema_version": VISUALIZATIONS_SCHEMA_VERSION,
+            "schema_version": VISUALIZATIONS_SCHEMA_VERSION_V2 if is_v2 else VISUALIZATIONS_SCHEMA_VERSION,
             "artifact_kind": ARTIFACT_KIND,
             "model_source_mode": MODEL_SOURCE_MODE,
             "created_at": now,
@@ -507,6 +623,8 @@ def materialize_external_analytical_visualizations(
                 "reduced_and_sanitized": True,
             },
         }
+        if confusion_matrix is not None:
+            artifact["confusion_matrix"] = confusion_matrix
 
         output_resolved.parent.mkdir(parents=True, exist_ok=True)
         output_resolved.write_text(json.dumps(artifact, indent=2, sort_keys=True), encoding="utf-8")

@@ -31,14 +31,20 @@ _VISUALIZATIONS_ROLE = "visualizations"
 # projection.
 _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.v1"
 _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION = "analytical-visualizations.external-fitted-model.v1"
+# Project Spec S0215: the multiclass v2 external profile projects the same
+# bounded Target Distribution/Feature Importance charts as v1, plus an
+# additional bounded confusion_matrix (see _bounded_confusion_matrix below).
+_ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2 = "analytical-visualizations.external-fitted-model.v2"
 _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION,
+    _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
 )
 _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND = "analytical_visualizations"
 _REQUIRED_CHART_IDS = ("target_distribution", "feature_importance")
 _MAX_CHART_DATA_POINTS = 64
 _TARGET_DISTRIBUTION_CHART_ID = "target_distribution"
+_CONFUSION_MATRIX_ROW_SUM_TOLERANCE = 1e-6
 
 # Project Spec S0205: population_kind identities the bounded dataset-
 # population derivation accepts as an instance-count authority. Any other
@@ -235,6 +241,69 @@ def _dataset_statistics(
     return None
 
 
+def _is_finite_unit_interval(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and 0.0 <= value <= 1.0
+    )
+
+
+def _bounded_confusion_matrix(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0215 Desired Change: bounded public projection of a
+    normalized multiclass confusion matrix, only for a valid
+    analytical-visualizations.external-fitted-model.v2 artifact. Re-validates
+    shape, bounds, and per-row normalization defensively (never trusting the
+    materializer's own validation alone) and returns exactly
+    ordered_class_ids/matrix/row_axis/column_axis -- no source paths,
+    provenance, or other internal fields."""
+    if visualizations.get("schema_version") != _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2:
+        return None
+
+    confusion_matrix = visualizations.get("confusion_matrix")
+    if not isinstance(confusion_matrix, dict):
+        return None
+    if confusion_matrix.get("row_axis") != "true_class" or confusion_matrix.get("column_axis") != "predicted_class":
+        return None
+
+    ordered_class_ids = confusion_matrix.get("ordered_class_ids")
+    if (
+        not isinstance(ordered_class_ids, list)
+        or len(ordered_class_ids) < 3
+        or len(set(ordered_class_ids)) != len(ordered_class_ids)
+        or not all(isinstance(class_id, str) and class_id for class_id in ordered_class_ids)
+    ):
+        return None
+
+    class_count = len(ordered_class_ids)
+    rows = confusion_matrix.get("matrix")
+    if not isinstance(rows, list) or len(rows) != class_count:
+        return None
+
+    normalized_rows: list[list[float]] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) != class_count:
+            return None
+        normalized_row: list[float] = []
+        row_sum = 0.0
+        for cell in row:
+            if not _is_finite_unit_interval(cell):
+                return None
+            normalized_row.append(float(cell))
+            row_sum += float(cell)
+        if abs(row_sum - 1.0) > _CONFUSION_MATRIX_ROW_SUM_TOLERANCE:
+            return None
+        normalized_rows.append(normalized_row)
+
+    return {
+        "ordered_class_ids": list(ordered_class_ids),
+        "matrix": normalized_rows,
+        "row_axis": "true_class",
+        "column_axis": "predicted_class",
+    }
+
+
 def _safe_projection(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -308,6 +377,10 @@ def load_public_visualizations(
     dataset_statistics = _dataset_statistics(visualizations, canonical_charts)
     if dataset_statistics is not None:
         payload["dataset_statistics"] = dataset_statistics
+
+    confusion_matrix = _bounded_confusion_matrix(visualizations)
+    if confusion_matrix is not None:
+        payload["confusion_matrix"] = confusion_matrix
 
     projection = _safe_projection(payload)
     if not isinstance(projection, dict):

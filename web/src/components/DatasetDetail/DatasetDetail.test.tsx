@@ -20,6 +20,7 @@ import {
 } from ".";
 import FeatureImportance from "./FeatureImportance";
 import TargetDistribution from "./TargetDistribution";
+import ConfusionMatrix from "./ConfusionMatrix";
 import { presentDatasetDateOnly, safePublicSourceUrl } from "../../lib/datasetPresentation";
 
 function renderHeader(
@@ -215,6 +216,215 @@ describe("PerformanceSummary focus subtitle shared label authority (Project Spec
       />,
     );
     expect(document.querySelector(".performance-summary__focus")).not.toBeInTheDocument();
+  });
+});
+
+// Project Spec S0215: PerformanceSummary never presents ambiguous
+// binary-only scores as multiclass-compatible, whether the score list came
+// from a published Admin focus or the raw canonical fallback metrics.
+describe("PerformanceSummary multiclass problem-type filtering (Project Spec S0215)", () => {
+  const staleBinaryFocus = {
+    focus_id: "balanced_classification" as const,
+    highlighted_score_id: "f1_macro",
+    visible_scores: [
+      { score_id: "f1_score", display_label: "F1-score", value: "0.77", value_source: "manual" as const, order: 0 },
+      { score_id: "recall", display_label: "Recall", value: "0.75", value_source: "manual" as const, order: 1 },
+      { score_id: "f1_macro", display_label: "F1 Macro", value: "0.80", value_source: "manual" as const, order: 2 },
+    ],
+  };
+
+  it("filters an ambiguous binary-only published score id out of a multiclass release", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={staleBinaryFocus}
+        problemType="multiclass_classification"
+      />,
+    );
+    expect(screen.getByText("F1 Macro")).toBeInTheDocument();
+    expect(screen.queryByText("F1-score")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recall")).not.toBeInTheDocument();
+  });
+
+  it("preserves every published score id, unfiltered, for a binary release", () => {
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={staleBinaryFocus}
+        problemType="binary_classification"
+      />,
+    );
+    expect(screen.getByText("F1-score")).toBeInTheDocument();
+    expect(screen.getByText("Recall")).toBeInTheDocument();
+    expect(screen.getByText("F1 Macro")).toBeInTheDocument();
+  });
+
+  it("preserves every published score id, unfiltered, when problemType is omitted", () => {
+    render(<PerformanceSummary metrics={{}} performanceFocus={staleBinaryFocus} />);
+    expect(screen.getByText("F1-score")).toBeInTheDocument();
+    expect(screen.getByText("Recall")).toBeInTheDocument();
+  });
+
+  it("renders explicit multiclass aggregate labels from the canonical fallback metrics, never relabeled as generic F1", () => {
+    render(
+      <PerformanceSummary
+        metrics={{ evaluation: { metrics: { f1_macro: 0.75, f1_weighted: 0.76, balanced_accuracy: 0.72 } } }}
+        problemType="multiclass_classification"
+      />,
+    );
+    expect(screen.getByText("F1 Macro")).toBeInTheDocument();
+    expect(screen.getByText("F1 Weighted")).toBeInTheDocument();
+    expect(screen.getByText("Balanced Accuracy")).toBeInTheDocument();
+  });
+
+  it("never surfaces an ambiguous binary-only canonical fallback metric for a multiclass release", () => {
+    render(
+      <PerformanceSummary
+        metrics={{ evaluation: { metrics: { f1_score: 0.77, precision: 0.8, recall: 0.75, accuracy: 0.9 } } }}
+        problemType="multiclass_classification"
+      />,
+    );
+    expect(screen.getByText("Accuracy")).toBeInTheDocument();
+    expect(screen.queryByText("F1-score")).not.toBeInTheDocument();
+    expect(screen.queryByText("Precision")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recall")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when every canonical fallback metric is binary-only for a multiclass release", () => {
+    const { container } = render(
+      <PerformanceSummary
+        metrics={{ evaluation: { metrics: { f1_score: 0.77, precision: 0.8 } } }}
+        problemType="multiclass_classification"
+      />,
+    );
+    expect(container.querySelector(".performance-summary")).not.toBeInTheDocument();
+  });
+});
+
+// Project Spec S0215: the shared normalized multiclass confusion-matrix
+// renderer used by both public Dataset Detail and Admin Live Preview.
+describe("ConfusionMatrix (Project Spec S0215)", () => {
+  const validVisualizations = {
+    confusion_matrix: {
+      ordered_class_ids: ["setosa", "versicolor", "virginica"],
+      matrix: [
+        [0.9, 0.1, 0],
+        [0.05, 0.85, 0.1],
+        [0, 0.2, 0.8],
+      ],
+      row_axis: "true_class",
+      column_axis: "predicted_class",
+    },
+  };
+
+  it("renders nothing when visualizations is null", () => {
+    const { container } = render(<ConfusionMatrix visualizations={null} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing when confusion_matrix is absent (every binary release)", () => {
+    const { container } = render(<ConfusionMatrix visualizations={{ charts: [] }} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing when ordered_class_ids has fewer than 3 entries", () => {
+    const { container } = render(
+      <ConfusionMatrix
+        visualizations={{
+          confusion_matrix: { ordered_class_ids: ["a", "b"], matrix: [[1, 0], [0, 1]] },
+        }}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing when a cell is out of [0,1] bounds", () => {
+    const { container } = render(
+      <ConfusionMatrix
+        visualizations={{
+          confusion_matrix: {
+            ordered_class_ids: ["a", "b", "c"],
+            matrix: [
+              [1.5, 0, 0],
+              [0, 1, 0],
+              [0, 0, 1],
+            ],
+          },
+        }}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing when a row does not sum to 1", () => {
+    const { container } = render(
+      <ConfusionMatrix
+        visualizations={{
+          confusion_matrix: {
+            ordered_class_ids: ["a", "b", "c"],
+            matrix: [
+              [0.5, 0.2, 0.2],
+              [0, 1, 0],
+              [0, 0, 1],
+            ],
+          },
+        }}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing when the matrix shape is not NxN", () => {
+    const { container } = render(
+      <ConfusionMatrix
+        visualizations={{
+          confusion_matrix: {
+            ordered_class_ids: ["a", "b", "c"],
+            matrix: [
+              [1, 0],
+              [0, 1],
+              [0, 1],
+            ],
+          },
+        }}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders a table with governed row/column class order and readable percentages", () => {
+    render(<ConfusionMatrix visualizations={validVisualizations} />);
+
+    const table = screen.getByRole("table", { name: "Confusion matrix" });
+    const rowHeaders = within(table).getAllByRole("rowheader").map((cell) => cell.textContent);
+    expect(rowHeaders).toEqual(["setosa", "versicolor", "virginica"]);
+
+    const columnHeaders = within(table)
+      .getAllByRole("columnheader")
+      .map((cell) => cell.textContent)
+      .filter((text) => ["setosa", "versicolor", "virginica"].includes(text ?? ""));
+    expect(columnHeaders).toEqual(["setosa", "versicolor", "virginica"]);
+
+    expect(screen.getByText("90.0%")).toBeInTheDocument();
+    expect(screen.getByText("85.0%")).toBeInTheDocument();
+    expect(screen.getByText("80.0%")).toBeInTheDocument();
+  });
+
+  it("labels rows as actual classes and columns as predicted classes", () => {
+    render(<ConfusionMatrix visualizations={validVisualizations} />);
+    expect(screen.getByText("Actual class")).toBeInTheDocument();
+    expect(screen.getByText("Predicted class")).toBeInTheDocument();
+    expect(screen.getByText("Rows are actual classes; columns are predicted classes.")).toBeInTheDocument();
+  });
+
+  it("never conveys a cell's value through color alone -- every cell carries readable percentage text", () => {
+    render(<ConfusionMatrix visualizations={validVisualizations} />);
+    const table = screen.getByRole("table", { name: "Confusion matrix" });
+    const dataCells = within(table).getAllByRole("cell");
+    expect(dataCells).toHaveLength(9);
+    for (const cell of dataCells) {
+      expect(cell.textContent).toMatch(/^\d+\.\d%$/);
+    }
   });
 });
 
@@ -581,6 +791,48 @@ describe("DatasetDetailSurface exact tab card ownership (S0138)", () => {
     expect(panel.querySelectorAll(".atlas-card")).toHaveLength(0);
     expect(panel.querySelector(".public-inference-form")).not.toBeInTheDocument();
     expect(panel.querySelector(".inference-result")).not.toBeInTheDocument();
+  });
+
+  // Project Spec S0215: confusionMatrixContent is an optional fifth Overview
+  // slot -- absent (undefined) for every binary composition above, so
+  // binary Dataset Detail's exact four-card contract is unaffected. This
+  // proves the slot itself when a caller does supply it for a multiclass
+  // release.
+  it("Overview renders a fifth card for confusionMatrixContent only when supplied with valid multiclass evidence", () => {
+    const multiclassVisualizations = {
+      charts: readyVisualizations.charts,
+      confusion_matrix: {
+        ordered_class_ids: ["class-a", "class-b", "class-c"],
+        matrix: [
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1],
+        ],
+        row_axis: "true_class",
+        column_axis: "predicted_class",
+      },
+    };
+    renderReadySurface({
+      confusionMatrixContent: <ConfusionMatrix visualizations={multiclassVisualizations} />,
+    });
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.querySelectorAll(".atlas-card")).toHaveLength(5);
+    expect(
+      panel.querySelector(".atlas-card.dataset-detail-visualization--confusion-matrix"),
+    ).toBeInTheDocument();
+  });
+
+  it("Overview stays at exactly four cards when confusionMatrixContent is wired but the visualizations payload carries no matrix (binary release)", () => {
+    renderReadySurface({
+      confusionMatrixContent: <ConfusionMatrix visualizations={readyVisualizations} />,
+    });
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.querySelectorAll(".atlas-card")).toHaveLength(4);
+    expect(
+      panel.querySelector(".dataset-detail-visualization--confusion-matrix"),
+    ).not.toBeInTheDocument();
   });
 });
 

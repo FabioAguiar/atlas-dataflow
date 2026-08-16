@@ -5,6 +5,7 @@ import DatasetDetailSurface, {
   type DatasetDetailMetadataItem,
 } from "../components/DatasetDetail/DatasetDetailSurface";
 import DatasetDocumentation from "../components/DatasetDetail/DatasetDocumentation";
+import ConfusionMatrix from "../components/DatasetDetail/ConfusionMatrix";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
@@ -496,6 +497,10 @@ export default function DatasetPage() {
           metrics={metricsState.data}
           emphasizedMetricKey={context?.primary_metric_key}
           performanceFocus={context?.performance_focus}
+          // Project Spec S0215: the same release-derived problem type
+          // already established by S0213 -- never dataset slug or
+          // editable profile fields.
+          problemType={availableResultProblemType(resultContract)}
         />
       )}
       {metricsState.status === "unavailable" && (
@@ -526,6 +531,15 @@ export default function DatasetPage() {
     </>
   );
 
+  // Project Spec S0215: ConfusionMatrix renders nothing on its own whenever
+  // the visualizations payload carries no valid confusion_matrix (every
+  // binary release), so no additional problem-type gating is needed here --
+  // Dataset Detail stays visually unchanged for binary releases.
+  const confusionMatrixContent =
+    visualizationsState.status === "ready" ? (
+      <ConfusionMatrix visualizations={visualizationsState.data} />
+    ) : null;
+
   // Project Spec S0196: the public Documentation tab renders only the
   // published snapshot's documentation (context.documentation), through the
   // same shared renderer the Admin Documentation tab and Live Preview use --
@@ -547,6 +561,7 @@ export default function DatasetPage() {
       <div className="dataset-detail-page-content app-shell public-shell__main">
         <DatasetDetailSurface
           analysisType={analysisType}
+          confusionMatrixContent={confusionMatrixContent}
           datasetSubtitle={datasetSubtitle}
           datasetTitle={datasetTitle}
           documentationContent={documentationContent}

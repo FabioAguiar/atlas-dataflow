@@ -2433,3 +2433,93 @@ describe("DatasetPage performance metric optimization orientation (Project Spec 
     expect(container.querySelectorAll(".performance-summary__score")).toHaveLength(3);
   });
 });
+
+// Project Spec S0215: the public page passes the release-derived problem
+// type to PerformanceSummary and renders the shared ConfusionMatrix only
+// for a multiclass release with valid matrix evidence -- binary Dataset
+// Detail stays visually unchanged.
+describe("DatasetPage multiclass confusion matrix and Performance Summary filtering (Project Spec S0215)", () => {
+  const multiclassMetricsPayload = {
+    evaluation: {
+      sample_size: 900,
+      metrics: { accuracy: 0.82, f1_macro: 0.79, f1_score: 0.9, precision: 0.85 },
+      metric_order: ["accuracy", "f1_macro", "f1_score", "precision"],
+    },
+  };
+
+  const multiclassVisualizationsPayload = {
+    charts: [],
+    confusion_matrix: {
+      ordered_class_ids: ["class-a", "class-b", "class-c"],
+      matrix: [
+        [0.9, 0.1, 0],
+        [0.05, 0.85, 0.1],
+        [0, 0.2, 0.8],
+      ],
+      row_axis: "true_class",
+      column_axis: "predicted_class",
+    },
+  };
+
+  function installMulticlassFetchMock() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: multiclassMetricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: multiclassVisualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: multiclassResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("renders the shared ConfusionMatrix table for a multiclass release with valid matrix evidence", async () => {
+    installMulticlassFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Confusion Matrix" })).toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(3);
+
+    const table = screen.getByRole("table", { name: "Confusion matrix" });
+    expect(within(table).getAllByText("class-a").length).toBeGreaterThan(0);
+    expect(within(table).getByText("90.0%")).toBeInTheDocument();
+  });
+
+  it("filters PerformanceSummary's canonical fallback metrics to the multiclass-compatible subset", async () => {
+    installMulticlassFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByText("Accuracy")).toBeInTheDocument();
+    expect(screen.getByText("F1 Macro")).toBeInTheDocument();
+    expect(screen.queryByText("F1-score")).not.toBeInTheDocument();
+    expect(screen.queryByText("Precision")).not.toBeInTheDocument();
+  });
+
+  it("renders no confusion matrix, and every canonical metric, for a binary release", async () => {
+    installDatasetPageFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByText("Binary Classification");
+    expect(screen.queryByRole("heading", { name: "Confusion Matrix" })).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
+  });
+});

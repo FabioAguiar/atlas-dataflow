@@ -1481,10 +1481,62 @@ def _model_selection_evidence_v2(
 ) -> dict:
     evidence = _model_selection_evidence(dataset_slug=dataset_slug, model_state_fingerprint=model_state_fingerprint)
     evidence["schema_version"] = "model-selection-evidence.external-fitted-model.v2"
+    evidence["selection_policy"] = {"primary_metric": "f1_macro", "ranking_direction": "higher_is_better"}
+    evidence["cross_validation_summary"] = {
+        "partition_role": "train",
+        "metric_summaries": [{"name": "f1_macro", "mean": 0.81, "standard_deviation": 0.02}],
+    }
+    evidence["validation_metrics"] = {
+        "partition_role": "validation",
+        "metrics": [{"name": "f1_macro", "value": 0.80}],
+    }
     evidence["classification_evidence"] = (
         classification_evidence if classification_evidence is not None else _classification_evidence_v2()
     )
     return evidence
+
+
+def _training_metrics_v2(
+    *,
+    dataset_slug: str = DATASET_SLUG,
+    classification_evidence: dict | None = None,
+    per_class_metrics: list[dict] | None = None,
+) -> dict:
+    evidence = classification_evidence if classification_evidence is not None else _classification_evidence_v2()
+    metrics_classification_evidence = {
+        "problem_type": evidence["problem_type"],
+        "ordered_class_ids": list(evidence["ordered_class_ids"]),
+    }
+    validation_evaluation = {
+        "partition_role": "validation",
+        "used_for_fitting": False,
+        "used_for_model_selection": True,
+        "used_for_decision_rule_selection": False,
+        "sealed_before_finalization": False,
+        "metrics": [{"name": "f1_macro", "value": 0.80}],
+    }
+    if per_class_metrics is not None:
+        validation_evaluation["per_class_metrics"] = per_class_metrics
+    return {
+        "schema_version": "training-metrics.external-fitted-model.v2",
+        "artifact_kind": "training_metrics",
+        "created_at": "2026-08-01T00:00:00+00:00",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": dataset_slug,
+        },
+        "classification_evidence": metrics_classification_evidence,
+        "cross_validation_summary": {
+            "partition_role": "train",
+            "used_for_fitting": True,
+            "used_for_model_selection": True,
+            "used_for_decision_rule_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": False,
+            "metrics": [{"name": "f1_macro", "value": 0.81}],
+        },
+        "validation_evaluation": validation_evaluation,
+    }
 
 
 def _v2_final_test_completion() -> dict:
@@ -1525,7 +1577,7 @@ class _MulticlassSourceFixture:
         self.training_record = _training_parameter_record_v2(
             dataset_slug=dataset_slug, model_artifact_sha256=self.model_sha256, classification_evidence=evidence
         )
-        self.training_metrics = _training_metrics(dataset_slug=dataset_slug)
+        self.training_metrics = _training_metrics_v2(dataset_slug=dataset_slug, classification_evidence=evidence)
         self.model_selection = _model_selection_evidence_v2(
             dataset_slug=dataset_slug, classification_evidence=evidence
         )
@@ -1580,10 +1632,23 @@ def test_v2_training_record_and_model_selection_evidence_validate_against_schema
     selection_schema = json.loads(
         (REPO_ROOT / "pipeline" / "model-selection-evidence.schema.json").read_text(encoding="utf-8")
     )
+    metrics_schema = json.loads(
+        (REPO_ROOT / "pipeline" / "training-metrics.schema.json").read_text(encoding="utf-8")
+    )
     jsonschema.Draft202012Validator(training_schema).validate(
         _training_parameter_record_v2(model_artifact_sha256="a" * 64)
     )
     jsonschema.Draft202012Validator(selection_schema).validate(_model_selection_evidence_v2())
+    jsonschema.Draft202012Validator(metrics_schema).validate(_training_metrics_v2())
+    jsonschema.Draft202012Validator(metrics_schema).validate(
+        _training_metrics_v2(
+            per_class_metrics=[
+                {"class_id": "class-a", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+                {"class_id": "class-b", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+                {"class_id": "class-c", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+            ]
+        )
+    )
 
 
 def test_v2_successful_materialization_is_schema_valid(tmp_path: Path) -> None:
@@ -1679,6 +1744,128 @@ def test_v2_mixed_v2_training_record_v1_model_selection_blocks(tmp_path: Path) -
     assert result["status"] == "blocked"
     assert result["schema_version"] == "external-fitted-model-materialization.v2"
     assert result["blocking_reasons"][0]["code"] == "mixed_external_evidence_profile"
+
+
+# --- Project Spec S0215: training_metrics v1/v2 dispatch and per-class
+# metric class-authority cross-check -----------------------------------------
+
+
+def test_v2_record_with_v1_training_metrics_blocks_mixed_profile(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    v1_metrics = _training_metrics(dataset_slug=fixture.dataset_slug)
+    metrics_bytes = _write_json(fixture.source_metrics_path, v1_metrics)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_metrics"] = _sha256_bytes(metrics_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["schema_version"] == "external-fitted-model-materialization.v2"
+    assert result["blocking_reasons"][0]["code"] == "mixed_external_evidence_profile"
+    assert result["blocking_reasons"][0]["field"] == "training_metrics.schema_version"
+
+
+def test_v1_record_with_v2_training_metrics_blocks_mixed_profile(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _SourceFixture(tmp_path)
+    v2_metrics = _training_metrics_v2(dataset_slug=fixture.dataset_slug)
+    metrics_bytes = _write_json(fixture.source_metrics_path, v2_metrics)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_metrics"] = _sha256_bytes(metrics_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["schema_version"] == "external-fitted-model-materialization.v1"
+    assert result["blocking_reasons"][0]["code"] == "mixed_external_evidence_profile"
+    assert result["blocking_reasons"][0]["field"] == "training_metrics.schema_version"
+
+
+def test_v2_training_metrics_ordered_class_ids_mismatch_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    mismatched_metrics = _training_metrics_v2(
+        dataset_slug=fixture.dataset_slug,
+        classification_evidence={
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": ["class-x", "class-y", "class-z"],
+            "probability_columns": [
+                {"class_id": "class-x", "probability_index": 0},
+                {"class_id": "class-y", "probability_index": 1},
+                {"class_id": "class-z", "probability_index": 2},
+            ],
+        },
+    )
+    metrics_bytes = _write_json(fixture.source_metrics_path, mismatched_metrics)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_metrics"] = _sha256_bytes(metrics_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "classification_evidence_mismatch"
+    assert result["blocking_reasons"][0]["field"] == "training_metrics.classification_evidence.ordered_class_ids"
+
+
+def test_v2_materializes_with_valid_per_class_metrics(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    fixture.training_metrics = _training_metrics_v2(
+        dataset_slug=fixture.dataset_slug,
+        per_class_metrics=[
+            {"class_id": "class-a", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+            {"class_id": "class-b", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+            {"class_id": "class-c", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+        ],
+    )
+    metrics_bytes = _write_json(fixture.source_metrics_path, fixture.training_metrics)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_metrics"] = _sha256_bytes(metrics_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "materialized"
+
+
+def test_v2_per_class_metrics_class_count_mismatch_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    fixture.training_metrics = _training_metrics_v2(
+        dataset_slug=fixture.dataset_slug,
+        per_class_metrics=[
+            {"class_id": "class-a", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+        ],
+    )
+    metrics_bytes = _write_json(fixture.source_metrics_path, fixture.training_metrics)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_metrics"] = _sha256_bytes(metrics_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "per_class_metrics_class_count_mismatch"
+
+
+def test_v2_per_class_metrics_class_order_mismatch_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    fixture.training_metrics = _training_metrics_v2(
+        dataset_slug=fixture.dataset_slug,
+        per_class_metrics=[
+            {"class_id": "class-b", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+            {"class_id": "class-a", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+            {"class_id": "class-c", "precision": 0.8, "recall": 0.7, "f1": 0.75, "support": 10},
+        ],
+    )
+    metrics_bytes = _write_json(fixture.source_metrics_path, fixture.training_metrics)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_metrics"] = _sha256_bytes(metrics_bytes)
+
+    result = materialize(**kwargs)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "per_class_metrics_class_order_mismatch"
 
 
 def test_v2_training_and_selection_classification_evidence_mismatch_blocks(tmp_path: Path) -> None:

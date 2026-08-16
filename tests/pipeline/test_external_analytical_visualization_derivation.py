@@ -217,6 +217,24 @@ def test_split_manifest_dataset_identity_mismatch_blocks(tmp_path):
     assert result["blocking_reasons"][0]["code"] == "dataset_identity_mismatch"
 
 
+# --- Project Spec S0215: multiclass fallback derivation fails closed --------
+
+
+def test_v2_materialization_result_blocks_before_any_further_processing(tmp_path):
+    """A multiclass (v2) materialization result must block immediately --
+    binary Average Precision permutation scoring is never attempted."""
+    kwargs, _ = _build_environment(tmp_path)
+    kwargs["materialization_result"]["schema_version"] = "external-fitted-model-materialization.v2"
+    # Sabotage a later-stage field so a passing result could only mean the
+    # v2 guard fired before that field was ever read.
+    kwargs["final_model_manifest"]["target_column"] = "does-not-exist-column"
+
+    result = derive_external_analytical_visualization_evidence(**kwargs)
+
+    assert result["status"] == "blocked", result
+    assert result["blocking_reasons"][0]["code"] == "multiclass_fallback_derivation_not_supported"
+
+
 # --- validation-partition integrity ------------------------------------------
 
 

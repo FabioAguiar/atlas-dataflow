@@ -51,6 +51,11 @@ PERFORMANCE_SCORE_CATALOG = {
         "f1_score": "F1-score", "accuracy": "Accuracy", "recall": "Recall",
         "specificity": "Specificity", "cohens_kappa": "Cohen's Kappa",
         "g_mean": "G-Mean",
+        # Project Spec S0215: explicit multiclass aggregate score ids --
+        # distinct from the binary-era f1_score/recall above, never
+        # collapsed into them.
+        "f1_macro": "F1 Macro", "f1_weighted": "F1 Weighted",
+        "precision_macro": "Precision Macro", "recall_macro": "Recall Macro",
     },
     "probability_quality": {
         "log_loss": "Log Loss", "brier_score": "Brier Score",

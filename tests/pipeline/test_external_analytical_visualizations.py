@@ -631,6 +631,238 @@ def test_historical_external_evidence_index_only_provenance_remains_schema_valid
     jsonschema.Draft202012Validator(schema).validate(historical_artifact)
 
 
+# --- Project Spec S0215: multiclass (v2) external visualizations profile ---
+
+MULTICLASS_ORDERED_CLASS_IDS = ["class-a", "class-b", "class-c"]
+
+
+def _identity_confusion_matrix() -> list[list[float]]:
+    return [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def _v2_materialization_result(
+    *,
+    repo_root: Path,
+    status: str = "materialized",
+    model_source_mode: str = "validated_external_fitted_model",
+    dataset_slug: str = DATASET_SLUG,
+    model_family: str = "decision_tree",
+    ordered_class_ids: list | None = None,
+) -> dict:
+    record_relative_path, record_sha256 = _write_training_parameter_record(
+        repo_root, dataset_slug=dataset_slug, model_family=model_family
+    )
+    return {
+        "status": status,
+        "schema_version": "external-fitted-model-materialization.v2",
+        "model_source_mode": model_source_mode,
+        "dataset_identity": {"dataset_slug": dataset_slug},
+        "evidence_references": {"training_parameter_record_path": record_relative_path},
+        "evidence_hashes": {"training_parameter_record_sha256": record_sha256},
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": (
+                ordered_class_ids if ordered_class_ids is not None else list(MULTICLASS_ORDERED_CLASS_IDS)
+            ),
+        },
+    }
+
+
+def _valid_v2_external_visual_evidence(
+    *,
+    dataset_slug: str = DATASET_SLUG,
+    model_family: str = "decision_tree",
+    confusion_matrix: dict | None = None,
+) -> dict:
+    evidence = _valid_external_visual_evidence(dataset_slug=dataset_slug, model_family=model_family)
+    evidence["confusion_matrix"] = confusion_matrix or {
+        "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+        "matrix": _identity_confusion_matrix(),
+    }
+    return evidence
+
+
+def test_v2_materialize_success_produces_schema_valid_artifact(tmp_path):
+    materialization_result = _v2_materialization_result(repo_root=tmp_path)
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_v2_external_visual_evidence(),
+        external_evidence_reference="artifacts/multiclass-sample/analytical-visual-evidence.json",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "materialized", result
+
+    artifact = json.loads((tmp_path / _output_path()).read_text())
+    assert artifact["schema_version"] == "analytical-visualizations.external-fitted-model.v2"
+    assert artifact["confusion_matrix"] == {
+        "ordered_class_ids": MULTICLASS_ORDERED_CLASS_IDS,
+        "matrix": _identity_confusion_matrix(),
+        "row_axis": "true_class",
+        "column_axis": "predicted_class",
+    }
+
+    schema = json.loads((REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(artifact)
+
+
+def test_v1_materialization_result_still_produces_v1_artifact_without_confusion_matrix(tmp_path):
+    materialization_result = _materialization_result(repo_root=tmp_path)
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_external_visual_evidence(),
+        external_evidence_reference="artifacts/telco-customer-churn/analytical-visual-evidence.json",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "materialized", result
+    artifact = json.loads((tmp_path / _output_path()).read_text())
+    assert artifact["schema_version"] == "analytical-visualizations.external-fitted-model.v1"
+    assert "confusion_matrix" not in artifact
+
+
+def test_v2_materialize_blocks_on_missing_confusion_matrix(tmp_path):
+    evidence = _valid_v2_external_visual_evidence()
+    del evidence["confusion_matrix"]
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=_v2_materialization_result(repo_root=tmp_path),
+        external_visual_evidence=evidence,
+        external_evidence_reference="x",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "missing_required_field"
+
+
+def test_v2_materialize_blocks_on_confusion_matrix_class_order_mismatch(tmp_path):
+    evidence = _valid_v2_external_visual_evidence(
+        confusion_matrix={
+            "ordered_class_ids": ["class-b", "class-a", "class-c"],
+            "matrix": _identity_confusion_matrix(),
+        }
+    )
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=_v2_materialization_result(repo_root=tmp_path),
+        external_visual_evidence=evidence,
+        external_evidence_reference="x",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "confusion_matrix_class_order_mismatch"
+    assert not (tmp_path / _output_path()).exists()
+
+
+def test_v2_materialize_blocks_on_confusion_matrix_wrong_shape(tmp_path):
+    evidence = _valid_v2_external_visual_evidence(
+        confusion_matrix={
+            "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+            "matrix": [[1.0, 0.0], [0.0, 1.0]],
+        }
+    )
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=_v2_materialization_result(repo_root=tmp_path),
+        external_visual_evidence=evidence,
+        external_evidence_reference="x",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "confusion_matrix_shape_invalid"
+
+
+def test_v2_materialize_blocks_on_confusion_matrix_row_not_summing_to_one(tmp_path):
+    evidence = _valid_v2_external_visual_evidence(
+        confusion_matrix={
+            "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+            "matrix": [[0.5, 0.2, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        }
+    )
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=_v2_materialization_result(repo_root=tmp_path),
+        external_visual_evidence=evidence,
+        external_evidence_reference="x",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "confusion_matrix_row_not_normalized"
+
+
+def test_v2_materialize_blocks_on_non_finite_confusion_matrix_cell(tmp_path):
+    evidence = _valid_v2_external_visual_evidence(
+        confusion_matrix={
+            "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+            "matrix": [[float("nan"), 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        }
+    )
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=_v2_materialization_result(repo_root=tmp_path),
+        external_visual_evidence=evidence,
+        external_evidence_reference="x",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "confusion_matrix_cell_invalid"
+
+
+def test_v2_materialize_blocks_on_invalid_model_family_gradient_boosting_not_in_v2_vocabulary(tmp_path):
+    """gradient_boosting is the v1-only family name; the v2 (multiclass)
+    profile uses decision_tree in its place (Project Spec S0208)."""
+    materialization_result = _v2_materialization_result(repo_root=tmp_path, model_family="gradient_boosting")
+
+    result = materialize_external_analytical_visualizations(
+        dataset_slug=DATASET_SLUG,
+        materialization_result=materialization_result,
+        external_visual_evidence=_valid_v2_external_visual_evidence(model_family=None),
+        external_evidence_reference="x",
+        external_evidence_sha256=VALID_SHA256,
+        output_visualizations_path=_output_path(),
+        repo_root=tmp_path,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "invalid_model_family"
+
+
+def test_v2_materializer_never_deserializes_model():
+    import pipeline.materialize_external_analytical_visualizations as module
+
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    for forbidden in ("import joblib", "import sklearn", "from sklearn", "pickle.load"):
+        assert forbidden not in source
+
+
 def test_materializer_module_still_has_no_sklearn_joblib_or_permutation_implementation():
     import pipeline.materialize_external_analytical_visualizations as module
 

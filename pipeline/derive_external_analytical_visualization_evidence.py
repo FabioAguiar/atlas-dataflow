@@ -43,6 +43,12 @@ ARTIFACT_TYPE = "atlas_derived_analytical_visualization_evidence"
 DERIVATION_ORIGIN = "external_reference_authoring"
 MODEL_SOURCE_MODE = "validated_external_fitted_model"
 FEATURE_IMPORTANCE_METHOD = "permutation_importance"
+# Project Spec S0215: the multiclass (v2) external fitted-model
+# materialization profile. This module's permutation-importance fallback
+# uses binary Average Precision scoring, which has no valid multiclass
+# meaning -- a v2 materialization result must block before any further
+# processing, never silently substitute a different scorer.
+_MATERIALIZATION_SCHEMA_VERSION_V2 = "external-fitted-model-materialization.v2"
 
 _MODEL_FAMILIES = ("hist_gradient_boosting", "gradient_boosting", "random_forest", "logistic_regression")
 _PUBLIC_ROW_LIMIT = 10
@@ -247,6 +253,15 @@ def derive_external_analytical_visualization_evidence(
                 "invalid_model_source_mode",
                 f"materialization_result.model_source_mode must be {MODEL_SOURCE_MODE!r}.",
                 "materialization_result.model_source_mode",
+            )
+        if materialization_result.get("schema_version") == _MATERIALIZATION_SCHEMA_VERSION_V2:
+            raise DerivationBlocked(
+                "multiclass_fallback_derivation_not_supported",
+                "Atlas's authoring-time permutation-importance fallback derivation is not "
+                "supported for a multiclass (v2) external fitted-model materialization -- "
+                "binary Average Precision scoring has no valid multiclass meaning. Supply the "
+                "external producer's own analytical-visualizations evidence instead.",
+                "materialization_result.schema_version",
             )
         materialization_dataset_slug = _require_mapping(
             materialization_result.get("dataset_identity"), "materialization_result.dataset_identity"

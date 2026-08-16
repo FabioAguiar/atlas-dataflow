@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from pipeline import build, contract_derivation
 from pipeline.contract_derivation import (
+    CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS,
     CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID,
     CapabilityProjectionResult,
     project_capability_aware_source_contract,
@@ -526,6 +527,144 @@ class TestUnsupportedCapabilityFailsClosed:
         assert result.status == "rejected"
         assert result.rejection_phase == "capability_unsupported"
         assert result.public_contract is None
+
+
+def _multiclass_classification_profile(*, support_status: str = "requires_future_contract_evolution") -> dict:
+    """Mirrors the real committed
+    pipeline/capabilities/multiclass-predictive-classification.v1.json
+    profile shape (same capability_profile_id/version, same artifact role
+    set). support_status defaults to the real committed value
+    (requires_future_contract_evolution); pass 'current_supported' to build
+    a synthetic clone that proves the contract-projection layer is
+    implemented, without ever mutating the committed profile file."""
+    return {
+        "schema_version": "capability-profile.v1",
+        "artifact_type": "capability_profile",
+        "capability_profile_id": "multiclass-predictive-classification",
+        "capability_profile_version": "v1",
+        "support_status": support_status,
+        "semantic_requirements": {"target_semantics_applicability": "required"},
+        "artifact_roles": [
+            {"role_name": "discovery_evidence", "applicability": "required"},
+            {"role_name": "semantic_intent", "applicability": "required"},
+            {"role_name": "preparation_recipe", "applicability": "required"},
+            {"role_name": "model_artifact", "applicability": "required", "authoring_boundary_applicability": "optional"},
+            {"role_name": "visual_evidence", "applicability": "optional"},
+            {"role_name": "no_model_analysis_summary", "applicability": "forbidden"},
+        ],
+        "prediction_runtime": {
+            "applicable": True,
+            "mode": "single_model_multiclass_classification",
+        },
+        "publication": {"public_prediction_capability_applicability": "optional"},
+        "capability_boundary_confirmations": {
+            "dataset_specific_selector_used": False,
+            "dataset_specific_feature_names_present": False,
+            "concrete_model_hashes_present": False,
+            "model_bytes_embedded": False,
+            "release_instance_metadata_embedded": False,
+            "absolute_external_path_present": False,
+            "training_result_values_embedded": False,
+        },
+        "generated_at": "2026-08-16T00:00:00+00:00",
+    }
+
+
+def _multiclass_semantic_intent_doc(profile: dict, *, include_target: bool, dataset_slug: str = DATASET_SLUG) -> dict:
+    document = {
+        "schema_version": "dataset-semantic-intent.v2",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": dataset_slug},
+        "authoring_generation_id": AUTHORING_GENERATION_ID,
+        "governing_capability_profile": {
+            "capability_profile_id": profile["capability_profile_id"],
+            "capability_profile_version": profile["capability_profile_version"],
+        },
+        "field_role_decisions": [
+            {"field_name": "tenure_months", "role": "feature", "include_in_features": True},
+        ],
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-16T00:00:00+00:00",
+    }
+    if include_target:
+        document["target_semantics"] = {
+            "target_field_name": "segment",
+            "task_type": "multiclass_classification",
+            "classes": [
+                {"class_id": "class-a", "display_label": "Class A"},
+                {"class_id": "class-b", "display_label": "Class B"},
+                {"class_id": "class-c", "display_label": "Class C"},
+            ],
+            "is_final_training_configuration": False,
+        }
+    return document
+
+
+class TestMulticlassCapabilityContractProjection:
+    """Project Spec S0209 Desired Change M / acceptance criteria 39-41:
+    contract_derivation explicitly knows both binary and multiclass
+    capability identities, but the real committed multiclass profile still
+    rejects because support_status is not current_supported -- only a
+    synthetic same-id/profile-version current_supported clone reaches the
+    existing generic input-contract projection."""
+
+    def test_committed_multiclass_support_status_still_rejects(self, tmp_path):
+        profile = _multiclass_classification_profile()
+        semantic_intent = _multiclass_semantic_intent_doc(profile, include_target=True)
+        source_input = _build_repo(tmp_path, profile, BINARY_CLASSIFICATION_ROLES, semantic_intent=semantic_intent)
+
+        result = project_capability_aware_source_contract(source_input, repo_root=tmp_path)
+
+        assert result.status == "rejected"
+        assert result.rejection_phase == "capability_unsupported"
+        assert result.capability_support_status == "requires_future_contract_evolution"
+        assert result.runtime_contract is None
+        assert result.public_contract is None
+
+    def test_synthetic_current_supported_multiclass_profile_is_accepted(self, tmp_path):
+        profile = _multiclass_classification_profile(support_status="current_supported")
+        semantic_intent = _multiclass_semantic_intent_doc(profile, include_target=True)
+        source_input = _build_repo(tmp_path, profile, BINARY_CLASSIFICATION_ROLES, semantic_intent=semantic_intent)
+
+        result = project_capability_aware_source_contract(source_input, repo_root=tmp_path)
+
+        assert result.status == "accepted"
+        assert result.rejection_phase is None
+        assert result.capability_profile_id == "multiclass-predictive-classification"
+        assert result.capability_support_status == "current_supported"
+        assert result.runtime_contract == RUNTIME_CONTRACT
+        assert result.public_contract is not None
+
+    def test_binary_current_supported_behavior_remains_unchanged(self, tmp_path):
+        source_input = _build_repo(tmp_path, _binary_classification_profile(), BINARY_CLASSIFICATION_ROLES)
+
+        result = project_capability_aware_source_contract(source_input, repo_root=tmp_path)
+
+        assert result.status == "accepted"
+        assert result.capability_profile_id == CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID
+
+    def test_unknown_capability_still_rejects_even_when_current_supported(self, tmp_path):
+        profile = _no_model_analysis_profile()
+        profile["support_status"] = "current_supported"
+        roles = {"discovery_evidence": b'{"schema_version": "dataset-discovery-evidence.v1"}'}
+        semantic_intent = _semantic_intent_doc(profile, include_target=False)
+        source_input = _build_repo(tmp_path, profile, roles, semantic_intent=semantic_intent)
+
+        result = project_capability_aware_source_contract(source_input, repo_root=tmp_path)
+
+        assert result.status == "rejected"
+        assert result.rejection_phase == "capability_unsupported"
+        assert result.public_contract is None
+
+    def test_multiclass_capability_id_is_a_member_of_the_supported_set(self):
+        assert "multiclass-predictive-classification" in CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS
+        assert CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID in CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS
 
 
 class TestNoDatasetNameBranching:

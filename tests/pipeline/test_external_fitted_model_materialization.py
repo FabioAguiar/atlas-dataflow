@@ -1877,3 +1877,376 @@ def test_v2_no_forbidden_calls_in_module_source_still_holds() -> None:
     )
     for substring in forbidden_substrings:
         assert substring not in source, f"forbidden call/import found: {substring}"
+
+
+# --- Project Spec S0209: multiclass (v2) external inference bundle generation
+# -----------------------------------------------------------------------------
+#
+# Uses only synthetic in-memory/tmp_path fixtures and opaque arbitrary model
+# bytes -- never a real trained model or real multiclass dataset fixture.
+
+MULTICLASS_ORDERED_CLASS_IDS = ["class-a", "class-b", "class-c"]
+
+
+def _minimal_execution_contract_with_multiclass_result_semantics(
+    *, dataset_id: str = DATASET_SLUG, classes: list[dict] | None = None
+) -> dict:
+    contract = _minimal_execution_contract(dataset_id=dataset_id)
+    contract["result_semantics"] = {
+        "schema_version": "multiclass-result-semantics.v1",
+        "problem_type": "multiclass_classification",
+        "classes": classes if classes is not None else [
+            {"class_id": "class-a", "display_label": "Class A"},
+            {"class_id": "class-b", "display_label": "Class B"},
+            {"class_id": "class-c", "display_label": "Class C"},
+        ],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+    }
+    return contract
+
+
+_MULTICLASS_DEFAULT_CLASS_LABELS = object()
+
+
+def _generate_multiclass_external_bundle_result(
+    *,
+    repo_root: Path,
+    materialization_result: dict,
+    execution_contract: dict | None = None,
+    prediction_type: str = "string",
+    class_labels=_MULTICLASS_DEFAULT_CLASS_LABELS,
+    probability_output: bool | None = True,
+) -> tuple[dict, Path]:
+    if execution_contract is None:
+        execution_contract = _minimal_execution_contract_with_multiclass_result_semantics()
+    resolved_class_labels = (
+        list(MULTICLASS_ORDERED_CLASS_IDS) if class_labels is _MULTICLASS_DEFAULT_CLASS_LABELS else class_labels
+    )
+
+    execution_contract_path = repo_root / "contracts" / "multiclass-sample" / "execution-contract.json"
+    _write_json(execution_contract_path, execution_contract)
+    runtime_contract_path = repo_root / "contracts" / "multiclass-sample" / "runtime-contract.json"
+    _write_json(runtime_contract_path, {"contract_version": "runtime_contract.v1"})
+    public_contract_path = repo_root / "contracts" / "multiclass-sample" / "public-contract.json"
+    _write_json(public_contract_path, {"contract_version": "public_contract.v1"})
+    dataset_context_path = repo_root / "contracts" / "multiclass-sample" / "dataset-context.json"
+    _write_json(dataset_context_path, {"schema_version": "dataset-context.v1"})
+    prepared_dataset_path = repo_root / "contracts" / "multiclass-sample" / "prepared-dataset.json"
+    _write_json(prepared_dataset_path, {"schema_version": "prepared-dataset.v1"})
+    output_path = repo_root / "contracts" / "multiclass-sample" / "inference-bundle.json"
+
+    result = generate_inference_bundle.materialize_governed_inference_bundle(
+        external_fitted_model_materialization_result=materialization_result,
+        execution_contract_path=execution_contract_path,
+        runtime_contract_path=runtime_contract_path,
+        public_contract_path=public_contract_path,
+        dataset_context_path=dataset_context_path,
+        prepared_dataset_path=prepared_dataset_path,
+        output_path=output_path,
+        prediction_type=prediction_type,
+        repo_root=repo_root,
+        dataset_slug=DATASET_SLUG,
+        release_id="release-20260801-001",
+        class_labels=resolved_class_labels,
+        probability_output=probability_output,
+        inference_bundle_schema_path=str(INFERENCE_BUNDLE_SCHEMA_PATH),
+        execution_contract_ref="contracts/multiclass-sample/execution-contract.json",
+        runtime_contract_ref="contracts/multiclass-sample/runtime-contract.json",
+        public_contract_ref="contracts/multiclass-sample/public-contract.json",
+        dataset_context_ref="contracts/multiclass-sample/dataset-context.json",
+        prepared_dataset_ref="contracts/multiclass-sample/prepared-dataset.json",
+    )
+    return result, output_path
+
+
+def test_v2_materialization_generates_schema_valid_multiclass_inference_bundle(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result
+    )
+
+    assert bundle_result["status"] == "generated"
+    assert bundle_result["model_provenance_origin"] == "validated_external_fitted_model"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+    schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(bundle)
+    assert bundle["contract_version"] == "inference_bundle.v1"
+
+
+def test_v2_bundle_result_semantics_projected_with_governed_identities(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result
+    )
+    assert bundle_result["status"] == "generated"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+
+    result_semantics = bundle["result_semantics"]
+    assert result_semantics["schema_version"] == "multiclass-result-semantics.v1"
+    assert result_semantics["problem_type"] == "multiclass_classification"
+    assert result_semantics["result_schema_version"] == "multiclass-classification-result.v1"
+    assert [c["class_id"] for c in result_semantics["classes"]] == MULTICLASS_ORDERED_CLASS_IDS
+    assert result_semantics["primary_output"] == "predicted_class"
+    assert result_semantics["probability_output"] == "class_probabilities"
+    assert result_semantics["decision"] == {"strategy": "argmax"}
+    assert result_semantics["model_descriptor"]["model_family"] == "hist_gradient_boosting"
+
+
+def test_v2_bundle_output_class_labels_equal_ordered_class_ids_and_probability_output_true(
+    tmp_path: Path,
+) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result
+    )
+    assert bundle_result["status"] == "generated"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert bundle["output_schema"]["class_labels"] == MULTICLASS_ORDERED_CLASS_IDS
+    assert bundle["output_schema"]["probability_output"] is True
+    assert bundle["output_schema"]["prediction_type"] == "string"
+
+
+def test_v2_bundle_external_evidence_contains_no_educational_or_operational_threshold(
+    tmp_path: Path,
+) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result
+    )
+    assert bundle_result["status"] == "generated"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+
+    external_evidence = bundle["external_model_evidence"]
+    assert "educational_threshold" not in external_evidence
+    assert "operational_threshold" not in external_evidence["readiness"]
+    assert external_evidence["decision_semantics"] == {"strategy": "argmax"}
+    assert external_evidence["readiness"]["decision_strategy"] == "argmax"
+    assert external_evidence["classification_evidence"]["ordered_class_ids"] == MULTICLASS_ORDERED_CLASS_IDS
+
+
+@pytest.mark.parametrize(
+    ("model_family", "class_name"),
+    [
+        ("logistic_regression", "LogisticRegression"),
+        ("decision_tree", "DecisionTreeClassifier"),
+        ("random_forest", "RandomForestClassifier"),
+        ("hist_gradient_boosting", "HistGradientBoostingClassifier"),
+    ],
+)
+def test_v2_bundle_accepts_all_four_bounded_estimator_pairs(
+    tmp_path: Path, model_family: str, class_name: str
+) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    training_record = dict(fixture.training_record)
+    training_record["model_family"] = model_family
+    training_record["estimator_identity"] = {"library": "scikit-learn", "class_name": class_name}
+    record_bytes = _write_json(fixture.source_record_path, training_record)
+    kwargs = fixture.kwargs(repo_root=repo_root)
+    kwargs["expected_evidence_hashes"]["training_parameter_record"] = _sha256_bytes(record_bytes)
+
+    model_selection = dict(fixture.model_selection)
+    model_selection["candidates"] = [
+        {
+            "candidate_id": "candidate-001",
+            "model_family": model_family,
+            "estimator_identity": {"library": "scikit-learn", "class_name": class_name},
+        }
+    ]
+    model_selection["selected_candidate"] = {"candidate_id": "candidate-001"}
+    selection_bytes = _write_json(fixture.source_selection_path, model_selection)
+    kwargs["expected_evidence_hashes"]["model_selection_evidence"] = _sha256_bytes(selection_bytes)
+
+    materialization_result = materialize(**kwargs)
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result
+    )
+
+    assert bundle_result["status"] == "generated"
+    bundle = json.loads(output_path.read_text(encoding="utf-8"))
+    assert bundle["external_model_evidence"]["model_family"] == model_family
+    assert bundle["external_model_evidence"]["estimator_identity"]["class_name"] == class_name
+    assert bundle["runtime_execution"]["model_family"] == model_family
+
+
+def test_v2_bundle_cross_paired_estimator_identity_blocks(tmp_path: Path) -> None:
+    """The materializer itself already rejects a cross-paired
+    model_family/estimator_identity at the source-evidence schema level
+    (test_v2_cross_paired_estimator_identity_rejected_by_schema above); this
+    proves the bundle's own contracts/inference-bundle.schema.json
+    external_family_estimator_pair_v2 independently rejects a bundle that
+    somehow carried a cross-paired combination, as a second, independent
+    fail-closed layer."""
+    schema = json.loads(INFERENCE_BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    # Build a minimal-but-representative external_model_evidence v2 fragment
+    # with a deliberately cross-paired family/estimator pairing and validate
+    # only that $defs fragment directly (isolates the check from every
+    # other unrelated required bundle field).
+    fragment_validator = jsonschema.Draft202012Validator(schema).evolve(
+        schema=schema["$defs"]["external_model_evidence_v2"]
+    )
+    cross_paired_evidence = {
+        "origin": "validated_external_fitted_model",
+        "evidence_references": {
+            "model_selection_evidence_reference": {
+                "path": "governed/model-selection-evidence.json", "sha256": "a" * 64,
+                "contract_version": "model-selection-evidence.external-fitted-model.v2",
+            },
+            "training_parameter_record_reference": {
+                "path": "governed/training-parameter-record.json", "sha256": "a" * 64,
+                "contract_version": "training-parameter-record.external-fitted-model.v2",
+            },
+            "training_metrics_reference": {
+                "path": "governed/training-metrics.json", "sha256": "a" * 64,
+                "contract_version": "training-metrics.external-fitted-model.v1",
+            },
+        },
+        "model_family": "random_forest",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "LogisticRegression"},
+        "model_state_fingerprint": "a" * 64,
+        "classification_evidence": _classification_evidence_v2(),
+        "decision_semantics": {"strategy": "argmax"},
+        "final_test_completion": {"evaluation_count": 1, "used_for_decision_rule_selection": False},
+        "readiness": {
+            "educational_final_model_complete": True,
+            "educational_inference_demo_ready": True,
+            "operational_validity": "unconfirmed",
+            "decision_strategy": "argmax",
+            "operational_prediction_available": False,
+        },
+    }
+
+    with pytest.raises(jsonschema.exceptions.ValidationError):
+        fragment_validator.validate(cross_paired_evidence)
+
+
+def test_v2_bundle_execution_contract_class_order_mismatch_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    execution_contract = _minimal_execution_contract_with_multiclass_result_semantics(
+        classes=[
+            {"class_id": "class-b", "display_label": "Class B"},
+            {"class_id": "class-a", "display_label": "Class A"},
+            {"class_id": "class-c", "display_label": "Class C"},
+        ]
+    )
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root,
+        materialization_result=materialization_result,
+        execution_contract=execution_contract,
+    )
+
+    assert bundle_result["status"] == "blocked"
+    assert not output_path.exists()
+
+
+def test_v2_bundle_training_record_classification_evidence_tamper_blocks(tmp_path: Path) -> None:
+    """Defense-in-depth: even after successful materialization, if the
+    Atlas-owned training_parameter_record evidence file referenced by the
+    materialization result is tampered to disagree with the materialization
+    result's own classification_evidence, bundle generation independently
+    re-reads and cross-checks it and blocks rather than trusting the
+    materialization result alone."""
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    training_record_path = (
+        repo_root / materialization_result["evidence_references"]["training_parameter_record_path"]
+    )
+    tampered = json.loads(training_record_path.read_text(encoding="utf-8"))
+    tampered["classification_evidence"] = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-x", "class-y", "class-z"],
+        "probability_columns": [
+            {"class_id": "class-x", "probability_index": 0},
+            {"class_id": "class-y", "probability_index": 1},
+            {"class_id": "class-z", "probability_index": 2},
+        ],
+    }
+    training_record_path.write_text(json.dumps(tampered, indent=2, sort_keys=True), encoding="utf-8")
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result
+    )
+
+    assert bundle_result["status"] == "blocked"
+    assert not output_path.exists()
+
+
+def test_v2_bundle_caller_class_label_mismatch_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root,
+        materialization_result=materialization_result,
+        class_labels=["class-a", "class-b", "not-class-c"],
+    )
+
+    assert bundle_result["status"] == "blocked"
+    assert not output_path.exists()
+
+
+def test_v2_bundle_caller_probability_output_false_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result, probability_output=False
+    )
+
+    assert bundle_result["status"] == "blocked"
+    assert not output_path.exists()
+
+
+def test_v2_bundle_caller_non_string_prediction_type_blocks(tmp_path: Path) -> None:
+    repo_root = _isolated_repo_root(tmp_path)
+    fixture = _MulticlassSourceFixture(tmp_path)
+    materialization_result = materialize(**fixture.kwargs(repo_root=repo_root))
+    assert materialization_result["status"] == "materialized"
+
+    bundle_result, output_path = _generate_multiclass_external_bundle_result(
+        repo_root=repo_root, materialization_result=materialization_result, prediction_type="integer"
+    )
+
+    assert bundle_result["status"] == "blocked"
+    assert not output_path.exists()
+
+
+def test_v2_bundle_generation_does_not_deserialize_model_bytes() -> None:
+    source = inspect.getsource(generate_inference_bundle)
+    for forbidden in (
+        "import joblib", "from joblib", "import pickle", "from pickle", "import sklearn", "from sklearn",
+        ".predict(", ".predict_proba(",
+    ):
+        assert forbidden not in source

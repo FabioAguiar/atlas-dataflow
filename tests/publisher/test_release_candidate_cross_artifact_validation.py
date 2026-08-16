@@ -224,6 +224,10 @@ def _rejection_codes(result: dict) -> set[str]:
     return {reason["code"] for reason in result["rejection_reasons"]}
 
 
+def _rejection_safe_details(result: dict) -> set[str]:
+    return {reason["safe_detail"] for reason in result["rejection_reasons"] if "safe_detail" in reason}
+
+
 def test_cross_artifact_validation_accepts_aligned_candidate(tmp_path):
     candidate_dir = _write_candidate(tmp_path)
 
@@ -1024,6 +1028,249 @@ def test_external_provenance_candidate_structurally_omitting_visualizations_is_r
     assert "visualizations" in result["effective_required_roles"]
     assert len(result["role_results"]) == 10
     assert result["role_results"]["visualizations"]["status"] == "missing"
+
+
+# --- Project Spec S0209 Desired Change AD: multiclass external bundle
+# cross-artifact compatibility -----------------------------------------------
+
+MULTICLASS_ORDERED_CLASS_IDS = ["class-a", "class-b", "class-c"]
+
+
+def _multiclass_classification_evidence(ordered_class_ids: list[str] | None = None) -> dict:
+    ids = ordered_class_ids if ordered_class_ids is not None else MULTICLASS_ORDERED_CLASS_IDS
+    return {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": list(ids),
+        "probability_columns": [{"class_id": cid, "probability_index": i} for i, cid in enumerate(ids)],
+    }
+
+
+def _multiclass_result_semantics(
+    classes: list[dict] | None = None, *, decision_strategy: str = "argmax"
+) -> dict:
+    class_entries = classes if classes is not None else [
+        {"class_id": cid, "display_label": cid.replace("-", " ").title()} for cid in MULTICLASS_ORDERED_CLASS_IDS
+    ]
+    return {
+        "schema_version": "multiclass-result-semantics.v1",
+        "problem_type": "multiclass_classification",
+        "classes": class_entries,
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": decision_strategy},
+    }
+
+
+def _multiclass_predictive_bundle_overrides(
+    *,
+    result_classes: list[dict] | None = None,
+    result_decision_strategy: str = "argmax",
+    evidence_class_ids: list[str] | None = None,
+    output_class_labels: list[str] | None = None,
+    probability_output: bool = True,
+    evidence_decision_strategy: str = "argmax",
+    readiness_decision_strategy: str = "argmax",
+    extra_evidence_fields: dict | None = None,
+) -> dict:
+    ordered_ids = evidence_class_ids if evidence_class_ids is not None else MULTICLASS_ORDERED_CLASS_IDS
+    output_labels = output_class_labels if output_class_labels is not None else MULTICLASS_ORDERED_CLASS_IDS
+    external_model_evidence = {
+        "origin": "validated_external_fitted_model",
+        "classification_evidence": _multiclass_classification_evidence(ordered_ids),
+        "decision_semantics": {"strategy": evidence_decision_strategy},
+        "readiness": {
+            "operational_validity": "unconfirmed",
+            "decision_strategy": readiness_decision_strategy,
+            "operational_prediction_available": False,
+        },
+    }
+    if extra_evidence_fields:
+        external_model_evidence.update(extra_evidence_fields)
+    return {
+        "model_provenance_origin": "validated_external_fitted_model",
+        "result_semantics": _multiclass_result_semantics(result_classes, decision_strategy=result_decision_strategy),
+        "external_model_evidence": external_model_evidence,
+        "output_schema": {
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "class_labels": output_labels,
+            "probability_output": probability_output,
+        },
+    }
+
+
+def _multiclass_metrics_overrides() -> dict:
+    return {
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": DATASET_SLUG,
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "metrics": [{"name": "accuracy", "value": 0.7}],
+        },
+    }
+
+
+def test_multiclass_argmax_bundle_passes_external_compatibility_when_class_order_agrees(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert "external_multiclass_class_order_mismatch" not in _rejection_safe_details(result)
+    assert "external_multiclass_threshold_present" not in _rejection_safe_details(result)
+
+
+def test_multiclass_evidence_class_order_mismatch_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(
+                evidence_class_ids=["class-b", "class-a", "class-c"]
+            ),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "external_multiclass_class_order_mismatch" in _rejection_safe_details(result)
+
+
+def test_multiclass_output_schema_class_order_mismatch_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(
+                output_class_labels=["class-c", "class-b", "class-a"]
+            ),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "external_multiclass_class_order_mismatch" in _rejection_safe_details(result)
+
+
+def test_multiclass_probability_output_false_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(probability_output=False),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "external_multiclass_probability_output_missing" in _rejection_safe_details(result)
+
+
+def test_multiclass_argmax_mismatch_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(
+                evidence_decision_strategy="majority_vote"
+            ),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "external_multiclass_evidence_decision_strategy_mismatch" in _rejection_safe_details(result)
+
+
+def test_multiclass_result_semantics_decision_strategy_mismatch_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(result_decision_strategy="majority_vote"),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "external_multiclass_decision_strategy_mismatch" in _rejection_safe_details(result)
+
+
+def test_multiclass_bundle_containing_educational_threshold_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_overrides(
+                extra_evidence_fields={"educational_threshold": {"value": 0.5}}
+            ),
+            "metrics": _multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "external_multiclass_threshold_present" in _rejection_safe_details(result)
+
+
+def test_binary_threshold_compatibility_remains_unchanged_after_multiclass_dispatch(tmp_path):
+    """Project Spec S0209 Desired Change T refactored
+    _external_predictive_bundle_compatibility into a dispatcher -- this
+    proves the pre-existing binary threshold-compatibility path (unchanged
+    logic, moved into _external_binary_predictive_bundle_compatibility)
+    still accepts a valid binary external candidate exactly as before."""
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": {
+                "model_provenance_origin": "validated_external_fitted_model",
+                "result_semantics": {
+                    "schema_version": "binary-result-semantics.v1",
+                    "problem_type": "binary_classification",
+                    "decision": {"threshold": 0.25},
+                },
+                "external_model_evidence": {
+                    "origin": "validated_external_fitted_model",
+                    "educational_threshold": {"value": 0.25},
+                    "readiness": {
+                        "operational_validity": "unconfirmed",
+                        "operational_threshold": {"status": "unresolved", "value": None},
+                        "operational_prediction_available": False,
+                    },
+                },
+            },
+            "metrics": {
+                "schema_version": "training-metrics.external-fitted-model.v1",
+                "evidence_identity": {
+                    "model_source_mode": "validated_external_fitted_model",
+                    "dataset_slug": DATASET_SLUG,
+                },
+                "validation_evaluation": {
+                    "partition_role": "validation",
+                    "metrics": [{"name": "roc_auc", "value": 0.80}],
+                },
+            },
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True
+    assert "external_threshold_mismatch" not in _rejection_safe_details(result)
 
 
 def test_visualizations_rejection_reasons_are_sanitized(tmp_path):

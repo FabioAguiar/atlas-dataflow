@@ -471,6 +471,11 @@ def _read_declared_contract_version(resolved_path: Path) -> str:
 # dataset-slug conditional.
 _TRAINING_PARAMETER_RECORD_INTERNAL_VERSION = "training-parameter-record.v1"
 _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION = "training-parameter-record.external-fitted-model.v1"
+# Project Spec S0209: the v2 (multiclass) external fitted-model training-
+# record profile also selects the governed external candidate path -- never
+# coerced to v1. training_metrics remains the same v1 schema for both until
+# a later metric-semantics spec.
+_TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION_V2 = "training-parameter-record.external-fitted-model.v2"
 _TRAINING_METRICS_INTERNAL_VERSION = "training-metrics.v1"
 _TRAINING_METRICS_EXTERNAL_VERSION = "training-metrics.external-fitted-model.v1"
 _EXTERNAL_MODEL_SOURCE_STAGE = "manual_governed_input"
@@ -520,22 +525,29 @@ def _resolve_training_provenance(
     Backward-compatible by construction (Project Spec S0180 acceptance
     criterion 44): the external path activates only when the referenced
     training_parameter_record artifact's own declared schema_version is
-    exactly the real S0157 external profile constant
-    (training-parameter-record.external-fitted-model.v1). Every other value
-    -- the real internal training-parameter-record.v1 constant, or any other
-    string a caller's artifact happens to declare -- is treated as the
-    historical internal path and returns (None, None) overrides, so
-    _build_artifact_input falls through to its pre-existing fixed
-    governance values exactly as before S0180 (which never inspected this
-    file's content for this role at all). Only once external is confirmed
-    does training_metrics get cross-checked and required to agree; a
-    mismatch raises ValueError, the same failure convention this function's
-    caller already uses.
+    exactly one of the real S0157/S0208 external profile constants
+    (training-parameter-record.external-fitted-model.v1 or .v2 -- Project
+    Spec S0209 adds v2 recognition without coercing it to v1; the actual
+    contract_version is carried forward verbatim into candidate input
+    metadata). Every other value -- the real internal
+    training-parameter-record.v1 constant, or any other string a caller's
+    artifact happens to declare -- is treated as the historical internal
+    path and returns (None, None) overrides, so _build_artifact_input falls
+    through to its pre-existing fixed governance values exactly as before
+    S0180 (which never inspected this file's content for this role at all).
+    Only once external is confirmed does training_metrics get cross-checked
+    and required to agree (the same v1 metrics schema is required for both
+    v1 and v2 training records, per Project Spec S0209); a mismatch raises
+    ValueError, the same failure convention this function's caller already
+    uses.
     """
     training_record_path = repo_root / artifact_references["training_parameter_record"]
     record_version = _read_declared_contract_version(training_record_path)
 
-    if record_version != _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION:
+    if record_version not in (
+        _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION,
+        _TRAINING_PARAMETER_RECORD_EXTERNAL_VERSION_V2,
+    ):
         return "M24", False, None, None
 
     training_metrics_path = repo_root / artifact_references["training_metrics"]
@@ -723,6 +735,21 @@ def build_release_candidate_input(
 
 CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID = "binary-predictive-classification"
 _CAPABILITY_SUPPORT_STATUS_OPERATIONAL = "current_supported"
+# Project Spec S0209: closed set/map of capability_profile_ids this module
+# has explicit release-layer implementation code for. Preserves
+# CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID's own value/meaning
+# (still the sole binary-classification identity) for existing
+# callers/tests; the release policy gate below checks membership in this
+# set, never equality against the single binary constant alone. The real
+# committed multiclass profile still declares support_status:
+# requires_future_contract_evolution, so real multiclass release-layer
+# acceptance remains rejected regardless of this set's membership -- only a
+# synthetic support_status: current_supported profile clone reaches
+# acceptance.
+RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS = frozenset({
+    CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID,
+    "multiclass-predictive-classification",
+})
 
 CAPABILITY_REJECTION_PHASE_PROFILE_MISMATCH = "capability_profile_identity_mismatch"
 CAPABILITY_REJECTION_PHASE_ROLE_POLICY_MISMATCH = "role_policy_profile_mismatch"
@@ -810,7 +837,7 @@ def resolve_capability_release_policy(
     support_status = capability_profile.get("support_status")
     if (
         support_status != _CAPABILITY_SUPPORT_STATUS_OPERATIONAL
-        or resolved_id != CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID
+        or resolved_id not in RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
     ):
         return CapabilityReleasePolicyResult(
             status="rejected",

@@ -48,6 +48,10 @@ MODEL_FAMILY_DISPLAY_NAMES: dict[str, str] = {
     # (checked by _resolve_runtime_execution before result_semantics is
     # ever resolved) does not include it.
     "hist_gradient_boosting": "HistGradientBoosting",
+    # Project Spec S0208/S0209: the fourth bounded external multiclass (v2)
+    # estimator family -- an internal training record can never reach this
+    # entry either, for the same reason as hist_gradient_boosting above.
+    "decision_tree": "Decision Tree",
 }
 # Project Spec S0191: bounded governed pairing of external public-result
 # model_family to its required estimator_identity, mirroring
@@ -1044,6 +1048,24 @@ _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION = "training-parameter-record.
 _EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION = "training-metrics.external-fitted-model.v1"
 _EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION = "model-selection-evidence.external-fitted-model.v1"
 
+# Project Spec S0209: multiclass (v2) external fitted-model bundle profile.
+# The common training-metrics.external-fitted-model.v1 schema remains valid
+# and read-only for both v1 and v2 until a later metric-semantics spec.
+_EXTERNAL_MATERIALIZATION_SCHEMA_VERSION_V2 = "external-fitted-model-materialization.v2"
+_EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION_V2 = "training-parameter-record.external-fitted-model.v2"
+_EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION_V2 = "model-selection-evidence.external-fitted-model.v2"
+MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION = "multiclass-result-semantics.v1"
+MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_VERSION = "multiclass-classification-result.v1"
+# Project Spec S0208's bounded v2 external estimator identity vocabulary --
+# never open-ended, never cross-paired (also enforced structurally by
+# contracts/inference-bundle.schema.json's external_family_estimator_pair_v2).
+_EXTERNAL_V2_GOVERNED_ESTIMATOR_IDENTITIES: dict[str, dict[str, str]] = {
+    "logistic_regression": {"library": "scikit-learn", "class_name": "LogisticRegression"},
+    "decision_tree": {"library": "scikit-learn", "class_name": "DecisionTreeClassifier"},
+    "random_forest": {"library": "scikit-learn", "class_name": "RandomForestClassifier"},
+    "hist_gradient_boosting": {"library": "scikit-learn", "class_name": "HistGradientBoostingClassifier"},
+}
+
 
 def _external_dataset_slug(materialization_result: dict[str, Any]) -> str:
     identity = _require_mapping(materialization_result, "dataset_identity")
@@ -1055,6 +1077,172 @@ def _external_dataset_slug(materialization_result: dict[str, Any]) -> str:
             field="dataset_identity.dataset_slug",
         )
     return slug
+
+
+# Project Spec S0209 Desired Change I: cross-check all multiclass class
+# authorities. Requires exact ordered equality between the training
+# parameter record's, model selection evidence's, and the materialization
+# result's own classification_evidence (ordered_class_ids +
+# probability_columns) -- never sorted or re-derived. A mismatch (missing
+# class, extra class, different order, different probability index mapping)
+# blocks before a bundle is written.
+def _cross_check_multiclass_class_authorities(
+    training_record: dict[str, Any],
+    model_selection: dict[str, Any],
+    materialization_classification_evidence: dict[str, Any],
+) -> None:
+    record_evidence = training_record.get("classification_evidence")
+    selection_evidence = model_selection.get("classification_evidence")
+    if not isinstance(record_evidence, dict) or not isinstance(selection_evidence, dict):
+        raise BundleGenerationError(
+            "missing_required_field",
+            "training_parameter_record and model_selection_evidence must both declare "
+            "classification_evidence for a multiclass external bundle.",
+            field="classification_evidence",
+        )
+    if (
+        record_evidence != materialization_classification_evidence
+        or selection_evidence != materialization_classification_evidence
+    ):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training_parameter_record, model_selection_evidence, and the materialization "
+            "result must declare identical multiclass classification_evidence "
+            "(ordered_class_ids and probability_columns).",
+            field="classification_evidence",
+        )
+
+
+# Project Spec S0209 Desired Change J: multiclass external output schema is
+# governed, not caller-defined. prediction_type must be 'string',
+# probability_output must be true, and class_labels must equal the governed
+# ordered class ids exactly -- a disagreeing caller-supplied value fails
+# closed rather than being silently reordered or overwritten.
+def _resolve_multiclass_output_schema(
+    args: argparse.Namespace, ordered_class_ids: list[str]
+) -> dict[str, Any]:
+    if args.prediction_type != "string":
+        raise BundleGenerationError(
+            "invalid_output_schema",
+            "prediction_type must be 'string' for a multiclass external bundle.",
+            field="prediction_type",
+        )
+    if args.probability_output is False:
+        raise BundleGenerationError(
+            "invalid_output_schema",
+            "probability_output must be true for a multiclass external bundle.",
+            field="probability_output",
+        )
+    if args.class_label and list(args.class_label) != list(ordered_class_ids):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "caller-supplied class_labels do not match the governed ordered class ids.",
+            field="class_labels",
+        )
+    return {
+        "prediction_key": "prediction",
+        "prediction_type": "string",
+        "class_labels": list(ordered_class_ids),
+        "probability_output": True,
+    }
+
+
+# Project Spec S0209 Desired Change H: project the execution contract's
+# governed multiclass result_semantics into the bundle. Unlike the binary
+# path (_resolve_result_semantics), this is unconditionally required for a
+# multiclass external bundle -- there is no historical multiclass bundle to
+# stay backward-compatible with.
+def _resolve_multiclass_result_semantics(
+    execution_contract: dict[str, Any],
+    classification_evidence: dict[str, Any],
+    model_family: str,
+) -> dict[str, Any]:
+    result_semantics_source = execution_contract.get("result_semantics")
+    if not isinstance(result_semantics_source, dict):
+        raise BundleGenerationError(
+            "missing_required_field",
+            "execution contract result_semantics is required for a multiclass external bundle.",
+            field="result_semantics",
+        )
+    if result_semantics_source.get("schema_version") != MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            f"result_semantics.schema_version must equal {MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION!r}.",
+            field="result_semantics.schema_version",
+        )
+    if result_semantics_source.get("problem_type") != "multiclass_classification":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.problem_type must be exactly multiclass_classification.",
+            field="result_semantics.problem_type",
+        )
+    if result_semantics_source.get("primary_output") != "predicted_class":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.primary_output must be exactly predicted_class.",
+            field="result_semantics.primary_output",
+        )
+    if result_semantics_source.get("probability_output") != "class_probabilities":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.probability_output must be exactly class_probabilities.",
+            field="result_semantics.probability_output",
+        )
+    decision = _require_mapping(result_semantics_source, "decision")
+    if decision.get("strategy") != "argmax":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.decision.strategy must be exactly argmax.",
+            field="result_semantics.decision.strategy",
+        )
+
+    classes = result_semantics_source.get("classes")
+    if not isinstance(classes, list) or len(classes) < 3:
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.classes must contain at least 3 ordered class entries.",
+            field="result_semantics.classes",
+        )
+    class_ids: list[str] = []
+    for entry in classes:
+        if not isinstance(entry, dict):
+            raise BundleGenerationError(
+                "invalid_result_semantics",
+                "result_semantics.classes entries must be objects.",
+                field="result_semantics.classes",
+            )
+        class_ids.append(_require_string(entry, "class_id"))
+        _require_string(entry, "display_label")
+
+    ordered_class_ids = classification_evidence.get("ordered_class_ids")
+    if class_ids != ordered_class_ids:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "result_semantics.classes order does not match the materialization "
+            "classification_evidence.ordered_class_ids.",
+            field="result_semantics.classes",
+        )
+
+    if model_family not in MODEL_FAMILY_DISPLAY_NAMES:
+        raise BundleGenerationError(
+            "unsupported_model_family",
+            "model_family is not supported by the result_semantics model_descriptor mapping.",
+            field="model_family",
+        )
+
+    return {
+        "schema_version": MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": "multiclass_classification",
+        "result_schema_version": MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_VERSION,
+        "classes": [dict(entry) for entry in classes],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": {
+            "model_family": model_family,
+            "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
+        },
+    }
 
 
 def _build_external_bundle(
@@ -1096,11 +1284,23 @@ def _build_external_bundle(
         resolved_repo_root / "pipeline" / "training-metrics.schema.json",
         "evidence_references.training_metrics_path",
     )
-    if training_record.get("schema_version") != _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
+    # Project Spec S0209: closed external materialization/evidence version
+    # dispatch. The materialization result's own schema_version is the sole
+    # source of truth for whether this is the historical v1 (binary) path or
+    # the new v2 (multiclass) path -- never dataset_slug, class labels,
+    # model family alone, or feature names. Every other combination
+    # (including a v2 materialization paired with v1-shaped training
+    # evidence, or vice versa) fails closed below as mixed evidence.
+    is_v2 = materialization_result.get("schema_version") == _EXTERNAL_MATERIALIZATION_SCHEMA_VERSION_V2
+    expected_record_version = (
+        _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION_V2
+        if is_v2
+        else _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION
+    )
+    if training_record.get("schema_version") != expected_record_version:
         raise BundleGenerationError(
             "invalid_external_evidence_profile",
-            "training_parameter_record must declare "
-            f"{_EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION!r}.",
+            f"training_parameter_record must declare {expected_record_version!r}.",
             field="evidence_references.training_parameter_record_path",
         )
     if training_metrics.get("schema_version") != _EXTERNAL_TRAINING_METRICS_SCHEMA_VERSION:
@@ -1121,11 +1321,15 @@ def _build_external_bundle(
             resolved_repo_root / "pipeline" / "model-selection-evidence.schema.json",
             "evidence_references.model_selection_evidence_path",
         )
-        if model_selection.get("schema_version") != _EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION:
+        expected_selection_version = (
+            _EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION_V2
+            if is_v2
+            else _EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION
+        )
+        if model_selection.get("schema_version") != expected_selection_version:
             raise BundleGenerationError(
                 "invalid_external_evidence_profile",
-                "model_selection_evidence must declare "
-                f"{_EXTERNAL_MODEL_SELECTION_EVIDENCE_SCHEMA_VERSION!r}.",
+                f"model_selection_evidence must declare {expected_selection_version!r}.",
                 field="evidence_references.model_selection_evidence_path",
             )
 
@@ -1192,7 +1396,14 @@ def _build_external_bundle(
             field="model_artifact_path",
         )
 
-    educational_threshold_source = _require_mapping(materialization_result, "educational_threshold")
+    if is_v2:
+        classification_evidence_source = _require_mapping(materialization_result, "classification_evidence")
+        decision_semantics_source = _require_mapping(materialization_result, "decision_semantics")
+        _cross_check_multiclass_class_authorities(
+            training_record, model_selection, classification_evidence_source
+        )
+    else:
+        educational_threshold_source = _require_mapping(materialization_result, "educational_threshold")
     operational_readiness = _require_mapping(materialization_result, "operational_readiness")
     final_test_completion_source = _require_mapping(materialization_result, "final_test_completion")
 
@@ -1306,63 +1517,118 @@ def _build_external_bundle(
         )
 
     preprocessing = _resolve_preprocessing(execution_contract)
-    output_schema = _resolve_output_schema(args)
-
-    # Project Spec S0191 Desired Change B: when the execution contract
-    # carries governed binary result_semantics, project it into the
-    # external bundle too, synchronizing decision.threshold to the
-    # already-validated external threshold evidence (never the execution
-    # contract's older threshold, never re-run threshold selection). When
-    # the execution contract carries no result_semantics, this preserves
-    # historical absence behavior identically to the internal path.
-    result_semantics = _resolve_result_semantics(
-        execution_contract,
-        training_record,
-        output_schema,
-        model_selection=model_selection,
-        decision_threshold_override=educational_threshold_source.get("value"),
-    )
-
-    external_model_evidence = {
-        "origin": EXTERNAL_MODEL_SOURCE_MODE,
-        "evidence_references": {
-            "model_selection_evidence_reference": model_selection_evidence_reference,
-            "training_parameter_record_reference": training_parameter_record_ref,
-            "training_metrics_reference": training_metrics_ref,
-        },
-        "model_family": model_family,
-        "estimator_identity": {
-            "library": _require_string(estimator_identity_source, "library"),
-            "class_name": _require_string(estimator_identity_source, "class_name"),
-        },
-        "model_state_fingerprint": model_state_fingerprint,
-        "educational_threshold": {
-            "value": educational_threshold_source.get("value"),
-            "label": "educational",
-            "selection_partition": "validation",
-            "scenario": _require_string(educational_threshold_source, "scenario"),
-        },
-        "final_test_completion": {
-            "used_for_threshold_selection": bool(
-                final_test_completion_source.get("used_for_threshold_selection", False)
-            ),
-            "evaluation_count": final_test_completion_source.get("evaluation_count"),
-        },
-        "readiness": {
-            "educational_final_model_complete": bool(
-                operational_readiness.get("educational_final_model_complete")
-            ),
-            "educational_inference_demo_ready": bool(
-                operational_readiness.get("educational_inference_demo_ready")
-            ),
-            "operational_modeling_ready": False,
-            "operational_validity": operational_readiness.get("operational_validity"),
-            "operational_threshold": operational_readiness.get("operational_threshold"),
-            "operational_prediction_available": bool(
-                operational_readiness.get("operational_prediction_available")
-            ),
-        },
+    estimator_identity_value = {
+        "library": _require_string(estimator_identity_source, "library"),
+        "class_name": _require_string(estimator_identity_source, "class_name"),
     }
+
+    if is_v2:
+        ordered_class_ids = classification_evidence_source.get("ordered_class_ids")
+        output_schema = _resolve_multiclass_output_schema(args, ordered_class_ids)
+
+        # Project Spec S0209 Desired Change H: project the execution
+        # contract's governed multiclass result_semantics into the bundle,
+        # unconditionally (there is no historical multiclass bundle to stay
+        # backward-compatible with, unlike the binary path below).
+        result_semantics = _resolve_multiclass_result_semantics(
+            execution_contract, classification_evidence_source, model_family
+        )
+
+        if decision_semantics_source.get("strategy") != "argmax":
+            raise BundleGenerationError(
+                "invalid_external_evidence_profile",
+                "materialization result decision_semantics.strategy must be argmax for a "
+                "multiclass external bundle.",
+                field="decision_semantics.strategy",
+            )
+
+        external_model_evidence = {
+            "origin": EXTERNAL_MODEL_SOURCE_MODE,
+            "evidence_references": {
+                "model_selection_evidence_reference": model_selection_evidence_reference,
+                "training_parameter_record_reference": training_parameter_record_ref,
+                "training_metrics_reference": training_metrics_ref,
+            },
+            "model_family": model_family,
+            "estimator_identity": estimator_identity_value,
+            "model_state_fingerprint": model_state_fingerprint,
+            "classification_evidence": dict(classification_evidence_source),
+            "decision_semantics": {"strategy": "argmax"},
+            "final_test_completion": {
+                "evaluation_count": final_test_completion_source.get("evaluation_count"),
+                "used_for_decision_rule_selection": bool(
+                    final_test_completion_source.get("used_for_decision_rule_selection", False)
+                ),
+            },
+            "readiness": {
+                "educational_final_model_complete": bool(
+                    operational_readiness.get("educational_final_model_complete")
+                ),
+                "educational_inference_demo_ready": bool(
+                    operational_readiness.get("educational_inference_demo_ready")
+                ),
+                "operational_validity": operational_readiness.get("operational_validity"),
+                "decision_strategy": operational_readiness.get("decision_strategy"),
+                "operational_prediction_available": bool(
+                    operational_readiness.get("operational_prediction_available")
+                ),
+            },
+        }
+    else:
+        output_schema = _resolve_output_schema(args)
+
+        # Project Spec S0191 Desired Change B: when the execution contract
+        # carries governed binary result_semantics, project it into the
+        # external bundle too, synchronizing decision.threshold to the
+        # already-validated external threshold evidence (never the execution
+        # contract's older threshold, never re-run threshold selection). When
+        # the execution contract carries no result_semantics, this preserves
+        # historical absence behavior identically to the internal path.
+        result_semantics = _resolve_result_semantics(
+            execution_contract,
+            training_record,
+            output_schema,
+            model_selection=model_selection,
+            decision_threshold_override=educational_threshold_source.get("value"),
+        )
+
+        external_model_evidence = {
+            "origin": EXTERNAL_MODEL_SOURCE_MODE,
+            "evidence_references": {
+                "model_selection_evidence_reference": model_selection_evidence_reference,
+                "training_parameter_record_reference": training_parameter_record_ref,
+                "training_metrics_reference": training_metrics_ref,
+            },
+            "model_family": model_family,
+            "estimator_identity": estimator_identity_value,
+            "model_state_fingerprint": model_state_fingerprint,
+            "educational_threshold": {
+                "value": educational_threshold_source.get("value"),
+                "label": "educational",
+                "selection_partition": "validation",
+                "scenario": _require_string(educational_threshold_source, "scenario"),
+            },
+            "final_test_completion": {
+                "used_for_threshold_selection": bool(
+                    final_test_completion_source.get("used_for_threshold_selection", False)
+                ),
+                "evaluation_count": final_test_completion_source.get("evaluation_count"),
+            },
+            "readiness": {
+                "educational_final_model_complete": bool(
+                    operational_readiness.get("educational_final_model_complete")
+                ),
+                "educational_inference_demo_ready": bool(
+                    operational_readiness.get("educational_inference_demo_ready")
+                ),
+                "operational_modeling_ready": False,
+                "operational_validity": operational_readiness.get("operational_validity"),
+                "operational_threshold": operational_readiness.get("operational_threshold"),
+                "operational_prediction_available": bool(
+                    operational_readiness.get("operational_prediction_available")
+                ),
+            },
+        }
 
     bundle: dict[str, Any] = {
         "contract_version": INFERENCE_BUNDLE_VERSION,

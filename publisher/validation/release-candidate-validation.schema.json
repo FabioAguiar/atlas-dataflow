@@ -375,6 +375,11 @@
         },
         "decision_valid": {
           "type": "boolean"
+        },
+        "decision_strategy": {
+          "type": ["string", "null"],
+          "enum": ["argmax", null],
+          "description": "Project Spec S0209: optional/nullable multiclass decision-strategy signal, extracted only from a multiclass (v2) predictive bundle's own self-declared readiness.decision_strategy. Absent from every historical persisted validation result (which must remain schema-valid); when present as argmax, operational_threshold_status is always null -- those two fields are mutually exclusive readiness signals."
         }
       },
       "allOf": [
@@ -388,6 +393,15 @@
               "decision_reference": { "type": "null" },
               "sha256": { "type": "null" }
             }
+          }
+        },
+        {
+          "if": {
+            "properties": { "decision_strategy": { "const": "argmax" } },
+            "required": ["decision_strategy"]
+          },
+          "then": {
+            "properties": { "operational_threshold_status": { "type": "null" } }
           }
         }
       ]

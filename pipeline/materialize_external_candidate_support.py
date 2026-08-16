@@ -33,6 +33,13 @@ MODEL_CARD_SCHEMA_VERSION = "model-card.v1"
 
 _EVIDENCE_ROLES = ("training_parameter_record", "training_metrics", "model_selection_evidence")
 
+# Project Spec S0209: closed materialization schema_version dispatch. Any
+# schema_version other than the v2 constant below (including the v1
+# constant and historical fixtures that omit schema_version entirely) is
+# treated as the unchanged v1 (binary, threshold-oriented) path -- never a
+# dataset-slug, model-family, or class-label conditional.
+_MATERIALIZATION_SCHEMA_VERSION_V2 = "external-fitted-model-materialization.v2"
+
 
 class CandidateSupportBlocked(Exception):
     """Internal control-flow signal that short-circuits to a blocked result."""
@@ -279,6 +286,68 @@ def materialize_external_candidate_support(
         estimator_identity = training_record.get("estimator_identity")
         model_state_fingerprint = materialization_result.get("model_state_fingerprint")
 
+        # Project Spec S0209: closed handling for
+        # external-fitted-model-materialization.v1 (unchanged, threshold
+        # wording) and .v2 (argmax decision-strategy wording, no threshold
+        # wording). Any other/absent schema_version is the unchanged v1
+        # path -- never a dataset-slug, model-family, or class-label
+        # conditional.
+        is_v2 = materialization_result.get("schema_version") == _MATERIALIZATION_SCHEMA_VERSION_V2
+
+        if is_v2:
+            classification_evidence = materialization_result.get("classification_evidence")
+            if not isinstance(classification_evidence, dict):
+                raise CandidateSupportBlocked(
+                    "missing_required_field",
+                    "materialization_result.classification_evidence must be present as an "
+                    "object for a v2 (multiclass) materialization result.",
+                    "materialization_result.classification_evidence",
+                )
+            decision_semantics = materialization_result.get("decision_semantics")
+            decision_strategy = (
+                decision_semantics.get("strategy") if isinstance(decision_semantics, dict) else None
+            )
+            if decision_strategy != "argmax":
+                raise CandidateSupportBlocked(
+                    "invalid_decision_strategy",
+                    "materialization_result.decision_semantics.strategy must be 'argmax' for a "
+                    "v2 (multiclass) materialization result.",
+                    "materialization_result.decision_semantics.strategy",
+                )
+            v2_operational_readiness = materialization_result.get("operational_readiness")
+            v2_operational_readiness = (
+                v2_operational_readiness if isinstance(v2_operational_readiness, dict) else {}
+            )
+            if v2_operational_readiness.get("decision_strategy") != "argmax":
+                raise CandidateSupportBlocked(
+                    "invalid_decision_strategy",
+                    "materialization_result.operational_readiness.decision_strategy must be "
+                    "'argmax' for a v2 (multiclass) materialization result.",
+                    "materialization_result.operational_readiness.decision_strategy",
+                )
+
+            result_semantics = execution_contract.get("result_semantics")
+            result_semantics = result_semantics if isinstance(result_semantics, dict) else {}
+            if result_semantics.get("problem_type") != "multiclass_classification":
+                raise CandidateSupportBlocked(
+                    "execution_contract_problem_type_mismatch",
+                    "execution_contract.result_semantics.problem_type must be "
+                    "'multiclass_classification' for a v2 (multiclass) materialization result.",
+                    "execution_contract.result_semantics.problem_type",
+                )
+            execution_contract_class_ids = [
+                entry.get("class_id")
+                for entry in (result_semantics.get("classes") or [])
+                if isinstance(entry, dict)
+            ]
+            if execution_contract_class_ids != classification_evidence.get("ordered_class_ids"):
+                raise CandidateSupportBlocked(
+                    "multiclass_class_order_mismatch",
+                    "execution_contract.result_semantics.classes class_id order does not match "
+                    "materialization_result.classification_evidence.ordered_class_ids.",
+                    "execution_contract.result_semantics.classes",
+                )
+
         output_resolved = _safe_repo_relative_path(
             output_model_card_path, "output_model_card_path", resolved_repo_root
         )
@@ -289,6 +358,26 @@ def materialize_external_candidate_support(
         operational_readiness = materialization_result.get("operational_readiness")
         if not isinstance(operational_readiness, dict):
             operational_readiness = {}
+
+        if is_v2:
+            limitations = [
+                "The model was fitted outside Atlas; Atlas never trained, selected, or tuned it.",
+                "Generated from governed external evidence only; independent validation is "
+                "required before any downstream use.",
+                "Decision strategy: argmax.",
+                f"Operational validity: {operational_readiness.get('operational_validity', 'unconfirmed')}.",
+            ]
+        else:
+            limitations = [
+                "The model was fitted outside Atlas; Atlas never trained, selected, or tuned it.",
+                "Generated from governed external evidence only; independent validation is "
+                "required before any downstream use.",
+                f"Operational validity: {operational_readiness.get('operational_validity', 'unconfirmed')}.",
+                (
+                    "Operational threshold status: "
+                    f"{(operational_readiness.get('operational_threshold') or {}).get('status', 'unresolved')}."
+                ),
+            ]
 
         model_card: dict[str, Any] = {
             "schema_version": MODEL_CARD_SCHEMA_VERSION,
@@ -314,16 +403,7 @@ def materialize_external_candidate_support(
                 "review from Atlas-owned governed evidence. Not yet reviewed or approved for "
                 "public release, profile publication, or production decisioning."
             ),
-            "limitations": [
-                "The model was fitted outside Atlas; Atlas never trained, selected, or tuned it.",
-                "Generated from governed external evidence only; independent validation is "
-                "required before any downstream use.",
-                f"Operational validity: {operational_readiness.get('operational_validity', 'unconfirmed')}.",
-                (
-                    "Operational threshold status: "
-                    f"{(operational_readiness.get('operational_threshold') or {}).get('status', 'unresolved')}."
-                ),
-            ],
+            "limitations": limitations,
             "path_references": {
                 "model_card_path": output_model_card_path,
                 "training_parameter_record_reference": {

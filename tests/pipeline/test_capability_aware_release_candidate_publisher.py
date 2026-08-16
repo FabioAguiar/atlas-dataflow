@@ -166,6 +166,62 @@ def test_resolve_capability_release_policy_fails_closed_for_unsupported_capabili
     assert result.support_status == "future_architecture_probe"
 
 
+def _multiclass_predictive_profile(*, support_status: str = "requires_future_contract_evolution") -> dict:
+    """Project Spec S0209: mirrors the real committed
+    multiclass-predictive-classification capability identity. support_status
+    defaults to the real committed value (requires_future_contract_evolution);
+    pass 'current_supported' to build a synthetic clone that proves the
+    release-layer implementation is ready, without ever mutating the
+    committed profile file."""
+    profile = _binary_predictive_profile()
+    profile["capability_profile_id"] = "multiclass-predictive-classification"
+    profile["support_status"] = support_status
+    profile["prediction_runtime"] = {
+        "applicable": True,
+        "mode": "single_model_multiclass_classification",
+    }
+    return profile
+
+
+def test_resolve_capability_release_policy_committed_multiclass_still_rejects():
+    profile = _multiclass_predictive_profile()
+    binding = _capability_binding(profile)
+
+    result = resolve_capability_release_policy(binding, profile)
+
+    assert result.status == "rejected"
+    assert result.rejection_phase == CAPABILITY_REJECTION_PHASE_UNSUPPORTED
+    assert result.support_status == "requires_future_contract_evolution"
+
+
+def test_resolve_capability_release_policy_synthetic_current_supported_multiclass_accepted():
+    profile = _multiclass_predictive_profile(support_status="current_supported")
+    binding = _capability_binding(profile)
+
+    result = resolve_capability_release_policy(binding, profile)
+
+    assert result.status == "accepted"
+    assert result.capability_profile_id == "multiclass-predictive-classification"
+    assert result.rejection_phase is None
+
+
+def test_resolve_capability_release_policy_binary_unchanged_after_multiclass_addition():
+    profile = _binary_predictive_profile()
+    binding = _capability_binding(profile)
+
+    result = resolve_capability_release_policy(binding, profile)
+
+    assert result.status == "accepted"
+    assert result.capability_profile_id == CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID
+
+
+def test_release_layer_supported_capability_profile_ids_contains_both_identities():
+    from pipeline.assemble_candidate import RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
+
+    assert "multiclass-predictive-classification" in RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
+    assert CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID in RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
+
+
 def test_resolve_capability_release_policy_never_fabricates_artifacts_on_rejection():
     """The typed result carries no model/runtime/predictive fields at all --
     an unsupported capability cannot leak fabricated evidence through this
@@ -603,3 +659,90 @@ def test_real_binary_profile_release_layout_policy_accepts_model_artifact_presen
 
     assert result.valid
     assert result.rejections == ()
+
+
+# --- Project Spec S0209 Desired Change O: _resolve_training_provenance
+# recognizes external fitted-model v1 and v2 candidate provenance ----------
+
+
+def _write_schema_version_fixture(path, schema_version: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": schema_version}), encoding="utf-8")
+
+
+def test_v2_external_training_record_is_classified_as_external_provenance(tmp_path):
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.external-fitted-model.v2")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.external-fitted-model.v1")
+
+    stage, is_external, record_version, metrics_version = assemble_candidate._resolve_training_provenance(
+        {
+            "training_parameter_record": str(record_path.relative_to(tmp_path)),
+            "training_metrics": str(metrics_path.relative_to(tmp_path)),
+        },
+        tmp_path,
+    )
+
+    assert is_external is True
+    assert stage == assemble_candidate._EXTERNAL_MODEL_SOURCE_STAGE
+    assert record_version == "training-parameter-record.external-fitted-model.v2"
+    assert metrics_version == "training-metrics.external-fitted-model.v1"
+
+
+def test_v1_external_training_record_still_classified_as_external_provenance(tmp_path):
+    """Regression: recognizing v2 must not disturb the pre-existing v1
+    classification behavior."""
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.external-fitted-model.v1")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.external-fitted-model.v1")
+
+    stage, is_external, record_version, metrics_version = assemble_candidate._resolve_training_provenance(
+        {
+            "training_parameter_record": str(record_path.relative_to(tmp_path)),
+            "training_metrics": str(metrics_path.relative_to(tmp_path)),
+        },
+        tmp_path,
+    )
+
+    assert is_external is True
+    assert stage == assemble_candidate._EXTERNAL_MODEL_SOURCE_STAGE
+    assert record_version == "training-parameter-record.external-fitted-model.v1"
+    assert metrics_version == "training-metrics.external-fitted-model.v1"
+
+
+def test_v2_training_record_with_non_external_training_metrics_rejects(tmp_path):
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.external-fitted-model.v2")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.v1")
+
+    with pytest.raises(ValueError, match="training_metrics contract_version"):
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )
+
+
+def test_internal_training_record_still_returns_m24_stage_unaffected_by_v2(tmp_path):
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.v1")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.v1")
+
+    stage, is_external, record_version, metrics_version = assemble_candidate._resolve_training_provenance(
+        {
+            "training_parameter_record": str(record_path.relative_to(tmp_path)),
+            "training_metrics": str(metrics_path.relative_to(tmp_path)),
+        },
+        tmp_path,
+    )
+
+    assert stage == "M24"
+    assert is_external is False
+    assert record_version is None
+    assert metrics_version is None

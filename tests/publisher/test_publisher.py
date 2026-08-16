@@ -220,6 +220,7 @@ def _write_candidate(
     *,
     role_payload_overrides: dict[str, dict] | None = None,
     omit_role: str | None = None,
+    extra_candidate_fields: dict | None = None,
 ) -> Path:
     """Write a synthetic release candidate.
 
@@ -301,6 +302,9 @@ def _write_candidate(
             "runtime_consumes_temporary_pipeline_output": False,
         },
     }
+    if extra_candidate_fields:
+        candidate.update(extra_candidate_fields)
+
     (candidate_dir / "release-candidate.json").write_text(
         json.dumps(candidate, indent=2),
         encoding="utf-8",
@@ -366,6 +370,245 @@ def test_valid_publisher_flow_records_publication_evidence(tmp_path):
 
     registry_after = json.loads((tmp_repo / "registry" / "datasets.json").read_text())
     assert registry_after["datasets"][0]["active_release"] == RELEASE_ID
+
+
+# --- Project Spec S0209 Desired Change AE: capability-aware multiclass
+# publisher integration/manifest/release-projection flow -------------------
+#
+# The referenced capability profile below is a synthetic
+# multiclass-predictive-classification v1 current_supported clone that
+# exists only in this test's own tmp_repo -- the real committed profile at
+# pipeline/capabilities/multiclass-predictive-classification.v1.json (which
+# still declares support_status: requires_future_contract_evolution) is
+# never read, referenced, or mutated by any test in this module.
+
+MULTICLASS_ORDERED_CLASS_IDS = ["class-a", "class-b", "class-c"]
+
+
+def _multiclass_capability_profile(*, support_status: str) -> dict:
+    return {
+        "schema_version": "capability-profile.v1",
+        "artifact_type": "capability_profile",
+        "capability_profile_id": "multiclass-predictive-classification",
+        "capability_profile_version": "v1",
+        "support_status": support_status,
+        "semantic_requirements": {"target_semantics_applicability": "required"},
+        "artifact_roles": [
+            {"role_name": "contracts", "applicability": "required"},
+            {"role_name": "visualizations", "applicability": "optional"},
+            {"role_name": "no_model_analysis_summary", "applicability": "forbidden"},
+        ],
+        "prediction_runtime": {"applicable": True, "mode": "single_model_multiclass_classification"},
+        "publication": {"public_prediction_capability_applicability": "optional"},
+        "capability_boundary_confirmations": {
+            "dataset_specific_selector_used": False,
+            "dataset_specific_feature_names_present": False,
+            "concrete_model_hashes_present": False,
+            "model_bytes_embedded": False,
+            "release_instance_metadata_embedded": False,
+            "absolute_external_path_present": False,
+            "training_result_values_embedded": False,
+        },
+        "generated_at": "2026-08-16T00:00:00+00:00",
+    }
+
+
+def _write_capability_profile(
+    tmp_repo: Path, profile: dict, *, path: str = "governed/capability-profile.json"
+) -> tuple[str, str]:
+    profile_path = tmp_repo / path
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(profile, indent=2).encode("utf-8")
+    profile_path.write_bytes(data)
+    return path, hashlib.sha256(data).hexdigest()
+
+
+def _multiclass_capability_binding(profile_path: str, profile_sha256: str) -> dict:
+    return {
+        "dataset_slug": DATASET_SLUG,
+        "authoring_generation_id": "authoring-gen-0001",
+        "authoring_manifest_ref": {"path": "governed/authoring-manifest.json", "sha256": "0" * 64},
+        "capability_profile_id": "multiclass-predictive-classification",
+        "capability_profile_version": "v1",
+        "capability_profile_ref": {"path": profile_path, "sha256": profile_sha256},
+        "resolved_role_policy": [
+            {"role_name": "contracts", "applicability": "required", "present": True},
+            {"role_name": "visualizations", "applicability": "optional", "present": True},
+            {"role_name": "no_model_analysis_summary", "applicability": "forbidden", "present": False},
+        ],
+    }
+
+
+def _multiclass_classification_evidence() -> dict:
+    return {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+        "probability_columns": [
+            {"class_id": cid, "probability_index": i} for i, cid in enumerate(MULTICLASS_ORDERED_CLASS_IDS)
+        ],
+    }
+
+
+def _multiclass_predictive_bundle_payload() -> dict:
+    payload = _artifact_payload("predictive_bundle")
+    payload.update({
+        "model_provenance_origin": "validated_external_fitted_model",
+        "result_semantics": {
+            "schema_version": "multiclass-result-semantics.v1",
+            "problem_type": "multiclass_classification",
+            "classes": [
+                {"class_id": cid, "display_label": cid.replace("-", " ").title()}
+                for cid in MULTICLASS_ORDERED_CLASS_IDS
+            ],
+            "primary_output": "predicted_class",
+            "probability_output": "class_probabilities",
+            "decision": {"strategy": "argmax"},
+        },
+        "external_model_evidence": {
+            "origin": "validated_external_fitted_model",
+            "classification_evidence": _multiclass_classification_evidence(),
+            "decision_semantics": {"strategy": "argmax"},
+            "readiness": {
+                "operational_validity": "unconfirmed",
+                "decision_strategy": "argmax",
+                "operational_prediction_available": False,
+            },
+        },
+        "output_schema": {
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "class_labels": list(MULTICLASS_ORDERED_CLASS_IDS),
+            "probability_output": True,
+        },
+        "bundle_identity": {"bundle_id": "example-dataset-inference-bundle-20260801T000000Z"},
+    })
+    return payload
+
+
+def _multiclass_metrics_payload() -> dict:
+    payload = _artifact_payload("metrics")
+    payload.update({
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "evidence_identity": {
+            "model_source_mode": "validated_external_fitted_model",
+            "dataset_slug": DATASET_SLUG,
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "metrics": [{"name": "accuracy", "value": 0.75}],
+        },
+    })
+    return payload
+
+
+def _write_multiclass_capability_candidate(tmp_repo: Path, *, support_status: str) -> Path:
+    profile = _multiclass_capability_profile(support_status=support_status)
+    profile_path, profile_sha256 = _write_capability_profile(tmp_repo, profile)
+    capability_binding = _multiclass_capability_binding(profile_path, profile_sha256)
+    return _write_candidate(
+        tmp_repo,
+        role_payload_overrides={
+            "predictive_bundle": _multiclass_predictive_bundle_payload(),
+            "metrics": _multiclass_metrics_payload(),
+        },
+        extra_candidate_fields={
+            "capability_binding": capability_binding,
+            # Project Spec S0168: a capability-aware candidate requires
+            # governed model delivery metadata, independent of Project Spec
+            # S0209's own capability_binding verification.
+            "model_delivery": {
+                "path": MODEL_ARTIFACT_PATH,
+                "sha256": MODEL_ARTIFACT_SHA256,
+                "inference_bundle_id": "example-dataset-inference-bundle-20260801T000000Z",
+            },
+        },
+    )
+
+
+def test_capability_aware_multiclass_publisher_independently_verifies_profile(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    candidate_dir = _write_multiclass_capability_candidate(tmp_repo, support_status="current_supported")
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "accepted"
+    assert validation_result["operational_readiness_evaluation"]["decision_strategy"] == "argmax"
+    assert validation_result["operational_readiness_evaluation"]["operational_threshold_status"] is None
+
+
+def test_capability_aware_multiclass_future_status_profile_rejects(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    candidate_dir = _write_multiclass_capability_candidate(
+        tmp_repo, support_status="requires_future_contract_evolution"
+    )
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    reason_codes = {r.get("code") for r in validation_result["rejection"]["reasons"]}
+    assert "capability_profile_unsupported_status" in reason_codes
+
+
+def test_capability_aware_multiclass_tampered_profile_hash_rejects(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    candidate_dir = _write_multiclass_capability_candidate(tmp_repo, support_status="current_supported")
+    candidate = json.loads((candidate_dir / "release-candidate.json").read_text())
+    candidate["capability_binding"]["capability_profile_ref"]["sha256"] = "f" * 64
+    (candidate_dir / "release-candidate.json").write_text(json.dumps(candidate, indent=2), encoding="utf-8")
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+
+    assert validation_result["validation_outcome"] == "rejected"
+    safe_details = {r.get("safe_detail") for r in validation_result["rejection"]["reasons"]}
+    assert "capability_profile_sha256_mismatch" in safe_details
+
+
+def test_capability_aware_multiclass_candidate_flows_through_manifest_and_promotion(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    candidate_dir = _write_multiclass_capability_candidate(tmp_repo, support_status="current_supported")
+
+    validation_result = validate.run(str(candidate_dir), repo_root=tmp_repo)
+    assert validation_result["validation_outcome"] == "accepted"
+
+    run_dir = _latest_run_dir(tmp_repo)
+
+    # publisher/manifest.py and publisher/promote.py remain unedited generic
+    # code (Project Spec S0209 Desired Change Y) -- this proves they require
+    # no production change to handle a structurally accepted, capability-aware
+    # multiclass candidate through the existing generic ten-role path.
+    manifest_result = manifest.run(str(run_dir), repo_root=tmp_repo)
+    assert manifest_result["schema_version"] == "release-manifest.v1"
+    artifacts = manifest_result["artifacts"]
+    assert len(artifacts) == len(REQUIRED_ROLES)
+    assert {a["role"] for a in artifacts} == set(REQUIRED_ROLES)
+
+    valid, errors = manifest.verify(run_dir / "manifest.json", candidate_dir)
+    assert valid is True
+    assert errors == []
+
+    promotion_result = promote.run(str(run_dir), repo_root=tmp_repo)
+    assert promotion_result["promotion_outcome"] == "promoted"
+
+    registry_result = registry_update.run(str(run_dir), repo_root=tmp_repo)
+    assert registry_result["update_applied"] is True
+
+    # No production capability profile is mutated by any of the above --
+    # only the synthetic tmp_repo copy this test itself wrote. The real,
+    # committed profile must still declare its real support_status.
+    real_profile = json.loads(
+        (REPO_ROOT / "pipeline" / "capabilities" / "multiclass-predictive-classification.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert real_profile["support_status"] == "requires_future_contract_evolution"
 
 
 def test_invalid_candidate_rejection_uses_temporary_candidate(tmp_path):

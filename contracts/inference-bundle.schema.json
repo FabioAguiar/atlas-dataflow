@@ -250,8 +250,10 @@
             "logistic_regression",
             "gradient_boosting",
             "random_forest",
-            "hist_gradient_boosting"
-          ]
+            "hist_gradient_boosting",
+            "decision_tree"
+          ],
+          "description": "Project Spec S0209 adds decision_tree, bounded to the validated external fitted-model v2 estimator-identity pairing -- never selectable by internal Atlas training."
         },
         "runtime_adapter_version": {
           "type": "string",
@@ -486,8 +488,11 @@
       }
     },
     "result_semantics": {
-      "$ref": "#/$defs/binary_result_semantics",
-      "description": "Project Spec S0108: optional, backward-compatible normalized binary-result release metadata. Present only on newly generated binary bundles whose execution contract carries a reviewed, materialized result_semantics; absent (never null) for historical bundles. Strictly validated when present."
+      "oneOf": [
+        { "$ref": "#/$defs/binary_result_semantics" },
+        { "$ref": "#/$defs/multiclass_result_semantics" }
+      ],
+      "description": "Project Spec S0108: optional, backward-compatible normalized binary-result release metadata. Present only on newly generated binary bundles whose execution contract carries a reviewed, materialized result_semantics; absent (never null) for historical bundles. Project Spec S0209 closes this into a binary/multiclass union -- exactly one of binary_result_semantics or multiclass_result_semantics may match, both additionalProperties: false with disjoint required-field shapes. Strictly validated when present."
     },
     "model_provenance_origin": {
       "type": "string",
@@ -495,8 +500,11 @@
       "description": "Project Spec S0157: optional, backward-compatible explicit model-provenance declaration for this bundle. Absent (the default for every historical bundle) or atlas_internal_training keeps the existing training_evidence-based shape unchanged. validated_external_fitted_model switches the required provenance block to external_model_evidence and forbids training_evidence on the same bundle. S0157 does not make the current Atlas runtime consume a validated_external_fitted_model bundle -- runtime architecture and load-safe implementation belong to later specs."
     },
     "external_model_evidence": {
-      "$ref": "#/$defs/external_model_evidence",
-      "description": "Project Spec S0157: present only when model_provenance_origin is validated_external_fitted_model. Carries external fitted-model provenance and educational-vs-operational readiness evidence. Never present on a bundle that also carries training_evidence."
+      "oneOf": [
+        { "$ref": "#/$defs/external_model_evidence_v1" },
+        { "$ref": "#/$defs/external_model_evidence_v2" }
+      ],
+      "description": "Project Spec S0157: present only when model_provenance_origin is validated_external_fitted_model. Carries external fitted-model provenance and educational-vs-operational readiness evidence. Never present on a bundle that also carries training_evidence. Project Spec S0209 closes this into a v1 (threshold-oriented, unchanged) / v2 (ordered multiclass classification evidence, argmax decision) union -- exactly one may match."
     },
     "boundary_confirmations": {
       "type": "object",
@@ -853,13 +861,206 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["library", "class_name"],
-      "description": "Project Spec S0157: bounded structured estimator identity. Never an arbitrary module import path or callable string.",
+      "description": "Project Spec S0157: bounded structured estimator identity for the v1 external evidence branch. Never an arbitrary module import path or callable string.",
       "properties": {
         "library": { "type": "string", "enum": ["scikit-learn"] },
         "class_name": { "type": "string", "enum": ["HistGradientBoostingClassifier"] }
       }
     },
-    "external_model_evidence": {
+    "estimator_identity_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["library", "class_name"],
+      "description": "Project Spec S0209: bounded structured estimator identity for the v2 multiclass external evidence branch. Never an arbitrary module import path or callable string; the library/class_name pairing is cross-checked against model_family by external_family_estimator_pair_v2 below.",
+      "properties": {
+        "library": { "type": "string", "enum": ["scikit-learn"] },
+        "class_name": {
+          "type": "string",
+          "enum": [
+            "LogisticRegression",
+            "DecisionTreeClassifier",
+            "RandomForestClassifier",
+            "HistGradientBoostingClassifier"
+          ]
+        }
+      }
+    },
+    "external_family_estimator_pair_v2": {
+      "description": "Project Spec S0209: closes the v2 model_family/estimator_identity pairing so a cross-paired combination (e.g. model_family=random_forest with class_name=LogisticRegression) is rejected. Mirrors pipeline/training-parameter-record.schema.json's external_family_estimator_pair_v2.",
+      "oneOf": [
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "logistic_regression" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "LogisticRegression" }
+              }
+            }
+          }
+        },
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "decision_tree" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "DecisionTreeClassifier" }
+              }
+            }
+          }
+        },
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "random_forest" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "RandomForestClassifier" }
+              }
+            }
+          }
+        },
+        {
+          "required": ["model_family", "estimator_identity"],
+          "properties": {
+            "model_family": { "const": "hist_gradient_boosting" },
+            "estimator_identity": {
+              "type": "object",
+              "required": ["library", "class_name"],
+              "properties": {
+                "library": { "const": "scikit-learn" },
+                "class_name": { "const": "HistGradientBoostingClassifier" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "multiclass_classification_evidence_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0209: governed multiclass classification evidence claim propagated verbatim in governed order from S0208 external evidence. Not proof from model deserialization.",
+      "required": ["problem_type", "ordered_class_ids", "probability_columns"],
+      "properties": {
+        "problem_type": {
+          "type": "string",
+          "const": "multiclass_classification"
+        },
+        "ordered_class_ids": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "probability_columns": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_id", "probability_index"],
+            "properties": {
+              "class_id": { "type": "string", "minLength": 1 },
+              "probability_index": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "multiclass_result_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0209: strict multiclass release result semantics, mirroring contracts/execution-contract.schema.json's Project Spec S0207 multiclass_result_semantics plus a deterministic model_descriptor (analogous to binary_result_semantics.model_descriptor). Never defines a positive/negative class, a threshold, or a risk interpretation -- those remain exclusively binary_result_semantics concepts.",
+      "required": [
+        "schema_version",
+        "problem_type",
+        "result_schema_version",
+        "classes",
+        "primary_output",
+        "probability_output",
+        "decision",
+        "model_descriptor"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "multiclass-result-semantics.v1"
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "multiclass_classification"
+        },
+        "result_schema_version": {
+          "type": "string",
+          "const": "multiclass-classification-result.v1",
+          "description": "Identifies the future multiclass response family this release's metadata is compatible with. Project Spec S0209 does not create or implement the runtime response payload for that version."
+        },
+        "classes": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["class_id", "display_label"],
+            "properties": {
+              "class_id": { "type": "string", "minLength": 1 },
+              "display_label": { "type": "string", "minLength": 1 }
+            }
+          },
+          "description": "The complete, normatively ordered set of governed classes. Array order is normative and must never be sorted or re-derived."
+        },
+        "primary_output": {
+          "type": "string",
+          "const": "predicted_class"
+        },
+        "probability_output": {
+          "type": "string",
+          "const": "class_probabilities"
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy"],
+          "properties": {
+            "strategy": { "type": "string", "const": "argmax" }
+          }
+        },
+        "model_descriptor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "display_name"],
+          "properties": {
+            "model_family": {
+              "type": "string",
+              "enum": [
+                "logistic_regression",
+                "decision_tree",
+                "random_forest",
+                "hist_gradient_boosting"
+              ],
+              "description": "Bounded to the four Project Spec S0208 external fitted-model v2 estimator families -- multiclass bundle generation in Project Spec S0209 has no internal Atlas training source."
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Deterministic projection of model_family via a fixed code mapping. Never editable profile copy."
+            }
+          }
+        }
+      }
+    },
+    "external_model_evidence_v1": {
       "type": "object",
       "additionalProperties": false,
       "description": "Project Spec S0157: validated external fitted-model provenance and educational-vs-operational readiness evidence. S0157 does not make the current Atlas runtime consume this profile.",
@@ -957,6 +1158,105 @@
                 }
               ]
             },
+            "operational_prediction_available": { "type": "boolean" }
+          },
+          "allOf": [
+            {
+              "description": "operational_prediction_available = true is rejected when operational_validity is unconfirmed.",
+              "if": {
+                "properties": { "operational_prediction_available": { "const": true } },
+                "required": ["operational_prediction_available"]
+              },
+              "then": {
+                "properties": { "operational_validity": { "const": "confirmed" } }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "external_model_evidence_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0209: validated external fitted-model v2 (multiclass) provenance and argmax decision/readiness evidence, mirroring pipeline/external-fitted-model-materialization.schema.json's materialized_result_v2. Never carries educational_threshold, operational_threshold, positive_class, or risk bands -- those remain exclusively v1 (binary) concepts.",
+      "required": [
+        "origin",
+        "evidence_references",
+        "model_family",
+        "estimator_identity",
+        "model_state_fingerprint",
+        "classification_evidence",
+        "decision_semantics",
+        "final_test_completion",
+        "readiness"
+      ],
+      "allOf": [
+        { "$ref": "#/$defs/external_family_estimator_pair_v2" }
+      ],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "const": "validated_external_fitted_model"
+        },
+        "evidence_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_selection_evidence_reference",
+            "training_parameter_record_reference",
+            "training_metrics_reference"
+          ],
+          "properties": {
+            "model_selection_evidence_reference": { "$ref": "#/$defs/versioned_artifact_reference" },
+            "training_parameter_record_reference": { "$ref": "#/$defs/versioned_artifact_reference" },
+            "training_metrics_reference": { "$ref": "#/$defs/versioned_artifact_reference" }
+          }
+        },
+        "model_family": {
+          "type": "string",
+          "enum": ["logistic_regression", "decision_tree", "random_forest", "hist_gradient_boosting"]
+        },
+        "estimator_identity": { "$ref": "#/$defs/estimator_identity_v2" },
+        "model_state_fingerprint": {
+          "$ref": "#/$defs/sha256_hex",
+          "description": "Must be consistent with the same fingerprint carried by the corresponding external model-selection-evidence and training-parameter-record evidence. A mismatch across those references is rejected."
+        },
+        "classification_evidence": {
+          "$ref": "#/$defs/multiclass_classification_evidence_v2",
+          "description": "The normalized/cross-checked multiclass classification evidence, propagated verbatim in governed order from the agreeing S0208 external evidence."
+        },
+        "decision_semantics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy"],
+          "properties": {
+            "strategy": { "type": "string", "const": "argmax" }
+          }
+        },
+        "final_test_completion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["evaluation_count", "used_for_decision_rule_selection"],
+          "properties": {
+            "evaluation_count": { "type": "integer", "const": 1 },
+            "used_for_decision_rule_selection": { "type": "boolean", "const": false }
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "educational_final_model_complete",
+            "educational_inference_demo_ready",
+            "operational_validity",
+            "decision_strategy",
+            "operational_prediction_available"
+          ],
+          "properties": {
+            "educational_final_model_complete": { "type": "boolean" },
+            "educational_inference_demo_ready": { "type": "boolean" },
+            "operational_validity": { "type": "string", "enum": ["confirmed", "unconfirmed"] },
+            "decision_strategy": { "type": "string", "const": "argmax" },
             "operational_prediction_available": { "type": "boolean" }
           },
           "allOf": [

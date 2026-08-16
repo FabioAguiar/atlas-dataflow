@@ -324,3 +324,226 @@ def test_no_external_absolute_root_persisted(tmp_path):
 
     dumped = json.dumps(model_card)
     assert str(tmp_repo.resolve()) not in dumped
+
+
+# --- Project Spec S0209: v2 (multiclass) external candidate-support model card ---
+
+
+def _classification_evidence_v2() -> dict:
+    return {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ["class-a", "class-b", "class-c"],
+        "probability_columns": [
+            {"class_id": "class-a", "probability_index": 0},
+            {"class_id": "class-b", "probability_index": 1},
+            {"class_id": "class-c", "probability_index": 2},
+        ],
+    }
+
+
+def _write_evidence_fixtures_v2(tmp_repo: Path, *, dataset_slug: str = DATASET_SLUG) -> dict:
+    training_record_path = tmp_repo / "pipeline" / "external-fitted-model-runs" / dataset_slug / "run-002" / "training-parameter-record.json"
+    training_metrics_path = tmp_repo / "pipeline" / "external-fitted-model-runs" / dataset_slug / "run-002" / "training-metrics.json"
+    model_selection_path = tmp_repo / "pipeline" / "external-fitted-model-runs" / dataset_slug / "run-002" / "model-selection-evidence.json"
+
+    record_sha256 = _write_json(training_record_path, {
+        "schema_version": "training-parameter-record.external-fitted-model.v2",
+        "dataset_identity": {"dataset_slug": dataset_slug},
+        "model_family": "decision_tree",
+        "estimator_identity": {"library": "scikit-learn", "class_name": "DecisionTreeClassifier"},
+    })
+    metrics_sha256 = _write_json(training_metrics_path, {
+        "schema_version": "training-metrics.external-fitted-model.v1",
+        "evidence_identity": {"dataset_slug": dataset_slug},
+    })
+    selection_sha256 = _write_json(model_selection_path, {
+        "schema_version": "model-selection-evidence.external-fitted-model.v2",
+        "dataset_identity": {"dataset_slug": dataset_slug},
+    })
+
+    return {
+        "evidence_references": {
+            "training_parameter_record_path": str(training_record_path.relative_to(tmp_repo)),
+            "training_metrics_path": str(training_metrics_path.relative_to(tmp_repo)),
+            "model_selection_evidence_path": str(model_selection_path.relative_to(tmp_repo)),
+        },
+        "evidence_hashes": {
+            "training_parameter_record_sha256": record_sha256,
+            "training_metrics_sha256": metrics_sha256,
+            "model_selection_evidence_sha256": selection_sha256,
+        },
+    }
+
+
+def _materialization_result_v2(
+    evidence: dict,
+    *,
+    dataset_slug: str = DATASET_SLUG,
+    status: str = "materialized",
+    classification_evidence: dict | None = None,
+) -> dict:
+    return {
+        "schema_version": "external-fitted-model-materialization.v2",
+        "status": status,
+        "model_source_mode": "validated_external_fitted_model",
+        "dataset_identity": {"dataset_slug": dataset_slug},
+        "model_state_fingerprint": "a" * 64,
+        "classification_evidence": (
+            classification_evidence if classification_evidence is not None else _classification_evidence_v2()
+        ),
+        "decision_semantics": {"strategy": "argmax"},
+        "operational_readiness": {
+            "operational_validity": "unconfirmed",
+            "decision_strategy": "argmax",
+            "operational_prediction_available": False,
+        },
+        **evidence,
+    }
+
+
+def _execution_contract_v2(
+    *, dataset_slug: str = DATASET_SLUG, classes: list[dict] | None = None
+) -> dict:
+    contract = _execution_contract(dataset_slug=dataset_slug)
+    contract["result_semantics"] = {
+        "schema_version": "multiclass-result-semantics.v1",
+        "problem_type": "multiclass_classification",
+        "classes": classes if classes is not None else [
+            {"class_id": "class-a", "display_label": "Class A"},
+            {"class_id": "class-b", "display_label": "Class B"},
+            {"class_id": "class-c", "display_label": "Class C"},
+        ],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+    }
+    return contract
+
+
+def _call_v2(
+    tmp_repo: Path,
+    *,
+    evidence=None,
+    materialization_result=None,
+    execution_contract=None,
+    dataset_context=None,
+    output_path="pipeline/external-fitted-model-runs/pytest-external-dataset/run-002/model-card.json",
+    dataset_slug=DATASET_SLUG,
+):
+    evidence = evidence if evidence is not None else _write_evidence_fixtures_v2(tmp_repo, dataset_slug=dataset_slug)
+    return materialize_external_candidate_support(
+        dataset_slug=dataset_slug,
+        materialization_result=(
+            materialization_result if materialization_result is not None else _materialization_result_v2(evidence, dataset_slug=dataset_slug)
+        ),
+        execution_contract=execution_contract if execution_contract is not None else _execution_contract_v2(dataset_slug=dataset_slug),
+        dataset_context=dataset_context if dataset_context is not None else _dataset_context(dataset_slug=dataset_slug),
+        output_model_card_path=output_path,
+        repo_root=tmp_repo,
+    )
+
+
+def test_v1_model_card_remains_threshold_oriented(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    result = _call(tmp_repo)
+    model_card = json.loads((tmp_repo / result["model_card_path"]).read_text(encoding="utf-8"))
+
+    limitations_text = " ".join(model_card["limitations"])
+    assert "Operational threshold status:" in limitations_text
+    assert "Decision strategy:" not in limitations_text
+
+
+def test_v2_model_card_contains_decision_strategy_argmax(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    result = _call_v2(tmp_repo)
+
+    assert result["status"] == "materialized"
+    model_card = json.loads((tmp_repo / result["model_card_path"]).read_text(encoding="utf-8"))
+    limitations_text = " ".join(model_card["limitations"])
+    assert "Decision strategy: argmax." in limitations_text
+
+
+def test_v2_model_card_contains_no_operational_threshold_wording(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    result = _call_v2(tmp_repo)
+    model_card = json.loads((tmp_repo / result["model_card_path"]).read_text(encoding="utf-8"))
+
+    limitations_text = " ".join(model_card["limitations"])
+    assert "Operational threshold status:" not in limitations_text
+    assert "threshold" not in limitations_text.lower()
+
+
+def test_v2_model_card_external_model_identity_uses_v2_family(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    result = _call_v2(tmp_repo)
+    model_card = json.loads((tmp_repo / result["model_card_path"]).read_text(encoding="utf-8"))
+
+    assert model_card["external_model_identity"]["model_family"] == "decision_tree"
+    assert model_card["external_model_identity"]["estimator_identity"] == {
+        "library": "scikit-learn",
+        "class_name": "DecisionTreeClassifier",
+    }
+
+
+def test_v2_execution_contract_wrong_problem_type_blocks(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    execution_contract = _execution_contract(dataset_slug=DATASET_SLUG)
+    execution_contract["model_source_mode"] = "validated_external_fitted_model"
+
+    result = _call_v2(tmp_repo, execution_contract=execution_contract)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "execution_contract_problem_type_mismatch"
+    assert not (tmp_repo / "pipeline" / "external-fitted-model-runs" / DATASET_SLUG / "run-002" / "model-card.json").exists()
+
+
+def test_v2_execution_contract_class_order_mismatch_blocks_before_output(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    execution_contract = _execution_contract_v2(
+        classes=[
+            {"class_id": "class-b", "display_label": "Class B"},
+            {"class_id": "class-a", "display_label": "Class A"},
+            {"class_id": "class-c", "display_label": "Class C"},
+        ]
+    )
+
+    result = _call_v2(tmp_repo, execution_contract=execution_contract)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "multiclass_class_order_mismatch"
+    assert list(tmp_repo.rglob("model-card.json")) == []
+
+
+def test_v2_decision_semantics_not_argmax_blocks(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    evidence = _write_evidence_fixtures_v2(tmp_repo)
+    materialization_result = _materialization_result_v2(evidence)
+    materialization_result["decision_semantics"] = {"strategy": "majority_vote"}
+
+    result = _call_v2(tmp_repo, evidence=evidence, materialization_result=materialization_result)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "invalid_decision_strategy"
+
+
+def test_v2_operational_readiness_decision_strategy_not_argmax_blocks(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    evidence = _write_evidence_fixtures_v2(tmp_repo)
+    materialization_result = _materialization_result_v2(evidence)
+    materialization_result["operational_readiness"]["decision_strategy"] = None
+
+    result = _call_v2(tmp_repo, evidence=evidence, materialization_result=materialization_result)
+
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"][0]["code"] == "invalid_decision_strategy"
+
+
+def test_v2_no_model_deserialization_or_inference_introduced():
+    module_source = Path(REPO_ROOT / "pipeline" / "materialize_external_candidate_support.py").read_text(
+        encoding="utf-8"
+    )
+    for forbidden in (
+        "import joblib", "import pickle", "from joblib", "from pickle", "import sklearn", "from sklearn",
+        ".fit(", ".predict(", ".predict_proba(",
+    ):
+        assert forbidden not in module_source

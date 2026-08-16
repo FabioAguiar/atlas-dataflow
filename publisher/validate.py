@@ -443,6 +443,171 @@ def validate_capability_conditional_roles(candidate: dict, role_results: dict) -
     }
 
 
+# ---------------------------------------------------------------------------
+# Independent capability profile binding verification (Project Spec S0209)
+#
+# validate_capability_conditional_roles above trusts the candidate's own
+# already-resolved capability_binding.resolved_role_policy (resolved earlier
+# by pipeline.assemble_candidate). This is a separate, independent
+# defense-in-depth re-verification: the publisher itself reloads and
+# hash-verifies the referenced capability profile document under repo_root,
+# re-derives its identity/version/support_status/role-policy, and fails
+# closed on any tamper or drift -- so a manually constructed candidate can
+# never bypass the committed profile's lifecycle status just by declaring a
+# plausible-looking capability_binding. Absent capability_binding, this is a
+# complete no-op and every historical candidate is unaffected.
+# ---------------------------------------------------------------------------
+
+_CAPABILITY_BINDING_UNSAFE_PATH_CODE = "capability_profile_unsafe_path"
+_CAPABILITY_BINDING_MISSING_PROFILE_CODE = "capability_profile_missing"
+_CAPABILITY_BINDING_HASH_MISMATCH_CODE = "capability_profile_hash_mismatch"
+_CAPABILITY_BINDING_INVALID_JSON_CODE = "capability_profile_invalid_json"
+_CAPABILITY_BINDING_IDENTITY_MISMATCH_CODE = "capability_profile_identity_mismatch"
+_CAPABILITY_BINDING_ROLE_POLICY_MISMATCH_CODE = "capability_profile_role_policy_mismatch"
+_CAPABILITY_BINDING_UNSUPPORTED_CAPABILITY_CODE = "capability_profile_unsupported_capability"
+_CAPABILITY_BINDING_UNSUPPORTED_STATUS_CODE = "capability_profile_unsupported_status"
+_CAPABILITY_BINDING_RESULT_PROBLEM_TYPE_MISMATCH_CODE = "capability_result_problem_type_mismatch"
+
+_CAPABILITY_SUPPORT_STATUS_OPERATIONAL = "current_supported"
+
+# Project Spec S0209: the closed set of capability identities the publisher
+# recognizes for independent verification. Never derived from dataset_slug.
+_SUPPORTED_CAPABILITY_IDENTITIES = frozenset({
+    "binary-predictive-classification",
+    "multiclass-predictive-classification",
+})
+_CAPABILITY_EXPECTED_RESULT_PROBLEM_TYPE = {
+    "binary-predictive-classification": "binary_classification",
+    "multiclass-predictive-classification": "multiclass_classification",
+}
+
+
+def _verify_capability_binding(
+    candidate: dict, resolved_repo_root: Path, predictive_bundle_data: dict | None
+) -> list[dict]:
+    capability_binding = candidate.get("capability_binding")
+    if not isinstance(capability_binding, dict):
+        return []
+
+    profile_ref = capability_binding.get("capability_profile_ref")
+    if not isinstance(profile_ref, dict):
+        return [_rejection_reason(
+            _CAPABILITY_BINDING_MISSING_PROFILE_CODE,
+            "capability_binding.capability_profile_ref must be an object.",
+        )]
+    ref_path = profile_ref.get("path")
+    ref_sha256 = profile_ref.get("sha256")
+    if not isinstance(ref_path, str) or not ref_path:
+        return [_rejection_reason(
+            _CAPABILITY_BINDING_MISSING_PROFILE_CODE,
+            "capability_binding.capability_profile_ref.path must be a non-empty string.",
+        )]
+
+    path = Path(ref_path)
+    if path.is_absolute() or ".." in path.parts:
+        return [_safe_rejection_reason(
+            _CAPABILITY_BINDING_UNSAFE_PATH_CODE,
+            "capability_binding.capability_profile_ref.path is unsafe.",
+            safe_detail="unsafe_capability_profile_path",
+        )]
+    resolved = (resolved_repo_root / path).resolve()
+    if not resolved.is_relative_to(resolved_repo_root.resolve()):
+        return [_safe_rejection_reason(
+            _CAPABILITY_BINDING_UNSAFE_PATH_CODE,
+            "capability_binding.capability_profile_ref.path resolves outside repo_root.",
+            safe_detail="unsafe_capability_profile_path",
+        )]
+    if not resolved.is_file():
+        return [_rejection_reason(
+            _CAPABILITY_BINDING_MISSING_PROFILE_CODE,
+            "Referenced capability profile could not be found.",
+        )]
+
+    actual_sha256 = _sha256_file(resolved)
+    if not isinstance(ref_sha256, str) or actual_sha256 != ref_sha256:
+        return [_safe_rejection_reason(
+            _CAPABILITY_BINDING_HASH_MISMATCH_CODE,
+            "Referenced capability profile does not match the declared hash.",
+            safe_detail="capability_profile_sha256_mismatch",
+        )]
+
+    profile = _load_json_if_possible(resolved)
+    if profile is None:
+        return [_rejection_reason(
+            _CAPABILITY_BINDING_INVALID_JSON_CODE,
+            "Referenced capability profile is not valid JSON.",
+        )]
+
+    declared_id = capability_binding.get("capability_profile_id")
+    declared_version = capability_binding.get("capability_profile_version")
+    resolved_id = profile.get("capability_profile_id")
+    resolved_version = profile.get("capability_profile_version")
+    if declared_id != resolved_id or declared_version != resolved_version:
+        return [_rejection_reason(
+            _CAPABILITY_BINDING_IDENTITY_MISMATCH_CODE,
+            "capability_binding capability_profile_id/version does not agree with the "
+            "referenced capability profile document.",
+        )]
+
+    profile_applicability = {
+        entry.get("role_name"): entry.get("applicability")
+        for entry in (profile.get("artifact_roles") or [])
+        if isinstance(entry, dict)
+    }
+    for policy_entry in capability_binding.get("resolved_role_policy") or []:
+        if not isinstance(policy_entry, dict):
+            continue
+        role_name = policy_entry.get("role_name")
+        declared_applicability = policy_entry.get("applicability")
+        if profile_applicability.get(role_name) != declared_applicability:
+            return [_rejection_reason(
+                _CAPABILITY_BINDING_ROLE_POLICY_MISMATCH_CODE,
+                f"resolved_role_policy for role '{role_name}' does not agree with the "
+                "referenced capability profile's own artifact_roles applicability.",
+                role_name,
+            )]
+
+    if resolved_id not in _SUPPORTED_CAPABILITY_IDENTITIES:
+        return [_rejection_reason(
+            _CAPABILITY_BINDING_UNSUPPORTED_CAPABILITY_CODE,
+            f"capability {resolved_id!r} is not a recognized capability identity.",
+        )]
+
+    support_status = profile.get("support_status")
+    if support_status != _CAPABILITY_SUPPORT_STATUS_OPERATIONAL:
+        return [_rejection_reason(
+            _CAPABILITY_BINDING_UNSUPPORTED_STATUS_CODE,
+            f"capability {resolved_id!r} (support_status={support_status!r}) is not "
+            "currently, operationally supported.",
+        )]
+
+    # Project Spec S0209 Desired Change S: for a capability-aware predictive
+    # candidate, the predictive bundle's own result_semantics.problem_type
+    # must agree with the resolved capability identity -- never derived from
+    # dataset_slug. Only checked once the identity itself is a recognized,
+    # currently-supported capability (unknown identities already rejected
+    # above).
+    expected_problem_type = _CAPABILITY_EXPECTED_RESULT_PROBLEM_TYPE.get(resolved_id)
+    if expected_problem_type is not None:
+        result_semantics = (
+            predictive_bundle_data.get("result_semantics")
+            if isinstance(predictive_bundle_data, dict)
+            else None
+        )
+        actual_problem_type = (
+            result_semantics.get("problem_type") if isinstance(result_semantics, dict) else None
+        )
+        if actual_problem_type != expected_problem_type:
+            return [_rejection_reason(
+                _CAPABILITY_BINDING_RESULT_PROBLEM_TYPE_MISMATCH_CODE,
+                f"predictive_bundle.result_semantics.problem_type must be "
+                f"{expected_problem_type!r} for capability {resolved_id!r}.",
+                "predictive_bundle",
+            )]
+
+    return []
+
+
 def _early_predictive_bundle_provenance(artifact_roles_decl: dict | None, candidate_dir: Path) -> str | None:
     """Read `model_provenance_origin` from the candidate's declared
     predictive_bundle artifact, before the main required-roles presence
@@ -910,6 +1075,10 @@ def validate_candidate(
     capability_conditional_validation = validate_capability_conditional_roles(candidate, role_results)
     rejection_reasons.extend(capability_conditional_validation["rejection_reasons"])
 
+    rejection_reasons.extend(
+        _verify_capability_binding(candidate, resolved_repo_root, json_artifacts.get("predictive_bundle"))
+    )
+
     return {
         "valid": len(rejection_reasons) == 0 and len(errors) == 0,
         "errors": errors,
@@ -942,6 +1111,7 @@ def _predictive_bundle_promotion_readiness(predictive_bundle_data: dict | None) 
             "operational_validity": None,
             "operational_threshold_status": None,
             "operational_prediction_available": None,
+            "decision_strategy": None,
         }
     provenance = predictive_bundle_data.get("model_provenance_origin")
     external_evidence = predictive_bundle_data.get("external_model_evidence")
@@ -954,6 +1124,13 @@ def _predictive_bundle_promotion_readiness(predictive_bundle_data: dict | None) 
     operational_prediction_available = (
         readiness.get("operational_prediction_available") if isinstance(readiness, dict) else None
     )
+    # Project Spec S0209 Desired Change W: an optional decision_strategy,
+    # extracted only from a multiclass (v2) predictive bundle's own
+    # self-declared readiness.decision_strategy. Binary (v1) bundles never
+    # carry this field, so decision_strategy stays None for them -- legacy
+    # threshold state (operational_threshold_status) remains the only signal
+    # binary candidates expose.
+    decision_strategy = readiness.get("decision_strategy") if isinstance(readiness, dict) else None
     return {
         "model_provenance_origin": provenance if isinstance(provenance, str) else None,
         "operational_validity": (
@@ -965,6 +1142,7 @@ def _predictive_bundle_promotion_readiness(predictive_bundle_data: dict | None) 
         "operational_prediction_available": (
             operational_prediction_available if isinstance(operational_prediction_available, bool) else None
         ),
+        "decision_strategy": decision_strategy if isinstance(decision_strategy, str) else None,
     }
 
 
@@ -999,14 +1177,31 @@ def _is_finite_numeric(value) -> bool:
 
 
 def _external_predictive_bundle_compatibility(predictive_bundle_data: dict | None) -> list[dict]:
-    """Require a validated_external_fitted_model candidate's predictive
-    bundle to carry compatible binary result_semantics whose decision
-    threshold matches the bundle's own governed external threshold
-    evidence, before the candidate can be accepted."""
+    """Dispatch a validated_external_fitted_model candidate's predictive
+    bundle compatibility check by its own declared result_semantics variant
+    -- never by dataset slug or model family alone. Binary keeps the exact
+    pre-S0209 threshold check unchanged; multiclass (Project Spec S0209)
+    requires argmax/class-order compatibility and rejects any threshold
+    field."""
     if not isinstance(predictive_bundle_data, dict):
         return []
 
     result_semantics = predictive_bundle_data.get("result_semantics")
+    problem_type = result_semantics.get("problem_type") if isinstance(result_semantics, dict) else None
+
+    if problem_type == "multiclass_classification":
+        return _external_multiclass_predictive_bundle_compatibility(predictive_bundle_data, result_semantics)
+    return _external_binary_predictive_bundle_compatibility(predictive_bundle_data, result_semantics)
+
+
+def _external_binary_predictive_bundle_compatibility(
+    predictive_bundle_data: dict, result_semantics: dict | None
+) -> list[dict]:
+    """Require a validated_external_fitted_model candidate's predictive
+    bundle to carry compatible binary result_semantics whose decision
+    threshold matches the bundle's own governed external threshold
+    evidence, before the candidate can be accepted. Unchanged from the
+    pre-S0209 behavior."""
     if (
         not isinstance(result_semantics, dict)
         or result_semantics.get("problem_type") != "binary_classification"
@@ -1042,6 +1237,115 @@ def _external_predictive_bundle_compatibility(predictive_bundle_data: dict | Non
             "predictive_bundle",
             "external_threshold_mismatch",
         )]
+    return []
+
+
+def _external_multiclass_predictive_bundle_compatibility(
+    predictive_bundle_data: dict, result_semantics: dict | None
+) -> list[dict]:
+    """Project Spec S0209 Desired Change T (multiclass v2): require
+    argmax/class-order compatibility and output_schema.probability_output,
+    and reject any multiclass threshold/educational-threshold field."""
+    if (
+        not isinstance(result_semantics, dict)
+        or result_semantics.get("schema_version") != "multiclass-result-semantics.v1"
+        or result_semantics.get("problem_type") != "multiclass_classification"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Validated external fitted-model predictive bundle is missing compatible "
+            "multiclass result_semantics required for public release compatibility.",
+            "predictive_bundle",
+            "external_multiclass_result_semantics_missing",
+        )]
+    decision = result_semantics.get("decision")
+    if not isinstance(decision, dict) or decision.get("strategy") != "argmax":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Validated external fitted-model multiclass result_semantics.decision.strategy "
+            "must be argmax.",
+            "predictive_bundle",
+            "external_multiclass_decision_strategy_mismatch",
+        )]
+
+    external_evidence = predictive_bundle_data.get("external_model_evidence")
+    if not isinstance(external_evidence, dict):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Validated external fitted-model predictive bundle is missing external_model_evidence.",
+            "predictive_bundle",
+            "external_model_evidence_missing",
+        )]
+
+    readiness = external_evidence.get("readiness")
+    readiness = readiness if isinstance(readiness, dict) else {}
+    if "educational_threshold" in external_evidence or "operational_threshold" in readiness:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Validated external fitted-model multiclass predictive bundle must not carry a "
+            "threshold or educational-threshold field.",
+            "predictive_bundle",
+            "external_multiclass_threshold_present",
+        )]
+
+    classification_evidence = external_evidence.get("classification_evidence")
+    if (
+        not isinstance(classification_evidence, dict)
+        or classification_evidence.get("problem_type") != "multiclass_classification"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Validated external fitted-model predictive bundle is missing multiclass "
+            "classification_evidence.",
+            "predictive_bundle",
+            "external_multiclass_classification_evidence_missing",
+        )]
+
+    decision_semantics = external_evidence.get("decision_semantics")
+    if not isinstance(decision_semantics, dict) or decision_semantics.get("strategy") != "argmax":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Validated external fitted-model external_model_evidence.decision_semantics.strategy "
+            "must be argmax.",
+            "predictive_bundle",
+            "external_multiclass_evidence_decision_strategy_mismatch",
+        )]
+
+    if readiness.get("decision_strategy") != "argmax":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Validated external fitted-model external_model_evidence.readiness.decision_strategy "
+            "must be argmax.",
+            "predictive_bundle",
+            "external_multiclass_readiness_decision_strategy_mismatch",
+        )]
+
+    result_class_ids = [
+        entry.get("class_id") for entry in (result_semantics.get("classes") or []) if isinstance(entry, dict)
+    ]
+    evidence_class_ids = classification_evidence.get("ordered_class_ids")
+    output_schema = predictive_bundle_data.get("output_schema")
+    output_class_labels = output_schema.get("class_labels") if isinstance(output_schema, dict) else None
+
+    if not result_class_ids or result_class_ids != evidence_class_ids or result_class_ids != output_class_labels:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Validated external fitted-model multiclass class order is not consistent across "
+            "result_semantics.classes, external_model_evidence.classification_evidence."
+            "ordered_class_ids, and output_schema.class_labels.",
+            "predictive_bundle",
+            "external_multiclass_class_order_mismatch",
+        )]
+
+    if not isinstance(output_schema, dict) or output_schema.get("probability_output") is not True:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Validated external fitted-model multiclass output_schema.probability_output "
+            "must be true.",
+            "predictive_bundle",
+            "external_multiclass_probability_output_missing",
+        )]
+
     return []
 
 
@@ -1456,6 +1760,7 @@ def _build_validation_result(validation: dict) -> dict:
         "operational_threshold_status": None,
         "operational_prediction_available": None,
         "decision_valid": False,
+        "decision_strategy": None,
     }
 
     if all_pass:
@@ -1473,18 +1778,27 @@ def _build_validation_result(validation: dict) -> dict:
         # promotion_gate any longer.
         promotion_gate = {"promotion_allowed": True, "registry_update_allowed": True}
         if predictive_bundle_promotion_readiness.get("model_provenance_origin") == "validated_external_fitted_model":
+            # Project Spec S0209 Desired Change X: decision_strategy is
+            # optional/nullable. When the bundle self-declares argmax (a
+            # multiclass v2 bundle), operational_threshold_status is always
+            # null -- those two fields are mutually exclusive readiness
+            # signals, never both populated.
+            decision_strategy = predictive_bundle_promotion_readiness.get("decision_strategy")
             operational_readiness_evaluation = {
                 "source": "bundle_only",
                 "decision_reference": None,
                 "sha256": None,
                 "operational_validity": predictive_bundle_promotion_readiness.get("operational_validity"),
-                "operational_threshold_status": predictive_bundle_promotion_readiness.get(
-                    "operational_threshold_status"
+                "operational_threshold_status": (
+                    None
+                    if decision_strategy == "argmax"
+                    else predictive_bundle_promotion_readiness.get("operational_threshold_status")
                 ),
                 "operational_prediction_available": predictive_bundle_promotion_readiness.get(
                     "operational_prediction_available"
                 ),
                 "decision_valid": False,
+                "decision_strategy": decision_strategy,
             }
         else:
             operational_readiness_evaluation = dict(_empty_operational_readiness_evaluation)

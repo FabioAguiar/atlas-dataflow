@@ -1394,6 +1394,22 @@ def materialize_execution_contract(
 
 CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID = "binary-predictive-classification"
 _CAPABILITY_SUPPORT_STATUS_OPERATIONAL = "current_supported"
+# Project Spec S0209: closed set/map of capability_profile_ids this module
+# has explicit contract-projection implementation code for. Preserves
+# CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID's own value/meaning (still the
+# sole binary-classification identity) for existing callers/tests; the
+# projection gate below checks membership in this set, never equality
+# against the single binary constant alone. multiclass-predictive-
+# classification is structurally represented here, but the real committed
+# profile (pipeline/capabilities/multiclass-predictive-classification.v1.json)
+# still declares support_status: requires_future_contract_evolution, so real
+# multiclass projection remains rejected below regardless of this set's
+# membership -- only a synthetic support_status: current_supported profile
+# clone reaches acceptance.
+CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS = frozenset({
+    CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID,
+    "multiclass-predictive-classification",
+})
 
 # Rejection phases, mirroring this module's existing _rejection()/
 # rejection_phase convention used by the runtime->public CLI flow above.
@@ -1607,7 +1623,7 @@ def project_capability_aware_source_contract(
 
     if (
         support_status != _CAPABILITY_SUPPORT_STATUS_OPERATIONAL
-        or resolved_profile_id != CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID
+        or resolved_profile_id not in CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS
     ):
         return _rejected(
             CAPABILITY_REJECTION_PHASE_UNSUPPORTED,

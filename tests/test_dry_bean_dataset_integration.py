@@ -365,3 +365,88 @@ def test_notebook_summary_exposes_publisher_run_and_terminal_result_identity():
     assert '"publisher_run_dir": publisher_run_dir_relative_path' in code
     assert '"terminal_status": validated_run_terminal_result["status"] if validated_run_terminal_result else None' in code
     assert '"promotion_eligibility": (' in code
+
+
+# --- Project Spec S0218: canonical dataset-context shape and native
+# dry-bean-classification Predict View declaration (Stage 9).
+
+
+def test_notebook_writes_canonical_dataset_context_shape():
+    code = _source("code")
+    assert '"schema_version": "1.0.0",\n    "dataset_slug": dataset_slug,\n    "title": "Dry Bean",' in code
+    assert '"description": "Predict the Dry Bean class from the governed morphological input features.",' in code
+    assert '"domain": "general",' in code
+    assert '"predict_views": [dry_bean_predict_view],' in code
+
+
+def test_notebook_no_longer_writes_the_legacy_minimal_dataset_context_shape():
+    code = _source("code")
+    assert '"dataset_title": "Dry Bean"' not in code
+    assert '"schema_version": "dataset-context.v1"' not in code
+
+
+def test_notebook_declares_exactly_one_stable_native_predict_view():
+    code = _source("code")
+    assert '"view_id": "dry-bean-classification",' in code
+    assert '"dataset_slug": dataset_slug,\n    "display": {' in code
+
+
+def test_notebook_predict_view_binding_is_active_release_relative():
+    code = _source("code")
+    assert '"binding": {\n        "dataset_slug": dataset_slug,\n        "release": {\n            "mode": "active",\n        },\n    },' in code
+    assert "release-20260818-001" not in code
+    predict_view_start = code.index("dry_bean_predict_view = {")
+    predict_view_end = code.index("dataset_context = {", predict_view_start)
+    predict_view_source = code[predict_view_start:predict_view_end]
+    assert "release_id" not in predict_view_source
+
+
+def test_notebook_predict_view_declares_canonical_contract_precedence():
+    code = _source("code")
+    assert (
+        '"contract_precedence": {\n'
+        '        "canonical_contracts_are_source_of_truth": True,\n'
+        '        "view_metadata_defines_runtime_validation": False,\n'
+        '        "view_metadata_duplicates_contract": False,\n'
+        "    },"
+    ) in code
+
+
+def test_notebook_predict_view_carries_no_feature_validation_rules():
+    # "features" legitimately appears elsewhere (runtime_contract/
+    # public_contract construction above), so this check is scoped to the
+    # Predict View declaration dict itself, not the whole notebook source.
+    code = _source("code")
+    predict_view_start = code.index("dry_bean_predict_view = {")
+    predict_view_end = code.index("dataset_context = {", predict_view_start)
+    predict_view_source = code[predict_view_start:predict_view_end]
+    for forbidden in (
+        "features",
+        "validation_rules",
+        "input_semantics",
+        "domain_constraints",
+        "business_logic",
+        "runtime_contract",
+        "public_contract",
+    ):
+        assert forbidden not in predict_view_source
+
+
+def test_notebook_validates_generated_context_against_canonical_schema_before_candidate_assembly():
+    code = _source("code")
+    assert "dataset_context_schema_path = repo_root / \"contracts\" / \"dataset-context.schema.json\"" in code
+    assert "jsonschema.Draft7Validator(dataset_context_schema).iter_errors(dataset_context)" in code
+    assert 'record_block("dataset_context_schema_invalid", message, "dataset_context")' in code
+    # This validation must happen before release-candidate assembly (Stage
+    # 14), not after.
+    validation_offset = code.index("dataset_context_schema_path = repo_root")
+    candidate_assembly_offset = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
+    assert validation_offset < candidate_assembly_offset
+
+
+def test_notebook_blocks_on_malformed_predict_view_declaration():
+    code = _source("code")
+    assert '"dataset_context_predict_views_count_invalid"' in code
+    assert '"dataset_context_predict_view_id_invalid"' in code
+    assert '"dataset_context_predict_view_dataset_slug_invalid"' in code
+    assert '"dataset_context_predict_view_contract_precedence_invalid"' in code

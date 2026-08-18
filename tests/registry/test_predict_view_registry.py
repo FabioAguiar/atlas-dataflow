@@ -552,6 +552,81 @@ def test_no_implementation_logic_hardcodes_churn_risk_overview():
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0218: first-dataset/native-style materialization fixture
+# (dry-bean-classification) proving registry/update.py's generic
+# materialization logic is not churn-risk-overview-specific.
+# ---------------------------------------------------------------------------
+
+_DRY_BEAN_VIEW_DECLARATION_TEMPLATE = {
+    "schema_version": "1.0.0",
+    "view_id": "dry-bean-classification",
+    "dataset_slug": "dry-bean",
+    "display": {
+        "title": "Dry Bean Classification",
+        "summary": "Predict the class of a dry bean sample from its morphological measurements.",
+        "description": "A multiclass prediction experience using the governed Dry Bean input contract.",
+        "tags": ["dry-bean", "classification", "multiclass"],
+    },
+    "intent": {
+        "prediction_goal": "Predict the bean class from the canonical dataset contract inputs.",
+        "audience": "Users exploring Dry Bean multiclass inference.",
+        "usage_notes": "Use the canonical dataset contracts for required fields, accepted values, and runtime validation.",
+    },
+    "binding": {"dataset_slug": "dry-bean", "release": {"mode": "active"}},
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "view_metadata_defines_runtime_validation": False,
+        "view_metadata_duplicates_contract": False,
+    },
+}
+
+
+def test_materialize_dry_bean_native_predict_view_declaration_end_to_end(tmp_path):
+    """Promotion materializes the Dry Bean Predict View from a canonical
+    S0218 dataset-context declaration; the view record validates; another
+    dataset's already-materialized view is preserved; repeated registry
+    update is idempotent; binding stays release-active-bound; and registry
+    update alone never creates a customization record."""
+    other_view = {**_VIEW_DECLARATION_TEMPLATE, "view_id": "other-view", "dataset_slug": "other-dataset"}
+    other_view["binding"] = {"dataset_slug": "other-dataset", "release": {"mode": "active"}}
+    _write_materialization_repo(
+        tmp_path,
+        dataset_entries=[_dataset_entry("other-dataset", "release-20260101-001")],
+        existing_predict_views=[other_view],
+    )
+    _write_release(
+        tmp_path, "release-20260818-101", "dry-bean", predict_views=[_DRY_BEAN_VIEW_DECLARATION_TEMPLATE]
+    )
+    run_dir = _write_promotion_run(tmp_path, "run-dry-bean", "dry-bean", "release-20260818-101")
+
+    result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert result["predict_view_materialization"]["action"] == "created"
+    views = _predict_views_of(tmp_path)["predict_views"]
+    assert {v["view_id"] for v in views} == {"other-view", "dry-bean-classification"}
+    assert other_view in views
+    dry_bean_view = next(v for v in views if v["view_id"] == "dry-bean-classification")
+    assert dry_bean_view["binding"] == {"dataset_slug": "dry-bean", "release": {"mode": "active"}}
+
+    validation = validate_predict_views(
+        _load(tmp_path / "registry" / "predict-views.json"),
+        known_dataset_slugs={"other-dataset", "dry-bean"},
+    )
+    assert validation["valid"] is True, f"Expected valid, got errors: {validation['errors']}"
+
+    customizations_before = (tmp_path / "registry" / "predict-view-customizations.json").read_bytes()
+    predict_views_before = (tmp_path / "registry" / "predict-views.json").read_bytes()
+
+    repeat_result = registry_update_run(str(run_dir), repo_root=tmp_path)
+
+    assert repeat_result["predict_view_materialization"]["action"] == "preserved"
+    assert (tmp_path / "registry" / "predict-views.json").read_bytes() == predict_views_before
+    assert (tmp_path / "registry" / "predict-view-customizations.json").read_bytes() == customizations_before
+    customizations = _load(tmp_path / "registry" / "predict-view-customizations.json")
+    assert customizations["predict_view_customizations"] == []
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
 

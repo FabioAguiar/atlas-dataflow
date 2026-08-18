@@ -8011,3 +8011,331 @@ describe("Performance focus selection round trip and single-column score present
     expect(screen.queryByText("KS statistic")).not.toBeInTheDocument();
   });
 });
+
+// -----------------------------------------------------------------------------
+// Project Spec S0218: Dry Bean native Predict View authoring bootstrap.
+//
+// A first-dataset/native-style regression, deliberately independent of the
+// shared Telco `installFetchMock`/`datasetSlug`/`viewId`/`customization`
+// fixtures above (its own dataset slug, its own fetch mock) -- it proves the
+// existing, unmodified production page correctly bootstraps a governed
+// multiclass dataset with one eligible Predict View and no stored
+// customization: the sole eligible view auto-binds, all 16 governed Dry Bean
+// fields render authorable and ungrouped, Add subgroup/field assignment
+// works, Live Preview reflects the unsaved draft, and Publish changes
+// persists the customization through the existing shared endpoint shape.
+// -----------------------------------------------------------------------------
+describe("Dry Bean native Predict View authoring bootstrap (Project Spec S0218)", () => {
+  const dryBeanSlug = "dry-bean";
+  const dryBeanViewId = "dry-bean-classification";
+  // The real 16 governed Dry Bean public-contract feature names (Project
+  // Specs S0216/S0218), not a synthetic subset.
+  const dryBeanFields = [
+    "Area",
+    "Perimeter",
+    "MajorAxisLength",
+    "MinorAxisLength",
+    "AspectRatio",
+    "Eccentricity",
+    "ConvexArea",
+    "EquivDiameter",
+    "Extent",
+    "Solidity",
+    "Roundness",
+    "Compactness",
+    "ShapeFactor1",
+    "ShapeFactor2",
+    "ShapeFactor3",
+    "ShapeFactor4",
+  ];
+
+  beforeEach(() => {
+    Element.prototype.setPointerCapture = vi.fn();
+    // jsdom does not implement elementFromPoint -- finishDrag() calls it
+    // unconditionally on pointer up/cancel (same precondition as the shared
+    // DatasetAdminPage describe block above).
+    document.elementFromPoint = vi.fn(() => null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function installDryBeanFetchMock() {
+    let savedCustomization: Record<string, unknown> | null = null;
+
+    function authoringContextEnvelope(): Record<string, unknown> {
+      return {
+        dataset_slug: dryBeanSlug,
+        active_release: "release-20260818-101",
+        dataset: {
+          status: "ready",
+          data: {
+            dataset_slug: dryBeanSlug,
+            title: "Dry Bean",
+            display_title: null,
+            summary: "Predict the Dry Bean class from the governed morphological input features.",
+            domain: "general",
+            tags: ["dry-bean", "classification", "multiclass"],
+            active_release: "release-20260818-101",
+            publication_status: "ready",
+          },
+        },
+        context: {
+          status: "ready",
+          data: {
+            title: "Dry Bean",
+            summary: "Predict the Dry Bean class from the governed morphological input features.",
+            domain: "general",
+            tags: ["dry-bean", "classification", "multiclass"],
+            problem_type: "multiclass_classification",
+            prediction_target_description: "Dry bean class",
+          },
+        },
+        contract: {
+          status: "ready",
+          data: {
+            contract: {
+              schema_version: "1.0.0",
+              features: dryBeanFields.map((name, index) => ({
+                name,
+                label: name,
+                input_type: "number",
+                optional: false,
+                display_order: index + 1,
+              })),
+            },
+            result_contract: {
+              status: "available",
+              semantics: {
+                schema_version: "multiclass-result-semantics.v1",
+                problem_type: "multiclass_classification",
+                result_schema_version: "multiclass-classification-result.v1",
+                primary_output: "predicted_class",
+                probability_output: "class_probabilities",
+                classes: [
+                  { class_id: "SEKER", display_label: "Seker" },
+                  { class_id: "BARBUNYA", display_label: "Barbunya" },
+                  { class_id: "BOMBAY", display_label: "Bombay" },
+                  { class_id: "CALI", display_label: "Cali" },
+                  { class_id: "DERMASON", display_label: "Dermason" },
+                  { class_id: "HOROZ", display_label: "Horoz" },
+                  { class_id: "SIRA", display_label: "Sira" },
+                ],
+                decision: { strategy: "argmax" },
+                model_descriptor: { model_family: "hist_gradient_boosting", display_name: "Dry Bean classifier" },
+              },
+            },
+          },
+        },
+        inference_guidance: { status: "ready", data: [] },
+        metrics: { status: "ready", data: { evaluation: { metrics: { f1_macro: 0.91, accuracy: 0.92 } } } },
+        visualizations: { status: "ready", data: {} },
+        views: {
+          status: "ready",
+          data: [{ view_id: dryBeanViewId, display: { title: "Dry Bean Classification" } }],
+        },
+      };
+    }
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: dryBeanSlug,
+              title: "Dry Bean",
+              display_title: null,
+              summary: "Predict the Dry Bean class from the governed morphological input features.",
+              domain: "general",
+              tags: ["dry-bean", "classification", "multiclass"],
+              active_release: "release-20260818-101",
+              publication_status: "ready",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: dryBeanSlug,
+              title: "Dry Bean",
+              summary: "Predict the Dry Bean class from the governed morphological input features.",
+              domain: "general",
+              visibility: "public",
+              tags: ["dry-bean", "classification", "multiclass"],
+              problem_type: "multiclass_classification",
+            },
+          ],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/authoring-context`)) {
+        return jsonResponse(authoringContextEnvelope());
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/publication-state`)) {
+        return jsonResponse({
+          dataset_slug: dryBeanSlug,
+          active_release: "release-20260818-101",
+          visibility: {
+            configured_visible: true,
+            source: "explicit_record",
+            record_status: "valid",
+            updated_at: "2026-08-18T00:00:00Z",
+            effective_visible: true,
+          },
+          review: { status: "ready", approval_allowed: false, approval_blockers: [] },
+          snapshot: { status: "no_snapshot", exists: false },
+          public_access: { reachable: true, blockers: [], observations: [] },
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/profile-draft`)) {
+        // Project Spec S0218 Section L: no customization is pre-created, and
+        // this scenario likewise starts with no saved Dataset Detail draft --
+        // proving the bootstrap never depends on one existing already.
+        return jsonResponse({ draft_exists: false, profile: null });
+      }
+      if (
+        url.endsWith(`/admin/datasets/${dryBeanSlug}/views/${dryBeanViewId}/customization`) &&
+        init?.method === "PUT"
+      ) {
+        const body = (typeof init.body === "string" ? JSON.parse(init.body) : null) as Record<string, unknown> | null;
+        savedCustomization = body;
+        return jsonResponse({ saved: true, customization: body });
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/views/${dryBeanViewId}/customization`)) {
+        // Project Spec S0218 Section L: the stored customization is absent
+        // until the operator authors and publishes one through this page.
+        return jsonResponse({
+          customization_exists: false,
+          compatibility_status: "absent",
+          customization: null,
+          errors: [],
+        });
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, getSavedCustomization: () => savedCustomization };
+  }
+
+  it("auto-binds the sole eligible Dry Bean view and renders all 16 governed fields ungrouped with no stored customization", async () => {
+    const { fetchMock } = installDryBeanFetchMock();
+    renderAdminPage();
+
+    await loadDraftAndCustomization();
+
+    // Project Spec S0100: a single eligible view is silently auto-bound --
+    // the manual "Bound predict view" select never renders.
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${dryBeanSlug}/views/${dryBeanViewId}/customization`),
+      ),
+    ).toBe(true);
+
+    const noSubgroupZone = screen.getByLabelText("No subgroup fields");
+    for (const fieldName of dryBeanFields) {
+      expect(within(noSubgroupZone).getByText(fieldName)).toBeInTheDocument();
+    }
+
+    // Every field is required (optional: false in the real Dry Bean public
+    // contract), so the Field bank starts empty -- nothing is silently
+    // hidden from the initial authoring state.
+    expect(
+      within(screen.getByLabelText("Field bank fields")).getByText(
+        "Drag fields here to remove them from the public form.",
+      ),
+    ).toBeInTheDocument();
+
+    // Project Spec S0218 Section Q: zero authored subgroups at bootstrap.
+    expect(
+      screen.getByText("No subgroups defined. Visible fields without a subgroup render in No subgroup below."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add subgroup" })).toBeInTheDocument();
+  });
+
+  it("creates a subgroup, assigns two fields, reflects it in Live Preview before persistence, and persists it through the shared Publish changes customization payload", async () => {
+    document.elementFromPoint = vi.fn(() =>
+      document.querySelector<HTMLElement>('[data-customization-drop-zone="group-1"]'),
+    );
+    const { getSavedCustomization } = installDryBeanFetchMock();
+    renderAdminPage();
+
+    await loadDraftAndCustomization();
+
+    const layoutPanel = screen.getByLabelText("Public form layout");
+    fireEvent.click(within(layoutPanel).getByRole("button", { name: "Add subgroup" }));
+    const cardsAfterAdd = layoutPanel.querySelectorAll(".dataset-admin-builder-card");
+    const newGroupCard = cardsAfterAdd[cardsAfterAdd.length - 1] as HTMLElement;
+
+    fireEvent.click(within(newGroupCard).getByRole("button", { name: "Edit" }));
+    fireEvent.change(within(newGroupCard).getByLabelText("Label"), { target: { value: "Shape geometry" } });
+    fireEvent.change(within(newGroupCard).getByLabelText("Description"), {
+      target: { value: "Shape-derived morphological measurements" },
+    });
+    fireEvent.click(within(newGroupCard).getByRole("button", { name: "Save subgroup" }));
+
+    // Assign at least two fields (Project Spec S0218 Section O) -- every
+    // drop resolves to the newly created "group-1" zone via the mocked
+    // elementFromPoint above.
+    for (const fieldName of ["Area", "Perimeter"]) {
+      const dragHandle = screen.getByRole("button", { name: `Drag field ${fieldName}` });
+      fireEvent.pointerDown(dragHandle, { pointerId: 1, clientX: 0, clientY: 0 });
+      fireEvent.pointerUp(dragHandle, { pointerId: 1, clientX: 0, clientY: 0 });
+    }
+
+    // Live Preview reflects the unsaved draft's subgroup label and field
+    // membership before any persistence (Project Spec S0218 Section O).
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    // The live InferenceForm renders each customization group as a
+    // <fieldset><legend>{label}</legend>...</fieldset> -- its accessible
+    // name comes from the legend, matched via role "group", not the
+    // form-control-oriented getByLabelText query.
+    const livePreviewSubgroup = screen.getByRole("group", { name: "Shape geometry" });
+    // Each field's own <label> carries an aria-hidden " *" required marker
+    // appended to its text, so match by prefix rather than the full
+    // (whitespace-including) label text.
+    expect(within(livePreviewSubgroup).getByLabelText(/^Area\b/)).toBeInTheDocument();
+    expect(within(livePreviewSubgroup).getByLabelText(/^Perimeter\b/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+    await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+
+    const saved = getSavedCustomization() as {
+      dataset_slug?: string;
+      view_id?: string;
+      field_hints?: Array<{ field_name: string; group?: string }>;
+      groups?: Array<{ group_id: string; label: string; description?: string }>;
+      contract_precedence?: Record<string, boolean>;
+    };
+    expect(saved).not.toBeNull();
+    expect(saved!.dataset_slug).toBe(dryBeanSlug);
+    expect(saved!.view_id).toBe(dryBeanViewId);
+    expect(saved!.field_hints?.map((hint) => hint.field_name).sort()).toEqual([...dryBeanFields].sort());
+    expect(saved!.groups).toEqual([
+      { group_id: "group-1", label: "Shape geometry", description: "Shape-derived morphological measurements" },
+    ]);
+    const assignedGroups = new Map(saved!.field_hints?.map((hint) => [hint.field_name, hint.group]));
+    expect(assignedGroups.get("Area")).toBe("group-1");
+    expect(assignedGroups.get("Perimeter")).toBe("group-1");
+    expect(assignedGroups.get("Solidity")).toBeUndefined();
+    // Project Spec S0218 Section P: customization introduces no validation
+    // semantics of its own -- the same fixed contract-precedence boundary
+    // every other dataset's customization carries.
+    expect(saved!.contract_precedence).toEqual({
+      canonical_contracts_are_source_of_truth: true,
+      customization_defines_runtime_validation: false,
+      customization_duplicates_contract: false,
+    });
+  });
+});

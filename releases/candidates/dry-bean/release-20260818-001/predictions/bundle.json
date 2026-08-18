@@ -11,8 +11,8 @@
   },
   "bundle_identity": {
     "artifact_kind": "inference_bundle",
-    "bundle_id": "dry-bean-inference-bundle-20260818T221506Z",
-    "created_at": "2026-08-18T22:15:06+00:00"
+    "bundle_id": "dry-bean-inference-bundle-20260818T230643Z",
+    "created_at": "2026-08-18T23:06:43+00:00"
   },
   "compatibility_constraints": {
     "requires_contract_versions": {
@@ -47,7 +47,7 @@
   "dataset_context": {
     "dataset_context_reference": {
       "path": "contracts/dry-bean/dataset-context.json",
-      "sha256": "7e27b954971a1bd5b9525a85b6186de6749f380daae9c76084570e81b2f23d4c"
+      "sha256": "015c0d97f4768a55c0b134684114580c80029b41cf23df6db3291eadd917fd55"
     },
     "dataset_slug": "dry-bean"
   },
@@ -76,7 +76,7 @@
   "model_artifact": {
     "path": "models/model.pkl",
     "sha256": "36246a3ef0dc253610780b9f92799c761d753caf4e596de5d5d98841f48302a9",
-    "source_training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/training-parameter-record.json"
+    "source_training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260818T230643Z/training-parameter-record.json"
   },
   "output_schema": {
     "class_labels": [
@@ -166,17 +166,17 @@
     "model_selection_evidence": null,
     "training_metrics": {
       "contract_version": "training-metrics.v2",
-      "path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/metrics.json",
-      "sha256": "52afa7f65df733eca1865c2f7cc3784e86729bc97c0158436dffee545476e0d5"
+      "path": "pipeline/training-runs/dry-bean/train-20260818T230643Z/metrics.json",
+      "sha256": "4b2248c265b3070b24b57f07dc086325cbceb06d9b88a41400670efda2a82e01"
     },
     "training_parameter_record": {
       "contract_version": "training-parameter-record.v2",
-      "path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/training-parameter-record.json",
-      "sha256": "4694cafd74a7496b66a4daf267a761b1d4e44e90edb97e7cdb84ed2e45235f23"
+      "path": "pipeline/training-runs/dry-bean/train-20260818T230643Z/training-parameter-record.json",
+      "sha256": "606d30532bfb35fad7f7411a842f25270f22ed7eb857fdd87dbb39ed681eaa1b"
     },
     "training_run_identity": {
       "dataset_slug": "dry-bean",
-      "run_id": "train-20260818T221505Z"
+      "run_id": "train-20260818T230643Z"
     }
   }
 }

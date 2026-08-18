@@ -8,7 +8,7 @@
   "release_identity": {
     "release_id": "release-20260818-001",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-08-18T22:15:06Z"
+    "created_at": "2026-08-18T23:06:43Z"
   },
   "artifacts": [
     {
@@ -27,7 +27,7 @@
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "1a90444ef529d25f429a86ae742d5d5adef318c043bc846eabab52da88ce2a34"
+      "hash_value": "502e726d3c40bf2927a9b61a1881b60b7b568859e59a0ba6ea9ac4da2b46d773"
     },
     {
       "role": "model_artifact",
@@ -39,37 +39,37 @@
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "52afa7f65df733eca1865c2f7cc3784e86729bc97c0158436dffee545476e0d5"
+      "hash_value": "4b2248c265b3070b24b57f07dc086325cbceb06d9b88a41400670efda2a82e01"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "b6f5f7b3a2cd032d9123c41029fee7da9661966edfe391aa578401daae1fdf79"
+      "hash_value": "f5dc62064f113fb697b7dc8637477bf71206c4543ef7321a37460ef9a4c893de"
     },
     {
       "role": "public_context",
       "reference": "public-context.json",
       "hash_algorithm": "sha256",
-      "hash_value": "7e27b954971a1bd5b9525a85b6186de6749f380daae9c76084570e81b2f23d4c"
+      "hash_value": "015c0d97f4768a55c0b134684114580c80029b41cf23df6db3291eadd917fd55"
     },
     {
       "role": "visualizations",
       "reference": "visualizations/visualizations.json",
       "hash_algorithm": "sha256",
-      "hash_value": "548c54dae46f6e8ef6a7236f187dd65f4478c2db3231a2c7cbbf6fe4f77eb8d0"
+      "hash_value": "cec5410023d55e9ed96ecaae72882ac84e766a51b6560e3ed6f575744bb869a3"
     },
     {
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "e831ca5ac1d0f2ec2c7f260513d10680efb17e2e8068453fa97182b7199ff3b5"
+      "hash_value": "3e135db7bfd09a8dadf32412d58d792dea95a930ac3fab9d62bc64e384706e05"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "c90f933fa83216868568e2dfd1306d46ed5a9e69ddb5241fbd050d490d8dc88b"
+      "hash_value": "1687429e2940faea350f904eb2ce2a517b8dcff87cde8c4a856fa76d56c1c87d"
     }
   ],
   "required_hash_coverage": {

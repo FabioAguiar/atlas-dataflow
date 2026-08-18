@@ -609,12 +609,17 @@ def _multiclass_semantic_intent_doc(profile: dict, *, include_target: bool, data
 class TestMulticlassCapabilityContractProjection:
     """Project Spec S0209 Desired Change M / acceptance criteria 39-41:
     contract_derivation explicitly knows both binary and multiclass
-    capability identities, but the real committed multiclass profile still
-    rejects because support_status is not current_supported -- only a
-    synthetic same-id/profile-version current_supported clone reaches the
-    existing generic input-contract projection."""
+    capability identities. A synthetic multiclass profile whose
+    support_status is not current_supported still rejects (this is the
+    generic, permanent lifecycle fail-closed behavior for any not-yet-
+    activated capability, preserved unchanged by Project Spec S0216); the
+    real committed multiclass profile itself was later activated to
+    support_status: current_supported once every S0216 native gate passed
+    (see tests/pipeline/test_multiclass_predictive_classification_capability_profile.py
+    for real-file coverage), which is the same synthetic-current_supported
+    acceptance path already proven below."""
 
-    def test_committed_multiclass_support_status_still_rejects(self, tmp_path):
+    def test_synthetic_future_status_multiclass_profile_still_rejects(self, tmp_path):
         profile = _multiclass_classification_profile()
         semantic_intent = _multiclass_semantic_intent_doc(profile, include_target=True)
         source_input = _build_repo(tmp_path, profile, BINARY_CLASSIFICATION_ROLES, semantic_intent=semantic_intent)

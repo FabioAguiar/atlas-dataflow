@@ -1753,6 +1753,231 @@ def test_public_metrics_loader_v2_omits_internal_evidence_fields():
             assert internal_marker not in serialized
 
 
+# --- Project Spec S0216: internal (Atlas-native) multiclass fixed-
+# configuration training-metrics.v2 public projector ------------------------
+
+_S0216_ORDERED_CLASS_IDS = ["BARBUNYA", "BOMBAY", "CALI"]
+
+
+def _s0216_native_metrics_v2_payload(
+    *,
+    include_final_test: bool = True,
+    final_test_completed: bool = True,
+    validation_metrics: list | None = None,
+    final_test_metrics: list | None = None,
+    final_test_per_class_metrics: list | None = None,
+) -> dict:
+    payload: dict = {
+        "schema_version": "training-metrics.v2",
+        "artifact_kind": "training_metrics",
+        "created_at": "2026-08-18T00:00:00Z",
+        "training_run_identity": {
+            "dataset_slug": "dry-bean",
+            "run_id": "train-20260818T000000Z",
+            "output_directory": "pipeline/training-runs/dry-bean/train-20260818T000000Z/",
+        },
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": _S0216_ORDERED_CLASS_IDS,
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "row_count": 500,
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_decision_rule_selection": False,
+            "sealed_before_finalization": False,
+            "evaluation_count": 1,
+            "metrics": (
+                validation_metrics
+                if validation_metrics is not None
+                else [{"name": "f1_macro", "value": 0.80}]
+            ),
+        },
+        "path_references": {
+            "metrics_path": "pipeline/training-runs/dry-bean/train-20260818T000000Z/metrics.json",
+            "training_parameter_record_path": (
+                "pipeline/training-runs/dry-bean/train-20260818T000000Z/training-parameter-record.json"
+            ),
+            "execution_contract_path": "contracts/dry-bean/execution-contract.json",
+            "dataset_path": "pipeline/prepared/dry-bean/prepared-data.csv",
+        },
+        "hashes": {"algorithm": "sha256", "execution_contract_sha256": "a" * 64},
+        "evidence_policy": {
+            "raw_logs_prohibited": True, "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True, "secrets_prohibited": True,
+            "raw_dataset_embedded": False, "model_bytes_embedded": False,
+            "notebook_state_embedded": False, "reduced_and_sanitized": True,
+        },
+    }
+    if include_final_test:
+        payload["final_test_evaluation"] = {
+            "partition_role": "test",
+            "row_count": 300,
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_decision_rule_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": True,
+            "completed": final_test_completed,
+            "evaluation_count": 1 if final_test_completed else 0,
+            "metrics": (
+                (final_test_metrics if final_test_metrics is not None else [{"name": "f1_macro", "value": 0.92}])
+                if final_test_completed
+                else []
+            ),
+        }
+        if final_test_completed and final_test_per_class_metrics is not None:
+            payload["final_test_evaluation"]["per_class_metrics"] = final_test_per_class_metrics
+    return payload
+
+
+def test_public_metrics_loader_native_v2_prefers_completed_final_test():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root, "release-s0216-001", _s0216_native_metrics_v2_payload(),
+        )
+        metrics = api_main.load_public_metrics("release-s0216-001", releases_root=releases_root)
+        evaluation = metrics["evaluation"]
+        assert evaluation["split_name"] == "test"
+        assert evaluation["sample_size"] == 300
+        assert evaluation["metrics"] == {"f1_macro": 0.92}
+
+
+def test_public_metrics_loader_native_v2_falls_back_to_validation_when_final_test_absent():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0216-002",
+            _s0216_native_metrics_v2_payload(include_final_test=False),
+        )
+        metrics = api_main.load_public_metrics("release-s0216-002", releases_root=releases_root)
+        evaluation = metrics["evaluation"]
+        assert evaluation["split_name"] == "validation"
+        assert evaluation["metrics"] == {"f1_macro": 0.80}
+
+
+def test_public_metrics_loader_native_v2_projects_bounded_per_class_metrics():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        per_class = [
+            {"class_id": cid, "precision": 0.9, "recall": 0.9, "f1": 0.9, "support": 10}
+            for cid in _S0216_ORDERED_CLASS_IDS
+        ]
+        _s0127_write_metrics_release(
+            releases_root,
+            "release-s0216-003",
+            _s0216_native_metrics_v2_payload(final_test_per_class_metrics=per_class),
+        )
+        metrics = api_main.load_public_metrics("release-s0216-003", releases_root=releases_root)
+        assert metrics["evaluation"]["per_class_metrics"] == per_class
+
+
+def test_public_metrics_loader_native_v2_omits_internal_fields():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0127_write_metrics_release(
+            releases_root, "release-s0216-004", _s0216_native_metrics_v2_payload(),
+        )
+        metrics = api_main.load_public_metrics("release-s0216-004", releases_root=releases_root)
+        serialized = json.dumps(metrics)
+        for internal_marker in (
+            "training_run_identity", "path_references", "hashes", "created_at", "output_directory",
+        ):
+            assert internal_marker not in serialized
+
+
+# --- Project Spec S0216: internal (Atlas-native) multiclass fixed-
+# configuration analytical-visualizations.v2 public projector ---------------
+
+
+def _s0216_native_visualizations_v2_artifact(*, confusion_matrix: dict | None = None) -> dict:
+    return {
+        "schema_version": "analytical-visualizations.v2",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-08-18T00:00:00Z",
+        "training_run_identity": {
+            "dataset_slug": "dry-bean",
+            "run_id": "train-20260818T000000Z",
+            "output_directory": "pipeline/training-runs/dry-bean/train-20260818T000000Z/",
+        },
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": _S0216_ORDERED_CLASS_IDS,
+        },
+        "charts": [
+            {
+                "id": "target_distribution", "title": "Target Distribution", "type": "bar",
+                "x_label": "Class", "y_label": "Rows",
+                "data": [{"name": cid, "value": 100} for cid in _S0216_ORDERED_CLASS_IDS],
+            },
+            {
+                "id": "feature_importance", "title": "HGB Feature Importance", "type": "bar",
+                "x_label": "Feature", "y_label": "Importance",
+                "data": [{"name": "Area", "value": 1.0}],
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset", "row_count": 300, "target_column": "Class",
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "sklearn.inspection.permutation_importance",
+            "method": "permutation_importance",
+            "total_source_feature_count": 1, "omitted_source_feature_count": 0, "public_row_limit": 10,
+        },
+        "confusion_matrix": confusion_matrix or {
+            "ordered_class_ids": _S0216_ORDERED_CLASS_IDS,
+            "matrix": _s0215_identity_matrix(),
+            "row_axis": "true_class",
+            "column_axis": "predicted_class",
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True, "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True, "secrets_prohibited": True,
+            "raw_dataset_embedded": False, "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False, "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False, "reduced_and_sanitized": True,
+        },
+    }
+
+
+def test_public_visualizations_loader_native_v2_projects_confusion_matrix():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        _s0205_write_visualizations(releases_root, "release-s0216-005", _s0216_native_visualizations_v2_artifact())
+
+        projection = api_main.load_public_visualizations("release-s0216-005", releases_root=releases_root)
+
+        assert projection["confusion_matrix"] == {
+            "ordered_class_ids": _S0216_ORDERED_CLASS_IDS,
+            "matrix": _s0215_identity_matrix(),
+            "row_axis": "true_class",
+            "column_axis": "predicted_class",
+        }
+        assert [chart["id"] for chart in projection["charts"]] == ["target_distribution", "feature_importance"]
+        assert projection["dataset_statistics"] == {"instance_count": 300}
+
+
+def test_public_visualizations_loader_native_v2_omits_confusion_matrix_when_row_not_normalized():
+    with tempfile.TemporaryDirectory() as tmp:
+        releases_root = Path(tmp)
+        artifact = _s0216_native_visualizations_v2_artifact(
+            confusion_matrix={
+                "ordered_class_ids": _S0216_ORDERED_CLASS_IDS,
+                "matrix": [[0.5, 0.2, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                "row_axis": "true_class",
+                "column_axis": "predicted_class",
+            }
+        )
+        _s0205_write_visualizations(releases_root, "release-s0216-006", artifact)
+
+        projection = api_main.load_public_visualizations("release-s0216-006", releases_root=releases_root)
+        assert "confusion_matrix" not in projection
+
+
 def test_real_release_dataset_home_model_card_payload_shape():
     for resolved in _real_release_dataset_pairs():
         model_card = api_main.load_public_model_card(

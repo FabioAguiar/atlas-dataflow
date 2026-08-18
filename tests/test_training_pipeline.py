@@ -16,13 +16,22 @@ from pipeline.training import (
     MODEL_CARD_FILENAME,
     MODEL_CARD_INPUT_FILENAME,
     METRICS_ARTIFACT_FILENAME,
+    NATIVE_MULTICLASS_METRIC_NAMES,
+    NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT,
     TRAINING_PARAMETER_RECORD_FILENAME,
     TrainingInputError,
     _aggregate_feature_importance,
+    _cross_check_authored_multiclass_class_order,
     _feature_importance_output_source_map,
     _load_json_file,
+    _native_multiclass_confusion_matrix,
+    _native_multiclass_metric_values,
+    _native_multiclass_per_class_metrics,
+    _native_multiclass_requested_metric_names,
     _require_valid_controlled_entrypoint_provenance,
+    _stratified_three_way_split_indices,
     _target_distribution_chart_data,
+    _validate_fixed_model_configuration,
     convert_model_card_input_to_model_card,
     materialize_training_run_from_prepared_metadata,
     prepare_training_invocation_readiness,
@@ -1524,3 +1533,219 @@ def test_aggregate_feature_importance_aggregates_one_hot_levels_into_source_feat
     assert set(values_by_name) == {"age", "segment"}
     assert values_by_name["segment"] == pytest.approx(0.35 / 0.65)
     assert values_by_name["age"] == pytest.approx(0.3 / 0.65)
+
+
+# --- Project Spec S0216: native multiclass fixed-configuration helper
+# unit tests (isolated pure-function coverage, complementing the real,
+# slower end-to-end run in tests/test_native_multiclass_training.py) ------
+
+
+def _fixed_hgb_hyperparameters(**overrides):
+    base = {
+        "class_weight": None,
+        "l2_regularization": 0.0,
+        "learning_rate": 0.05,
+        "max_iter": 250,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 40,
+    }
+    base.update(overrides)
+    return base
+
+
+def _fixed_hgb_modeling_constraints(**hyperparameter_overrides):
+    return {
+        "allowed_model_families": ["hist_gradient_boosting"],
+        "no_automl": True,
+        "selection_mode": "fixed_configuration",
+        "fixed_model_configuration": {
+            "model_family": "hist_gradient_boosting",
+            "hyperparameters": _fixed_hgb_hyperparameters(**hyperparameter_overrides),
+        },
+    }
+
+
+def test_native_multiclass_metric_names_are_the_bounded_seven():
+    assert set(NATIVE_MULTICLASS_METRIC_NAMES) == {
+        "accuracy", "balanced_accuracy", "f1_macro", "f1_weighted",
+        "precision_macro", "recall_macro", "log_loss",
+    }
+    assert NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT == 3
+
+
+def test_validate_fixed_model_configuration_accepts_valid_hgb_configuration():
+    model_family, hyperparameters = _validate_fixed_model_configuration(_fixed_hgb_modeling_constraints())
+    assert model_family == "hist_gradient_boosting"
+    assert hyperparameters["max_iter"] == 250
+
+
+def test_validate_fixed_model_configuration_rejects_missing_fixed_model_configuration():
+    constraints = {"allowed_model_families": ["hist_gradient_boosting"], "selection_mode": "fixed_configuration"}
+    with pytest.raises(TrainingInputError):
+        _validate_fixed_model_configuration(constraints)
+
+
+def test_validate_fixed_model_configuration_rejects_family_not_solely_allowed():
+    constraints = _fixed_hgb_modeling_constraints()
+    constraints["allowed_model_families"] = ["hist_gradient_boosting", "gradient_boosting"]
+    with pytest.raises(TrainingInputError):
+        _validate_fixed_model_configuration(constraints)
+
+
+def test_validate_fixed_model_configuration_rejects_unsupported_family():
+    constraints = _fixed_hgb_modeling_constraints()
+    constraints["allowed_model_families"] = ["gradient_boosting"]
+    constraints["fixed_model_configuration"]["model_family"] = "gradient_boosting"
+    with pytest.raises(TrainingInputError) as excinfo:
+        _validate_fixed_model_configuration(constraints)
+    assert excinfo.value.code == "unsupported_model_family"
+
+
+def test_validate_fixed_model_configuration_rejects_missing_required_hyperparameter():
+    constraints = _fixed_hgb_modeling_constraints()
+    del constraints["fixed_model_configuration"]["hyperparameters"]["learning_rate"]
+    with pytest.raises(TrainingInputError):
+        _validate_fixed_model_configuration(constraints)
+
+
+def test_validate_fixed_model_configuration_rejects_unsupported_hyperparameter():
+    constraints = _fixed_hgb_modeling_constraints()
+    constraints["fixed_model_configuration"]["hyperparameters"]["n_estimators"] = 100
+    with pytest.raises(TrainingInputError) as excinfo:
+        _validate_fixed_model_configuration(constraints)
+    assert excinfo.value.code == "unsupported_hyperparameter"
+
+
+def test_stratified_three_way_split_indices_is_deterministic_stratified_and_complete():
+    rows = []
+    for label, count in (("a", 30), ("b", 20), ("c", 10)):
+        rows.extend({"target": label} for _ in range(count))
+
+    train_a, val_a, test_a = _stratified_three_way_split_indices(rows, "target", 0.7, 0.15, 0.15, 42)
+    train_b, val_b, test_b = _stratified_three_way_split_indices(rows, "target", 0.7, 0.15, 0.15, 42)
+    assert (train_a, val_a, test_a) == (train_b, val_b, test_b)
+
+    all_indices = sorted(train_a + val_a + test_a)
+    assert all_indices == list(range(len(rows)))
+    assert set(train_a).isdisjoint(val_a)
+    assert set(train_a).isdisjoint(test_a)
+    assert set(val_a).isdisjoint(test_a)
+
+    for label_indices in (train_a, val_a, test_a):
+        labels = {rows[i]["target"] for i in label_indices}
+        assert labels == {"a", "b", "c"}
+
+
+def test_stratified_three_way_split_indices_different_seed_changes_assignment():
+    rows = [{"target": "a"} for _ in range(20)] + [{"target": "b"} for _ in range(20)]
+    split_1 = _stratified_three_way_split_indices(rows, "target", 0.7, 0.15, 0.15, 1)
+    split_2 = _stratified_three_way_split_indices(rows, "target", 0.7, 0.15, 0.15, 2)
+    assert split_1 != split_2
+
+
+def test_stratified_three_way_split_indices_requires_at_least_two_classes():
+    rows = [{"target": "a"} for _ in range(10)]
+    with pytest.raises(ValueError):
+        _stratified_three_way_split_indices(rows, "target", 0.7, 0.15, 0.15, 0)
+
+
+def test_native_multiclass_requested_metric_names_rejects_unsupported_metric():
+    contract = {"primary_metric": "roc_auc", "secondary_metrics": []}
+    with pytest.raises(TrainingInputError):
+        _native_multiclass_requested_metric_names(contract)
+
+
+def test_native_multiclass_requested_metric_names_deduplicates_primary_and_secondary():
+    contract = {"primary_metric": "f1_macro", "secondary_metrics": ["f1_macro", "accuracy"]}
+    assert _native_multiclass_requested_metric_names(contract) == ["f1_macro", "accuracy"]
+
+
+def test_native_multiclass_metric_values_computes_the_full_bounded_set():
+    y_true = ["a", "a", "b", "b", "c", "c"]
+    y_pred = ["a", "a", "b", "c", "c", "c"]
+    y_proba = [
+        [0.9, 0.05, 0.05], [0.8, 0.1, 0.1], [0.1, 0.8, 0.1],
+        [0.1, 0.1, 0.8], [0.1, 0.1, 0.8], [0.05, 0.05, 0.9],
+    ]
+    values = _native_multiclass_metric_values(
+        y_true=y_true, y_pred=y_pred, y_proba=y_proba, classes=["a", "b", "c"],
+        metric_names=list(NATIVE_MULTICLASS_METRIC_NAMES),
+    )
+    assert set(values) == set(NATIVE_MULTICLASS_METRIC_NAMES)
+    for name, value in values.items():
+        assert isinstance(value, float)
+        assert value == value  # not NaN
+    assert values["accuracy"] == pytest.approx(5 / 6)
+
+
+def test_native_multiclass_metric_values_rejects_unsupported_metric():
+    with pytest.raises(TrainingInputError):
+        _native_multiclass_metric_values(
+            y_true=["a", "b"], y_pred=["a", "b"], y_proba=[[1, 0], [0, 1]],
+            classes=["a", "b"], metric_names=["roc_auc"],
+        )
+
+
+def test_native_multiclass_per_class_metrics_covers_every_class_in_order():
+    y_true = ["a", "a", "b", "b", "c", "c"]
+    y_pred = ["a", "b", "b", "b", "c", "c"]
+    entries = _native_multiclass_per_class_metrics(y_true=y_true, y_pred=y_pred, classes=["a", "b", "c"])
+    assert [entry["class_id"] for entry in entries] == ["a", "b", "c"]
+    for entry in entries:
+        assert 0.0 <= entry["precision"] <= 1.0
+        assert 0.0 <= entry["recall"] <= 1.0
+        assert 0.0 <= entry["f1"] <= 1.0
+        assert entry["support"] >= 0
+
+
+def test_native_multiclass_confusion_matrix_rows_sum_to_one():
+    y_true = ["a", "a", "b", "b", "c", "c"]
+    y_pred = ["a", "a", "b", "c", "c", "c"]
+    matrix = _native_multiclass_confusion_matrix(y_true=y_true, y_pred=y_pred, classes=["a", "b", "c"])
+    assert len(matrix) == 3
+    for row in matrix:
+        assert len(row) == 3
+        assert sum(row) == pytest.approx(1.0, abs=1e-9)
+        assert all(0.0 <= value <= 1.0 for value in row)
+
+
+def test_cross_check_authored_multiclass_class_order_passes_when_matching():
+    full_contract = {
+        "result_semantics": {
+            "schema_version": "multiclass-result-semantics.v1",
+            "problem_type": "multiclass_classification",
+            "decision": {"strategy": "argmax"},
+            "classes": [{"class_id": "a"}, {"class_id": "b"}, {"class_id": "c"}],
+        }
+    }
+    _cross_check_authored_multiclass_class_order(full_contract, ["a", "b", "c"])
+
+
+def test_cross_check_authored_multiclass_class_order_raises_on_mismatch():
+    full_contract = {
+        "result_semantics": {
+            "schema_version": "multiclass-result-semantics.v1",
+            "problem_type": "multiclass_classification",
+            "decision": {"strategy": "argmax"},
+            "classes": [{"class_id": "a"}, {"class_id": "b"}, {"class_id": "c"}],
+        }
+    }
+    with pytest.raises(TrainingInputError) as excinfo:
+        _cross_check_authored_multiclass_class_order(full_contract, ["b", "a", "c"])
+    assert excinfo.value.code == "result_semantics_cross_artifact_mismatch"
+
+
+def test_cross_check_authored_multiclass_class_order_is_a_noop_when_result_semantics_absent():
+    _cross_check_authored_multiclass_class_order({}, ["a", "b", "c"])
+
+
+def test_legacy_binary_train_candidate_models_path_unaffected_by_native_multiclass_functions():
+    # Regression: the new S0216 fixed-configuration pipeline must never
+    # extend the legacy multi-candidate selection path's own supported
+    # family set -- S0216 does not generalize native multiclass model
+    # selection, so hist_gradient_boosting must never become selectable
+    # there.
+    assert set(training.SUPPORTED_MODEL_FAMILIES) == {
+        "logistic_regression", "gradient_boosting", "random_forest",
+    }
+    assert "hist_gradient_boosting" not in training.SUPPORTED_MODEL_FAMILIES

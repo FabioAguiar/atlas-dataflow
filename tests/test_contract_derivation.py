@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.contract_derivation import (
     EXECUTION_CONTRACT_DRAFT_CONTRACT_VERSION,
+    TrainingPolicyValidationError,
     _build_execution_contract,
     _build_execution_contract_materialization_evidence,
     _check_safety,
@@ -14,6 +15,8 @@ from pipeline.contract_derivation import (
     _derive_public_feature,
     _derive_public_options,
     _fresh_label,
+    _materialize_training_policy_fields,
+    _validate_training_policy_intent,
     categorical_known_values,
     categorical_scalar_type,
     categorical_validation_behavior,
@@ -1050,3 +1053,172 @@ def test_materialization_evidence_names_absence_of_both_intents_deterministicall
     assert materialization["materialized_schema_version"] is None
     assert materialization["problem_type"] is None
     assert materialization["status"] == "omitted"
+
+
+# --- Project Spec S0216: reviewed native training-policy validation and
+# materialization (Desired Changes D/E/F) -----------------------------------
+
+
+def _approved_fixed_configuration_training_policy_intent(**overrides) -> dict:
+    policy = {
+        "review_status": "approved",
+        "numeric_handling": "passthrough",
+        "categorical_encoding_policy": "onehot",
+        "allowed_transformations": ["passthrough"],
+        "split_policy": {"strategy": "stratified", "train_ratio": 0.70, "val_ratio": 0.15, "test_ratio": 0.15},
+        "primary_metric": "f1_macro",
+        "secondary_metrics": ["balanced_accuracy", "f1_weighted", "recall_macro", "accuracy", "log_loss"],
+        "modeling_constraints": {
+            "allowed_model_families": ["hist_gradient_boosting"],
+            "no_automl": True,
+            "selection_mode": "fixed_configuration",
+            "fixed_model_configuration": {
+                "model_family": "hist_gradient_boosting",
+                "hyperparameters": {
+                    "class_weight": None,
+                    "l2_regularization": 0.0,
+                    "learning_rate": 0.05,
+                    "max_iter": 250,
+                    "max_leaf_nodes": 15,
+                    "min_samples_leaf": 40,
+                },
+            },
+        },
+    }
+    policy.update(overrides)
+    return policy
+
+
+def _modeling_intent_with_training_policy(training_policy_intent=None) -> dict:
+    intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    intent["training_policy_intent"] = training_policy_intent
+    return intent
+
+
+def test_validate_training_policy_intent_accepts_complete_approved_policy():
+    reasons = _validate_training_policy_intent(_approved_fixed_configuration_training_policy_intent())
+    assert reasons == []
+
+
+def test_validate_training_policy_intent_rejects_unapproved_review_status():
+    policy = _approved_fixed_configuration_training_policy_intent(review_status="pending_review")
+    reasons = _validate_training_policy_intent(policy)
+    assert any("unapproved review status" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_rejects_unknown_metric():
+    policy = _approved_fixed_configuration_training_policy_intent(primary_metric="not_a_real_metric")
+    reasons = _validate_training_policy_intent(policy)
+    assert any("unknown metric" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_rejects_unknown_model_family():
+    policy = _approved_fixed_configuration_training_policy_intent()
+    policy["modeling_constraints"]["allowed_model_families"] = ["not_a_real_family"]
+    policy["modeling_constraints"]["fixed_model_configuration"]["model_family"] = "not_a_real_family"
+    reasons = _validate_training_policy_intent(policy)
+    assert any("unknown model family" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_rejects_fixed_family_not_in_allowed_families():
+    policy = _approved_fixed_configuration_training_policy_intent()
+    policy["modeling_constraints"]["allowed_model_families"] = ["gradient_boosting"]
+    reasons = _validate_training_policy_intent(policy)
+    assert reasons
+
+
+def test_validate_training_policy_intent_rejects_fixed_configuration_with_multiple_allowed_families():
+    policy = _approved_fixed_configuration_training_policy_intent()
+    policy["modeling_constraints"]["allowed_model_families"] = ["hist_gradient_boosting", "gradient_boosting"]
+    reasons = _validate_training_policy_intent(policy)
+    assert reasons
+
+
+def test_validate_training_policy_intent_rejects_unsupported_hgb_hyperparameter():
+    policy = _approved_fixed_configuration_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["n_estimators"] = 100
+    reasons = _validate_training_policy_intent(policy)
+    assert any("unsupported HGB hyperparameter" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_rejects_invalid_split_ratios():
+    policy = _approved_fixed_configuration_training_policy_intent()
+    policy["split_policy"] = {"strategy": "stratified", "train_ratio": 0.5, "val_ratio": 0.5, "test_ratio": 0.5}
+    reasons = _validate_training_policy_intent(policy)
+    assert any("sum to 1.0" in reason for reason in reasons)
+
+
+def test_materialize_training_policy_fields_returns_none_when_absent():
+    modeling_intent = _modeling_intent_with_training_policy(None)
+    assert _materialize_training_policy_fields(modeling_intent) is None
+
+
+def test_materialize_training_policy_fields_raises_for_invalid_present_policy():
+    modeling_intent = _modeling_intent_with_training_policy(
+        _approved_fixed_configuration_training_policy_intent(review_status="pending_review")
+    )
+    with pytest.raises(TrainingPolicyValidationError):
+        _materialize_training_policy_fields(modeling_intent)
+
+
+def test_execution_contract_uses_approved_training_policy_wholesale():
+    modeling_intent = _modeling_intent_with_training_policy(_approved_fixed_configuration_training_policy_intent())
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+    assert contract["numeric_handling"] == "passthrough"
+    assert contract["primary_metric"] == "f1_macro"
+    assert contract["modeling_constraints"]["selection_mode"] == "fixed_configuration"
+    assert contract["modeling_constraints"]["allowed_model_families"] == ["hist_gradient_boosting"]
+
+
+def test_execution_contract_present_but_invalid_training_policy_raises_not_falls_back():
+    modeling_intent = _modeling_intent_with_training_policy(
+        _approved_fixed_configuration_training_policy_intent(review_status="pending_review")
+    )
+    with pytest.raises(TrainingPolicyValidationError):
+        _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+
+def test_execution_contract_legacy_defaults_unchanged_when_training_policy_absent():
+    modeling_intent = _modeling_intent_with_training_policy(None)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+
+    assert contract["numeric_handling"] == "standardize"
+    assert contract["primary_metric"] == "roc_auc"
+    assert "selection_mode" not in contract["modeling_constraints"]
+
+
+def test_execution_contract_with_training_policy_still_validates_against_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    modeling_intent = _modeling_intent_with_training_policy(_approved_fixed_configuration_training_policy_intent())
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_materialization_evidence_reports_training_policy_present():
+    modeling_intent = _modeling_intent_with_training_policy(_approved_fixed_configuration_training_policy_intent())
+    discovery_evidence = _discovery_evidence_for_result_semantics()
+    contract = _build_execution_contract(modeling_intent, discovery_evidence, None)
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        None,
+        contract,
+        execution_contract_relative_path="contracts/dry-bean/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        generated_at="2026-08-18T00:00:00+00:00",
+    )
+    training_policy_materialization = evidence["training_policy_materialization"]
+    assert training_policy_materialization["reviewed_source_intent_present"] is True
+    assert training_policy_materialization["materialized"] is True
+    assert evidence["policy_defaults_requiring_future_review"] == []

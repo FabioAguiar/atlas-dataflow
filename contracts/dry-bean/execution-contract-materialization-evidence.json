@@ -1,0 +1,180 @@
+{
+  "artifact_type": "execution_contract_materialization_evidence",
+  "contract_version": "execution_contract_materialization_evidence.v1",
+  "dataset_identity": {
+    "dataset_slug": "dry-bean",
+    "dataset_source_ref": "data/raw/dry-bean/dataset.csv"
+  },
+  "execution_contract_ref": "contracts/dry-bean/execution-contract.json",
+  "source_artifact_references": {
+    "discovery_evidence_ref": "pipeline/evidence/dry-bean/discovery-evidence.json",
+    "preparation_recipe_ref": "pipeline/authoring/dry-bean/preparation-recipe.json",
+    "prepared_data_metadata_ref": "pipeline/prepared/dry-bean/prepared-data-metadata.json",
+    "dataset_modeling_intent_ref": null,
+    "public_context_ref": null,
+    "raw_dataset_ref": "data/raw/dry-bean/dataset.csv",
+    "semantic_intent_ref": null
+  },
+  "target_policy": {
+    "target_column": "Class",
+    "task_type": "classification"
+  },
+  "positive_label_policy": {
+    "positive_label_candidate": null,
+    "observed_labels": [
+      "BARBUNYA",
+      "BOMBAY",
+      "CALI",
+      "DERMASON",
+      "HOROZ",
+      "SEKER",
+      "SIRA"
+    ],
+    "is_reviewed_final_decision": false
+  },
+  "identifier_exclusion_policy": [],
+  "unresolved_feature_exclusions": [],
+  "feature_type_grounding": {
+    "Area": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Perimeter": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "MajorAxisLength": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "MinorAxisLength": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "AspectRatio": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Eccentricity": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "ConvexArea": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "EquivDiameter": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Extent": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Solidity": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Roundness": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "Compactness": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "ShapeFactor1": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "ShapeFactor2": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "ShapeFactor3": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    },
+    "ShapeFactor4": {
+      "declared_type": "numeric",
+      "grounded_from": "discovery_evidence.field_observations[].inferred_type"
+    }
+  },
+  "categorical_domain_materialization": {
+    "approved_categorical_domains": [],
+    "unresolved_categorical_features": [],
+    "rejected_categorical_domain_declarations": [],
+    "values_inferred_during_materialization": false
+  },
+  "policy_defaults_requiring_future_review": [],
+  "training_policy_materialization": {
+    "reviewed_source_intent_present": true,
+    "materialized": true
+  },
+  "result_semantics_materialization": {
+    "reviewed_source_intent_present": true,
+    "classes": [
+      {
+        "class_id": "BARBUNYA",
+        "display_label": "Barbunya"
+      },
+      {
+        "class_id": "BOMBAY",
+        "display_label": "Bombay"
+      },
+      {
+        "class_id": "CALI",
+        "display_label": "Cali"
+      },
+      {
+        "class_id": "DERMASON",
+        "display_label": "Dermason"
+      },
+      {
+        "class_id": "HOROZ",
+        "display_label": "Horoz"
+      },
+      {
+        "class_id": "SEKER",
+        "display_label": "Seker"
+      },
+      {
+        "class_id": "SIRA",
+        "display_label": "Sira"
+      }
+    ],
+    "class_count": 7,
+    "primary_output": "predicted_class",
+    "probability_output": "class_probabilities",
+    "decision_strategy": "argmax",
+    "no_defaults_inferred": true,
+    "readiness": "materialized",
+    "blocking_reasons": [],
+    "class_ids": [
+      "BARBUNYA",
+      "BOMBAY",
+      "CALI",
+      "DERMASON",
+      "HOROZ",
+      "SEKER",
+      "SIRA"
+    ],
+    "requested_variant": "multiclass",
+    "materialized_schema_version": "multiclass-result-semantics.v1",
+    "problem_type": "multiclass_classification",
+    "status": "materialized",
+    "reason": null
+  },
+  "execution_contract_boundary_confirmations": {
+    "is_runtime_contract": false,
+    "is_public_contract": false,
+    "is_release_candidate_input": false,
+    "is_publisher_input": false,
+    "is_registry_artifact": false,
+    "is_api_fixture": false,
+    "is_ui_fixture": false,
+    "model_training_performed": false,
+    "model_family_selected": false
+  },
+  "generated_at": "2026-08-18T00:00:00+00:00"
+}

@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/analytical-visualizations.schema.json",
   "title": "Atlas DataFlow Analytical Visual Evidence",
-  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation.",
+  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; internal_v2 (Project Spec S0216) is the Atlas-native multiclass fixed-configuration training profile; governed_v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation; external_fitted_model_v1/v2 are the validated-external-fitted-model profiles.",
   "oneOf": [
     { "$ref": "#/$defs/legacy_v1" },
+    { "$ref": "#/$defs/internal_v2" },
     { "$ref": "#/$defs/governed_v2" },
     { "$ref": "#/$defs/external_fitted_model_v1" },
     { "$ref": "#/$defs/external_fitted_model_v2" }
@@ -135,6 +136,77 @@
         "raw_transformed_matrices_embedded": { "const": false },
         "notebook_state_embedded": { "const": false },
         "reduced_and_sanitized": { "const": true }
+      }
+    },
+    "internal_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_kind", "created_at", "training_run_identity", "classification_evidence", "charts", "target_distribution_method", "feature_importance_method", "confusion_matrix", "evidence_policy"],
+      "description": "Project Spec S0216: Atlas-native fixed-configuration multiclass training visual evidence, emitted alongside training-parameter-record.v2/training-metrics.v2. Preserves the same bounded Target Distribution/Feature Importance chart shape as legacy_v1 and additionally requires a governed normalized confusion matrix sourced from the one final-test prediction pass.",
+      "properties": {
+        "schema_version": { "const": "analytical-visualizations.v2" },
+        "artifact_kind": { "const": "analytical_visualizations" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "training_run_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug", "run_id", "output_directory"],
+          "properties": {
+            "dataset_slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+            "run_id": { "type": "string", "pattern": "^train-[0-9]{8}T[0-9]{6}Z$" },
+            "output_directory": { "type": "string", "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$" }
+          }
+        },
+        "classification_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "ordered_class_ids"],
+          "properties": {
+            "problem_type": { "const": "multiclass_classification" },
+            "ordered_class_ids": {
+              "type": "array",
+              "minItems": 3,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "charts": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/legacy_chart" },
+          "allOf": [
+            { "contains": { "properties": { "id": { "const": "target_distribution" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 },
+            { "contains": { "properties": { "id": { "const": "feature_importance" } }, "required": ["id"] }, "minContains": 1, "maxContains": 1 }
+          ]
+        },
+        "target_distribution_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["population_kind", "row_count", "target_column"],
+          "properties": {
+            "population_kind": { "const": "prepared_dataset" },
+            "row_count": { "type": "integer", "minimum": 1 },
+            "target_column": { "type": "string", "minLength": 1 }
+          }
+        },
+        "feature_importance_method": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "source", "method", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
+          "description": "Project Spec S0216: HGB Feature Importance is deterministic permutation importance computed on the final-fit (train+validation) population, never the final test partition, and never used for model selection or hyperparameter tuning.",
+          "properties": {
+            "model_family": { "const": "hist_gradient_boosting" },
+            "source": { "type": "string", "minLength": 1 },
+            "method": { "type": "string", "minLength": 1 },
+            "total_source_feature_count": { "type": "integer", "minimum": 1 },
+            "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
+            "public_row_limit": { "const": 10 }
+          }
+        },
+        "confusion_matrix": { "$ref": "#/$defs/normalized_confusion_matrix" },
+        "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
       }
     },
     "external_fitted_model_v1": {

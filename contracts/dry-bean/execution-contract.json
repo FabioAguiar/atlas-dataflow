@@ -1,0 +1,235 @@
+{
+  "contract_version": "execution_contract.v1",
+  "dataset_id": "dry-bean",
+  "target_column": "Class",
+  "feature_columns": [
+    "Area",
+    "Perimeter",
+    "MajorAxisLength",
+    "MinorAxisLength",
+    "AspectRatio",
+    "Eccentricity",
+    "ConvexArea",
+    "EquivDiameter",
+    "Extent",
+    "Solidity",
+    "Roundness",
+    "Compactness",
+    "ShapeFactor1",
+    "ShapeFactor2",
+    "ShapeFactor3",
+    "ShapeFactor4"
+  ],
+  "ignored_columns": [],
+  "required_columns": [
+    "Area",
+    "Perimeter",
+    "MajorAxisLength",
+    "MinorAxisLength",
+    "AspectRatio",
+    "Eccentricity",
+    "ConvexArea",
+    "EquivDiameter",
+    "Extent",
+    "Solidity",
+    "Roundness",
+    "Compactness",
+    "ShapeFactor1",
+    "ShapeFactor2",
+    "ShapeFactor3",
+    "ShapeFactor4"
+  ],
+  "optional_columns": [],
+  "feature_definitions": {
+    "Area": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 20420,
+        "max": 254616
+      }
+    },
+    "Perimeter": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 524.736,
+        "max": 1985.37
+      }
+    },
+    "MajorAxisLength": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 183.601165,
+        "max": 738.8601535
+      }
+    },
+    "MinorAxisLength": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 122.5126535,
+        "max": 460.1984968
+      }
+    },
+    "AspectRatio": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 1.024867596,
+        "max": 2.430306447
+      }
+    },
+    "Eccentricity": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.218951263,
+        "max": 0.911422968
+      }
+    },
+    "ConvexArea": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 20684,
+        "max": 263261
+      }
+    },
+    "EquivDiameter": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 161.2437642,
+        "max": 569.3743583
+      }
+    },
+    "Extent": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.555314717,
+        "max": 0.866194641
+      }
+    },
+    "Solidity": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.919246157,
+        "max": 0.9946775
+      }
+    },
+    "Roundness": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.489618256,
+        "max": 0.9906854
+      }
+    },
+    "Compactness": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.640576759,
+        "max": 0.987302969
+      }
+    },
+    "ShapeFactor1": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.002778013,
+        "max": 0.010451169
+      }
+    },
+    "ShapeFactor2": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.000564169,
+        "max": 0.003664972
+      }
+    },
+    "ShapeFactor3": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.410338584,
+        "max": 0.974767153
+      }
+    },
+    "ShapeFactor4": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.947687403,
+        "max": 0.99973253
+      }
+    }
+  },
+  "missing_value_policy": {},
+  "categorical_encoding_policy": "onehot",
+  "numeric_handling": "passthrough",
+  "allowed_transformations": [
+    "passthrough"
+  ],
+  "split_policy": {
+    "strategy": "stratified",
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15
+  },
+  "random_seed": 42,
+  "primary_metric": "f1_macro",
+  "secondary_metrics": [
+    "balanced_accuracy",
+    "f1_weighted",
+    "recall_macro",
+    "accuracy",
+    "log_loss"
+  ],
+  "modeling_constraints": {
+    "allowed_model_families": [
+      "hist_gradient_boosting"
+    ],
+    "no_automl": true,
+    "selection_mode": "fixed_configuration",
+    "fixed_model_configuration": {
+      "model_family": "hist_gradient_boosting",
+      "hyperparameters": {
+        "class_weight": null,
+        "l2_regularization": 0.0,
+        "learning_rate": 0.05,
+        "max_iter": 250,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 40
+      }
+    }
+  },
+  "result_semantics": {
+    "schema_version": "multiclass-result-semantics.v1",
+    "problem_type": "multiclass_classification",
+    "classes": [
+      {
+        "class_id": "BARBUNYA",
+        "display_label": "Barbunya"
+      },
+      {
+        "class_id": "BOMBAY",
+        "display_label": "Bombay"
+      },
+      {
+        "class_id": "CALI",
+        "display_label": "Cali"
+      },
+      {
+        "class_id": "DERMASON",
+        "display_label": "Dermason"
+      },
+      {
+        "class_id": "HOROZ",
+        "display_label": "Horoz"
+      },
+      {
+        "class_id": "SEKER",
+        "display_label": "Seker"
+      },
+      {
+        "class_id": "SIRA",
+        "display_label": "Sira"
+      }
+    ],
+    "primary_output": "predicted_class",
+    "probability_output": "class_probabilities",
+    "decision": {
+      "strategy": "argmax"
+    }
+  }
+}

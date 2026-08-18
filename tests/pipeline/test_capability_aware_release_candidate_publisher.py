@@ -167,12 +167,16 @@ def test_resolve_capability_release_policy_fails_closed_for_unsupported_capabili
 
 
 def _multiclass_predictive_profile(*, support_status: str = "requires_future_contract_evolution") -> dict:
-    """Project Spec S0209: mirrors the real committed
-    multiclass-predictive-classification capability identity. support_status
-    defaults to the real committed value (requires_future_contract_evolution);
-    pass 'current_supported' to build a synthetic clone that proves the
-    release-layer implementation is ready, without ever mutating the
-    committed profile file."""
+    """Project Spec S0209: mirrors the multiclass-predictive-classification
+    capability identity. support_status defaults to a not-yet-activated
+    value (requires_future_contract_evolution), used to prove the generic,
+    permanent lifecycle fail-closed behavior for any not-yet-activated
+    capability; pass 'current_supported' to build a synthetic clone that
+    proves the release-layer implementation is ready. Never mutates the
+    committed profile file -- Project Spec S0216 later activated that real
+    file to support_status: current_supported directly (see
+    tests/pipeline/test_multiclass_predictive_classification_capability_profile.py),
+    independent of this synthetic fixture."""
     profile = _binary_predictive_profile()
     profile["capability_profile_id"] = "multiclass-predictive-classification"
     profile["support_status"] = support_status
@@ -183,7 +187,7 @@ def _multiclass_predictive_profile(*, support_status: str = "requires_future_con
     return profile
 
 
-def test_resolve_capability_release_policy_committed_multiclass_still_rejects():
+def test_resolve_capability_release_policy_synthetic_future_status_multiclass_still_rejects():
     profile = _multiclass_predictive_profile()
     binding = _capability_binding(profile)
 
@@ -678,18 +682,21 @@ def test_v2_external_training_record_is_classified_as_external_provenance(tmp_pa
     # v2 training-metrics, not the v1 binary metrics profile.
     _write_schema_version_fixture(metrics_path, "training-metrics.external-fitted-model.v2")
 
-    stage, is_external, record_version, metrics_version = assemble_candidate._resolve_training_provenance(
-        {
-            "training_parameter_record": str(record_path.relative_to(tmp_path)),
-            "training_metrics": str(metrics_path.relative_to(tmp_path)),
-        },
-        tmp_path,
+    stage, is_external, record_version, metrics_version, visualizations_version = (
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )
     )
 
     assert is_external is True
     assert stage == assemble_candidate._EXTERNAL_MODEL_SOURCE_STAGE
     assert record_version == "training-parameter-record.external-fitted-model.v2"
     assert metrics_version == "training-metrics.external-fitted-model.v2"
+    assert visualizations_version is None
 
 
 def test_v2_training_record_with_v1_training_metrics_rejects(tmp_path):
@@ -719,18 +726,21 @@ def test_v1_external_training_record_still_classified_as_external_provenance(tmp
     metrics_path = tmp_path / "governed" / "training-metrics.json"
     _write_schema_version_fixture(metrics_path, "training-metrics.external-fitted-model.v1")
 
-    stage, is_external, record_version, metrics_version = assemble_candidate._resolve_training_provenance(
-        {
-            "training_parameter_record": str(record_path.relative_to(tmp_path)),
-            "training_metrics": str(metrics_path.relative_to(tmp_path)),
-        },
-        tmp_path,
+    stage, is_external, record_version, metrics_version, visualizations_version = (
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )
     )
 
     assert is_external is True
     assert stage == assemble_candidate._EXTERNAL_MODEL_SOURCE_STAGE
     assert record_version == "training-parameter-record.external-fitted-model.v1"
     assert metrics_version == "training-metrics.external-fitted-model.v1"
+    assert visualizations_version is None
 
 
 def test_v2_training_record_with_non_external_training_metrics_rejects(tmp_path):
@@ -755,15 +765,83 @@ def test_internal_training_record_still_returns_m24_stage_unaffected_by_v2(tmp_p
     metrics_path = tmp_path / "governed" / "training-metrics.json"
     _write_schema_version_fixture(metrics_path, "training-metrics.v1")
 
-    stage, is_external, record_version, metrics_version = assemble_candidate._resolve_training_provenance(
-        {
-            "training_parameter_record": str(record_path.relative_to(tmp_path)),
-            "training_metrics": str(metrics_path.relative_to(tmp_path)),
-        },
-        tmp_path,
+    stage, is_external, record_version, metrics_version, visualizations_version = (
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )
     )
 
     assert stage == "M24"
     assert is_external is False
     assert record_version is None
     assert metrics_version is None
+    assert visualizations_version is None
+
+
+# --- Project Spec S0216: _resolve_training_provenance recognizes the
+# internal Atlas-native multiclass training-parameter-record.v2 profile ---
+
+
+def test_native_v2_training_record_is_classified_as_internal_m24_stage(tmp_path):
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.v2")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.v2")
+    visualizations_path = tmp_path / "governed" / "analytical-visualizations.json"
+    _write_schema_version_fixture(visualizations_path, "analytical-visualizations.v2")
+
+    stage, is_external, record_version, metrics_version, visualizations_version = (
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+                "visualizations": str(visualizations_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )
+    )
+
+    assert stage == "M24"
+    assert is_external is False
+    assert record_version == "training-parameter-record.v2"
+    assert metrics_version == "training-metrics.v2"
+    assert visualizations_version == "analytical-visualizations.v2"
+
+
+def test_native_v2_training_record_with_v1_training_metrics_rejects(tmp_path):
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.v2")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.v1")
+
+    with pytest.raises(ValueError, match="training_metrics contract_version"):
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )
+
+
+def test_native_v2_training_record_with_v1_visualizations_rejects(tmp_path):
+    record_path = tmp_path / "governed" / "training-parameter-record.json"
+    _write_schema_version_fixture(record_path, "training-parameter-record.v2")
+    metrics_path = tmp_path / "governed" / "training-metrics.json"
+    _write_schema_version_fixture(metrics_path, "training-metrics.v2")
+    visualizations_path = tmp_path / "governed" / "analytical-visualizations.json"
+    _write_schema_version_fixture(visualizations_path, "analytical-visualizations.v1")
+
+    with pytest.raises(ValueError, match="visualizations contract_version"):
+        assemble_candidate._resolve_training_provenance(
+            {
+                "training_parameter_record": str(record_path.relative_to(tmp_path)),
+                "training_metrics": str(metrics_path.relative_to(tmp_path)),
+                "visualizations": str(visualizations_path.relative_to(tmp_path)),
+            },
+            tmp_path,
+        )

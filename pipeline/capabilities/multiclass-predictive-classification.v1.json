@@ -3,7 +3,7 @@
   "artifact_type": "capability_profile",
   "capability_profile_id": "multiclass-predictive-classification",
   "capability_profile_version": "v1",
-  "support_status": "requires_future_contract_evolution",
+  "support_status": "current_supported",
   "semantic_requirements": {
     "target_semantics_applicability": "required"
   },

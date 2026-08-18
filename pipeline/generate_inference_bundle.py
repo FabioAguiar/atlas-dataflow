@@ -31,6 +31,13 @@ SUPPORTED_MODEL_FAMILIES = frozenset({
     "logistic_regression",
     "gradient_boosting",
     "random_forest",
+    # Project Spec S0216: internal Atlas-native fixed-configuration
+    # multiclass training now fits hist_gradient_boosting (see
+    # pipeline/training.py's NATIVE_MULTICLASS_* fixed-configuration
+    # pipeline) -- runtime_execution.model_family already accepted this
+    # value at the schema level (contracts/inference-bundle.schema.json,
+    # added for the external path by Project Spec S0209).
+    "hist_gradient_boosting",
 })
 # Project Spec S0108: deterministic code mapping from model-family ID to a
 # safe display descriptor. Never looked up any other way (e.g. from editable
@@ -571,6 +578,138 @@ def _resolve_external_result_semantics_model_descriptor(
     }
 
 
+_INTERNAL_MULTICLASS_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION = "training-parameter-record.v2"
+
+
+def _resolve_internal_multiclass_model_descriptor(
+    training_record: dict[str, Any], ordered_class_ids: list[str]
+) -> dict[str, str]:
+    """training-parameter-record.v2 (internal Atlas-native multiclass)
+    model_descriptor resolution (Project Spec S0216).
+
+    Never trusts a positive-class concept -- multiclass has none. Instead
+    cross-checks the training evidence's own governed
+    classification_evidence.ordered_class_ids against the bundle's
+    result_semantics.classes order, so a reversed/mismatched class order
+    fails closed rather than being silently accepted.
+    """
+    if training_record.get("schema_version") != _INTERNAL_MULTICLASS_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "internal multiclass result_semantics requires a "
+            f"{_INTERNAL_MULTICLASS_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION!r} training parameter record.",
+            field="schema_version",
+        )
+    training_parameters = _require_mapping(training_record, "training_parameters")
+    model_family = _require_string(training_parameters, "model_family")
+    if model_family not in MODEL_FAMILY_DISPLAY_NAMES:
+        raise BundleGenerationError(
+            "unsupported_model_family",
+            "model_family is not supported by the result_semantics model_descriptor mapping.",
+            field="training_parameters.model_family",
+        )
+    classification_evidence = training_record.get("classification_evidence")
+    evidence_class_ids = (
+        classification_evidence.get("ordered_class_ids")
+        if isinstance(classification_evidence, dict)
+        else None
+    )
+    if evidence_class_ids != ordered_class_ids:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training evidence classification_evidence.ordered_class_ids does not match "
+            "result_semantics.classes order.",
+            field="classification_evidence.ordered_class_ids",
+        )
+    return {
+        "model_family": model_family,
+        "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
+    }
+
+
+def _resolve_internal_multiclass_result_semantics(
+    training_record: dict[str, Any],
+    output_schema: dict[str, Any],
+    result_semantics_source: dict[str, Any],
+) -> dict[str, Any]:
+    """Project an internal (Atlas-native) multiclass execution contract
+    result_semantics into the bundle (Project Spec S0216). Mirrors
+    `_resolve_multiclass_result_semantics`'s external validation
+    discipline, but is unconditionally sourced from the training parameter
+    record's own governed classification_evidence rather than a validated
+    external materialization result.
+    """
+    if result_semantics_source.get("schema_version") != MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            f"result_semantics.schema_version must equal {MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION!r}.",
+            field="result_semantics.schema_version",
+        )
+    if result_semantics_source.get("primary_output") != "predicted_class":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.primary_output must be exactly predicted_class.",
+            field="result_semantics.primary_output",
+        )
+    if result_semantics_source.get("probability_output") != "class_probabilities":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.probability_output must be exactly class_probabilities.",
+            field="result_semantics.probability_output",
+        )
+    decision = _require_mapping(result_semantics_source, "decision")
+    if decision.get("strategy") != "argmax":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.decision.strategy must be exactly argmax.",
+            field="result_semantics.decision.strategy",
+        )
+
+    classes = result_semantics_source.get("classes")
+    if not isinstance(classes, list) or len(classes) < 3:
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.classes must contain at least 3 ordered class entries.",
+            field="result_semantics.classes",
+        )
+    ordered_class_ids: list[str] = []
+    for entry in classes:
+        if not isinstance(entry, dict):
+            raise BundleGenerationError(
+                "invalid_result_semantics",
+                "result_semantics.classes entries must be objects.",
+                field="result_semantics.classes",
+            )
+        ordered_class_ids.append(_require_string(entry, "class_id"))
+
+    class_labels = output_schema.get("class_labels")
+    if not isinstance(class_labels, list) or class_labels != ordered_class_ids:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "output_schema.class_labels must equal result_semantics.classes order exactly.",
+            field="output_schema.class_labels",
+        )
+    if output_schema.get("probability_output") is not True:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "output_schema.probability_output must be true when result_semantics is present.",
+            field="output_schema.probability_output",
+        )
+
+    model_descriptor = _resolve_internal_multiclass_model_descriptor(training_record, ordered_class_ids)
+
+    return {
+        "schema_version": MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": "multiclass_classification",
+        "result_schema_version": MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_VERSION,
+        "classes": [dict(entry) for entry in classes],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+        "model_descriptor": model_descriptor,
+    }
+
+
 def _resolve_result_semantics(
     execution_contract: dict[str, Any],
     training_record: dict[str, Any],
@@ -625,6 +764,18 @@ def _resolve_result_semantics(
             "result_semantics is only valid on an execution_contract.v1 contract.",
             field="result_semantics",
         )
+
+    # Project Spec S0216: an internal (Atlas-native) multiclass bundle
+    # dispatches to its own dedicated resolver -- never the binary path
+    # below, and never the external multiclass path
+    # (_resolve_multiclass_result_semantics), which is reserved for a
+    # validated_external_fitted_model materialization result shape this
+    # function never receives.
+    if result_semantics_source.get("problem_type") == "multiclass_classification":
+        return _resolve_internal_multiclass_result_semantics(
+            training_record, output_schema, result_semantics_source
+        )
+
     if result_semantics_source.get("problem_type") != "binary_classification":
         raise BundleGenerationError(
             "invalid_result_semantics",

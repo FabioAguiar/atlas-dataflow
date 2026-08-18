@@ -691,7 +691,18 @@ def _infer_task_type(target_values: Any) -> str:
     return "classification"
 
 
-def _build_preprocessor(features: Any):
+def _build_preprocessor(features: Any, numeric_handling: str = "standardize"):
+    """Build the governed ColumnTransformer for a training run.
+
+    Project Spec S0216 (Desired Change H): `numeric_handling` makes numeric
+    preprocessing obey the execution contract instead of unconditionally
+    applying StandardScaler. `standardize` preserves the original
+    median-impute + StandardScaler behavior unchanged (the only value every
+    pre-S0216 caller implicitly relied on); `passthrough` imputes only (no
+    learned scaler is ever fit); `normalize` is schema-valid vocabulary this
+    pipeline does not yet implement, so it fails closed with a stable error
+    rather than silently reusing StandardScaler under a different name.
+    """
     try:
         from sklearn.compose import ColumnTransformer
         from sklearn.impute import SimpleImputer
@@ -705,6 +716,27 @@ def _build_preprocessor(features: Any):
             field="modeling_constraints.allowed_model_families",
         ) from exc
 
+    if numeric_handling == "standardize":
+        numeric_pipeline = Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ])
+    elif numeric_handling == "passthrough":
+        numeric_pipeline = Pipeline([("imputer", SimpleImputer(strategy="median"))])
+    elif numeric_handling == "normalize":
+        raise TrainingInputError(
+            "unsupported_numeric_handling",
+            "execution contract numeric_handling 'normalize' is not yet implemented by this "
+            "training pipeline; it is never silently mapped to a different scaling behavior.",
+            field="numeric_handling",
+        )
+    else:
+        raise TrainingInputError(
+            "unsupported_numeric_handling",
+            f"unsupported execution contract numeric_handling: {numeric_handling!r}",
+            field="numeric_handling",
+        )
+
     numeric_columns = [
         column
         for column in features.columns
@@ -715,10 +747,7 @@ def _build_preprocessor(features: Any):
     if numeric_columns:
         transformers.append((
             "numeric",
-            Pipeline([
-                ("imputer", SimpleImputer(strategy="median")),
-                ("scaler", StandardScaler()),
-            ]),
+            numeric_pipeline,
             numeric_columns,
         ))
     if categorical_columns:
@@ -1521,7 +1550,9 @@ def _train_candidate_models(
     candidates: list[dict[str, Any]] = []
     for model_family in supported_families:
         model = _build_estimator(model_family, task_type, contract.get("random_seed"))
-        model.set_params(preprocess=_build_preprocessor(features))
+        model.set_params(preprocess=_build_preprocessor(
+            features, numeric_handling=str(contract.get("numeric_handling", "standardize"))
+        ))
         model.fit(features.iloc[train_indices], target.iloc[train_indices])
         # Project Spec S0108: resolve governed binary-classification evidence
         # immediately after fit, for every candidate, regardless of which
@@ -2096,6 +2127,45 @@ def train_from_paths(
     _require_execution_ready_contract(full_contract)
     _require_atlas_trainable_model_source(full_contract)
     contract = _load_execution_contract(contract_path)
+
+    # Project Spec S0216 (Desired Change M): selection_mode absent or
+    # evaluate_allowed_families preserves the legacy multi-candidate
+    # selection path below completely unchanged. fixed_configuration is a
+    # fully isolated pipeline -- S0216 does not generalize native
+    # multiclass model selection.
+    selection_mode = (contract.get("modeling_constraints") or {}).get(
+        "selection_mode", "evaluate_allowed_families"
+    )
+    if selection_mode == "fixed_configuration":
+        return _train_native_multiclass_fixed_configuration(
+            contract=contract,
+            full_contract=full_contract,
+            contract_path=contract_path,
+            prepared_dataset_path=prepared_dataset_path,
+            dataset_slug=dataset_slug,
+            run_id=run_id,
+        )
+
+    # Project Spec S0216 (Desired Change M): a multiclass result_semantics
+    # declaration under the historical selection mode with more than one
+    # allowed model family would require native multiclass model
+    # selection, which S0216 does not generalize -- fail closed with a
+    # bounded reason instead of silently running the legacy multi-candidate
+    # comparison loop against multiclass targets.
+    _result_semantics_for_legacy_guard = full_contract.get("result_semantics")
+    if (
+        isinstance(_result_semantics_for_legacy_guard, dict)
+        and _result_semantics_for_legacy_guard.get("problem_type") == "multiclass_classification"
+        and len(contract["modeling_constraints"].get("allowed_model_families") or []) > 1
+    ):
+        raise TrainingInputError(
+            "unsupported_multiclass_model_selection",
+            "native multiclass result_semantics with more than one allowed_model_families entry "
+            "requires a separately governed future multiclass-selection policy; this governed "
+            "training entrypoint does not generalize native multiclass model selection.",
+            field="modeling_constraints.allowed_model_families",
+        )
+
     rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
     _validate_dataset(rows, prepared_dataset_id, contract)
 
@@ -2677,6 +2747,916 @@ def materialize_training_run_from_prepared_metadata(
         },
         "training_result": result.to_summary(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Native multiclass fixed-configuration training (Project Spec S0216)
+#
+# This section is a fully isolated pipeline for
+# `modeling_constraints.selection_mode == "fixed_configuration"`. It never
+# calls the legacy `_train_candidate_models`/multi-candidate selection loop
+# above -- S0216 does not generalize native multiclass model selection. A
+# real three-way stratified split (train/validation/test) replaces the
+# legacy two-way split only for this branch, and the frozen fixed
+# configuration is never mutated by the descriptive validation evaluation.
+# ---------------------------------------------------------------------------
+
+NATIVE_MULTICLASS_TRAINING_PARAMETER_RECORD_VERSION = "training-parameter-record.v2"
+NATIVE_MULTICLASS_TRAINING_METRICS_VERSION = "training-metrics.v2"
+NATIVE_MULTICLASS_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v2"
+NATIVE_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION = "multiclass-result-semantics.v1"
+NATIVE_MULTICLASS_METRIC_NAMES = (
+    "accuracy",
+    "balanced_accuracy",
+    "f1_macro",
+    "f1_weighted",
+    "precision_macro",
+    "recall_macro",
+    "log_loss",
+)
+NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT = 3
+NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_N_REPEATS = 5
+NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_SCORING = "f1_macro"
+
+_HGB_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
+    "class_weight", "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf",
+})
+_HGB_ALLOWED_HYPERPARAMETER_FIELDS = _HGB_REQUIRED_HYPERPARAMETER_FIELDS | frozenset({"early_stopping"})
+
+
+def _validate_fixed_model_configuration(modeling_constraints: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Independently re-validate a fixed_configuration modeling_constraints
+    block before any estimator is constructed. Never trusted from
+    authoring-time contract-derivation validation alone (defense in depth,
+    matching this repository's existing dual-validation convention)."""
+    allowed_model_families = modeling_constraints.get("allowed_model_families")
+    fixed_model_configuration = modeling_constraints.get("fixed_model_configuration")
+    if not isinstance(fixed_model_configuration, dict):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "modeling_constraints.fixed_model_configuration is required when selection_mode is "
+            "fixed_configuration.",
+            field="modeling_constraints.fixed_model_configuration",
+        )
+    model_family = fixed_model_configuration.get("model_family")
+    if (
+        not isinstance(allowed_model_families, list)
+        or len(allowed_model_families) != 1
+        or allowed_model_families[0] != model_family
+    ):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "fixed_configuration requires exactly one allowed_model_families entry, matching "
+            "fixed_model_configuration.model_family.",
+            field="modeling_constraints.allowed_model_families",
+        )
+    if model_family != "hist_gradient_boosting":
+        raise TrainingInputError(
+            "unsupported_model_family",
+            f"fixed_configuration model family is not natively supported: {model_family!r}",
+            field="modeling_constraints.fixed_model_configuration.model_family",
+        )
+    hyperparameters = fixed_model_configuration.get("hyperparameters")
+    if not isinstance(hyperparameters, dict):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "modeling_constraints.fixed_model_configuration.hyperparameters must be an object.",
+            field="modeling_constraints.fixed_model_configuration.hyperparameters",
+        )
+    missing = _HGB_REQUIRED_HYPERPARAMETER_FIELDS - set(hyperparameters)
+    if missing:
+        raise TrainingInputError(
+            "invalid_contract_field",
+            f"fixed_model_configuration.hyperparameters is missing required fields: {sorted(missing)}.",
+            field="modeling_constraints.fixed_model_configuration.hyperparameters",
+        )
+    unsupported = set(hyperparameters) - _HGB_ALLOWED_HYPERPARAMETER_FIELDS
+    if unsupported:
+        raise TrainingInputError(
+            "unsupported_hyperparameter",
+            f"unsupported HGB hyperparameter(s): {sorted(unsupported)}.",
+            field="modeling_constraints.fixed_model_configuration.hyperparameters",
+        )
+    return model_family, hyperparameters
+
+
+def _build_hgb_estimator(hyperparameters: dict[str, Any], random_seed: int | None):
+    try:
+        from sklearn.ensemble import HistGradientBoostingClassifier
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed training. Install scikit-learn in the training environment.",
+            field="modeling_constraints.fixed_model_configuration",
+        ) from exc
+    return HistGradientBoostingClassifier(
+        class_weight=hyperparameters.get("class_weight"),
+        l2_regularization=float(hyperparameters["l2_regularization"]),
+        learning_rate=float(hyperparameters["learning_rate"]),
+        max_iter=int(hyperparameters["max_iter"]),
+        max_leaf_nodes=int(hyperparameters["max_leaf_nodes"]),
+        min_samples_leaf=int(hyperparameters["min_samples_leaf"]),
+        early_stopping=hyperparameters.get("early_stopping", "auto"),
+        random_state=random_seed,
+    )
+
+
+def _build_native_hgb_pipeline(
+    hyperparameters: dict[str, Any],
+    random_seed: int | None,
+    features: Any,
+    numeric_handling: str,
+):
+    try:
+        from sklearn.pipeline import Pipeline
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed training. Install scikit-learn in the training environment.",
+            field="modeling_constraints.fixed_model_configuration",
+        ) from exc
+    estimator = _build_hgb_estimator(hyperparameters, random_seed)
+    preprocessor = _build_preprocessor(features, numeric_handling=numeric_handling)
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def _stratified_three_way_split_indices(
+    rows: list[dict[str, Any]],
+    target_column: str,
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    random_seed: int | None,
+) -> tuple[list[int], list[int], list[int]]:
+    """Deterministic, stratified three-way split with no row overlap and
+    complete row coverage. Each governed class with at least three rows
+    (mathematically possible) contributes at least one row to every
+    partition; a class with fewer rows still contributes every row to
+    train first, mirroring the existing two-way split's own precedent of
+    prioritizing a non-empty train partition over guaranteed coverage of
+    every split for a degenerate class.
+    """
+    import random
+
+    by_class: dict[str, list[int]] = {}
+    for index, row in enumerate(rows):
+        by_class.setdefault(str(row[target_column]), []).append(index)
+    if len(by_class) < 2:
+        raise ValueError("stratified split requires at least two target classes")
+
+    rng = random.Random(random_seed)
+    train_indices: list[int] = []
+    val_indices: list[int] = []
+    test_indices: list[int] = []
+    for label in sorted(by_class):
+        class_indices = list(by_class[label])
+        rng.shuffle(class_indices)
+        n = len(class_indices)
+        if n >= 3:
+            train_count = max(1, min(n - 2, round(n * train_ratio)))
+            remaining = n - train_count
+            val_count = max(1, min(remaining - 1, round(n * val_ratio)))
+            test_count = n - train_count - val_count
+        elif n == 2:
+            train_count, val_count, test_count = 1, 1, 0
+        else:
+            train_count, val_count, test_count = n, 0, 0
+        train_indices.extend(class_indices[:train_count])
+        val_indices.extend(class_indices[train_count:train_count + val_count])
+        test_indices.extend(class_indices[train_count + val_count:])
+
+    if not train_indices or not val_indices or not test_indices:
+        raise ValueError("stratified three-way split produced an empty partition")
+    return sorted(train_indices), sorted(val_indices), sorted(test_indices)
+
+
+def _native_multiclass_requested_metric_names(contract: dict[str, Any]) -> list[str]:
+    names = _metric_names(contract)
+    unsupported = [name for name in names if name not in NATIVE_MULTICLASS_METRIC_NAMES]
+    if unsupported:
+        raise TrainingInputError(
+            "unsupported_metric",
+            f"unsupported native multiclass metric(s): {unsupported}",
+            field="primary_metric",
+        )
+    return names
+
+
+def _native_multiclass_metric_values(
+    *, y_true: Any, y_pred: Any, y_proba: Any, classes: list[Any], metric_names: list[str],
+) -> dict[str, float]:
+    try:
+        from sklearn.metrics import (
+            accuracy_score,
+            balanced_accuracy_score,
+            f1_score,
+            log_loss,
+            precision_score,
+            recall_score,
+        )
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn metrics are required for governed training metrics.",
+            field="primary_metric",
+        ) from exc
+
+    values: dict[str, float] = {}
+    for metric_name in metric_names:
+        if metric_name == "accuracy":
+            value = accuracy_score(y_true, y_pred)
+        elif metric_name == "balanced_accuracy":
+            value = balanced_accuracy_score(y_true, y_pred)
+        elif metric_name == "f1_macro":
+            value = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        elif metric_name == "f1_weighted":
+            value = f1_score(y_true, y_pred, average="weighted", zero_division=0)
+        elif metric_name == "precision_macro":
+            value = precision_score(y_true, y_pred, average="macro", zero_division=0)
+        elif metric_name == "recall_macro":
+            value = recall_score(y_true, y_pred, average="macro", zero_division=0)
+        elif metric_name == "log_loss":
+            value = log_loss(y_true, y_proba, labels=list(classes))
+        else:
+            raise TrainingInputError(
+                "unsupported_metric",
+                f"unsupported native multiclass metric: {metric_name}",
+                field=metric_name,
+            )
+        values[metric_name] = _finite_metric_value(metric_name, value)
+    return values
+
+
+def _native_multiclass_per_class_metrics(
+    *, y_true: Any, y_pred: Any, classes: list[Any],
+) -> list[dict[str, Any]]:
+    try:
+        from sklearn.metrics import precision_recall_fscore_support
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn metrics are required for governed training metrics.",
+            field="primary_metric",
+        ) from exc
+    precision, recall, f1, support = precision_recall_fscore_support(
+        y_true, y_pred, labels=classes, average=None, zero_division=0
+    )
+    return [
+        {
+            "class_id": str(classes[i]),
+            "precision": _finite_metric_value("precision", precision[i]),
+            "recall": _finite_metric_value("recall", recall[i]),
+            "f1": _finite_metric_value("f1", f1[i]),
+            "support": int(support[i]),
+        }
+        for i in range(len(classes))
+    ]
+
+
+def _native_multiclass_permutation_importance(
+    *, pipeline: Any, features: Any, target: Any, feature_columns: list[str], random_seed: int | None,
+) -> tuple[list[dict[str, Any]], int, int]:
+    try:
+        from sklearn.inspection import permutation_importance
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed Feature Importance. Install scikit-learn in the "
+            "training environment.",
+            field="feature_importance",
+        ) from exc
+
+    result = permutation_importance(
+        pipeline,
+        features,
+        target,
+        scoring=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_SCORING,
+        n_repeats=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_N_REPEATS,
+        random_state=random_seed,
+        n_jobs=1,
+    )
+    raw_importances = [float(value) for value in result.importances_mean]
+    if len(raw_importances) != len(feature_columns):
+        raise TrainingInputError(
+            "unmappable_transformed_feature",
+            "permutation importance value count does not match the governed feature_columns count.",
+            field="feature_importance",
+        )
+    non_negative = {
+        column: max(value, 0.0)
+        for column, value in zip(feature_columns, raw_importances)
+    }
+    total = sum(non_negative.values())
+    if total <= 0:
+        raise TrainingInputError(
+            "zero_total_feature_importance",
+            "aggregated permutation Feature Importance magnitude is zero; this is an explicit "
+            "unavailable condition, not a fabricated ranking.",
+            field="feature_importance",
+        )
+    normalized = {column: value / total for column, value in non_negative.items()}
+    ranked = sorted(normalized.items(), key=lambda item: (-item[1], item[0]))
+    total_source_feature_count = len(ranked)
+    top = ranked[:FEATURE_IMPORTANCE_TOP_N]
+    omitted_count = total_source_feature_count - len(top)
+    data = [{"name": name, "value": value} for name, value in top]
+    return data, total_source_feature_count, omitted_count
+
+
+def _native_multiclass_confusion_matrix(
+    *, y_true: Any, y_pred: Any, classes: list[Any],
+) -> list[list[float]]:
+    try:
+        from sklearn.metrics import confusion_matrix as sk_confusion_matrix
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for the governed confusion matrix.",
+            field="confusion_matrix",
+        ) from exc
+    matrix = sk_confusion_matrix(y_true, y_pred, labels=classes, normalize="true")
+    rows: list[list[float]] = []
+    for row in matrix:
+        normalized_row = [float(value) for value in row]
+        if not all(math.isfinite(value) for value in normalized_row):
+            raise TrainingInputError(
+                "non_finite_confusion_matrix_value",
+                "confusion matrix contains a non-finite value; this occurs only when a governed "
+                "class has zero test rows.",
+                field="confusion_matrix",
+            )
+        if not math.isclose(sum(normalized_row), 1.0, abs_tol=1e-6):
+            raise TrainingInputError(
+                "invalid_confusion_matrix_row_sum",
+                "confusion matrix row does not sum to 1 within tolerance.",
+                field="confusion_matrix",
+            )
+        rows.append(normalized_row)
+    return rows
+
+
+def _cross_check_authored_multiclass_class_order(
+    full_contract: dict[str, Any], final_classes: list[Any]
+) -> None:
+    """Reject a native multiclass run whose authored result_semantics class
+    order disagrees with the final fitted model's real `classes_` order
+    (Project Spec S0216 Desired Change Z). `predict_proba()` output is
+    never reordered after the model is fitted -- a mismatch here always
+    fails closed instead.
+    """
+    result_semantics = full_contract.get("result_semantics")
+    if not isinstance(result_semantics, dict):
+        return
+    if result_semantics.get("problem_type") != "multiclass_classification":
+        return
+    if result_semantics.get("schema_version") != NATIVE_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.schema_version must be "
+            f"{NATIVE_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION!r} for native multiclass training.",
+            field="result_semantics.schema_version",
+        )
+    decision = result_semantics.get("decision") or {}
+    if decision.get("strategy") != "argmax":
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.decision.strategy must be argmax for native "
+            "multiclass training.",
+            field="result_semantics.decision.strategy",
+        )
+    authored_class_ids = [
+        entry.get("class_id") for entry in (result_semantics.get("classes") or []) if isinstance(entry, dict)
+    ]
+    actual_class_ids = [str(c) for c in final_classes]
+    if authored_class_ids != actual_class_ids:
+        raise TrainingInputError(
+            "result_semantics_cross_artifact_mismatch",
+            "execution contract result_semantics.classes order does not match the final fitted "
+            f"model's real classes_ order: authored={authored_class_ids}, actual={actual_class_ids}.",
+            field="result_semantics.classes",
+        )
+
+
+def _build_native_multiclass_model_card_input_artifact(
+    *,
+    contract: dict[str, Any],
+    rows: list[dict[str, Any]],
+    output_directory: Path,
+    model_card_input_path: Path,
+    parameter_record_path: Path,
+    metrics_path: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    parameter_record = _load_json_file(parameter_record_path, "training_parameter_record_path")
+    _require_valid_controlled_entrypoint_provenance(parameter_record)
+    metrics_artifact = _load_json_file(metrics_path, "metrics_path")
+    training_parameters = parameter_record["training_parameters"]
+    final_test = metrics_artifact["final_test_evaluation"]
+    primary_metric_name = str(training_parameters["primary_metric"])
+    primary_metric_entry = next(
+        item for item in final_test["metrics"] if item["name"] == primary_metric_name
+    )
+    secondary_metrics = [item for item in final_test["metrics"] if item["name"] != primary_metric_name]
+    feature_columns = [str(column) for column in training_parameters["feature_columns"]]
+    target_column = str(training_parameters["target_column"])
+
+    return {
+        "schema_version": "model-card-input.v2",
+        "artifact_kind": "model_card_input",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "model": {
+            "model_family": str(training_parameters["model_family"]),
+            "task_type": "multiclass_classification",
+            "hyperparameters": _json_safe(training_parameters["hyperparameters"]),
+        },
+        "training": {
+            "training_timestamp": training_timestamp,
+            "seed": training_parameters.get("random_seed"),
+            "split_policy": _json_safe(training_parameters["split_policy"]),
+            "training_data_row_count": int(training_parameters["split_sizes"]["training_rows"]),
+            "evaluation_split_size": int(final_test["row_count"]),
+        },
+        "evaluation": {
+            "primary_metric_name": primary_metric_name,
+            "primary_metric_value": primary_metric_entry["value"],
+            "secondary_metrics": _json_safe(secondary_metrics),
+        },
+        "dataset": {
+            "dataset_id": str(contract["dataset_id"]),
+            "target_column": target_column,
+            "target_description": _explicit_absence(
+                "execution contract does not declare target_description"
+            ),
+            "feature_count": len(feature_columns),
+            "feature_columns": feature_columns,
+            "feature_definitions": _json_safe(contract.get("feature_definitions") or {}),
+            "class_distribution": _class_distribution(rows, target_column),
+        },
+        "intended_use_context": _explicit_absence(
+            "execution contract does not declare intended_use_context"
+        ),
+        "path_references": {
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "execution_contract_path": parameter_record["consumed_inputs"]["execution_contract_path"],
+            "dataset_path": parameter_record["consumed_inputs"]["dataset_path"],
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": parameter_record["hashes"]["prepared_dataset_sha256"],
+            "training_parameter_record_sha256": _sha256_file(parameter_record_path),
+            "metrics_sha256": parameter_record["hashes"]["metrics_sha256"],
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "full_training_parameter_record_embedded": False,
+            "full_metrics_artifact_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def _train_native_multiclass_fixed_configuration(
+    *,
+    contract: dict[str, Any],
+    full_contract: dict[str, Any],
+    contract_path: Path,
+    prepared_dataset_path: Path,
+    dataset_slug: str | None,
+    run_id: str | None,
+) -> TrainingResult:
+    modeling_constraints = contract["modeling_constraints"]
+    model_family, hyperparameters = _validate_fixed_model_configuration(modeling_constraints)
+
+    rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
+    _validate_dataset(rows, prepared_dataset_id, contract)
+
+    target_column = str(contract["target_column"])
+    feature_columns = [str(column) for column in contract["feature_columns"]]
+    split_policy = contract["split_policy"]
+    train_ratio = float(split_policy.get("train_ratio"))
+    val_ratio = float(split_policy.get("val_ratio", 0))
+    test_ratio = float(split_policy.get("test_ratio"))
+    if val_ratio <= 0:
+        raise TrainingInputError(
+            "invalid_split_policy",
+            "native multiclass fixed-configuration training requires a real, non-empty validation "
+            "partition: split_policy.val_ratio must be greater than 0.",
+            field="split_policy.val_ratio",
+        )
+    random_seed = contract.get("random_seed")
+
+    try:
+        train_indices, val_indices, test_indices = _stratified_three_way_split_indices(
+            rows, target_column, train_ratio, val_ratio, test_ratio, random_seed
+        )
+    except ValueError as exc:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            f"native multiclass three-way stratified split failed: {exc}",
+            field="dataset_path",
+        ) from exc
+
+    features, target = _rows_to_training_frame(rows, feature_columns, target_column)
+    final_fit_indices = sorted(train_indices + val_indices)
+    numeric_handling = str(contract.get("numeric_handling", "standardize"))
+    requested_metric_names = _native_multiclass_requested_metric_names(contract)
+
+    # Step 1: initial fixed-configuration fit on train only. Validation is
+    # descriptive only -- it never alters the frozen configuration.
+    initial_pipeline = _build_native_hgb_pipeline(hyperparameters, random_seed, features, numeric_handling)
+    initial_pipeline.fit(features.iloc[train_indices], target.iloc[train_indices])
+    initial_classes = list(initial_pipeline.named_steps["model"].classes_)
+    if len(initial_classes) < NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT:
+        raise TrainingInputError(
+            "insufficient_multiclass_classes",
+            "native multiclass fixed-configuration training requires at least "
+            f"{NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT} fitted model classes.",
+            field="target_column",
+        )
+    validation_predictions = initial_pipeline.predict(features.iloc[val_indices])
+    validation_probabilities = initial_pipeline.predict_proba(features.iloc[val_indices])
+    validation_metric_values = _native_multiclass_metric_values(
+        y_true=target.iloc[val_indices],
+        y_pred=validation_predictions,
+        y_proba=validation_probabilities,
+        classes=initial_classes,
+        metric_names=requested_metric_names,
+    )
+    validation_per_class_metrics = _native_multiclass_per_class_metrics(
+        y_true=target.iloc[val_indices], y_pred=validation_predictions, classes=initial_classes,
+    )
+
+    # Step 2: a fresh configured pipeline is fit on train + validation
+    # ("final fit"). No hyperparameter/family/feature change from the
+    # frozen configuration -- the validation result above never alters
+    # this fit.
+    final_pipeline = _build_native_hgb_pipeline(hyperparameters, random_seed, features, numeric_handling)
+    final_pipeline.fit(features.iloc[final_fit_indices], target.iloc[final_fit_indices])
+    final_model = final_pipeline.named_steps["model"]
+    final_classes = list(final_model.classes_)
+    if len(final_classes) < NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT:
+        raise TrainingInputError(
+            "insufficient_multiclass_classes",
+            "native multiclass fixed-configuration final fit requires at least "
+            f"{NATIVE_MULTICLASS_MINIMUM_CLASS_COUNT} fitted model classes.",
+            field="target_column",
+        )
+    _cross_check_authored_multiclass_class_order(full_contract, final_classes)
+
+    # Step 3: test is evaluated exactly once, sealed, never used for
+    # fitting or model selection. The same prediction pass is reused for
+    # both the sealed metrics and the confusion matrix below.
+    final_test_predictions = final_pipeline.predict(features.iloc[test_indices])
+    final_test_probabilities = final_pipeline.predict_proba(features.iloc[test_indices])
+    final_test_metric_values = _native_multiclass_metric_values(
+        y_true=target.iloc[test_indices],
+        y_pred=final_test_predictions,
+        y_proba=final_test_probabilities,
+        classes=final_classes,
+        metric_names=requested_metric_names,
+    )
+    final_test_per_class_metrics = _native_multiclass_per_class_metrics(
+        y_true=target.iloc[test_indices], y_pred=final_test_predictions, classes=final_classes,
+    )
+    confusion_matrix_rows = _native_multiclass_confusion_matrix(
+        y_true=target.iloc[test_indices], y_pred=final_test_predictions, classes=final_classes,
+    )
+
+    # Step 4: deterministic permutation Feature Importance on the
+    # final-fit (train+validation) population -- descriptive model
+    # interpretation, never used for candidate selection or hyperparameter
+    # tuning.
+    feature_importance_data, total_source_feature_count, omitted_source_feature_count = (
+        _native_multiclass_permutation_importance(
+            pipeline=final_pipeline,
+            features=features.iloc[final_fit_indices],
+            target=target.iloc[final_fit_indices],
+            feature_columns=feature_columns,
+            random_seed=random_seed,
+        )
+    )
+
+    selected_dataset_slug = dataset_slug or _dataset_slug_from_dataset_id(str(contract["dataset_id"]))
+    selected_run_id = run_id or _new_run_id()
+    output_directory = _training_output_directory(selected_dataset_slug, selected_run_id)
+    model_artifact_path = output_directory / MODEL_ARTIFACT_FILENAME
+    parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
+    metrics_path = output_directory / METRICS_ARTIFACT_FILENAME
+    model_card_input_path = output_directory / MODEL_CARD_INPUT_FILENAME
+    analytical_visualizations_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
+    serializer_version = _serializer_version()
+    training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    model_artifact_sha256 = _serialize_model(final_pipeline, model_artifact_path)
+    controlled_entrypoint_provenance = _controlled_entrypoint_provenance_marker(
+        contract_path=contract_path,
+        dataset_path=prepared_dataset_path,
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
+
+    ordered_class_ids = [str(c) for c in final_classes]
+    classification_evidence = {
+        "problem_type": "multiclass_classification",
+        "ordered_class_ids": ordered_class_ids,
+        "probability_columns": [
+            {"class_id": class_id, "probability_index": index}
+            for index, class_id in enumerate(ordered_class_ids)
+        ],
+    }
+
+    metrics_artifact = {
+        "schema_version": NATIVE_MULTICLASS_TRAINING_METRICS_VERSION,
+        "artifact_kind": "training_metrics",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": ordered_class_ids,
+        },
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "row_count": len(val_indices),
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_decision_rule_selection": False,
+            "sealed_before_finalization": False,
+            "evaluation_count": 1,
+            "metrics": [
+                {"name": name, "value": value} for name, value in validation_metric_values.items()
+            ],
+            "per_class_metrics": validation_per_class_metrics,
+        },
+        "final_test_evaluation": {
+            "partition_role": "test",
+            "row_count": len(test_indices),
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_decision_rule_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": True,
+            "completed": True,
+            "evaluation_count": 1,
+            "metrics": [
+                {"name": name, "value": value} for name, value in final_test_metric_values.items()
+            ],
+            "per_class_metrics": final_test_per_class_metrics,
+        },
+        "path_references": {
+            "metrics_path": _repo_relative_path(metrics_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+    metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
+
+    analytical_visualizations_artifact = {
+        "schema_version": NATIVE_MULTICLASS_ANALYTICAL_VISUALIZATIONS_VERSION,
+        "artifact_kind": "analytical_visualizations",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": ordered_class_ids,
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": target_column,
+                "y_label": "Rows",
+                "data": _target_distribution_chart_data(rows, target_column)[0],
+            },
+            {
+                "id": "feature_importance",
+                "title": "HGB Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": feature_importance_data,
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset",
+            "row_count": len(rows),
+            "target_column": target_column,
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "sklearn.inspection.permutation_importance",
+            "method": "permutation_importance",
+            "total_source_feature_count": total_source_feature_count,
+            "omitted_source_feature_count": omitted_source_feature_count,
+            "public_row_limit": FEATURE_IMPORTANCE_TOP_N,
+        },
+        "confusion_matrix": {
+            "ordered_class_ids": ordered_class_ids,
+            "matrix": confusion_matrix_rows,
+            "row_axis": "true_class",
+            "column_axis": "predicted_class",
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+    analytical_visualizations_sha256 = _write_reduced_json_artifact(
+        analytical_visualizations_path, analytical_visualizations_artifact,
+    )
+
+    training_parameter_record = {
+        "schema_version": NATIVE_MULTICLASS_TRAINING_PARAMETER_RECORD_VERSION,
+        "record_kind": "training_parameter_record",
+        "problem_type": "multiclass_classification",
+        "training_timestamp": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "consumed_inputs": {
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+            "execution_contract_dataset_id": str(contract["dataset_id"]),
+            "prepared_dataset_dataset_id": str(prepared_dataset_id or contract["dataset_id"]),
+        },
+        "produced_outputs": {
+            "serialized_model_path": _repo_relative_path(model_artifact_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "model_selection_evidence_path": None,
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
+        },
+        "serializer": {
+            "name": SERIALIZER_NAME,
+            "installed_version": serializer_version,
+            "serialization_format_version": f"{SERIALIZER_NAME}-{serializer_version}",
+        },
+        "controlled_entrypoint_provenance": controlled_entrypoint_provenance,
+        "permitted_execution_contract_fields": sorted(PERMITTED_EXECUTION_CONTRACT_FIELDS),
+        "training_parameters": {
+            "model_family": model_family,
+            "hyperparameters": _json_safe(hyperparameters),
+            "target_column": target_column,
+            "feature_columns": feature_columns,
+            "split_policy": dict(split_policy),
+            "split_sizes": {
+                "training_rows": len(train_indices),
+                "validation_rows": len(val_indices),
+                "test_rows": len(test_indices),
+                "final_fit_rows": len(final_fit_indices),
+            },
+            "random_seed": random_seed,
+            "primary_metric": str(contract["primary_metric"]),
+            "secondary_metrics": list(contract.get("secondary_metrics") or []),
+            "modeling_constraints": _json_safe(modeling_constraints),
+            "selection_mode": "fixed_configuration",
+            "model_selection_performed": False,
+            "initial_fit": {"fit_partition": "train"},
+            "validation_evaluation": {
+                "partition": "validation",
+                "used_for_model_selection": False,
+                "used_for_hyperparameter_selection": False,
+            },
+            "final_fit": {"fit_partitions": ["train", "validation"]},
+            "final_test": {
+                "partition": "test",
+                "used_for_fitting": False,
+                "used_for_model_selection": False,
+                "evaluation_count": 1,
+            },
+        },
+        "classification_evidence": classification_evidence,
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+            "prepared_dataset_sha256": _sha256_file(prepared_dataset_path),
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+        },
+        "record_boundary_confirmations": {
+            "is_metrics_artifact": False,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "unauthorized_contract_fields_consumed": False,
+            "controlled_entrypoint_provenance_marker_present": True,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "raw_artifact_contents_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+    parameter_record_sha256 = _write_parameter_record(parameter_record_path, training_parameter_record)
+
+    model_card_input_artifact = _build_native_multiclass_model_card_input_artifact(
+        contract=contract,
+        rows=rows,
+        output_directory=output_directory,
+        model_card_input_path=model_card_input_path,
+        parameter_record_path=parameter_record_path,
+        metrics_path=metrics_path,
+        training_timestamp=training_timestamp,
+    )
+    model_card_input_sha256 = _write_reduced_json_artifact(model_card_input_path, model_card_input_artifact)
+    model_card_path = output_directory / MODEL_CARD_FILENAME
+    model_card_artifact = _model_card_artifact_from_input(
+        model_card_input_artifact,
+        model_card_input_path_ref=_repo_relative_path(model_card_input_path),
+        model_card_path_ref=_repo_relative_path(model_card_path),
+        model_card_input_sha256=model_card_input_sha256,
+        created_at=training_timestamp,
+    )
+    model_card_sha256 = _write_reduced_json_artifact(model_card_path, model_card_artifact)
+
+    return TrainingResult(
+        status="trained",
+        model=final_pipeline,
+        model_family=model_family,
+        task_type="classification",
+        train_indices=train_indices,
+        evaluation_indices=test_indices,
+        dataset_id=str(contract["dataset_id"]),
+        target_column=target_column,
+        feature_columns=feature_columns,
+        primary_metric=str(contract["primary_metric"]),
+        output_directory=f"{_repo_relative_path(output_directory)}/",
+        serialized_model_path=_repo_relative_path(model_artifact_path),
+        training_parameter_record_path=_repo_relative_path(parameter_record_path),
+        metrics_path=_repo_relative_path(metrics_path),
+        model_selection_evidence_path=None,
+        model_card_input_path=_repo_relative_path(model_card_input_path),
+        model_card_path=_repo_relative_path(model_card_path),
+        analytical_visualizations_path=_repo_relative_path(analytical_visualizations_path),
+        serializer_name=SERIALIZER_NAME,
+        serializer_version=serializer_version,
+        serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
+        training_timestamp=training_timestamp,
+        hashes={
+            "execution_contract_sha256": training_parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": training_parameter_record["hashes"]["prepared_dataset_sha256"],
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+            "training_parameter_record_sha256": parameter_record_sha256,
+            "model_card_input_sha256": model_card_input_sha256,
+            "model_card_sha256": model_card_sha256,
+            "model_selection_evidence_sha256": None,
+            "analytical_visualizations_sha256": analytical_visualizations_sha256,
+        },
+        metrics=final_test_metric_values,
+        model_selection_evidence_produced=False,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

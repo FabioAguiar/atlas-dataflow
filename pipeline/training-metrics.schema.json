@@ -2,11 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-metrics.schema.json",
   "title": "Atlas DataFlow Training Metrics Artifact",
-  "description": "Reduced metrics artifact. Two schema-version-discriminated profiles are supported: training-metrics.v1 (unchanged, emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json, computed from the controlled evaluation split only) and training-metrics.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow, distinguishing cross-validation, validation, and final-test partition roles).",
+  "description": "Reduced metrics artifact. Four schema-version-discriminated profiles are supported: training-metrics.v1 (unchanged, emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json, computed from the controlled evaluation split only), training-metrics.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training, distinguishing a descriptive validation evaluation from a sealed final-test evaluation), training-metrics.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow, distinguishing cross-validation, validation, and final-test partition roles), and training-metrics.external-fitted-model.v2 (Project Spec S0215, the multiclass external variant).",
   "type": "object",
   "required": ["schema_version"],
   "oneOf": [
     { "$ref": "#/$defs/internal_run_metrics_v1" },
+    { "$ref": "#/$defs/internal_run_metrics_v2" },
     { "$ref": "#/$defs/external_metrics_v1" },
     { "$ref": "#/$defs/external_metrics_v2" }
   ],
@@ -91,6 +92,109 @@
               }
             }
           }
+        },
+        "path_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metrics_path",
+            "training_parameter_record_path",
+            "execution_contract_path",
+            "dataset_path"
+          ],
+          "properties": {
+            "metrics_path": {
+              "$ref": "#/$defs/metrics_path"
+            },
+            "training_parameter_record_path": {
+              "$ref": "#/$defs/training_parameter_record_path"
+            },
+            "execution_contract_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dataset_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "execution_contract_sha256"
+          ],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "sha256"
+            },
+            "execution_contract_sha256": {
+              "$ref": "#/$defs/sha256_hex"
+            }
+          }
+        },
+        "evidence_policy": {
+          "$ref": "#/$defs/evidence_policy"
+        }
+      }
+    },
+    "internal_run_metrics_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0216: Atlas-native fixed-configuration multiclass training metrics, emitted alongside training-parameter-record.v2 at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json. Distinguishes a descriptive validation_evaluation (never used for model selection or hyperparameter selection under fixed_configuration) from a sealed, non-selection, non-fitting final_test_evaluation. Reuses the same partition/metric-name shapes as the external v2 multiclass profile (S0215) so downstream public projection is symmetric between internal and external multiclass evidence.",
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "training_run_identity",
+        "classification_evidence",
+        "validation_evaluation",
+        "final_test_evaluation",
+        "path_references",
+        "hashes",
+        "evidence_policy"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-metrics.v2"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "const": "training_metrics"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "training_run_identity": {
+          "$ref": "#/$defs/training_run_identity"
+        },
+        "classification_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "ordered_class_ids"],
+          "properties": {
+            "problem_type": {
+              "type": "string",
+              "const": "multiclass_classification"
+            },
+            "ordered_class_ids": {
+              "type": "array",
+              "minItems": 3,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "validation_evaluation": {
+          "$ref": "#/$defs/multiclass_validation_partition_v2"
+        },
+        "final_test_evaluation": {
+          "$ref": "#/$defs/multiclass_final_test_partition_v2"
         },
         "path_references": {
           "type": "object",

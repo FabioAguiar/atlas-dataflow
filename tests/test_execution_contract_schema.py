@@ -1880,3 +1880,140 @@ def test_historical_telco_inference_bundle_still_valid_after_schema_evolution():
     assert "model_provenance_origin" not in doc
     assert "external_model_evidence" not in doc
     assert "training_evidence" in doc
+
+
+# --- Project Spec S0216: bounded fixed hist_gradient_boosting configuration
+# and explicit multiclass aggregate metric vocabulary -------------------
+
+
+def _fixed_hgb_hyperparameters(**overrides) -> dict:
+    base = {
+        "class_weight": None,
+        "l2_regularization": 0.0,
+        "learning_rate": 0.05,
+        "max_iter": 250,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 40,
+    }
+    base.update(overrides)
+    return base
+
+
+def _fixed_configuration_contract() -> dict:
+    contract = _valid_contract()
+    contract["primary_metric"] = "f1_macro"
+    contract["secondary_metrics"] = ["balanced_accuracy", "f1_weighted", "recall_macro", "accuracy", "log_loss"]
+    contract["modeling_constraints"] = {
+        "allowed_model_families": ["hist_gradient_boosting"],
+        "no_automl": True,
+        "selection_mode": "fixed_configuration",
+        "fixed_model_configuration": {
+            "model_family": "hist_gradient_boosting",
+            "hyperparameters": _fixed_hgb_hyperparameters(),
+        },
+    }
+    return contract
+
+
+def test_fixed_configuration_hgb_contract_is_schema_valid():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_fixed_configuration_contract(), schema)
+
+
+def test_multiclass_aggregate_metric_ids_are_schema_valid():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    jsonschema.validate(contract, schema)
+    for metric in ("f1_macro", "f1_weighted", "precision_macro", "recall_macro"):
+        contract["primary_metric"] = metric
+        jsonschema.validate(contract, schema)
+
+
+def test_selection_mode_evaluate_allowed_families_still_valid_without_fixed_configuration():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["modeling_constraints"]["selection_mode"] = "evaluate_allowed_families"
+    jsonschema.validate(contract, schema)
+
+
+def test_selection_mode_fixed_configuration_requires_fixed_model_configuration():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    del contract["modeling_constraints"]["fixed_model_configuration"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(contract))
+    assert errors
+
+
+def test_fixed_model_configuration_without_selection_mode_fixed_configuration_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"] = {
+        "model_family": "hist_gradient_boosting",
+        "hyperparameters": _fixed_hgb_hyperparameters(),
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(contract))
+    assert errors
+
+
+def test_hgb_hyperparameters_missing_required_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    del contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["learning_rate"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(contract))
+    assert errors
+
+
+def test_hgb_hyperparameters_unsupported_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["n_estimators"] = 100
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(contract))
+    assert errors
+
+
+def test_hgb_hyperparameters_never_expose_callable_or_module_strings():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["learning_rate"] = (
+        "sklearn.ensemble.HistGradientBoostingClassifier"
+    )
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(contract))
+    assert errors
+
+
+def test_hgb_fixed_model_configuration_only_accepts_hist_gradient_boosting_family():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["model_family"] = "gradient_boosting"
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = list(validator.iter_errors(contract))
+    assert errors
+
+
+def test_native_multiclass_result_semantics_still_conforms_to_result_semantics_union():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    contract["result_semantics"] = {
+        "schema_version": "multiclass-result-semantics.v1",
+        "problem_type": "multiclass_classification",
+        "classes": [
+            {"class_id": "a", "display_label": "A"},
+            {"class_id": "b", "display_label": "B"},
+            {"class_id": "c", "display_label": "C"},
+        ],
+        "primary_output": "predicted_class",
+        "probability_output": "class_probabilities",
+        "decision": {"strategy": "argmax"},
+    }
+    jsonschema.validate(contract, schema)

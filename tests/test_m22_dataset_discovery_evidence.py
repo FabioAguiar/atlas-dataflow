@@ -911,3 +911,61 @@ def test_modeling_intent_existing_binary_result_semantics_behavior_unchanged_alo
     intent = _build_telco_shaped_modeling_intent(binary_result_semantics_intent=binary_intent)
     assert intent["binary_result_semantics_intent"] == binary_intent
     assert intent["multiclass_result_semantics_intent"] is None
+
+
+# --- Project Spec S0216: optional training_policy_intent is carried
+# forward verbatim by build_dataset_modeling_intent, with no default
+# invented by the builder ----------------------------------------------
+
+
+def _fixed_configuration_training_policy_intent() -> dict:
+    return {
+        "review_status": "approved",
+        "numeric_handling": "passthrough",
+        "categorical_encoding_policy": "onehot",
+        "allowed_transformations": ["passthrough"],
+        "split_policy": {"strategy": "stratified", "train_ratio": 0.70, "val_ratio": 0.15, "test_ratio": 0.15},
+        "primary_metric": "f1_macro",
+        "secondary_metrics": ["balanced_accuracy", "f1_weighted", "recall_macro", "accuracy", "log_loss"],
+        "modeling_constraints": {
+            "allowed_model_families": ["hist_gradient_boosting"],
+            "no_automl": True,
+            "selection_mode": "fixed_configuration",
+            "fixed_model_configuration": {
+                "model_family": "hist_gradient_boosting",
+                "hyperparameters": {
+                    "class_weight": None,
+                    "l2_regularization": 0.0,
+                    "learning_rate": 0.05,
+                    "max_iter": 250,
+                    "max_leaf_nodes": 15,
+                    "min_samples_leaf": 40,
+                },
+            },
+        },
+    }
+
+
+def test_modeling_intent_training_policy_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["training_policy_intent"] is None
+
+
+def test_modeling_intent_carries_training_policy_intent_verbatim():
+    training_policy_intent = _fixed_configuration_training_policy_intent()
+    intent = _build_telco_shaped_modeling_intent(training_policy_intent=training_policy_intent)
+    assert intent["training_policy_intent"] == training_policy_intent
+    # A copy, not the same object identity, matching the existing
+    # binary/multiclass result-semantics-intent convention above.
+    assert intent["training_policy_intent"] is not training_policy_intent
+
+
+def test_modeling_intent_training_policy_intent_coexists_with_multiclass_result_semantics_intent():
+    training_policy_intent = _fixed_configuration_training_policy_intent()
+    multiclass_intent = _build_multiclass_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        training_policy_intent=training_policy_intent,
+        multiclass_result_semantics_intent=multiclass_intent,
+    )
+    assert intent["training_policy_intent"] == training_policy_intent
+    assert intent["multiclass_result_semantics_intent"] == multiclass_intent

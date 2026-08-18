@@ -4,10 +4,16 @@ Semantic Intent Contract.
 
 Proves the real, committed capability profile document at
 pipeline/capabilities/multiclass-predictive-classification.v1.json is a
-governed, additive capability profile that is registered but never treated
-as currently, operationally supported by any downstream consumer -- unlike
-the binary predictive-classification profile, which remains the sole
-`current_supported` capability and is unchanged by this spec.
+governed, additive capability profile. Project Spec S0216 activates it to
+`support_status: current_supported` only after every native multiclass
+training/schema/notebook/E2E/bundle/candidate/publisher/runtime/API/
+frontend gate and the full binary/Telco regression suite pass -- the binary
+predictive-classification profile remains the sole
+`CURRENTLY_SUPPORTED_CAPABILITY_PROFILE_ID`/
+`CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID` architecture identity
+unchanged; multiclass becomes operationally accepted only through the
+existing set-based `CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS`/
+`RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS` gates.
 
 Uses only the real repository profile files, the real capability-profile
 schema, and synthetic inert fixture bytes under a temporary directory --
@@ -96,8 +102,8 @@ class TestIdentityVersionSupportStatus:
     def test_capability_profile_version(self):
         assert _load_profile()["capability_profile_version"] == "v1"
 
-    def test_support_status_is_requires_future_contract_evolution(self):
-        assert _load_profile()["support_status"] == "requires_future_contract_evolution"
+    def test_support_status_is_current_supported(self):
+        assert _load_profile()["support_status"] == "current_supported"
 
 
 class TestSemanticRuntimePublicationPolicy:
@@ -231,16 +237,21 @@ class TestContractDerivationAndReleaseConstantsRemainBinary:
         assert profile_id != CURRENTLY_SUPPORTED_RELEASE_CAPABILITY_PROFILE_ID
 
 
-class TestMulticlassProfileIsNotTreatedAsDownstreamOperationalSupport:
-    def test_support_status_is_not_current_supported(self):
-        assert _load_profile()["support_status"] != "current_supported"
+class TestMulticlassProfileIsNowTreatedAsDownstreamOperationalSupport:
+    """Project Spec S0216: the real committed multiclass profile becomes
+    current_supported only after every native gate listed in this module's
+    docstring passes -- this is the terminal activation state, not an
+    intermediate probe."""
 
-    def test_support_status_requires_future_contract_evolution_is_not_operational(self):
-        # requires_future_contract_evolution is a distinct, non-operational
-        # status from current_supported and future_architecture_probe.
+    def test_support_status_is_current_supported(self):
+        assert _load_profile()["support_status"] == "current_supported"
+
+    def test_support_status_is_not_a_non_operational_status(self):
         profile = _load_profile()
-        assert profile["support_status"] == "requires_future_contract_evolution"
-        assert profile["support_status"] != "current_supported"
+        assert profile["support_status"] not in (
+            "requires_future_contract_evolution",
+            "future_architecture_probe",
+        )
 
 
 class TestAuthoringBoundaryCompatibility:

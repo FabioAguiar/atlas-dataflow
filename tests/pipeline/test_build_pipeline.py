@@ -1093,6 +1093,151 @@ def test_build_release_candidate_input_internal_provenance_still_requires_visual
         )
 
 
+# --- Project Spec S0216: internal (Atlas-native) multiclass fixed-
+# configuration training-parameter-record.v2/training-metrics.v2/
+# analytical-visualizations.v2 provenance recognition -----------------------
+
+_NATIVE_MULTICLASS_ORDERED_CLASS_IDS = ["a", "b", "c"]
+
+
+def _write_native_multiclass_governed_artifacts(repo_root: Path) -> dict:
+    paths = _write_handoff_governed_artifacts(repo_root)
+    for role in ("execution_contract", "runtime_contract", "prepared_data_metadata"):
+        _write_json(repo_root / paths[role], {"role": role, "schema_version": f"{role}.v1"})
+    _write_json(repo_root / paths["training_parameter_record"], {
+        "schema_version": "training-parameter-record.v2",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": _NATIVE_MULTICLASS_ORDERED_CLASS_IDS,
+        },
+    })
+    _write_json(repo_root / paths["training_metrics"], {
+        "schema_version": "training-metrics.v2",
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": _NATIVE_MULTICLASS_ORDERED_CLASS_IDS,
+        },
+    })
+    _write_json(repo_root / paths["model_card"], {"schema_version": "model-card-input.v2"})
+    _write_json(repo_root / paths["public_context"], {"role": "public_context", "schema_version": "x"})
+    _write_json(repo_root / paths["public_contract"], _VALID_PUBLIC_CONTRACT)
+    native_visualizations = {
+        "schema_version": "analytical-visualizations.v2",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-08-18T00:00:00Z",
+        "training_run_identity": {
+            "dataset_slug": DATASET_SLUG,
+            "run_id": "train-20260818T000000Z",
+            "output_directory": f"pipeline/training-runs/{DATASET_SLUG}/train-20260818T000000Z/",
+        },
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": _NATIVE_MULTICLASS_ORDERED_CLASS_IDS,
+        },
+        "charts": [
+            {
+                "id": "target_distribution", "title": "Target Distribution", "type": "bar",
+                "x_label": "Class", "y_label": "Rows",
+                "data": [{"name": cid, "value": 10} for cid in _NATIVE_MULTICLASS_ORDERED_CLASS_IDS],
+            },
+            {
+                "id": "feature_importance", "title": "HGB Feature Importance", "type": "bar",
+                "x_label": "Feature", "y_label": "Importance",
+                "data": [{"name": "example_feature", "value": 1.0}],
+            },
+        ],
+        "target_distribution_method": {
+            "population_kind": "prepared_dataset", "row_count": 30, "target_column": "Class",
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "sklearn.inspection.permutation_importance",
+            "method": "permutation_importance",
+            "total_source_feature_count": 1, "omitted_source_feature_count": 0, "public_row_limit": 10,
+        },
+        "confusion_matrix": {
+            "ordered_class_ids": _NATIVE_MULTICLASS_ORDERED_CLASS_IDS,
+            "matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            "row_axis": "true_class", "column_axis": "predicted_class",
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True, "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True, "secrets_prohibited": True,
+            "raw_dataset_embedded": False, "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False, "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False, "reduced_and_sanitized": True,
+        },
+    }
+    _write_json(repo_root / paths["visualizations"], native_visualizations)
+    model_artifact_sha256 = hashlib.sha256((repo_root / paths["model_artifact"]).read_bytes()).hexdigest()
+    _write_json(repo_root / paths["inference_bundle"], {
+        "role": "inference_bundle",
+        "schema_version": "inference_bundle.v1",
+        "model_artifact": {"path": "models/model.pkl", "sha256": model_artifact_sha256},
+    })
+    return dict(paths)
+
+
+def test_build_release_candidate_input_native_multiclass_provenance_carries_v2_versions(tmp_path):
+    # Note: pipeline/release-candidate-input.schema.json is not authorized
+    # for edit by Project Spec S0216 and, like Project Spec S0209/S0215's
+    # own external v2 additions before it, does not yet enumerate the v2
+    # contract_version constants below -- a pre-existing gap this spec does
+    # not have edit authorization to close. build_release_candidate_input's
+    # real behavior (asserted here) is independent of that schema file: it
+    # is never consulted by pipeline/assemble_candidate.py's own
+    # _validate_candidate_input at runtime.
+    tmp_repo = tmp_path / "repo"
+    paths = _write_native_multiclass_governed_artifacts(tmp_repo)
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=DATASET_SLUG,
+        release_id=RELEASE_ID,
+        source_run_id="native-multiclass-run-20260818T000000Z",
+        artifact_references=paths,
+        repo_root=tmp_repo,
+    )
+
+    artifact_inputs = candidate_input["artifact_inputs"]
+    assert artifact_inputs["training_parameter_record"]["contract_version"] == "training-parameter-record.v2"
+    assert artifact_inputs["training_metrics"]["contract_version"] == "training-metrics.v2"
+    assert artifact_inputs["visualizations"]["contract_version"] == "analytical-visualizations.v2"
+    # Still the internal M24 source stage -- never coerced to the external
+    # manual_governed_input path.
+    assert artifact_inputs["training_parameter_record"]["source_stage"] == "M24"
+    assert artifact_inputs["model_artifact"]["source_stage"] == "M24"
+
+
+def test_assemble_release_candidate_native_multiclass_produces_publisher_accepted_candidate(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    paths = _write_native_multiclass_governed_artifacts(tmp_repo)
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=DATASET_SLUG,
+        release_id=RELEASE_ID,
+        source_run_id="native-multiclass-run-20260818T000000Z",
+        artifact_references=paths,
+        repo_root=tmp_repo,
+    )
+
+    public_contract_schema_dst = tmp_repo / "contracts" / "public-contract.schema.json"
+    public_contract_schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "contracts" / "public-contract.schema.json", public_contract_schema_dst)
+    visualizations_schema_dst = tmp_repo / "pipeline" / "analytical-visualizations.schema.json"
+    visualizations_schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json", visualizations_schema_dst)
+
+    output_dir = tmp_repo / "releases" / "candidates"
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0216-native-multiclass-test",
+    )
+
+    assert result["status"] == "accepted", result
+    candidate_dir = Path(result["candidate_dir"])
+    visualizations = json.loads((candidate_dir / "visualizations" / "visualizations.json").read_text())
+    assert visualizations["schema_version"] == "analytical-visualizations.v2"
+    assert visualizations["confusion_matrix"]["ordered_class_ids"] == _NATIVE_MULTICLASS_ORDERED_CLASS_IDS
+
+
 def test_assemble_release_candidate_external_provenance_produces_ten_role_candidate(tmp_path, monkeypatch):
     tmp_repo = tmp_path / "repo"
     paths = _write_external_governed_artifacts(tmp_repo)

@@ -844,6 +844,7 @@ def build_dataset_modeling_intent(
     categorical_domain_intent: Sequence[dict[str, Any]] | None = None,
     binary_result_semantics_intent: dict[str, Any] | None = None,
     multiclass_result_semantics_intent: dict[str, Any] | None = None,
+    training_policy_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build a `dataset_modeling_intent.v1` authoring-intent object.
@@ -864,6 +865,17 @@ def build_dataset_modeling_intent(
     policy by `contract_derivation._build_execution_contract` -- this builder
     only carries the declarations forward verbatim, it never approves or
     rejects one itself.
+
+    `training_policy_intent` (Project Spec S0216) is optional reviewed
+    native training policy authoring intent -- execution-only fields
+    (`numeric_handling`, `categorical_encoding_policy`,
+    `allowed_transformations`, `split_policy`, `random_seed`,
+    `primary_metric`, `secondary_metrics`, `modeling_constraints`) plus its
+    own `review_status`. This builder never invents a default for it and
+    never validates its shape -- it is copied forward verbatim only when
+    explicitly supplied; strict validation before materialization into an
+    execution contract is owned exclusively by
+    `contract_derivation._validate_training_policy_intent`.
     """
     feature_candidates = derive_feature_candidates(
         columns, target_column=target_column, identifier_columns=identifier_columns
@@ -920,6 +932,9 @@ def build_dataset_modeling_intent(
             dict(multiclass_result_semantics_intent)
             if multiclass_result_semantics_intent is not None
             else None
+        ),
+        "training_policy_intent": (
+            dict(training_policy_intent) if training_policy_intent is not None else None
         ),
         "modeling_intent_boundary_confirmations": dict(
             MODELING_INTENT_BOUNDARY_CONFIRMATIONS

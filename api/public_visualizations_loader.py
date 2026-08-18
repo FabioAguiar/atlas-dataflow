@@ -35,10 +35,20 @@ _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION = "analytical-visualizations.
 # bounded Target Distribution/Feature Importance charts as v1, plus an
 # additional bounded confusion_matrix (see _bounded_confusion_matrix below).
 _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2 = "analytical-visualizations.external-fitted-model.v2"
+# Project Spec S0216: the internal (Atlas-native) multiclass fixed-
+# configuration visualizations profile projects the identical bounded
+# Target Distribution/Feature Importance charts as v1, plus the same
+# bounded confusion_matrix shape as the external v2 profile.
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2 = "analytical-visualizations.v2"
 _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
+)
+_CONFUSION_MATRIX_SCHEMA_VERSIONS = (
+    _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
 )
 _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND = "analytical_visualizations"
 _REQUIRED_CHART_IDS = ("target_distribution", "feature_importance")
@@ -258,7 +268,7 @@ def _bounded_confusion_matrix(visualizations: dict[str, Any]) -> dict[str, Any] 
     materializer's own validation alone) and returns exactly
     ordered_class_ids/matrix/row_axis/column_axis -- no source paths,
     provenance, or other internal fields."""
-    if visualizations.get("schema_version") != _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2:
+    if visualizations.get("schema_version") not in _CONFUSION_MATRIX_SCHEMA_VERSIONS:
         return None
 
     confusion_matrix = visualizations.get("confusion_matrix")

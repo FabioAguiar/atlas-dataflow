@@ -69,6 +69,7 @@ contract. Contains no dataset-slug or dataset-name conditional anywhere.
 import argparse
 import hashlib
 import json
+import math
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -582,6 +583,265 @@ _POLICY_DEFAULT_FIELDS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Reviewed native training policy validation and materialization
+# (Project Spec S0216)
+#
+# `_validate_training_policy_intent` strictly validates an optional, reviewed
+# `training_policy_intent` object (`pipeline.discovery_evidence
+# .build_dataset_modeling_intent`'s optional field) before it may ever
+# replace `_POLICY_DEFAULT_FIELDS`'s repository-standard defaults. Either the
+# complete approved policy is accepted (every execution-only field present
+# and schema-compatible) or it is rejected outright with a concrete reason --
+# there is no partial/field-by-field fallback from a partially supplied
+# approved policy. Absence of `training_policy_intent` entirely is not a
+# validation failure; that is the existing, unchanged legacy-defaults path
+# (`_build_execution_contract`) and this validator is never consulted for it.
+# ---------------------------------------------------------------------------
+
+_TRAINING_POLICY_METRIC_VOCABULARY = frozenset({
+    "roc_auc", "f1", "accuracy", "log_loss", "pr_auc", "average_precision",
+    "precision", "recall", "f2", "balanced_accuracy", "brier_score",
+    "f1_macro", "f1_weighted", "precision_macro", "recall_macro",
+})
+_TRAINING_POLICY_MODEL_FAMILY_VOCABULARY = frozenset({
+    "logistic_regression", "gradient_boosting", "random_forest",
+    "xgboost", "lightgbm", "hist_gradient_boosting",
+})
+_TRAINING_POLICY_NUMERIC_HANDLING_VOCABULARY = frozenset({"standardize", "normalize", "passthrough"})
+_TRAINING_POLICY_CATEGORICAL_ENCODING_VOCABULARY = frozenset({"onehot", "ordinal", "target_encode", "binary"})
+_TRAINING_POLICY_TRANSFORMATION_VOCABULARY = frozenset({"log1p", "sqrt", "clip", "passthrough"})
+_TRAINING_POLICY_SPLIT_STRATEGY_VOCABULARY = frozenset({"stratified", "random"})
+_TRAINING_POLICY_SELECTION_MODE_VOCABULARY = frozenset({"evaluate_allowed_families", "fixed_configuration"})
+
+# Project Spec S0216: the only bounded fixed-parameter family this
+# validator (and pipeline/training.py's native estimator construction)
+# currently recognizes. A future family requires a new, separately
+# authorized whitelist -- never an ad hoc extension here.
+_HGB_REQUIRED_HYPERPARAMETERS = frozenset({
+    "class_weight", "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf",
+})
+_HGB_OPTIONAL_HYPERPARAMETERS = frozenset({"early_stopping"})
+_HGB_ALLOWED_HYPERPARAMETERS = _HGB_REQUIRED_HYPERPARAMETERS | _HGB_OPTIONAL_HYPERPARAMETERS
+
+TRAINING_POLICY_REQUIRED_FIELDS = (
+    "review_status",
+    "numeric_handling",
+    "categorical_encoding_policy",
+    "allowed_transformations",
+    "split_policy",
+    "primary_metric",
+    "secondary_metrics",
+    "modeling_constraints",
+)
+
+
+class TrainingPolicyValidationError(ValueError):
+    """Raised when a supplied `training_policy_intent` is present but not a
+    complete, approved, schema-compatible reviewed native training policy.
+
+    Never raised for an absent `training_policy_intent` -- that case uses
+    the unchanged legacy derivation defaults instead.
+    """
+
+    def __init__(self, reasons: list[str]) -> None:
+        self.reasons = list(reasons)
+        super().__init__("training_policy_intent failed strict validation: " + "; ".join(reasons))
+
+
+def _validate_hgb_hyperparameters(hyperparameters: Any) -> list[str]:
+    reasons: list[str] = []
+    if not isinstance(hyperparameters, dict):
+        return ["fixed_model_configuration.hyperparameters must be an object"]
+    missing = _HGB_REQUIRED_HYPERPARAMETERS - set(hyperparameters)
+    if missing:
+        reasons.append(
+            f"fixed_model_configuration.hyperparameters is missing required fields: {sorted(missing)}"
+        )
+    unsupported = set(hyperparameters) - _HGB_ALLOWED_HYPERPARAMETERS
+    if unsupported:
+        reasons.append(f"unsupported HGB hyperparameter(s): {sorted(unsupported)}")
+    if "class_weight" in hyperparameters and hyperparameters["class_weight"] not in (None, "balanced"):
+        reasons.append("hyperparameters.class_weight must be null or 'balanced'")
+    if "l2_regularization" in hyperparameters:
+        value = hyperparameters["l2_regularization"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            reasons.append("hyperparameters.l2_regularization must be a number >= 0")
+    if "learning_rate" in hyperparameters:
+        value = hyperparameters["learning_rate"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            reasons.append("hyperparameters.learning_rate must be a number > 0")
+    if "max_iter" in hyperparameters:
+        value = hyperparameters["max_iter"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.max_iter must be an integer >= 1")
+    if "max_leaf_nodes" in hyperparameters:
+        value = hyperparameters["max_leaf_nodes"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+            reasons.append("hyperparameters.max_leaf_nodes must be an integer >= 2")
+    if "min_samples_leaf" in hyperparameters:
+        value = hyperparameters["min_samples_leaf"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.min_samples_leaf must be an integer >= 1")
+    if "early_stopping" in hyperparameters and hyperparameters["early_stopping"] not in ("auto", True, False):
+        reasons.append("hyperparameters.early_stopping must be 'auto' or a boolean")
+    return reasons
+
+
+def _validate_modeling_constraints_intent(modeling_constraints: Any) -> list[str]:
+    reasons: list[str] = []
+    if not isinstance(modeling_constraints, dict):
+        return ["modeling_constraints must be an object"]
+
+    allowed_model_families = modeling_constraints.get("allowed_model_families")
+    if not isinstance(allowed_model_families, list) or not allowed_model_families:
+        reasons.append("modeling_constraints.allowed_model_families must be a non-empty array")
+        allowed_model_families = []
+    unknown_families = [
+        family for family in allowed_model_families
+        if family not in _TRAINING_POLICY_MODEL_FAMILY_VOCABULARY
+    ]
+    if unknown_families:
+        reasons.append(f"unknown model family: {unknown_families}")
+
+    selection_mode = modeling_constraints.get("selection_mode")
+    if selection_mode is not None and selection_mode not in _TRAINING_POLICY_SELECTION_MODE_VOCABULARY:
+        reasons.append(f"modeling_constraints.selection_mode is unrecognized: {selection_mode!r}")
+
+    if selection_mode == "fixed_configuration":
+        fixed_model_configuration = modeling_constraints.get("fixed_model_configuration")
+        if not isinstance(fixed_model_configuration, dict):
+            reasons.append("modeling_constraints.fixed_model_configuration is required for fixed_configuration")
+            return reasons
+        fixed_family = fixed_model_configuration.get("model_family")
+        if len(allowed_model_families) != 1 or (allowed_model_families and allowed_model_families[0] != fixed_family):
+            reasons.append(
+                "fixed configuration with multiple allowed families, or fixed family not present in "
+                "allowed families"
+            )
+        if fixed_family == "hist_gradient_boosting":
+            reasons.extend(
+                _validate_hgb_hyperparameters(fixed_model_configuration.get("hyperparameters"))
+            )
+        elif fixed_family is not None:
+            reasons.append(f"fixed family not present in allowed families: {fixed_family!r}")
+    elif "fixed_model_configuration" in modeling_constraints:
+        reasons.append(
+            "modeling_constraints.fixed_model_configuration is only valid when selection_mode is "
+            "fixed_configuration"
+        )
+
+    return reasons
+
+
+def _validate_split_policy_intent(split_policy: Any) -> list[str]:
+    reasons: list[str] = []
+    if not isinstance(split_policy, dict):
+        return ["split_policy must be an object"]
+    strategy = split_policy.get("strategy")
+    if strategy not in _TRAINING_POLICY_SPLIT_STRATEGY_VOCABULARY:
+        reasons.append(f"split_policy.strategy is invalid: {strategy!r}")
+    train_ratio = split_policy.get("train_ratio")
+    val_ratio = split_policy.get("val_ratio", 0)
+    test_ratio = split_policy.get("test_ratio")
+    for name, value in (("train_ratio", train_ratio), ("val_ratio", val_ratio), ("test_ratio", test_ratio)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0 <= value <= 1):
+            reasons.append(f"split_policy.{name} must be a number within [0, 1]")
+    if not reasons and not math.isclose(float(train_ratio) + float(val_ratio) + float(test_ratio), 1.0):
+        reasons.append("split_policy train_ratio, val_ratio, and test_ratio must sum to 1.0")
+    return reasons
+
+
+def _validate_training_policy_intent(training_policy_intent: dict[str, Any]) -> list[str]:
+    """Return a list of blocking reasons for a supplied `training_policy_intent`.
+
+    Empty list means the policy is a complete, approved, schema-compatible
+    reviewed native training policy. Never mutates its input; never invents
+    a value the intent does not itself declare.
+    """
+    reasons: list[str] = []
+    missing_fields = [
+        field for field in TRAINING_POLICY_REQUIRED_FIELDS if field not in training_policy_intent
+    ]
+    if missing_fields:
+        reasons.append(f"training_policy_intent is missing required fields: {missing_fields}")
+
+    if training_policy_intent.get("review_status") != "approved":
+        reasons.append(
+            f"unapproved review status: {training_policy_intent.get('review_status')!r}"
+        )
+
+    if "numeric_handling" in training_policy_intent:
+        if training_policy_intent["numeric_handling"] not in _TRAINING_POLICY_NUMERIC_HANDLING_VOCABULARY:
+            reasons.append(f"numeric_handling is invalid: {training_policy_intent['numeric_handling']!r}")
+
+    if "categorical_encoding_policy" in training_policy_intent:
+        if training_policy_intent["categorical_encoding_policy"] not in _TRAINING_POLICY_CATEGORICAL_ENCODING_VOCABULARY:
+            reasons.append(
+                f"categorical_encoding_policy is invalid: {training_policy_intent['categorical_encoding_policy']!r}"
+            )
+
+    if "allowed_transformations" in training_policy_intent:
+        allowed_transformations = training_policy_intent["allowed_transformations"]
+        if not isinstance(allowed_transformations, list):
+            reasons.append("allowed_transformations must be an array")
+        else:
+            unknown = [t for t in allowed_transformations if t not in _TRAINING_POLICY_TRANSFORMATION_VOCABULARY]
+            if unknown:
+                reasons.append(f"allowed_transformations contains unknown value(s): {unknown}")
+
+    if "split_policy" in training_policy_intent:
+        reasons.extend(_validate_split_policy_intent(training_policy_intent["split_policy"]))
+
+    if "primary_metric" in training_policy_intent:
+        primary_metric = training_policy_intent["primary_metric"]
+        if primary_metric not in _TRAINING_POLICY_METRIC_VOCABULARY:
+            reasons.append(f"unknown metric: {primary_metric!r}")
+
+    if "secondary_metrics" in training_policy_intent:
+        secondary_metrics = training_policy_intent["secondary_metrics"]
+        if not isinstance(secondary_metrics, list):
+            reasons.append("secondary_metrics must be an array")
+        else:
+            unknown_metrics = [m for m in secondary_metrics if m not in _TRAINING_POLICY_METRIC_VOCABULARY]
+            if unknown_metrics:
+                reasons.append(f"unknown metric: {unknown_metrics}")
+
+    if "modeling_constraints" in training_policy_intent:
+        reasons.extend(_validate_modeling_constraints_intent(training_policy_intent["modeling_constraints"]))
+
+    return reasons
+
+
+def _materialize_training_policy_fields(modeling_intent: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the materialized execution-only policy fields from a modeling
+    intent's `training_policy_intent`, or None when absent.
+
+    Raises `TrainingPolicyValidationError` when `training_policy_intent` is
+    present but fails strict validation -- a present-but-invalid policy is
+    never silently replaced by the legacy defaults.
+    """
+    training_policy_intent = modeling_intent.get("training_policy_intent")
+    if training_policy_intent is None:
+        return None
+    if not isinstance(training_policy_intent, dict):
+        raise TrainingPolicyValidationError(["training_policy_intent must be an object"])
+
+    reasons = _validate_training_policy_intent(training_policy_intent)
+    if reasons:
+        raise TrainingPolicyValidationError(reasons)
+
+    return {
+        "numeric_handling": training_policy_intent["numeric_handling"],
+        "categorical_encoding_policy": training_policy_intent["categorical_encoding_policy"],
+        "allowed_transformations": list(training_policy_intent["allowed_transformations"]),
+        "split_policy": dict(training_policy_intent["split_policy"]),
+        "primary_metric": training_policy_intent["primary_metric"],
+        "secondary_metrics": list(training_policy_intent["secondary_metrics"]),
+        "modeling_constraints": json.loads(json.dumps(training_policy_intent["modeling_constraints"])),
+    }
+
+
 CATEGORICAL_DOMAIN_APPROVED_STATUS = "approved"
 
 
@@ -1090,33 +1350,36 @@ def _build_execution_contract(
         modeling_intent, semantic_intent
     )
 
-    contract: dict[str, Any] = {
-        "contract_version": EXECUTION_CONTRACT_CONTRACT_VERSION,
-        "dataset_id": dataset_identity.get("dataset_slug"),
-        "target_column": target_column,
-        "feature_columns": feature_columns,
-        "ignored_columns": ignored_columns,
-        "required_columns": required_columns,
-        "optional_columns": optional_columns,
-        "feature_definitions": feature_definitions,
-        # No feature currently carries an approved missing-value strategy --
-        # TotalCharges (the only column with real missing values) is excluded
-        # from feature_columns above rather than assigned a fabricated
-        # strategy here.
-        "missing_value_policy": {},
-        "categorical_encoding_policy": "onehot",
-        "numeric_handling": "standardize",
-        "allowed_transformations": ["passthrough"],
-        "split_policy": {
+    # Project Spec S0216: a reviewed, approved training_policy_intent
+    # replaces the repository-standard execution-only policy defaults below
+    # wholesale (never field-by-field) once it passes strict validation.
+    # Absence preserves the historical Telco-derived defaults unchanged
+    # (Desired Change F); `_materialize_training_policy_fields` raises
+    # `TrainingPolicyValidationError` for a present-but-invalid policy
+    # rather than silently falling back to these defaults.
+    training_policy_fields = _materialize_training_policy_fields(modeling_intent)
+
+    if training_policy_fields is not None:
+        categorical_encoding_policy = training_policy_fields["categorical_encoding_policy"]
+        numeric_handling = training_policy_fields["numeric_handling"]
+        allowed_transformations = training_policy_fields["allowed_transformations"]
+        split_policy = training_policy_fields["split_policy"]
+        primary_metric = training_policy_fields["primary_metric"]
+        secondary_metrics = training_policy_fields["secondary_metrics"]
+        modeling_constraints = training_policy_fields["modeling_constraints"]
+    else:
+        categorical_encoding_policy = "onehot"
+        numeric_handling = "standardize"
+        allowed_transformations = ["passthrough"]
+        split_policy = {
             "strategy": "stratified",
             "train_ratio": 0.7,
             "val_ratio": 0.15,
             "test_ratio": 0.15,
-        },
-        "random_seed": seed if isinstance(seed, int) else None,
-        "primary_metric": "roc_auc",
-        "secondary_metrics": ["f1", "pr_auc"],
-        "modeling_constraints": {
+        }
+        primary_metric = "roc_auc"
+        secondary_metrics = ["f1", "pr_auc"]
+        modeling_constraints = {
             # Full schema-permitted family space -- modeling_intent records
             # no model family constraint (`metric_candidates: []`), so this
             # deliberately narrows nothing beyond what the schema itself
@@ -1131,7 +1394,30 @@ def _build_execution_contract(
             ],
             "no_automl": True,
             "max_training_time_seconds": None,
-        },
+        }
+
+    contract: dict[str, Any] = {
+        "contract_version": EXECUTION_CONTRACT_CONTRACT_VERSION,
+        "dataset_id": dataset_identity.get("dataset_slug"),
+        "target_column": target_column,
+        "feature_columns": feature_columns,
+        "ignored_columns": ignored_columns,
+        "required_columns": required_columns,
+        "optional_columns": optional_columns,
+        "feature_definitions": feature_definitions,
+        # No feature currently carries an approved missing-value strategy --
+        # TotalCharges (the only column with real missing values) is excluded
+        # from feature_columns above rather than assigned a fabricated
+        # strategy here.
+        "missing_value_policy": {},
+        "categorical_encoding_policy": categorical_encoding_policy,
+        "numeric_handling": numeric_handling,
+        "allowed_transformations": allowed_transformations,
+        "split_policy": split_policy,
+        "random_seed": seed if isinstance(seed, int) else None,
+        "primary_metric": primary_metric,
+        "secondary_metrics": secondary_metrics,
+        "modeling_constraints": modeling_constraints,
     }
     if result_semantics is not None:
         contract["result_semantics"] = result_semantics
@@ -1233,6 +1519,16 @@ def _build_execution_contract_materialization_evidence(
         modeling_intent, semantic_intent
     )
 
+    # Project Spec S0216: independently re-derived (never trusted from
+    # hidden state set during _build_execution_contract), mirroring the
+    # categorical-domain/result-semantics re-derivation convention above.
+    training_policy_intent_present = modeling_intent.get("training_policy_intent") is not None
+    training_policy_materialization = {
+        "reviewed_source_intent_present": training_policy_intent_present,
+        "materialized": training_policy_intent_present
+        and _materialize_training_policy_fields(modeling_intent) is not None,
+    }
+
     return {
         "artifact_type": "execution_contract_materialization_evidence",
         "contract_version": EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_CONTRACT_VERSION,
@@ -1285,7 +1581,10 @@ def _build_execution_contract_materialization_evidence(
             "rejected_categorical_domain_declarations": rejected_categorical_domain_declarations,
             "values_inferred_during_materialization": False,
         },
-        "policy_defaults_requiring_future_review": list(_POLICY_DEFAULT_FIELDS),
+        "policy_defaults_requiring_future_review": (
+            [] if training_policy_intent_present else list(_POLICY_DEFAULT_FIELDS)
+        ),
+        "training_policy_materialization": training_policy_materialization,
         "result_semantics_materialization": result_semantics_evidence,
         "execution_contract_boundary_confirmations": dict(EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS),
         "generated_at": generated_at or _utc_now_iso(),

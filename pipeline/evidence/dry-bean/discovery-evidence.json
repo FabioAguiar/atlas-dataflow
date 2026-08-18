@@ -1,0 +1,194 @@
+{
+  "schema_version": "dataset-discovery-evidence.v1",
+  "producer": "pipeline/discovery_evidence.py",
+  "dataset_metadata": {
+    "name": "dry-bean",
+    "row_count": 13611,
+    "column_count": 17,
+    "source_path": "data/raw/dry-bean/dataset.csv"
+  },
+  "field_observations": [
+    {
+      "name": "Area",
+      "inferred_type": "integer",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 12011,
+      "sample_min": 20420,
+      "sample_max": 254616
+    },
+    {
+      "name": "Perimeter",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13351,
+      "sample_min": 524.736,
+      "sample_max": 1985.37
+    },
+    {
+      "name": "MajorAxisLength",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13543,
+      "sample_min": 183.601165,
+      "sample_max": 738.8601535
+    },
+    {
+      "name": "MinorAxisLength",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13543,
+      "sample_min": 122.5126535,
+      "sample_max": 460.1984968
+    },
+    {
+      "name": "AspectRatio",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13543,
+      "sample_min": 1.024867596,
+      "sample_max": 2.430306447
+    },
+    {
+      "name": "Eccentricity",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13543,
+      "sample_min": 0.218951263,
+      "sample_max": 0.911422968
+    },
+    {
+      "name": "ConvexArea",
+      "inferred_type": "integer",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 12066,
+      "sample_min": 20684,
+      "sample_max": 263261
+    },
+    {
+      "name": "EquivDiameter",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 12011,
+      "sample_min": 161.2437642,
+      "sample_max": 569.3743583
+    },
+    {
+      "name": "Extent",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13535,
+      "sample_min": 0.555314717,
+      "sample_max": 0.866194641
+    },
+    {
+      "name": "Solidity",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13522,
+      "sample_min": 0.919246157,
+      "sample_max": 0.9946775
+    },
+    {
+      "name": "Roundness",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13540,
+      "sample_min": 0.489618256,
+      "sample_max": 0.9906854
+    },
+    {
+      "name": "Compactness",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13543,
+      "sample_min": 0.640576759,
+      "sample_max": 0.987302969
+    },
+    {
+      "name": "ShapeFactor1",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13521,
+      "sample_min": 0.002778013,
+      "sample_max": 0.010451169
+    },
+    {
+      "name": "ShapeFactor2",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13506,
+      "sample_min": 0.000564169,
+      "sample_max": 0.003664972
+    },
+    {
+      "name": "ShapeFactor3",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13543,
+      "sample_min": 0.410338584,
+      "sample_max": 0.974767153
+    },
+    {
+      "name": "ShapeFactor4",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 13532,
+      "sample_min": 0.947687403,
+      "sample_max": 0.99973253
+    },
+    {
+      "name": "Class",
+      "inferred_type": "string",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 7,
+      "sample_min": "BARBUNYA",
+      "sample_max": "SIRA"
+    }
+  ],
+  "duplicated_rows_count": 68,
+  "candidate_categorical_fields": [
+    "Class"
+  ],
+  "candidate_target_columns": [
+    {
+      "name": "Class",
+      "is_authoritative": false,
+      "candidate_reason": "low_cardinality_categorical_candidate"
+    }
+  ],
+  "generation_settings": {
+    "seed": 42,
+    "generator_version": "discovery-evidence.v1"
+  },
+  "generated_at": "2026-08-18T21:22:41+00:00",
+  "discovery_boundary_confirmations": {
+    "contract_promotion_occurred": false,
+    "model_training_occurred": false,
+    "release_publication_occurred": false
+  },
+  "evidence_policy": {
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "secrets_prohibited": true,
+    "private_source_paths_prohibited": true,
+    "reduced_and_sanitized": true
+  }
+}

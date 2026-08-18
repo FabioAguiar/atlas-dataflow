@@ -61,6 +61,9 @@ _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION = "training-metrics.external-fitte
 # Project Spec S0215: the multiclass (v2) external fitted-model
 # training-metrics profile, dispatched on explicitly alongside v1.
 _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION_V2 = "training-metrics.external-fitted-model.v2"
+# Project Spec S0216: the internal (Atlas-native) multiclass fixed-
+# configuration training-metrics profile, dispatched on explicitly.
+_INTERNAL_MULTICLASS_METRICS_SCHEMA_VERSION_V2 = "training-metrics.v2"
 
 # Top-level keys that are never themselves metric declarations, used only
 # by the bounded flat top-level fallback (case 3 below) to avoid mistaking
@@ -419,11 +422,68 @@ def _project_external_fitted_model_metrics_v2(payload: dict) -> dict:
     return {"evaluation": evaluation}
 
 
+def _project_internal_multiclass_metrics_v2(payload: dict) -> dict:
+    """Project Spec S0216: public projector for training-metrics.v2
+    (internal Atlas-native multiclass fixed-configuration training).
+    Mirrors `_project_external_fitted_model_metrics_v2`'s partition-
+    selection discipline (completed final_test_evaluation when present,
+    otherwise validation_evaluation) and bounded per_class_metrics
+    projection -- this internal profile never carries a
+    cross_validation_summary at all, so there is no train-partition
+    candidate to ever accidentally select. The internal schema does not
+    designate a primary metric, so primary_metric_id is never fabricated
+    and remains None."""
+    final_test = payload.get("final_test_evaluation")
+    validation = payload.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    split_name = None
+    sample_size = None
+    entries: list[tuple[Any, Any, bool]] = []
+    per_class_metrics_source = None
+    if isinstance(selected, dict):
+        split_name = _optional_str(selected.get("partition_role"))
+        sample_size = _optional_int(selected.get("row_count"))
+        raw_metrics = selected.get("metrics")
+        if isinstance(raw_metrics, list):
+            entries = [
+                (item.get("name"), item.get("value"), False)
+                for item in raw_metrics
+                if isinstance(item, dict)
+            ]
+        per_class_metrics_source = selected.get("per_class_metrics")
+
+    metrics, metric_order = _project_metric_entries(entries)
+
+    classification_evidence = payload.get("classification_evidence")
+    ordered_class_ids = (
+        classification_evidence.get("ordered_class_ids") if isinstance(classification_evidence, dict) else None
+    )
+    projected_per_class_metrics = _project_bounded_per_class_metrics(per_class_metrics_source, ordered_class_ids)
+
+    evaluation: dict[str, Any] = {
+        "split_name": split_name,
+        "sample_size": sample_size,
+        "primary_metric_id": None,
+        "metrics": metrics,
+        "metric_order": metric_order,
+    }
+    if projected_per_class_metrics is not None:
+        evaluation["per_class_metrics"] = projected_per_class_metrics
+    return {"evaluation": evaluation}
+
+
 def _project_public_metrics(payload: dict) -> dict:
     if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION:
         return _project_external_fitted_model_metrics(payload)
     if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION_V2:
         return _project_external_fitted_model_metrics_v2(payload)
+    if payload.get("schema_version") == _INTERNAL_MULTICLASS_METRICS_SCHEMA_VERSION_V2:
+        return _project_internal_multiclass_metrics_v2(payload)
     metrics_block = payload.get("metrics")
     if isinstance(metrics_block, dict) and isinstance(metrics_block.get("primary_metric"), dict):
         return _project_training_metrics_v1(payload)

@@ -967,6 +967,39 @@ def validate_candidate(
             )
         )
 
+    # --- Internal native multiclass public-release compatibility (Project
+    # Spec S0216). Gated on the candidate's own predictive bundle declaring
+    # multiclass result_semantics while NOT being a
+    # validated_external_fitted_model candidate -- historical/internal
+    # binary candidates never reach these checks, so their acceptance
+    # behavior is unchanged. ---
+    if predictive_bundle_provenance != _VALIDATED_EXTERNAL_FITTED_MODEL_PROVENANCE:
+        _native_predictive_bundle_data = json_artifacts.get("predictive_bundle")
+        _native_result_semantics = (
+            _native_predictive_bundle_data.get("result_semantics")
+            if isinstance(_native_predictive_bundle_data, dict)
+            else None
+        )
+        if (
+            isinstance(_native_result_semantics, dict)
+            and _native_result_semantics.get("problem_type") == "multiclass_classification"
+        ):
+            rejection_reasons.extend(
+                _internal_native_multiclass_predictive_bundle_compatibility(_native_predictive_bundle_data)
+            )
+            rejection_reasons.extend(
+                _internal_native_multiclass_metrics_public_projection_check(
+                    json_artifacts.get("metrics"), _native_predictive_bundle_data
+                )
+            )
+            rejection_reasons.extend(
+                _internal_native_multiclass_visualizations_compatibility(
+                    json_artifacts.get("visualizations"),
+                    _native_predictive_bundle_data,
+                    json_artifacts.get("metrics"),
+                )
+            )
+
     # --- Model artifact / predictive bundle cross-consistency (Project Spec
     # S0107). The model is binary and never JSON-parsed itself; only its
     # already-computed bytes hash and declared candidate path are
@@ -1366,6 +1399,208 @@ def _external_multiclass_predictive_bundle_compatibility(
             "external_multiclass_probability_output_missing",
         )]
 
+    return []
+
+
+# Project Spec S0216: internal (Atlas-native) multiclass public-release
+# compatibility checks for a fixed-configuration training-parameter-record.v2
+# candidate's predictive bundle, metrics, and visualizations artifacts.
+# Gated exclusively on the predictive bundle's own declared
+# result_semantics.problem_type == multiclass_classification while it is
+# NOT a validated_external_fitted_model candidate -- historical/internal
+# binary candidates never reach these functions, so their acceptance
+# behavior is unchanged. Mirrors the external multiclass compatibility
+# discipline above, without an external_model_evidence wrapper (internal
+# bundles never carry one).
+_INTERNAL_METRICS_SCHEMA_VERSION_V2 = "training-metrics.v2"
+_INTERNAL_VISUALIZATIONS_SCHEMA_VERSION_V2 = "analytical-visualizations.v2"
+
+
+def _internal_native_multiclass_predictive_bundle_compatibility(
+    predictive_bundle_data: dict | None,
+) -> list[dict]:
+    if not isinstance(predictive_bundle_data, dict):
+        return []
+    result_semantics = predictive_bundle_data.get("result_semantics")
+    if (
+        not isinstance(result_semantics, dict)
+        or result_semantics.get("schema_version") != "multiclass-result-semantics.v1"
+        or result_semantics.get("problem_type") != "multiclass_classification"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native multiclass predictive bundle is missing compatible multiclass result_semantics "
+            "required for public release compatibility.",
+            "predictive_bundle",
+            "native_multiclass_result_semantics_missing",
+        )]
+    decision = result_semantics.get("decision")
+    if not isinstance(decision, dict) or decision.get("strategy") != "argmax":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native multiclass result_semantics.decision.strategy must be argmax.",
+            "predictive_bundle",
+            "native_multiclass_decision_strategy_mismatch",
+        )]
+    if "educational_threshold" in predictive_bundle_data or "operational_threshold" in predictive_bundle_data:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native multiclass predictive bundle must not carry a threshold or educational-threshold "
+            "field.",
+            "predictive_bundle",
+            "native_multiclass_threshold_present",
+        )]
+    output_schema = predictive_bundle_data.get("output_schema")
+    if not isinstance(output_schema, dict) or output_schema.get("probability_output") is not True:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native multiclass output_schema.probability_output must be true.",
+            "predictive_bundle",
+            "native_multiclass_probability_output_missing",
+        )]
+
+    result_class_ids = [
+        entry.get("class_id") for entry in (result_semantics.get("classes") or []) if isinstance(entry, dict)
+    ]
+    output_class_labels = output_schema.get("class_labels")
+    if not result_class_ids or result_class_ids != output_class_labels:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native multiclass class order is not consistent between result_semantics.classes and "
+            "output_schema.class_labels.",
+            "predictive_bundle",
+            "native_multiclass_class_order_mismatch",
+        )]
+
+    return []
+
+
+def _internal_native_multiclass_metrics_public_projection_check(
+    metrics_data: dict | None, predictive_bundle_data: dict | None = None
+) -> list[dict]:
+    """Require a native multiclass candidate's metrics artifact to declare
+    training-metrics.v2 and contain at least one projectable multiclass
+    aggregate metric in its selected public evaluation partition (completed
+    final_test_evaluation when present, otherwise validation_evaluation --
+    never a cross_validation_summary, which this internal profile does not
+    even carry)."""
+    if not isinstance(metrics_data, dict):
+        return []
+    if metrics_data.get("schema_version") != _INTERNAL_METRICS_SCHEMA_VERSION_V2:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            f"Native multiclass candidate metrics artifact does not declare "
+            f"{_INTERNAL_METRICS_SCHEMA_VERSION_V2!r}.",
+            "metrics",
+            "native_metrics_schema_version_missing",
+        )]
+
+    final_test = metrics_data.get("final_test_evaluation")
+    validation = metrics_data.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    raw_metrics = selected.get("metrics") if isinstance(selected, dict) else None
+    has_projectable_metric = False
+    if isinstance(raw_metrics, list):
+        for item in raw_metrics:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if (
+                isinstance(name, str)
+                and name.strip().lower() in _PUBLIC_PROJECTABLE_MULTICLASS_METRIC_IDS
+                and _is_finite_numeric(item.get("value"))
+            ):
+                has_projectable_metric = True
+                break
+
+    if not has_projectable_metric:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native multiclass candidate metrics selected public evaluation partition yields no "
+            "supported public metric.",
+            "metrics",
+            "native_metrics_no_public_metric",
+        )]
+    return []
+
+
+def _internal_native_multiclass_visualizations_compatibility(
+    visualizations_data: dict | None,
+    predictive_bundle_data: dict | None,
+    metrics_data: dict | None = None,
+) -> list[dict]:
+    """Require a native multiclass candidate's visualizations artifact to
+    declare analytical-visualizations.v2 and to agree, class-order-for-
+    class-order, with the predictive bundle's result_semantics.classes and
+    the metrics artifact's classification_evidence.ordered_class_ids."""
+    if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
+        return []
+    if visualizations_data.get("schema_version") != _INTERNAL_VISUALIZATIONS_SCHEMA_VERSION_V2:
+        return [_safe_rejection_reason(
+            "visualizations_provenance_mismatch",
+            "Native multiclass visualizations schema profile does not match the predictive bundle's "
+            "problem type.",
+            "visualizations",
+            "native_visualizations_version_mismatch",
+        )]
+
+    result_semantics = predictive_bundle_data.get("result_semantics")
+    bundle_class_ids = (
+        [
+            entry.get("class_id")
+            for entry in (result_semantics.get("classes") or [])
+            if isinstance(entry, dict)
+        ]
+        if isinstance(result_semantics, dict)
+        else None
+    )
+
+    viz_classification_evidence = visualizations_data.get("classification_evidence")
+    viz_class_ids = (
+        viz_classification_evidence.get("ordered_class_ids")
+        if isinstance(viz_classification_evidence, dict)
+        else None
+    )
+
+    confusion_matrix = visualizations_data.get("confusion_matrix")
+    confusion_class_ids = (
+        confusion_matrix.get("ordered_class_ids") if isinstance(confusion_matrix, dict) else None
+    )
+
+    metrics_class_ids = None
+    if isinstance(metrics_data, dict):
+        metrics_classification_evidence = metrics_data.get("classification_evidence")
+        metrics_class_ids = (
+            metrics_classification_evidence.get("ordered_class_ids")
+            if isinstance(metrics_classification_evidence, dict)
+            else None
+        )
+
+    observed_orders = [
+        tuple(candidate)
+        for candidate in (bundle_class_ids, viz_class_ids, confusion_class_ids, metrics_class_ids)
+        if candidate is not None
+    ]
+    if (
+        not bundle_class_ids
+        or not viz_class_ids
+        or not confusion_class_ids
+        or len(set(observed_orders)) != 1
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native multiclass class order is not consistent across the predictive bundle's "
+            "result_semantics.classes, the metrics artifact's classification_evidence."
+            "ordered_class_ids, and the visualizations artifact's classification_evidence."
+            "ordered_class_ids/confusion_matrix.ordered_class_ids.",
+            "visualizations",
+            "native_multiclass_class_order_mismatch",
+        )]
     return []
 
 

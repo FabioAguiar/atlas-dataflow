@@ -377,9 +377,13 @@
         "recall",
         "f2",
         "balanced_accuracy",
-        "brier_score"
+        "brier_score",
+        "f1_macro",
+        "f1_weighted",
+        "precision_macro",
+        "recall_macro"
       ],
-      "description": "Evaluation metric identifier. Scoped to Atlas classification use cases. roc_auc: area under ROC curve; f1: F1 score; accuracy: classification accuracy; log_loss: cross-entropy loss; pr_auc: area under precision-recall curve (this project's existing internal-training identifier, computed via average_precision_score). Project Spec S0157 additions for the external fitted-model evidence profile: average_precision (a distinct canonical identifier from pr_auc -- both remain valid and are never silently translated into one another; pr_auc is this project's established internal-training name, average_precision is the external evidence profile's own name for the same class of ranking metric, kept separate so provenance is never lost); precision; recall; f2 (F-beta with beta=2, recall-weighted); balanced_accuracy; brier_score (mean squared error of predicted probabilities, lower_is_better semantics, distinct from log_loss). The governed internal training entrypoint (pipeline/training.py) only computes roc_auc/f1/accuracy/log_loss/pr_auc today; the new identifiers are schema-valid vocabulary for evidence artifacts and fail closed with a stable unsupported_metric error if ever selected as an internal training primary_metric."
+      "description": "Evaluation metric identifier. Scoped to Atlas classification use cases. roc_auc: area under ROC curve; f1: F1 score; accuracy: classification accuracy; log_loss: cross-entropy loss; pr_auc: area under precision-recall curve (this project's existing internal-training identifier, computed via average_precision_score). Project Spec S0157 additions for the external fitted-model evidence profile: average_precision (a distinct canonical identifier from pr_auc -- both remain valid and are never silently translated into one another; pr_auc is this project's established internal-training name, average_precision is the external evidence profile's own name for the same class of ranking metric, kept separate so provenance is never lost); precision; recall; f2 (F-beta with beta=2, recall-weighted); balanced_accuracy; brier_score (mean squared error of predicted probabilities, lower_is_better semantics, distinct from log_loss). Project Spec S0216 explicit multiclass-native aggregate additions: f1_macro, f1_weighted, precision_macro, recall_macro -- each a distinct, explicit multiclass aggregate identifier, never a silent reinterpretation of the binary-era f1/precision/recall ids (those never carry multiclass averaging semantics). The governed internal training entrypoint (pipeline/training.py) computes roc_auc/f1/accuracy/log_loss/pr_auc for binary native training and additionally accuracy/balanced_accuracy/f1_macro/f1_weighted/precision_macro/recall_macro/log_loss for fixed-configuration native multiclass training; every other identifier is schema-valid vocabulary for evidence artifacts and fails closed with a stable unsupported_metric error if ever selected as an internal training primary_metric outside those two governed sets."
     },
     "modeling_constraints": {
       "type": "object",
@@ -401,7 +405,7 @@
               "hist_gradient_boosting"
             ]
           },
-          "description": "Non-empty list of permitted model family identifiers. Training must use only families declared here. Scoped to the Atlas classification model families — broader ML families are out of scope for this contract. Project Spec S0157: hist_gradient_boosting is vocabulary for a validated_external_fitted_model contract's declared family only -- pipeline/training.py's SUPPORTED_MODEL_FAMILIES (the authoritative internal-fit capability list) does not include it and never constructs or fits a HistGradientBoostingClassifier."
+          "description": "Non-empty list of permitted model family identifiers. Training must use only families declared here. Scoped to the Atlas classification model families — broader ML families are out of scope for this contract. Project Spec S0157 introduced hist_gradient_boosting as vocabulary for a validated_external_fitted_model contract's declared family. Project Spec S0216 additionally authorizes it for Atlas-native multiclass training: pipeline/training.py's internal supported-family registry now constructs and fits a HistGradientBoostingClassifier only when task_type is classification, modeling_constraints.selection_mode is fixed_configuration, and fixed_model_configuration.model_family is hist_gradient_boosting. Atlas never fits hist_gradient_boosting for a binary/legacy selection_mode."
         },
         "no_automl": {
           "type": "boolean",
@@ -411,6 +415,85 @@
           "type": ["integer", "null"],
           "minimum": 1,
           "description": "Optional upper bound on training wall-clock time in seconds. Null means no time constraint is imposed."
+        },
+        "selection_mode": {
+          "type": "string",
+          "enum": ["evaluate_allowed_families", "fixed_configuration"],
+          "description": "Project Spec S0216: optional, backward-compatible native training selection strategy. Absent preserves the historical evaluate_allowed_families behavior (train and compare every allowed_model_families candidate, select by primary_metric). fixed_configuration requires exactly one fixed_model_configuration entry whose model_family also appears exactly once in allowed_model_families, and authorizes no model/hyperparameter selection at all -- the fixed configuration is fit as-is."
+        },
+        "fixed_model_configuration": {
+          "$ref": "#/definitions/fixed_model_configuration",
+          "description": "Project Spec S0216: required exactly when selection_mode is fixed_configuration; absent otherwise. Bounded, explicit fixed hyperparameter configuration for one model family -- never a callable, module path, or class string."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "selection_mode": { "const": "fixed_configuration" } },
+            "required": ["selection_mode"]
+          },
+          "then": { "required": ["fixed_model_configuration"] }
+        },
+        {
+          "if": {
+            "not": {
+              "properties": { "selection_mode": { "const": "fixed_configuration" } },
+              "required": ["selection_mode"]
+            }
+          },
+          "then": { "not": { "required": ["fixed_model_configuration"] } }
+        }
+      ]
+    },
+    "fixed_model_configuration": {
+      "type": "object",
+      "required": ["model_family", "hyperparameters"],
+      "additionalProperties": false,
+      "description": "Project Spec S0216: a single bounded fixed model configuration for modeling_constraints.selection_mode = fixed_configuration. hyperparameters is discriminated strictly by model_family -- only the named model_family's own allowed hyperparameter shape may match, and it must be complete (no partial supply): unknown hyperparameter names or callable/module/class-string values are always rejected.",
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": ["hist_gradient_boosting"],
+          "description": "Project Spec S0216 introduces the first bounded fixed-parameter family. random_state is never part of hyperparameters -- it always remains governed by the top-level execution-contract random_seed."
+        },
+        "hyperparameters": {
+          "$ref": "#/definitions/hist_gradient_boosting_hyperparameters"
+        }
+      }
+    },
+    "hist_gradient_boosting_hyperparameters": {
+      "type": "object",
+      "required": ["class_weight", "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf"],
+      "additionalProperties": false,
+      "description": "Project Spec S0216: the complete, explicit set of whitelisted hist_gradient_boosting hyperparameters for a fixed_configuration native multiclass run. No other estimator parameter name is ever accepted, and no field here may ever be a callable, module path, or class string.",
+      "properties": {
+        "class_weight": {
+          "type": ["string", "null"],
+          "enum": [null, "balanced"]
+        },
+        "l2_regularization": {
+          "type": "number",
+          "minimum": 0
+        },
+        "learning_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_iter": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_leaf_nodes": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "min_samples_leaf": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "early_stopping": {
+          "type": ["string", "boolean"],
+          "enum": ["auto", true, false]
         }
       }
     },

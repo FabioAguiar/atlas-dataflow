@@ -1530,3 +1530,210 @@ def test_visualizations_rejection_reasons_are_sanitized(tmp_path):
     for reason in result["rejection_reasons"]:
         assert str(candidate_dir) not in json.dumps(reason)
         assert str(tmp_path) not in json.dumps(reason)
+
+
+# --- Project Spec S0216: internal (Atlas-native) multiclass fixed-
+# configuration cross-artifact compatibility ---------------------------------
+#
+# Gated exclusively on the predictive bundle's own declared multiclass
+# result_semantics while NOT being a validated_external_fitted_model
+# candidate -- never on dataset identity. Mirrors the S0209 external
+# multiclass compatibility tests above without an external_model_evidence
+# wrapper (internal bundles never carry one).
+
+
+def _native_multiclass_predictive_bundle_overrides(
+    *,
+    result_classes: list[dict] | None = None,
+    result_decision_strategy: str = "argmax",
+    output_class_labels: list[str] | None = None,
+    probability_output: bool = True,
+) -> dict:
+    class_entries = result_classes if result_classes is not None else [
+        {"class_id": cid, "display_label": cid.replace("-", " ").title()} for cid in MULTICLASS_ORDERED_CLASS_IDS
+    ]
+    output_labels = output_class_labels if output_class_labels is not None else MULTICLASS_ORDERED_CLASS_IDS
+    return {
+        "result_semantics": {
+            "schema_version": "multiclass-result-semantics.v1",
+            "problem_type": "multiclass_classification",
+            "classes": class_entries,
+            "primary_output": "predicted_class",
+            "probability_output": "class_probabilities",
+            "decision": {"strategy": result_decision_strategy},
+        },
+        "training_evidence": {"training_run_identity": {"dataset_slug": DATASET_SLUG}},
+        "output_schema": {
+            "prediction_key": "prediction",
+            "prediction_type": "string",
+            "class_labels": output_labels,
+            "probability_output": probability_output,
+        },
+    }
+
+
+def _native_multiclass_metrics_overrides() -> dict:
+    return {
+        "schema_version": "training-metrics.v2",
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+        },
+        "final_test_evaluation": {
+            "partition_role": "test",
+            "completed": True,
+            "metrics": [{"name": "f1_macro", "value": 0.9}],
+        },
+    }
+
+
+def _native_multiclass_visualizations_overrides(
+    *, confusion_matrix_class_ids: list[str] | None = None
+) -> dict:
+    ids = confusion_matrix_class_ids if confusion_matrix_class_ids is not None else MULTICLASS_ORDERED_CLASS_IDS
+    return {
+        "schema_version": "analytical-visualizations.v2",
+        "classification_evidence": {
+            "problem_type": "multiclass_classification",
+            "ordered_class_ids": list(MULTICLASS_ORDERED_CLASS_IDS),
+        },
+        "feature_importance_method": {
+            "model_family": "hist_gradient_boosting",
+            "source": "sklearn.inspection.permutation_importance",
+            "method": "permutation_importance",
+            "total_source_feature_count": 1,
+            "omitted_source_feature_count": 0,
+            "public_row_limit": 10,
+        },
+        "confusion_matrix": {
+            "ordered_class_ids": list(ids),
+            "matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            "row_axis": "true_class",
+            "column_axis": "predicted_class",
+        },
+    }
+
+
+def test_native_multiclass_bundle_passes_compatibility_when_class_order_agrees(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _native_multiclass_predictive_bundle_overrides(),
+            "metrics": _native_multiclass_metrics_overrides(),
+            "visualizations": _native_multiclass_visualizations_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True, result["rejection_reasons"]
+    assert "native_multiclass_class_order_mismatch" not in _rejection_safe_details(result)
+    assert "native_multiclass_threshold_present" not in _rejection_safe_details(result)
+
+
+def test_native_multiclass_confusion_matrix_class_order_mismatch_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _native_multiclass_predictive_bundle_overrides(),
+            "metrics": _native_multiclass_metrics_overrides(),
+            "visualizations": _native_multiclass_visualizations_overrides(
+                confusion_matrix_class_ids=["class-b", "class-a", "class-c"]
+            ),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "native_multiclass_class_order_mismatch" in _rejection_safe_details(result)
+
+
+def test_native_multiclass_output_schema_class_order_mismatch_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _native_multiclass_predictive_bundle_overrides(
+                output_class_labels=["class-c", "class-b", "class-a"]
+            ),
+            "metrics": _native_multiclass_metrics_overrides(),
+            "visualizations": _native_multiclass_visualizations_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "native_multiclass_class_order_mismatch" in _rejection_safe_details(result)
+
+
+def test_native_multiclass_decision_strategy_not_argmax_rejects(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _native_multiclass_predictive_bundle_overrides(
+                result_decision_strategy="not-argmax"
+            ),
+            "metrics": _native_multiclass_metrics_overrides(),
+            "visualizations": _native_multiclass_visualizations_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "native_multiclass_decision_strategy_mismatch" in _rejection_safe_details(result)
+
+
+def test_native_multiclass_metrics_wrong_schema_version_rejects(tmp_path):
+    metrics_overrides = _native_multiclass_metrics_overrides()
+    metrics_overrides["schema_version"] = "training-metrics.v1"
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _native_multiclass_predictive_bundle_overrides(),
+            "metrics": metrics_overrides,
+            "visualizations": _native_multiclass_visualizations_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "native_metrics_schema_version_missing" in _rejection_safe_details(result)
+
+
+def test_native_multiclass_visualizations_wrong_schema_version_rejects(tmp_path):
+    # analytical-visualizations.v2 confusion_matrix requires >= 3 unique
+    # class ids -- a v1 payload never carries one, so this candidate must
+    # fail closed instead of silently accepting a version mismatch.
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _native_multiclass_predictive_bundle_overrides(),
+            "metrics": _native_multiclass_metrics_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+
+
+def test_native_multiclass_never_confused_with_external_provenance_checks(tmp_path):
+    # A native (internal) multiclass candidate must never trigger the
+    # external_* rejection codes -- those are reserved exclusively for a
+    # validated_external_fitted_model candidate.
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _native_multiclass_predictive_bundle_overrides(),
+            "metrics": _native_multiclass_metrics_overrides(),
+            "visualizations": _native_multiclass_visualizations_overrides(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    safe_details = _rejection_safe_details(result)
+    assert not any(detail.startswith("external_multiclass") for detail in safe_details)

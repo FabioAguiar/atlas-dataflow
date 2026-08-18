@@ -1,0 +1,234 @@
+{
+  "artifact_type": "atlas_derived_analytical_visualization_evidence",
+  "boundary_confirmations": {
+    "absolute_external_root_persisted": false,
+    "final_test_metric_recalculated": false,
+    "historical_visualization_reused": false,
+    "model_bytes_persisted": false,
+    "model_fit_or_refit_performed": false,
+    "model_selection_performed": false,
+    "raw_transformed_matrix_persisted": false,
+    "raw_validation_rows_persisted": false,
+    "serialized_estimator_state_persisted": false,
+    "test_partition_accessed": false,
+    "threshold_recalculated": false
+  },
+  "created_at": "2026-08-18T21:29:37+00:00",
+  "dataset_slug": "telco-customer-churn",
+  "derivation_origin": "external_reference_authoring",
+  "feature_importance": {
+    "omitted_source_feature_count": 9,
+    "rows": [
+      {
+        "name": "tenure",
+        "value": 0.12502191497267642
+      },
+      {
+        "name": "Contract",
+        "value": 0.10914153032750286
+      },
+      {
+        "name": "InternetService",
+        "value": 0.05244819795648356
+      },
+      {
+        "name": "TotalCharges",
+        "value": 0.030658097757236786
+      },
+      {
+        "name": "MonthlyCharges",
+        "value": 0.020939072801770216
+      },
+      {
+        "name": "TechSupport",
+        "value": 0.014123014183194664
+      },
+      {
+        "name": "PaymentMethod",
+        "value": 0.012039427636945332
+      },
+      {
+        "name": "PaperlessBilling",
+        "value": 0.010681630400737755
+      },
+      {
+        "name": "MultipleLines",
+        "value": 0.009710351733576395
+      },
+      {
+        "name": "OnlineSecurity",
+        "value": 0.009273848839087906
+      }
+    ],
+    "source": "artifacts/models/telco-customer-churn/final-model-manifest.json",
+    "total_source_feature_count": 19
+  },
+  "feature_importance_evidence": [
+    {
+      "mean": 0.001103126465958141,
+      "name": "gender",
+      "std": 0.0005760355077828799
+    },
+    {
+      "mean": 0.007065169715611771,
+      "name": "SeniorCitizen",
+      "std": 0.0021480954985589823
+    },
+    {
+      "mean": 0.0,
+      "name": "Partner",
+      "std": 0.0
+    },
+    {
+      "mean": 0.0009168410545471462,
+      "name": "Dependents",
+      "std": 0.0009816341144468258
+    },
+    {
+      "mean": 0.12502191497267642,
+      "name": "tenure",
+      "std": 0.015548801735803006
+    },
+    {
+      "mean": 0.0008831036330392506,
+      "name": "PhoneService",
+      "std": 0.0005107086189413239
+    },
+    {
+      "mean": 0.009710351733576395,
+      "name": "MultipleLines",
+      "std": 0.006753835322983009
+    },
+    {
+      "mean": 0.05244819795648356,
+      "name": "InternetService",
+      "std": 0.011751970383328323
+    },
+    {
+      "mean": 0.009273848839087906,
+      "name": "OnlineSecurity",
+      "std": 0.007144436702108782
+    },
+    {
+      "mean": 0.001510318726339188,
+      "name": "OnlineBackup",
+      "std": 0.0012337614605554385
+    },
+    {
+      "mean": 0.0005796407631312321,
+      "name": "DeviceProtection",
+      "std": 0.0005504757335963753
+    },
+    {
+      "mean": 0.014123014183194664,
+      "name": "TechSupport",
+      "std": 0.00781442462946848
+    },
+    {
+      "mean": 0.0019612605145185925,
+      "name": "StreamingTV",
+      "std": 0.0022827456182548346
+    },
+    {
+      "mean": 0.003046400521784324,
+      "name": "StreamingMovies",
+      "std": 0.0017172753501160346
+    },
+    {
+      "mean": 0.10914153032750286,
+      "name": "Contract",
+      "std": 0.014583736013499514
+    },
+    {
+      "mean": 0.010681630400737755,
+      "name": "PaperlessBilling",
+      "std": 0.007132421531160718
+    },
+    {
+      "mean": 0.012039427636945332,
+      "name": "PaymentMethod",
+      "std": 0.005344777426745371
+    },
+    {
+      "mean": 0.020939072801770216,
+      "name": "MonthlyCharges",
+      "std": 0.007791847984467761
+    },
+    {
+      "mean": 0.030658097757236786,
+      "name": "TotalCharges",
+      "std": 0.008082363298130793
+    }
+  ],
+  "feature_importance_method": "permutation_importance",
+  "method_details": {
+    "expected_runtime": {
+      "joblib": "1.5.3",
+      "pandas": "3.0.3",
+      "python": "3.11.15",
+      "scikit_learn": "1.9.0"
+    },
+    "method": "permutation_importance",
+    "n_jobs": 1,
+    "n_repeats": 30,
+    "observed_runtime": {
+      "joblib": "1.5.3",
+      "pandas": "3.0.3",
+      "python": "3.11.15",
+      "scikit_learn": "1.9.0"
+    },
+    "random_state": 42,
+    "scoring": "average_precision",
+    "source_feature_order": [
+      "gender",
+      "SeniorCitizen",
+      "Partner",
+      "Dependents",
+      "tenure",
+      "PhoneService",
+      "MultipleLines",
+      "InternetService",
+      "OnlineSecurity",
+      "OnlineBackup",
+      "DeviceProtection",
+      "TechSupport",
+      "StreamingTV",
+      "StreamingMovies",
+      "Contract",
+      "PaperlessBilling",
+      "PaymentMethod",
+      "MonthlyCharges",
+      "TotalCharges"
+    ],
+    "target_encoding": {
+      "No": 0,
+      "Yes": 1
+    }
+  },
+  "model_family": "hist_gradient_boosting",
+  "schema_version": "atlas-derived-analytical-visualization-evidence.v1",
+  "source_references": {
+    "final_model_manifest_reference": "artifacts/models/telco-customer-churn/final-model-manifest.json",
+    "final_model_manifest_sha256": "ae4c2a17b2e0bea5de1fb8405dd071ea70bd2e4d090e4fc99e2c9d7877856d45",
+    "model_artifact_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260818T212915Z/model.bin",
+    "model_artifact_sha256": "48da4c7aa56d5d08090e808f551f555740d18e791af39c4c3f373467ec296b8c",
+    "split_manifest_reference": "artifacts/preparation/telco-customer-churn/split-manifest.json",
+    "split_manifest_sha256": "bac2ed1eca1c90da79531ef579dfdbb551e3d16521704eeaa4fb08edefd26ab9",
+    "training_parameter_record_path": "pipeline/external-fitted-model-runs/telco-customer-churn/telco-customer-churn-external-materialization-20260818T212915Z/training-parameter-record.json",
+    "training_parameter_record_sha256": "550545520c8da737ab26354652ea023ab0c1050435e3a4e97121f42e45bbcb65"
+  },
+  "target_distribution": {
+    "counts": [
+      {
+        "name": "No",
+        "value": 5174
+      },
+      {
+        "name": "Yes",
+        "value": 1869
+      }
+    ],
+    "source": "artifacts/preparation/telco-customer-churn/split-manifest.json",
+    "target_column": "Churn"
+  }
+}

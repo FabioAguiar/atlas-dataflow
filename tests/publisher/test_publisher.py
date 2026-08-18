@@ -376,11 +376,16 @@ def test_valid_publisher_flow_records_publication_evidence(tmp_path):
 # publisher integration/manifest/release-projection flow -------------------
 #
 # The referenced capability profile below is a synthetic
-# multiclass-predictive-classification v1 current_supported clone that
-# exists only in this test's own tmp_repo -- the real committed profile at
-# pipeline/capabilities/multiclass-predictive-classification.v1.json (which
-# still declares support_status: requires_future_contract_evolution) is
-# never read, referenced, or mutated by any test in this module.
+# multiclass-predictive-classification v1 clone that exists only in this
+# test's own tmp_repo -- the real committed profile at
+# pipeline/capabilities/multiclass-predictive-classification.v1.json is
+# never read, referenced, or mutated by any test in this module except the
+# read-only real-profile spot-check at the end of
+# test_capability_aware_multiclass_candidate_flows_through_manifest_and_promotion,
+# which proves the promotion/registry flow below never mutates it (Project
+# Spec S0216 activated the real file to support_status: current_supported
+# only through a direct, separately authorized file edit -- never through
+# any publisher/manifest/promote/registry_update call).
 
 MULTICLASS_ORDERED_CLASS_IDS = ["class-a", "class-b", "class-c"]
 
@@ -602,13 +607,14 @@ def test_capability_aware_multiclass_candidate_flows_through_manifest_and_promot
 
     # No production capability profile is mutated by any of the above --
     # only the synthetic tmp_repo copy this test itself wrote. The real,
-    # committed profile must still declare its real support_status.
+    # committed profile must still declare its real (Project Spec S0216
+    # activated) support_status, unchanged by this test's promotion flow.
     real_profile = json.loads(
         (REPO_ROOT / "pipeline" / "capabilities" / "multiclass-predictive-classification.v1.json").read_text(
             encoding="utf-8"
         )
     )
-    assert real_profile["support_status"] == "requires_future_contract_evolution"
+    assert real_profile["support_status"] == "current_supported"
 
 
 def test_invalid_candidate_rejection_uses_temporary_candidate(tmp_path):
@@ -1586,7 +1592,7 @@ def test_resolve_training_provenance_defaults_to_internal_for_any_non_external_v
         metrics_schema_version="training_metrics.v1",
     )
 
-    source_stage, is_external, record_override, metrics_override = (
+    source_stage, is_external, record_override, metrics_override, visualizations_override = (
         assemble_candidate._resolve_training_provenance(references, tmp_repo)
     )
 
@@ -1594,6 +1600,7 @@ def test_resolve_training_provenance_defaults_to_internal_for_any_non_external_v
     assert is_external is False
     assert record_override is None
     assert metrics_override is None
+    assert visualizations_override is None
 
 
 def test_resolve_training_provenance_detects_real_external_profile(tmp_path):
@@ -1604,7 +1611,7 @@ def test_resolve_training_provenance_detects_real_external_profile(tmp_path):
         metrics_schema_version="training-metrics.external-fitted-model.v1",
     )
 
-    source_stage, is_external, record_override, metrics_override = (
+    source_stage, is_external, record_override, metrics_override, visualizations_override = (
         assemble_candidate._resolve_training_provenance(references, tmp_repo)
     )
 
@@ -1612,6 +1619,7 @@ def test_resolve_training_provenance_detects_real_external_profile(tmp_path):
     assert is_external is True
     assert record_override == "training-parameter-record.external-fitted-model.v1"
     assert metrics_override == "training-metrics.external-fitted-model.v1"
+    assert visualizations_override is None
 
 
 def test_resolve_training_provenance_rejects_disagreeing_external_metrics_profile(tmp_path):

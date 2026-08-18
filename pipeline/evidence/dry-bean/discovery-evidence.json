@@ -177,7 +177,7 @@
     "seed": 42,
     "generator_version": "discovery-evidence.v1"
   },
-  "generated_at": "2026-08-18T21:22:41+00:00",
+  "generated_at": "2026-08-18T22:14:37+00:00",
   "discovery_boundary_confirmations": {
     "contract_promotion_occurred": false,
     "model_training_occurred": false,

@@ -2420,3 +2420,269 @@ def test_materialize_telco_validation_run_rejects_both_references_given(tmp_path
 
     assert result["materialization_status"] == "blocked"
     assert result["reason_code"] == "ambiguous_candidate_reference"
+
+
+# --- Project Spec S0217: dataset-generic Publisher Run materializer
+# (materialize_validation_run), the generalization
+# materialize_telco_validation_run above now wraps.
+
+
+def test_materialize_validation_run_accepted_binary_internal_candidate_writes_manifest(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_candidate(tmp_repo)
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "accepted"
+    assert result["dataset_slug"] == DATASET_SLUG
+    assert result["release_id"] == RELEASE_ID
+    assert result["manifest_generated"] is True
+    assert result["manifest_path"] is not None
+
+    run_dir = tmp_repo / result["run_dir"]
+    assert run_dir.name.startswith("validate-")
+    assert (run_dir / "validation-result.json").is_file()
+    assert (run_dir / "manifest.json").is_file()
+    assert not (tmp_repo / "registry").exists()
+    assert not (run_dir / "promotion-result.json").exists()
+
+
+def test_materialize_validation_run_accepted_multiclass_internal_candidate_writes_manifest(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_multiclass_capability_candidate(tmp_repo, support_status="current_supported")
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "accepted"
+    assert result["manifest_generated"] is True
+    run_dir = tmp_repo / result["run_dir"]
+    assert (run_dir / "manifest.json").is_file()
+    assert not (run_dir / "promotion-result.json").exists()
+
+
+def test_materialize_validation_run_from_accepted_assembly_result(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo)
+
+    assembly_result = {
+        "status": "accepted",
+        "dataset_slug": DATASET_SLUG,
+        "release_id": RELEASE_ID,
+        "candidate_dir": str(candidate_dir),
+    }
+
+    result = validate.materialize_validation_run(assembly_result, repo_root=tmp_repo)
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "accepted"
+    assert result["manifest_generated"] is True
+
+
+def test_materialize_validation_run_from_explicit_relative_candidate_path(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_candidate(tmp_repo)
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    assert result["dataset_slug"] == DATASET_SLUG
+
+
+def test_materialize_validation_run_blocks_missing_reference(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+
+    result = validate.materialize_validation_run(repo_root=tmp_repo)
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "missing_candidate_reference"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_validation_run_blocks_both_references_given(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo)
+
+    result = validate.materialize_validation_run(
+        {"status": "accepted", "dataset_slug": DATASET_SLUG, "candidate_dir": str(candidate_dir)},
+        candidate_dir=str(candidate_dir.relative_to(tmp_repo)),
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "ambiguous_candidate_reference"
+
+
+def test_materialize_validation_run_rejects_absolute_candidate_dir(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+
+    result = validate.materialize_validation_run(
+        candidate_dir="/etc/passwd",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "absolute_path_rejected"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_validation_run_rejects_parent_traversal(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_candidate(tmp_repo)
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/../{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "parent_traversal_rejected"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_validation_run_rejects_glob_candidate_dir(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_candidate(tmp_repo)
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/*",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "ambiguous_candidate_reference"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_validation_run_rejects_candidate_outside_staging(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    outside_dir = tmp_repo / "not-releases" / "candidates" / DATASET_SLUG / RELEASE_ID
+    outside_dir.mkdir(parents=True, exist_ok=True)
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"not-releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "unstable_candidate_reference"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_validation_run_blocks_rejected_assembly_result(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+
+    assembly_result = {
+        "status": "rejected",
+        "reason": "release-candidate-input JSON failed required assembly checks",
+        "rejection_phase": "candidate_input_parse",
+    }
+
+    result = validate.materialize_validation_run(assembly_result, repo_root=tmp_repo)
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "release_candidate_assembly_not_accepted"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_validation_run_rejects_dataset_slug_mismatch(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    candidate_dir = _write_candidate(tmp_repo)
+
+    assembly_result = {
+        "status": "accepted",
+        "dataset_slug": "a-different-dataset",
+        "candidate_dir": str(candidate_dir),
+    }
+
+    result = validate.materialize_validation_run(assembly_result, repo_root=tmp_repo)
+
+    assert result["materialization_status"] == "blocked"
+    assert result["reason_code"] == "dataset_slug_mismatch"
+    assert not (tmp_repo / "publisher" / "runs").exists()
+
+
+def test_materialize_validation_run_rejected_candidate_writes_validation_but_no_manifest(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_candidate(tmp_repo, missing_role="metrics")
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "rejected"
+    assert result["manifest_generated"] is False
+    assert result["manifest_path"] is None
+
+    run_dir = tmp_repo / result["run_dir"]
+    assert (run_dir / "validation-result.json").is_file()
+    assert not (run_dir / "manifest.json").exists()
+
+
+def test_materialize_validation_run_manifest_failure_is_bounded(tmp_path, monkeypatch):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_candidate(tmp_repo)
+
+    def _raise_manifest_failure(*args, **kwargs):
+        raise RuntimeError("synthetic manifest failure")
+
+    monkeypatch.setattr(manifest, "run", _raise_manifest_failure)
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    assert result["validation_outcome"] == "accepted"
+    assert result["manifest_generated"] is False
+    assert result["manifest_error"] == "synthetic manifest failure"
+    run_dir = tmp_repo / result["run_dir"]
+    assert not (run_dir / "manifest.json").exists()
+    assert not (run_dir / "promotion-result.json").exists()
+    assert not (tmp_repo / "registry").exists()
+
+
+def test_materialize_validation_run_never_creates_promotion_result_or_touches_registry(tmp_path):
+    tmp_repo = tmp_path / "repo"
+    _copy_publisher_contracts(tmp_repo)
+    _write_registry(tmp_repo)
+    _write_candidate(tmp_repo)
+    registry_before = (tmp_repo / "registry" / "datasets.json").read_text(encoding="utf-8")
+
+    result = validate.materialize_validation_run(
+        candidate_dir=f"releases/candidates/{DATASET_SLUG}/{RELEASE_ID}",
+        repo_root=tmp_repo,
+    )
+
+    assert result["materialization_status"] == "materialized"
+    run_dir = tmp_repo / result["run_dir"]
+    assert not (run_dir / "promotion-result.json").exists()
+    assert (tmp_repo / "registry" / "datasets.json").read_text(encoding="utf-8") == registry_before
+    assert (candidate_dir_ := tmp_repo / "releases" / "candidates" / DATASET_SLUG / RELEASE_ID / "release-candidate.json").is_file()

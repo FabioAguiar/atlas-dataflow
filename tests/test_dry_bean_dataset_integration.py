@@ -89,6 +89,11 @@ def test_notebook_tests_are_static_and_need_no_external_files_or_model_bytes():
 
 
 def test_notebook_has_the_seventeen_orchestration_stages_in_order():
+    # Project Spec S0217 reassigns Stage 15/16/17 to Publisher Run
+    # materialization, the validated terminal handoff, and the final
+    # boundary-stop summary; the native runtime/API projection checks
+    # previously at Stage 16 move (content unchanged) to a sub-section of
+    # Stage 13, right after inference-bundle generation.
     markdown = _source("markdown")
     stages = [
         "## 1. Orchestration boundary declaration and responsibility",
@@ -104,9 +109,10 @@ def test_notebook_has_the_seventeen_orchestration_stages_in_order():
         "## 11. Native multiclass training run materialization",
         "## 12. Native metrics/visualization evidence validation",
         "## 13. Governed inference-bundle generation",
+        "### Native runtime/API projection checks",
         "## 14. Release-candidate assembly",
-        "## 15. Publisher structural validation + manifest readiness",
-        "## 16. Native runtime/API projection checks",
+        "## 15. Publisher Run materialization + manifest",
+        "## 16. Validated-run terminal result",
         "## 17. Explicit stop before real registry/release activation",
     ]
     offsets = [markdown.index(stage) for stage in stages]
@@ -261,9 +267,12 @@ def test_notebook_orchestrates_release_candidate_assembly():
 
 
 def test_notebook_has_no_promotion_or_registry_activation_calls():
+    # Project Spec S0217 legitimately reaches publisher.manifest.run through
+    # the generic Publisher Run materializer (publisher.validate.materialize_validation_run),
+    # so that call is no longer forbidden here; promotion and registry
+    # mutation remain forbidden.
     code = _source("code")
     for forbidden in (
-        "publisher_manifest.run(", "publisher.manifest.run(",
         "publisher_promote.run(", "publisher.promote", "promote.run(",
         "registry_update.run(", "registry.update", "activate_release",
         "write_registry", "update_registry",
@@ -290,3 +299,69 @@ def test_notebook_introduces_no_dataset_slug_branch_into_generic_pipeline_module
     code = _source("code")
     assert 'if dataset_slug == "dry-bean"' not in code
     assert "if dataset_slug ==" not in code
+
+
+# --- Project Spec S0217: Publisher Run materialization + validated
+# terminal handoff (Stage 15/16/17).
+
+
+def test_notebook_calls_the_generic_publisher_run_materializer_with_assembly_result():
+    code = _source("code")
+    assert "from publisher import validate as publisher_validate" in code
+    assert "publisher_validate.materialize_validation_run(" in code
+    assert "materialize_validation_run" in _called_names()
+    # The explicit assembly_result returned by candidate assembly is passed
+    # as the sole positional candidate reference -- never a latest-candidate
+    # scan or a releases/candidates glob.
+    assert "publisher_materialization_result = publisher_validate.materialize_validation_run(\n        assembly_result, repo_root=repo_root,\n    )" in code
+    for forbidden in ("glob(", "iterdir()", "Path(\"releases\"", "releases/candidates\"\n"):
+        assert forbidden not in code
+    assert "materialize_telco_validation_run" not in code
+
+
+def test_notebook_blocks_when_publisher_run_materialization_fails():
+    code = _source("code")
+    assert 'publisher_materialization_result["materialization_status"] != "materialized"' in code
+    assert '"publisher_run_materialization_blocked"' in code
+    assert 'publisher_validation_outcome != "accepted"' in code
+    assert '"publisher_structural_validation_rejected"' in code
+    assert 'not publisher_materialization_result["manifest_generated"]' in code
+    assert '"publisher_manifest_not_generated"' in code
+
+
+def test_notebook_materializes_validated_terminal_result_with_atlas_internal_training():
+    code = _source("code")
+    assert "from pipeline import validated_run" in code
+    assert "validated_run.materialize_validated_run_terminal_result(" in code
+    assert "materialize_validated_run_terminal_result" in _called_names()
+    assert 'model_source_mode="atlas_internal_training"' in code
+    # Never the argmax external-operational-readiness profile.
+    assert '"decision_strategy": "argmax"' not in code
+    assert '"operational_validity": "not_applicable"' in code
+
+
+def test_notebook_writes_validated_run_terminal_result_under_publisher_runs():
+    code = _source("code")
+    assert (
+        'terminal_result_relative_path = f"{publisher_run_dir_relative_path}/validated-run-terminal-result.json"'
+        in code
+    )
+    assert "write_governed_json(terminal_result_relative_path, validated_run_terminal_result)" in code
+    assert "pipeline/training-runs/" not in code
+    assert 'terminal_result_relative_path = f"releases/candidates' not in code
+    assert "if publisher_run_dir_relative_path is not None:" in code
+
+
+def test_notebook_requires_completed_terminal_status_and_promotion_eligibility_true():
+    code = _source("code")
+    assert 'if validated_run_terminal_result["status"] == "completed":' in code
+    assert 'assert validated_run_terminal_result["promotion_eligibility"] is True' in code
+    assert 'assert validated_run_terminal_result["status"] in ("completed", "blocked", "failed")' in code
+
+
+def test_notebook_summary_exposes_publisher_run_and_terminal_result_identity():
+    code = _source("code")
+    assert '"publisher_run_id": publisher_run_id' in code
+    assert '"publisher_run_dir": publisher_run_dir_relative_path' in code
+    assert '"terminal_status": validated_run_terminal_result["status"] if validated_run_terminal_result else None' in code
+    assert '"promotion_eligibility": (' in code

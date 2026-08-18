@@ -1,0 +1,263 @@
+{
+  "artifact_kind": "model_card_input",
+  "created_at": "2026-08-18T21:31:51.303641Z",
+  "dataset": {
+    "class_distribution": [
+      {
+        "label": "BARBUNYA",
+        "row_count": 1322
+      },
+      {
+        "label": "BOMBAY",
+        "row_count": 522
+      },
+      {
+        "label": "CALI",
+        "row_count": 1630
+      },
+      {
+        "label": "DERMASON",
+        "row_count": 3546
+      },
+      {
+        "label": "HOROZ",
+        "row_count": 1928
+      },
+      {
+        "label": "SEKER",
+        "row_count": 2027
+      },
+      {
+        "label": "SIRA",
+        "row_count": 2636
+      }
+    ],
+    "dataset_id": "dry-bean",
+    "feature_columns": [
+      "Area",
+      "Perimeter",
+      "MajorAxisLength",
+      "MinorAxisLength",
+      "AspectRatio",
+      "Eccentricity",
+      "ConvexArea",
+      "EquivDiameter",
+      "Extent",
+      "Solidity",
+      "Roundness",
+      "Compactness",
+      "ShapeFactor1",
+      "ShapeFactor2",
+      "ShapeFactor3",
+      "ShapeFactor4"
+    ],
+    "feature_count": 16,
+    "feature_definitions": {
+      "Area": {
+        "domain_constraints": {
+          "max": 254616,
+          "min": 20420
+        },
+        "type": "numeric"
+      },
+      "AspectRatio": {
+        "domain_constraints": {
+          "max": 2.430306447,
+          "min": 1.024867596
+        },
+        "type": "numeric"
+      },
+      "Compactness": {
+        "domain_constraints": {
+          "max": 0.987302969,
+          "min": 0.640576759
+        },
+        "type": "numeric"
+      },
+      "ConvexArea": {
+        "domain_constraints": {
+          "max": 263261,
+          "min": 20684
+        },
+        "type": "numeric"
+      },
+      "Eccentricity": {
+        "domain_constraints": {
+          "max": 0.911422968,
+          "min": 0.218951263
+        },
+        "type": "numeric"
+      },
+      "EquivDiameter": {
+        "domain_constraints": {
+          "max": 569.3743583,
+          "min": 161.2437642
+        },
+        "type": "numeric"
+      },
+      "Extent": {
+        "domain_constraints": {
+          "max": 0.866194641,
+          "min": 0.555314717
+        },
+        "type": "numeric"
+      },
+      "MajorAxisLength": {
+        "domain_constraints": {
+          "max": 738.8601535,
+          "min": 183.601165
+        },
+        "type": "numeric"
+      },
+      "MinorAxisLength": {
+        "domain_constraints": {
+          "max": 460.1984968,
+          "min": 122.5126535
+        },
+        "type": "numeric"
+      },
+      "Perimeter": {
+        "domain_constraints": {
+          "max": 1985.37,
+          "min": 524.736
+        },
+        "type": "numeric"
+      },
+      "Roundness": {
+        "domain_constraints": {
+          "max": 0.9906854,
+          "min": 0.489618256
+        },
+        "type": "numeric"
+      },
+      "ShapeFactor1": {
+        "domain_constraints": {
+          "max": 0.010451169,
+          "min": 0.002778013
+        },
+        "type": "numeric"
+      },
+      "ShapeFactor2": {
+        "domain_constraints": {
+          "max": 0.003664972,
+          "min": 0.000564169
+        },
+        "type": "numeric"
+      },
+      "ShapeFactor3": {
+        "domain_constraints": {
+          "max": 0.974767153,
+          "min": 0.410338584
+        },
+        "type": "numeric"
+      },
+      "ShapeFactor4": {
+        "domain_constraints": {
+          "max": 0.99973253,
+          "min": 0.947687403
+        },
+        "type": "numeric"
+      },
+      "Solidity": {
+        "domain_constraints": {
+          "max": 0.9946775,
+          "min": 0.919246157
+        },
+        "type": "numeric"
+      }
+    },
+    "target_column": "Class",
+    "target_description": {
+      "absence_reason": "execution contract does not declare target_description",
+      "declared": false,
+      "value": null
+    }
+  },
+  "evaluation": {
+    "primary_metric_name": "f1_macro",
+    "primary_metric_value": 0.9432970875011353,
+    "secondary_metrics": [
+      {
+        "name": "balanced_accuracy",
+        "value": 0.9435821120390392
+      },
+      {
+        "name": "f1_weighted",
+        "value": 0.9339728177004784
+      },
+      {
+        "name": "recall_macro",
+        "value": 0.9435821120390392
+      },
+      {
+        "name": "accuracy",
+        "value": 0.9339530332681018
+      },
+      {
+        "name": "log_loss",
+        "value": 0.19422789181319125
+      }
+    ]
+  },
+  "evidence_policy": {
+    "full_metrics_artifact_embedded": false,
+    "full_training_parameter_record_embedded": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "3924095f225ab2902d4560d55236f00e18e6be0a70f57a4b27569c7afa499d1c",
+    "metrics_sha256": "8fd4da612e860f9dadf3c100e95b6884fd96cf4b3c1c3628865e179ffa9a31fc",
+    "prepared_dataset_sha256": "1330e4ccc5c54a925e43daf60d1409ac62dad2a21de9a25213765bee4b655787",
+    "training_parameter_record_sha256": "6345cc2682ac3f80d0ca9237f801d795adaf325fed801a2f01544507f73f93af"
+  },
+  "intended_use_context": {
+    "absence_reason": "execution contract does not declare intended_use_context",
+    "declared": false,
+    "value": null
+  },
+  "model": {
+    "hyperparameters": {
+      "class_weight": null,
+      "l2_regularization": 0.0,
+      "learning_rate": 0.05,
+      "max_iter": 250,
+      "max_leaf_nodes": 15,
+      "min_samples_leaf": 40
+    },
+    "model_family": "hist_gradient_boosting",
+    "task_type": "multiclass_classification"
+  },
+  "path_references": {
+    "dataset_path": "pipeline/prepared/dry-bean/prepared-data.csv",
+    "execution_contract_path": "contracts/dry-bean/execution-contract.json",
+    "metrics_path": "pipeline/training-runs/dry-bean/train-20260818T213151Z/metrics.json",
+    "model_card_input_path": "pipeline/training-runs/dry-bean/train-20260818T213151Z/model-card-input.json",
+    "training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260818T213151Z/training-parameter-record.json"
+  },
+  "schema_version": "model-card-input.v2",
+  "training": {
+    "evaluation_split_size": 2044,
+    "seed": 42,
+    "split_policy": {
+      "strategy": "stratified",
+      "test_ratio": 0.15,
+      "train_ratio": 0.7,
+      "val_ratio": 0.15
+    },
+    "training_data_row_count": 9527,
+    "training_timestamp": "2026-08-18T21:31:51.303641Z"
+  },
+  "training_run_identity": {
+    "dataset_slug": "dry-bean",
+    "output_directory": "pipeline/training-runs/dry-bean/train-20260818T213151Z/",
+    "run_id": "train-20260818T213151Z"
+  }
+}

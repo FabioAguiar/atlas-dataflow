@@ -1,0 +1,54 @@
+{
+  "artifact_kind": "validated_run_terminal_result",
+  "boundary_confirmations": {
+    "educational_threshold_reinterpreted_as_operational": false,
+    "publisher_promotion_invoked": false,
+    "registry_state_written": false
+  },
+  "durable_references": {
+    "inference_bundle": {
+      "path": "pipeline/inference-bundles/dry-bean/inference-bundle.json",
+      "sha256": "1a90444ef529d25f429a86ae742d5d5adef318c043bc846eabab52da88ce2a34"
+    },
+    "manifest": {
+      "path": "publisher/runs/validate-20260818T221506Z/manifest.json",
+      "sha256": "ea5a6626e6278634215e97d2b3ba74213c379c3ab8c92820126001e17e8fbce0"
+    },
+    "materialization_result": null,
+    "operational_readiness_source": null,
+    "publisher_validation_result": {
+      "path": "publisher/runs/validate-20260818T221506Z/validation-result.json",
+      "sha256": "52b988f216be84838d979f36477131d1d3784af60ccd10ad3bfbd4b6acb272a4"
+    },
+    "release_candidate": {
+      "path": "releases/candidates/dry-bean/release-20260818-001/release-candidate.json",
+      "sha256": "c90f933fa83216868568e2dfd1306d46ed5a9e69ddb5241fbd050d490d8dc88b"
+    }
+  },
+  "manifest_outcome": {
+    "manifest_generated": true,
+    "manifest_path": "publisher/runs/validate-20260818T221506Z/manifest.json"
+  },
+  "model_source_mode": "atlas_internal_training",
+  "operational_readiness": {
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "not_applicable",
+      "value": null
+    },
+    "operational_validity": "not_applicable"
+  },
+  "promotion_eligibility": true,
+  "reasons": [],
+  "run_identity": {
+    "created_at": "2026-08-18T22:15:06+00:00",
+    "dataset_slug": "dry-bean",
+    "run_id": "train-20260818T221505Z"
+  },
+  "schema_version": "validated-run-terminal-result.v1",
+  "status": "completed",
+  "structural_validation": {
+    "checked": true,
+    "validation_outcome": "accepted"
+  }
+}

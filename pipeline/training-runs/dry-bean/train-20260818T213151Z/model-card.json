@@ -1,6 +1,6 @@
 {
   "artifact_kind": "model_card",
-  "created_at": "2026-08-18T22:15:05.975186Z",
+  "created_at": "2026-08-18T21:31:51.303641Z",
   "data_notes": "Reduced, deterministic training-run model card. No raw dataset rows, model bytes, raw logs, raw runtime data, secrets, or notebook state are included.",
   "evaluation": {
     "primary_metric_name": "f1_macro",
@@ -37,7 +37,7 @@
   },
   "hashes": {
     "algorithm": "sha256",
-    "model_card_input_sha256": "493610fc7e31f70d337af995a20b338281c1a573c8daddf55406ada6498ff297"
+    "model_card_input_sha256": "8175272e0554bab90b8d0b378ca37d9ca11d6b57c8b3d14e187a75a0f1b5f0c7"
   },
   "input_features": [
     "Area",
@@ -71,15 +71,15 @@
   },
   "model_summary": "hist_gradient_boosting model trained for dataset dry-bean to predict Class.",
   "path_references": {
-    "model_card_input_path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/model-card-input.json",
-    "model_card_path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/model-card.json"
+    "model_card_input_path": "pipeline/training-runs/dry-bean/train-20260818T213151Z/model-card-input.json",
+    "model_card_path": "pipeline/training-runs/dry-bean/train-20260818T213151Z/model-card.json"
   },
   "prediction_target": "Class",
   "problem_type": "multiclass_classification",
   "schema_version": "model-card.v1",
   "training_run_identity": {
     "dataset_slug": "dry-bean",
-    "output_directory": "pipeline/training-runs/dry-bean/train-20260818T221505Z/",
-    "run_id": "train-20260818T221505Z"
+    "output_directory": "pipeline/training-runs/dry-bean/train-20260818T213151Z/",
+    "run_id": "train-20260818T213151Z"
   }
 }

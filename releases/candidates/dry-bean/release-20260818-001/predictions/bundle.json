@@ -11,8 +11,8 @@
   },
   "bundle_identity": {
     "artifact_kind": "inference_bundle",
-    "bundle_id": "dry-bean-inference-bundle-20260818T212311Z",
-    "created_at": "2026-08-18T21:23:11+00:00"
+    "bundle_id": "dry-bean-inference-bundle-20260818T221506Z",
+    "created_at": "2026-08-18T22:15:06+00:00"
   },
   "compatibility_constraints": {
     "requires_contract_versions": {
@@ -76,7 +76,7 @@
   "model_artifact": {
     "path": "models/model.pkl",
     "sha256": "36246a3ef0dc253610780b9f92799c761d753caf4e596de5d5d98841f48302a9",
-    "source_training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260818T212311Z/training-parameter-record.json"
+    "source_training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/training-parameter-record.json"
   },
   "output_schema": {
     "class_labels": [
@@ -166,17 +166,17 @@
     "model_selection_evidence": null,
     "training_metrics": {
       "contract_version": "training-metrics.v2",
-      "path": "pipeline/training-runs/dry-bean/train-20260818T212311Z/metrics.json",
-      "sha256": "d17261e2b7228de0b5de5903b1f15c000ec376a88ef79b617464c9abcd557372"
+      "path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/metrics.json",
+      "sha256": "52afa7f65df733eca1865c2f7cc3784e86729bc97c0158436dffee545476e0d5"
     },
     "training_parameter_record": {
       "contract_version": "training-parameter-record.v2",
-      "path": "pipeline/training-runs/dry-bean/train-20260818T212311Z/training-parameter-record.json",
-      "sha256": "34fd9d4bfe043a63b37ec701c62880f338ece9a4360681e57d58bf26c1fdf56f"
+      "path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/training-parameter-record.json",
+      "sha256": "4694cafd74a7496b66a4daf267a761b1d4e44e90edb97e7cdb84ed2e45235f23"
     },
     "training_run_identity": {
       "dataset_slug": "dry-bean",
-      "run_id": "train-20260818T212311Z"
+      "run_id": "train-20260818T221505Z"
     }
   }
 }

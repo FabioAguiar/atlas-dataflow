@@ -12,7 +12,7 @@
     ],
     "problem_type": "multiclass_classification"
   },
-  "created_at": "2026-08-18T22:15:05.975186Z",
+  "created_at": "2026-08-18T21:31:51.303641Z",
   "evidence_policy": {
     "model_bytes_embedded": false,
     "notebook_state_embedded": false,
@@ -118,14 +118,14 @@
   "path_references": {
     "dataset_path": "pipeline/prepared/dry-bean/prepared-data.csv",
     "execution_contract_path": "contracts/dry-bean/execution-contract.json",
-    "metrics_path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/metrics.json",
-    "training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260818T221505Z/training-parameter-record.json"
+    "metrics_path": "pipeline/training-runs/dry-bean/train-20260818T213151Z/metrics.json",
+    "training_parameter_record_path": "pipeline/training-runs/dry-bean/train-20260818T213151Z/training-parameter-record.json"
   },
   "schema_version": "training-metrics.v2",
   "training_run_identity": {
     "dataset_slug": "dry-bean",
-    "output_directory": "pipeline/training-runs/dry-bean/train-20260818T221505Z/",
-    "run_id": "train-20260818T221505Z"
+    "output_directory": "pipeline/training-runs/dry-bean/train-20260818T213151Z/",
+    "run_id": "train-20260818T213151Z"
   },
   "validation_evaluation": {
     "evaluation_count": 1,

@@ -22,6 +22,13 @@ export type DatasetDetailSurfaceProps = {
   // surface, rendered only for a multiclass release -- omitted entirely
   // (never a placeholder) keeps binary Dataset Detail visually unchanged.
   confusionMatrixContent?: ReactNode;
+  // Project Spec S0228: an optional, bounded continuous-regression
+  // diagnostics section (Actual vs Predicted + Residual Distribution),
+  // rendered below the primary analytics grid for a regression release --
+  // omitted entirely (never a placeholder) keeps classification Dataset
+  // Detail layouts, including S0221's full-width Confusion Matrix, visually
+  // unchanged.
+  regressionDiagnosticsContent?: ReactNode;
   inferenceContent: ReactNode;
   documentationContent?: ReactNode;
 };
@@ -43,6 +50,7 @@ export default function DatasetDetailSurface({
   targetDistributionContent,
   featureImportanceContent,
   confusionMatrixContent,
+  regressionDiagnosticsContent,
   inferenceContent,
   documentationContent,
 }: DatasetDetailSurfaceProps) {
@@ -63,6 +71,10 @@ export default function DatasetDetailSurface({
         {featureImportanceContent}
         {confusionMatrixContent}
       </div>
+
+      {regressionDiagnosticsContent && (
+        <div className="dataset-detail-overview__regression-diagnostics">{regressionDiagnosticsContent}</div>
+      )}
     </div>
   );
 

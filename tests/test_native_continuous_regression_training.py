@@ -21,10 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pipeline.training as training
 from pipeline.training import (
+    ANALYTICAL_VISUALIZATIONS_FILENAME,
     MODEL_ARTIFACT_FILENAME,
     MODEL_CARD_FILENAME,
     MODEL_CARD_INPUT_FILENAME,
     METRICS_ARTIFACT_FILENAME,
+    NATIVE_CONTINUOUS_REGRESSION_ANALYTICAL_VISUALIZATIONS_VERSION,
     NATIVE_CONTINUOUS_REGRESSION_METRIC_NAMES,
     NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
     NATIVE_CONTINUOUS_REGRESSION_TRAINING_METRICS_VERSION,
@@ -46,6 +48,7 @@ except ImportError:  # pragma: no cover
 REPO_ROOT = Path(__file__).parent.parent
 TRAINING_PARAMETER_RECORD_SCHEMA_PATH = REPO_ROOT / "pipeline" / "training-parameter-record.schema.json"
 TRAINING_METRICS_SCHEMA_PATH = REPO_ROOT / "pipeline" / "training-metrics.schema.json"
+ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH = REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json"
 
 
 # ---------------------------------------------------------------------------
@@ -210,14 +213,101 @@ def test_random_forest_fixed_configuration_trains_and_produces_expected_artifact
     assert (output_directory / MODEL_ARTIFACT_FILENAME).exists()
 
 
-def test_no_analytical_visualizations_artifact_is_produced(
+def test_analytical_visualizations_v3_artifact_is_produced(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    """Project Spec S0228: native continuous-regression training now
+    materializes a real analytical-visualizations.v3 artifact and returns
+    its repo-relative path/hash in TrainingResult -- superseding S0224's
+    "no analytical visualizations" expectation."""
+    result, output_directory = _run(fixed_training_environment, tmp_path)
+
+    artifact_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
+    assert artifact_path.exists()
+    assert artifact_path.stat().st_size > 0
+    assert result.analytical_visualizations_path == training._repo_relative_path(artifact_path)
+    assert result.hashes["analytical_visualizations_sha256"] is not None
+    assert result.hashes["analytical_visualizations_sha256"] == training._sha256_file(artifact_path)
+
+    artifact = json.loads(artifact_path.read_text())
+    assert artifact["schema_version"] == NATIVE_CONTINUOUS_REGRESSION_ANALYTICAL_VISUALIZATIONS_VERSION
+    assert artifact["artifact_kind"] == "analytical_visualizations"
+    assert artifact["regression_evidence"] == {
+        "problem_type": "continuous_regression",
+        "result_semantics_schema_version": NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "output_value_kind": "continuous_numeric",
+    }
+    assert "classification_evidence" not in artifact
+    assert "confusion_matrix" not in artifact
+
+    chart_ids = {chart["id"] for chart in artifact["charts"]}
+    assert chart_ids == {"target_distribution", "feature_importance"}
+
+    target_distribution_method = artifact["target_distribution_method"]
+    assert target_distribution_method["distribution_kind"] == "continuous_histogram"
+    assert target_distribution_method["population_kind"] == "prepared_dataset"
+    assert target_distribution_method["binning_method"] == "deterministic_equal_width"
+    assert target_distribution_method["row_count"] == 150
+    target_distribution_chart = next(c for c in artifact["charts"] if c["id"] == "target_distribution")
+    assert sum(point["value"] for point in target_distribution_chart["data"]) == 150
+
+    metrics_artifact = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+    final_test_row_count = metrics_artifact["final_test_evaluation"]["row_count"]
+
+    actual_vs_predicted = artifact["actual_vs_predicted"]
+    assert actual_vs_predicted["partition_role"] == "test"
+    assert actual_vs_predicted["evaluation_count"] == 1
+    assert actual_vs_predicted["reference_line"] == "identity"
+    assert sum(point["count"] for point in actual_vs_predicted["points"]) == final_test_row_count
+    for point in actual_vs_predicted["points"]:
+        assert point["count"] >= 1
+        for key in ("actual_mean", "predicted_mean"):
+            assert point[key] == point[key]
+            assert point[key] not in (float("inf"), float("-inf"))
+
+    residual_distribution = artifact["residual_distribution"]
+    assert residual_distribution["partition_role"] == "test"
+    assert residual_distribution["evaluation_count"] == 1
+    assert residual_distribution["residual_definition"] == "actual_minus_predicted"
+    assert residual_distribution["binning_method"] == "deterministic_equal_width"
+    assert sum(bin_["count"] for bin_ in residual_distribution["bins"]) == final_test_row_count
+    for bin_ in residual_distribution["bins"]:
+        assert bin_["count"] >= 0
+
+
+@pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
+def test_analytical_visualizations_v3_validates_against_real_schema(
     fixed_training_environment: Path, tmp_path: Path,
 ) -> None:
     result, output_directory = _run(fixed_training_environment, tmp_path)
+    artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+    schema = json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text())
+    jsonschema.validate(artifact, schema)
 
-    assert result.analytical_visualizations_path is None
-    assert result.hashes["analytical_visualizations_sha256"] is None
-    assert not (output_directory / "analytical-visualizations.json").exists()
+
+def test_analytical_visualizations_reuses_already_computed_final_test_predictions(
+    fixed_training_environment: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    """Project Spec S0228: visualization generation must never call
+    final_pipeline.predict a second time -- it reuses the single final-test
+    prediction pass S0224 already performs."""
+    from sklearn.pipeline import Pipeline
+
+    original_predict = Pipeline.predict
+    call_count = {"count": 0}
+
+    def _counting_predict(self, features):
+        call_count["count"] += 1
+        return original_predict(self, features)
+
+    monkeypatch.setattr(Pipeline, "predict", _counting_predict)
+
+    _run(fixed_training_environment, tmp_path)
+
+    # Exactly one predict call for the sealed final-test partition, plus one
+    # for the descriptive validation-partition predict in Step 1 (S0224's
+    # existing protocol) -- two total, never three.
+    assert call_count["count"] == 2
 
 
 def test_no_model_selection_evidence_artifact_is_produced(

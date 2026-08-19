@@ -3408,6 +3408,152 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0228: Dataset Detail Live Preview gates RegressionDiagnostics
+  // from the same private, dataset-bound result-contract authority as
+  // Performance Summary, and reuses the exact same shared renderer/already-
+  // loaded visualizations payload the public route consumes -- no
+  // synthesized diagnostics from draft form data, and no additional request.
+  describe("Dataset Detail Live Preview continuous-regression diagnostics (Project Spec S0228)", () => {
+    const regressionResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "continuous-regression-result-semantics.v1",
+        problem_type: "continuous_regression",
+        result_schema_version: "continuous-regression-result.v1",
+        primary_output: "predicted_value",
+        output_value_kind: "continuous_numeric",
+        model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+      },
+    };
+
+    const regressionVisualizations = {
+      charts: [
+        {
+          id: "target_distribution", title: "Target Distribution", type: "bar" as const,
+          x_label: "Strength", y_label: "Rows",
+          data: [
+            { name: "10 to 20", value: 6 },
+            { name: "20 to 30", value: 4 },
+          ],
+        },
+        {
+          id: "feature_importance", title: "Feature Importance", type: "bar" as const,
+          x_label: "Feature", y_label: "Importance",
+          data: [
+            { name: "cement", value: 0.6 },
+            { name: "water", value: 0.4 },
+          ],
+        },
+      ],
+      dataset_statistics: { instance_count: 10 },
+      target_distribution_kind: "continuous_histogram",
+      regression_diagnostics: {
+        actual_vs_predicted: {
+          points: [
+            { actual_mean: 15.5, predicted_mean: 16.1, count: 6 },
+            { actual_mean: 25.5, predicted_mean: 24.3, count: 4 },
+          ],
+        },
+        residual_distribution: {
+          bins: [
+            { label: "-2 to 0", count: 4 },
+            { label: "0 to 2", count: 6 },
+          ],
+        },
+      },
+    };
+
+    it("renders Actual vs Predicted and Residual Distribution for a continuous-regression release", async () => {
+      installFetchMock({
+        resultContractOverride: regressionResultContract,
+        visualizationsOverride: regressionVisualizations,
+      });
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      expect(await screen.findByRole("heading", { name: "Actual vs Predicted" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Residual Distribution" })).toBeInTheDocument();
+
+      const overviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
+      expect(overviewPanel.querySelector(".dataset-detail-overview__regression-diagnostics")).toBeInTheDocument();
+      expect(screen.getByText("Actual 15.5 vs Predicted 16.1")).toBeInTheDocument();
+      expect(screen.getByText("n=6")).toBeInTheDocument();
+      expect(screen.getByText("-2 to 0")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Confusion Matrix" })).not.toBeInTheDocument();
+    });
+
+    it("renders continuous Target Distribution as a histogram, not the classification donut, in Live Preview", async () => {
+      installFetchMock({
+        resultContractOverride: regressionResultContract,
+        visualizationsOverride: regressionVisualizations,
+      });
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      const targetDistributionHeading = await screen.findByRole("heading", { name: "Target Distribution" });
+      expect(targetDistributionHeading.closest(".atlas-card")).toHaveClass("dataset-detail-visualization--histogram");
+      expect(container.querySelector(".dataset-detail-visualization--donut")).not.toBeInTheDocument();
+    });
+
+    it("renders no regression diagnostics for the default binary release", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Target Distribution" });
+      expect(screen.queryByRole("heading", { name: "Actual vs Predicted" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Residual Distribution" })).not.toBeInTheDocument();
+    });
+
+    it("renders no regression diagnostics for a multiclass release, and does not synthesize diagnostics from draft form data", async () => {
+      const multiclassResultContract = {
+        status: "available",
+        semantics: {
+          schema_version: "multiclass-result-semantics.v1",
+          problem_type: "multiclass_classification",
+          result_schema_version: "multiclass-classification-result.v1",
+          primary_output: "predicted_class",
+          probability_output: "class_probabilities",
+          classes: [
+            { class_id: "class-a", display_label: "Class A" },
+            { class_id: "class-b", display_label: "Class B" },
+            { class_id: "class-c", display_label: "Class C" },
+          ],
+          decision: { strategy: "argmax" },
+          model_descriptor: { model_family: "model", display_name: "Model" },
+        },
+      };
+      installFetchMock({ resultContractOverride: multiclassResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Target Distribution" });
+      expect(screen.queryByRole("heading", { name: "Actual vs Predicted" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Residual Distribution" })).not.toBeInTheDocument();
+    });
+
+    it("does not issue an additional request for Live Preview regression diagnostics", async () => {
+      const fetchMock = installFetchMock({
+        resultContractOverride: regressionResultContract,
+        visualizationsOverride: regressionVisualizations,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Actual vs Predicted" });
+
+      const authoringContextCalls = fetchMock.mock.calls.filter((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/authoring-context`),
+      );
+      expect(authoringContextCalls.length).toBe(1);
+    });
+  });
+
   // Project Spec S0120: Dataset Detail Live Preview now renders the exact
   // shared DatasetDetailSurface (S0119) used by /dataset/:slug -- one
   // instance, its own real three-tab system (Overview/Inference/

@@ -1012,10 +1012,6 @@ def validate_candidate(
             isinstance(_native_result_semantics, dict)
             and _native_result_semantics.get("problem_type") == "continuous_regression"
         ):
-            # Project Spec S0227: no visualizations compatibility check is
-            # dispatched here (desired change G) -- the existing generic
-            # required-role/schema validation above continues to govern the
-            # visualizations role for a regression candidate unchanged.
             rejection_reasons.extend(
                 _internal_native_continuous_regression_predictive_bundle_compatibility(
                     _native_predictive_bundle_data
@@ -1024,6 +1020,16 @@ def validate_candidate(
             rejection_reasons.extend(
                 _internal_native_continuous_regression_metrics_public_projection_check(
                     json_artifacts.get("metrics"), _native_predictive_bundle_data
+                )
+            )
+            # Project Spec S0228: analytical-visualizations.v3 now exists, so
+            # the visualizations role is dispatched for compatibility here,
+            # mirroring the native multiclass dispatch above.
+            rejection_reasons.extend(
+                _internal_native_continuous_regression_visualizations_compatibility(
+                    json_artifacts.get("visualizations"),
+                    _native_predictive_bundle_data,
+                    json_artifacts.get("metrics"),
                 )
             )
 
@@ -1454,11 +1460,11 @@ _INTERNAL_VISUALIZATIONS_SCHEMA_VERSION_V2 = "analytical-visualizations.v2"
 # candidate -- historical/internal binary and multiclass candidates never
 # reach these functions, so their acceptance behavior is unchanged. There is
 # deliberately no external-fitted-model regression branch (Project Spec
-# S0227 desired change E) and no regression-visualization compatibility
-# function (desired change G): the existing generic required-role/schema
-# validation continues to govern the visualizations role for a regression
-# candidate unchanged, so a real regression release remains incomplete
-# until a future spec defines analytical-visualizations.v3.
+# S0227 desired change E). Project Spec S0228 defines
+# analytical-visualizations.v3 and adds
+# `_internal_native_continuous_regression_visualizations_compatibility` below
+# the metrics check, so the visualizations role is now dispatched for a
+# native continuous-regression candidate too.
 # ---------------------------------------------------------------------------
 
 _INTERNAL_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regression-result-semantics.v1"
@@ -1623,6 +1629,107 @@ def _internal_native_continuous_regression_metrics_public_projection_check(
             "metrics",
             "native_regression_metrics_no_public_metric",
         )]
+    return []
+
+
+# Project Spec S0228: analytical-visualizations.v3 is the Atlas-native
+# continuous-regression visual evidence profile. Mirrors the internal native
+# multiclass visualizations compatibility discipline below, requiring the
+# schema profile itself, rejecting classification-only evidence, and (when a
+# completed final-test evaluation is available in the metrics artifact)
+# cross-checking the diagnostic aggregate population against the metrics
+# artifact's final_test_evaluation.row_count. Never recomputes visual
+# evidence.
+_INTERNAL_CONTINUOUS_REGRESSION_VISUALIZATIONS_SCHEMA_VERSION_V3 = "analytical-visualizations.v3"
+_CONTINUOUS_REGRESSION_FORBIDDEN_VISUALIZATION_KEYS = ("classification_evidence", "confusion_matrix")
+
+
+def _internal_native_continuous_regression_visualizations_compatibility(
+    visualizations_data: dict | None,
+    predictive_bundle_data: dict | None,
+    metrics_data: dict | None = None,
+) -> list[dict]:
+    """Require a native continuous-regression candidate's visualizations
+    artifact to declare analytical-visualizations.v3, never carry
+    classification-only evidence, source its diagnostic evidence from the
+    sealed test partition, and (when a completed final-test evaluation is
+    available in the metrics artifact) agree with the metrics artifact's
+    final_test_evaluation.row_count on both the Actual vs Predicted and
+    Residual Distribution aggregate population sizes."""
+    if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
+        return []
+    if (
+        visualizations_data.get("schema_version")
+        != _INTERNAL_CONTINUOUS_REGRESSION_VISUALIZATIONS_SCHEMA_VERSION_V3
+    ):
+        return [_safe_rejection_reason(
+            "visualizations_provenance_mismatch",
+            "Native continuous-regression visualizations schema profile does not match the "
+            "predictive bundle's problem type.",
+            "visualizations",
+            "native_regression_visualizations_version_mismatch",
+        )]
+
+    for forbidden_key in _CONTINUOUS_REGRESSION_FORBIDDEN_VISUALIZATION_KEYS:
+        if forbidden_key in visualizations_data:
+            return [_safe_rejection_reason(
+                "contradictory_candidate_artifact",
+                "Native continuous-regression visualizations artifact must not carry "
+                "classification-only evidence.",
+                "visualizations",
+                "native_regression_visualizations_classification_evidence_present",
+            )]
+
+    actual_vs_predicted = visualizations_data.get("actual_vs_predicted")
+    residual_distribution = visualizations_data.get("residual_distribution")
+    if not isinstance(actual_vs_predicted, dict) or not isinstance(residual_distribution, dict):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native continuous-regression visualizations artifact is missing required "
+            "actual_vs_predicted/residual_distribution evidence.",
+            "visualizations",
+            "native_regression_visualizations_diagnostics_missing",
+        )]
+    if (
+        actual_vs_predicted.get("partition_role") != "test"
+        or residual_distribution.get("partition_role") != "test"
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native continuous-regression visualizations diagnostic evidence must be sourced "
+            "from the sealed final-test partition.",
+            "visualizations",
+            "native_regression_visualizations_partition_role_mismatch",
+        )]
+
+    final_test = metrics_data.get("final_test_evaluation") if isinstance(metrics_data, dict) else None
+    if isinstance(final_test, dict) and final_test.get("completed") is True:
+        expected_row_count = final_test.get("row_count")
+        points = actual_vs_predicted.get("points")
+        bins = residual_distribution.get("bins")
+        actual_vs_predicted_count = (
+            sum(point.get("count", 0) for point in points if isinstance(point, dict))
+            if isinstance(points, list)
+            else None
+        )
+        residual_count = (
+            sum(bin_.get("count", 0) for bin_ in bins if isinstance(bin_, dict))
+            if isinstance(bins, list)
+            else None
+        )
+        if (
+            not isinstance(expected_row_count, int)
+            or actual_vs_predicted_count != expected_row_count
+            or residual_count != expected_row_count
+        ):
+            return [_safe_rejection_reason(
+                "contradictory_candidate_artifact",
+                "Native continuous-regression visualizations diagnostic aggregate population "
+                "does not match the metrics artifact's completed final-test row_count.",
+                "visualizations",
+                "native_regression_visualizations_population_mismatch",
+            )]
+
     return []
 
 

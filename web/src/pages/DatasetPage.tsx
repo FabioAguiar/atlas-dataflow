@@ -8,6 +8,7 @@ import DatasetDocumentation from "../components/DatasetDetail/DatasetDocumentati
 import ConfusionMatrix from "../components/DatasetDetail/ConfusionMatrix";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
+import RegressionDiagnostics from "../components/DatasetDetail/RegressionDiagnostics";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
 import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
 import {
@@ -140,6 +141,24 @@ function resolveAnalysisType(
 ): string | null {
   const releaseBoundProblemType = availableResultProblemType(resultContract);
   return humanizeProblemType(releaseBoundProblemType) ?? humanizeProblemType(context?.problem_type) ?? null;
+}
+
+/**
+ * Project Spec S0228: the same authoritative release-bound problem type
+ * already established by availableResultProblemType (S0215/S0213) for
+ * binary/multiclass, narrowed here to detect an available continuous-
+ * regression result contract -- never dataset slug, context.problem_type,
+ * or visualizations shape. ResultCard/types.ts is not extended for
+ * continuous_regression (out of scope for this Project Spec), so this
+ * local guard reads the same result_contract.semantics.problem_type field
+ * without editing any ResultCard file.
+ */
+function isAvailableContinuousRegressionResultContract(resultContract: ResultContract | null): boolean {
+  if (!resultContract || resultContract.status !== "available") {
+    return false;
+  }
+  const semantics = (resultContract as { semantics?: { problem_type?: unknown } }).semantics;
+  return semantics?.problem_type === "continuous_regression";
 }
 
 export default function DatasetPage() {
@@ -540,6 +559,16 @@ export default function DatasetPage() {
       <ConfusionMatrix visualizations={visualizationsState.data} />
     ) : null;
 
+  // Project Spec S0228: RegressionDiagnostics renders only for an available
+  // continuous-regression release, gated on the same release-bound result
+  // contract authority as Performance Summary above -- never a second
+  // /visualizations request, and never rendered alongside binary/multiclass
+  // Confusion Matrix content.
+  const regressionDiagnosticsContent =
+    visualizationsState.status === "ready" && isAvailableContinuousRegressionResultContract(resultContract) ? (
+      <RegressionDiagnostics visualizations={visualizationsState.data} />
+    ) : null;
+
   // Project Spec S0196: the public Documentation tab renders only the
   // published snapshot's documentation (context.documentation), through the
   // same shared renderer the Admin Documentation tab and Live Preview use --
@@ -572,6 +601,7 @@ export default function DatasetPage() {
           performanceFocusId={context?.performance_focus?.focus_id}
           problemSummaryBody={problemSummaryText}
           problemSummaryTitle={problemSummaryTitle}
+          regressionDiagnosticsContent={regressionDiagnosticsContent}
           targetDistributionContent={targetDistributionContent}
           themePresetId={context?.theme_preset}
         />

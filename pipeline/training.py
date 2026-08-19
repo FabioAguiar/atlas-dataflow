@@ -3739,6 +3739,14 @@ NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regre
 NATIVE_CONTINUOUS_REGRESSION_TRAINING_PARAMETER_RECORD_VERSION = "training-parameter-record.v3"
 NATIVE_CONTINUOUS_REGRESSION_TRAINING_METRICS_VERSION = "training-metrics.v3"
 NATIVE_CONTINUOUS_REGRESSION_METRIC_NAMES = ("r2", "mae", "rmse")
+# Project Spec S0228: analytical-visualizations.v3 is the Atlas-native
+# continuous-regression visual evidence profile emitted alongside
+# training-parameter-record.v3/training-metrics.v3.
+NATIVE_CONTINUOUS_REGRESSION_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v3"
+# Deterministic bounded bin count shared by the continuous target-distribution
+# histogram, the Actual vs Predicted aggregate, and the Residual Distribution
+# histogram -- a fixed public-safe maximum in the documented 12-20 range.
+NATIVE_CONTINUOUS_REGRESSION_MAX_HISTOGRAM_BINS = 15
 
 _GBR_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
     "n_estimators", "learning_rate", "max_depth", "min_samples_leaf", "subsample", "loss",
@@ -4016,6 +4024,313 @@ def _native_continuous_regression_metric_values(
     return values
 
 
+# ---------------------------------------------------------------------------
+# Native continuous-regression analytical-visualizations.v3 evidence (Project
+# Spec S0228). Every bounded aggregate below is built only from the already
+# governed prepared-dataset population and the already-computed final-test
+# prediction vector -- never from a second model predict pass and never from
+# raw per-row arrays. `_continuous_equal_width_histogram` is the single
+# deterministic binning primitive shared by the target-distribution
+# histogram, the Actual vs Predicted aggregation, and the Residual
+# Distribution histogram.
+# ---------------------------------------------------------------------------
+
+
+def _continuous_equal_width_bin_edges(
+    minimum: float, maximum: float, max_bins: int,
+) -> list[tuple[float, float]]:
+    if maximum <= minimum:
+        return [(float(minimum), float(minimum))]
+    bin_width = (maximum - minimum) / max_bins
+    edges: list[tuple[float, float]] = []
+    for index in range(max_bins):
+        lower = minimum + index * bin_width
+        upper = maximum if index == max_bins - 1 else minimum + (index + 1) * bin_width
+        edges.append((float(lower), float(upper)))
+    return edges
+
+
+def _continuous_equal_width_bin_assignment(
+    values: list[float], *, max_bins: int,
+) -> tuple[list[int], list[tuple[float, float]]]:
+    minimum = min(values)
+    maximum = max(values)
+    edges = _continuous_equal_width_bin_edges(minimum, maximum, max_bins)
+    if maximum <= minimum:
+        return [0] * len(values), edges
+    bin_width = (maximum - minimum) / max_bins
+    indices: list[int] = []
+    for value in values:
+        index = int((value - minimum) / bin_width)
+        if index < 0:
+            index = 0
+        elif index >= max_bins:
+            index = max_bins - 1
+        indices.append(index)
+    return indices, edges
+
+
+def _format_continuous_bin_label(lower: float, upper: float) -> str:
+    if lower == upper:
+        return f"{lower:.4g}"
+    return f"{lower:.4g} to {upper:.4g}"
+
+
+def _continuous_equal_width_histogram(
+    values: list[float], *, max_bins: int, error_code: str, error_field: str,
+) -> list[dict[str, Any]]:
+    if not values:
+        raise TrainingInputError(
+            error_code,
+            "continuous value population is empty; cannot generate a bounded histogram.",
+            field=error_field,
+        )
+    for value in values:
+        if not math.isfinite(value):
+            raise TrainingInputError(
+                error_code,
+                "continuous value population contains a non-finite value; cannot generate a "
+                "bounded histogram.",
+                field=error_field,
+            )
+    indices, edges = _continuous_equal_width_bin_assignment(values, max_bins=max_bins)
+    counts = [0] * len(edges)
+    for index in indices:
+        counts[index] += 1
+    bins: list[dict[str, Any]] = []
+    for index, (lower, upper) in enumerate(edges):
+        bins.append({
+            "lower_bound": lower,
+            "upper_bound": upper,
+            "count": counts[index],
+            "label": _format_continuous_bin_label(lower, upper),
+        })
+    return bins
+
+
+def _native_continuous_regression_target_histogram_chart(
+    rows: list[dict[str, Any]], target_column: str, *, max_bins: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    values: list[float] = []
+    for row in rows:
+        value = row.get(target_column)
+        if not _is_numeric_dataset_value(value):
+            raise TrainingInputError(
+                "missing_target_value_for_visualization",
+                (
+                    f"prepared dataset row is missing a finite numeric value for target column "
+                    f"{target_column}; continuous Target Distribution generation requires every "
+                    "governed row to declare a finite numeric target value."
+                ),
+                field=target_column,
+            )
+        values.append(float(value))
+    bins = _continuous_equal_width_histogram(
+        values, max_bins=max_bins, error_code="invalid_prepared_dataset", error_field=target_column,
+    )
+    chart_data = [{"name": entry["label"], "value": entry["count"]} for entry in bins]
+    method = {
+        "distribution_kind": "continuous_histogram",
+        "population_kind": "prepared_dataset",
+        "binning_method": "deterministic_equal_width",
+        "row_count": len(values),
+        "target_column": target_column,
+        "bin_count": len(bins),
+        "min_value": min(values),
+        "max_value": max(values),
+    }
+    return chart_data, method
+
+
+def _native_continuous_regression_feature_importance(
+    *, model_family: str, final_pipeline: Any, feature_columns: list[str],
+) -> tuple[list[dict[str, Any]], int, int]:
+    preprocess = final_pipeline.named_steps["preprocess"]
+    estimator = final_pipeline.named_steps["model"]
+    source_names = _feature_importance_output_source_map(preprocess)
+    raw_values = _feature_importance_raw_values(model_family, estimator)
+    return _aggregate_feature_importance(source_names, raw_values, feature_columns)
+
+
+def _native_continuous_regression_actual_vs_predicted(
+    *, y_true: Any, y_pred: Any, max_bins: int,
+) -> dict[str, Any]:
+    actual_values = [float(value) for value in list(y_true)]
+    predicted_values = [float(value) for value in list(y_pred)]
+    if len(actual_values) != len(predicted_values):
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "final-test actual and predicted vectors have mismatched lengths; cannot generate "
+            "Actual vs Predicted evidence.",
+            field="actual_vs_predicted",
+        )
+    if not actual_values:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "final-test partition is empty; cannot generate Actual vs Predicted evidence.",
+            field="actual_vs_predicted",
+        )
+    for value in actual_values + predicted_values:
+        if not math.isfinite(value):
+            raise TrainingInputError(
+                "non_finite_regression_diagnostic_value",
+                "final-test actual/predicted value is not finite; cannot generate Actual vs "
+                "Predicted evidence.",
+                field="actual_vs_predicted",
+            )
+
+    bin_indices, bin_edges = _continuous_equal_width_bin_assignment(actual_values, max_bins=max_bins)
+    sums_actual: dict[int, float] = {}
+    sums_predicted: dict[int, float] = {}
+    counts: dict[int, int] = {}
+    for index, actual_value, predicted_value in zip(bin_indices, actual_values, predicted_values):
+        sums_actual[index] = sums_actual.get(index, 0.0) + actual_value
+        sums_predicted[index] = sums_predicted.get(index, 0.0) + predicted_value
+        counts[index] = counts.get(index, 0) + 1
+
+    points: list[dict[str, Any]] = []
+    for index in sorted(counts):
+        count = counts[index]
+        lower, upper = bin_edges[index]
+        points.append({
+            "actual_mean": sums_actual[index] / count,
+            "predicted_mean": sums_predicted[index] / count,
+            "count": count,
+            "bin_lower": lower,
+            "bin_upper": upper,
+        })
+
+    return {
+        "partition_role": "test",
+        "evaluation_count": 1,
+        "aggregation_method": "deterministic_equal_width_actual_bins",
+        "reference_line": "identity",
+        "points": points,
+    }
+
+
+def _native_continuous_regression_residual_distribution(
+    *, y_true: Any, y_pred: Any, max_bins: int,
+) -> dict[str, Any]:
+    actual_values = [float(value) for value in list(y_true)]
+    predicted_values = [float(value) for value in list(y_pred)]
+    if len(actual_values) != len(predicted_values):
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "final-test actual and predicted vectors have mismatched lengths; cannot generate "
+            "Residual Distribution evidence.",
+            field="residual_distribution",
+        )
+    residual_values = [actual - predicted for actual, predicted in zip(actual_values, predicted_values)]
+    bins = _continuous_equal_width_histogram(
+        residual_values,
+        max_bins=max_bins,
+        error_code="non_finite_regression_diagnostic_value",
+        error_field="residual_distribution",
+    )
+    return {
+        "partition_role": "test",
+        "evaluation_count": 1,
+        "residual_definition": "actual_minus_predicted",
+        "binning_method": "deterministic_equal_width",
+        "bins": [
+            {
+                "label": entry["label"],
+                "lower_bound": entry["lower_bound"],
+                "upper_bound": entry["upper_bound"],
+                "count": entry["count"],
+            }
+            for entry in bins
+        ],
+    }
+
+
+def _build_native_continuous_regression_analytical_visualizations_artifact(
+    *,
+    rows: list[dict[str, Any]],
+    target_column: str,
+    feature_columns: list[str],
+    model_family: str,
+    final_pipeline: Any,
+    final_test_actual: Any,
+    final_test_predicted: Any,
+    output_directory: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    target_chart_data, target_distribution_method = _native_continuous_regression_target_histogram_chart(
+        rows, target_column, max_bins=NATIVE_CONTINUOUS_REGRESSION_MAX_HISTOGRAM_BINS,
+    )
+    feature_data, total_source_feature_count, omitted_count = _native_continuous_regression_feature_importance(
+        model_family=model_family, final_pipeline=final_pipeline, feature_columns=feature_columns,
+    )
+    actual_vs_predicted = _native_continuous_regression_actual_vs_predicted(
+        y_true=final_test_actual,
+        y_pred=final_test_predicted,
+        max_bins=NATIVE_CONTINUOUS_REGRESSION_MAX_HISTOGRAM_BINS,
+    )
+    residual_distribution = _native_continuous_regression_residual_distribution(
+        y_true=final_test_actual,
+        y_pred=final_test_predicted,
+        max_bins=NATIVE_CONTINUOUS_REGRESSION_MAX_HISTOGRAM_BINS,
+    )
+
+    return {
+        "schema_version": NATIVE_CONTINUOUS_REGRESSION_ANALYTICAL_VISUALIZATIONS_VERSION,
+        "artifact_kind": "analytical_visualizations",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "regression_evidence": {
+            "problem_type": "continuous_regression",
+            "result_semantics_schema_version": NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
+            "output_value_kind": "continuous_numeric",
+        },
+        "charts": [
+            {
+                "id": "target_distribution",
+                "title": "Target Distribution",
+                "type": "bar",
+                "x_label": target_column,
+                "y_label": "Rows",
+                "data": target_chart_data,
+            },
+            {
+                "id": "feature_importance",
+                "title": "Feature Importance",
+                "type": "bar",
+                "x_label": "Feature",
+                "y_label": "Importance",
+                "data": feature_data,
+            },
+        ],
+        "target_distribution_method": target_distribution_method,
+        "feature_importance_method": {
+            "model_family": model_family,
+            "source": "estimator.feature_importances_",
+            "total_source_feature_count": total_source_feature_count,
+            "omitted_source_feature_count": omitted_count,
+            "public_row_limit": FEATURE_IMPORTANCE_TOP_N,
+        },
+        "actual_vs_predicted": actual_vs_predicted,
+        "residual_distribution": residual_distribution,
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
 def _build_native_continuous_regression_model_card_input_artifact(
     *,
     contract: dict[str, Any],
@@ -4205,6 +4520,7 @@ def _train_native_continuous_regression_fixed_configuration(
     parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
     metrics_path = output_directory / METRICS_ARTIFACT_FILENAME
     model_card_input_path = output_directory / MODEL_CARD_INPUT_FILENAME
+    analytical_visualizations_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
     serializer_version = _serializer_version()
     training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -4280,6 +4596,21 @@ def _train_native_continuous_regression_fixed_configuration(
         },
     }
     metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
+
+    analytical_visualizations_artifact = _build_native_continuous_regression_analytical_visualizations_artifact(
+        rows=rows,
+        target_column=target_column,
+        feature_columns=feature_columns,
+        model_family=model_family,
+        final_pipeline=final_pipeline,
+        final_test_actual=target.iloc[test_indices],
+        final_test_predicted=final_test_predictions,
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
+    analytical_visualizations_sha256 = _write_reduced_json_artifact(
+        analytical_visualizations_path, analytical_visualizations_artifact,
+    )
 
     training_parameter_record = {
         "schema_version": NATIVE_CONTINUOUS_REGRESSION_TRAINING_PARAMETER_RECORD_VERSION,
@@ -4408,7 +4739,7 @@ def _train_native_continuous_regression_fixed_configuration(
         model_selection_evidence_path=None,
         model_card_input_path=_repo_relative_path(model_card_input_path),
         model_card_path=_repo_relative_path(model_card_path),
-        analytical_visualizations_path=None,
+        analytical_visualizations_path=_repo_relative_path(analytical_visualizations_path),
         serializer_name=SERIALIZER_NAME,
         serializer_version=serializer_version,
         serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
@@ -4422,7 +4753,7 @@ def _train_native_continuous_regression_fixed_configuration(
             "model_card_input_sha256": model_card_input_sha256,
             "model_card_sha256": model_card_sha256,
             "model_selection_evidence_sha256": None,
-            "analytical_visualizations_sha256": None,
+            "analytical_visualizations_sha256": analytical_visualizations_sha256,
         },
         metrics=final_test_metric_values,
         model_selection_evidence_produced=False,

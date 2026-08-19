@@ -40,16 +40,25 @@ _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2 = "analytical-visualizatio
 # Target Distribution/Feature Importance charts as v1, plus the same
 # bounded confusion_matrix shape as the external v2 profile.
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2 = "analytical-visualizations.v2"
+# Project Spec S0228: the internal (Atlas-native) continuous-regression
+# fixed-configuration visualizations profile projects the same bounded
+# Target Distribution/Feature Importance charts as v1/v2, plus a bounded
+# regression_diagnostics projection (actual_vs_predicted/
+# residual_distribution) and an explicit continuous target-distribution
+# discriminator -- never a confusion_matrix.
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3 = "analytical-visualizations.v3"
 _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
+    _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3,
 )
 _CONFUSION_MATRIX_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
 )
+_MAX_REGRESSION_DIAGNOSTIC_POINTS = 32
 _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND = "analytical_visualizations"
 _REQUIRED_CHART_IDS = ("target_distribution", "feature_importance")
 _MAX_CHART_DATA_POINTS = 64
@@ -314,6 +323,97 @@ def _bounded_confusion_matrix(visualizations: dict[str, Any]) -> dict[str, Any] 
     }
 
 
+def _is_finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _is_non_negative_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_positive_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _bounded_actual_vs_predicted(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0228: bounded public projection of the Actual vs
+    Predicted aggregate for a valid analytical-visualizations.v3 artifact.
+    Re-validates shape and bounds defensively and returns only the aggregate
+    mean points needed to draw the chart -- no method source, training-run
+    identity, or other internal fields."""
+    data = visualizations.get("actual_vs_predicted")
+    if not isinstance(data, dict):
+        return None
+    if data.get("partition_role") != "test" or data.get("reference_line") != "identity":
+        return None
+    points = data.get("points")
+    if not isinstance(points, list) or not points or len(points) > _MAX_REGRESSION_DIAGNOSTIC_POINTS:
+        return None
+    bounded_points: list[dict[str, Any]] = []
+    for point in points:
+        if not isinstance(point, dict):
+            return None
+        actual_mean = point.get("actual_mean")
+        predicted_mean = point.get("predicted_mean")
+        count = point.get("count")
+        if not _is_finite_number(actual_mean) or not _is_finite_number(predicted_mean):
+            return None
+        if not _is_positive_integer(count):
+            return None
+        bounded_points.append({
+            "actual_mean": float(actual_mean),
+            "predicted_mean": float(predicted_mean),
+            "count": count,
+        })
+    return {"points": bounded_points}
+
+
+def _bounded_residual_distribution(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0228: bounded public projection of the Residual
+    Distribution aggregate for a valid analytical-visualizations.v3
+    artifact. Re-validates shape and bounds defensively and returns only
+    the already-binned aggregate counts -- never a raw residual vector."""
+    data = visualizations.get("residual_distribution")
+    if not isinstance(data, dict):
+        return None
+    if (
+        data.get("partition_role") != "test"
+        or data.get("residual_definition") != "actual_minus_predicted"
+    ):
+        return None
+    bins = data.get("bins")
+    if not isinstance(bins, list) or not bins or len(bins) > _MAX_REGRESSION_DIAGNOSTIC_POINTS:
+        return None
+    bounded_bins: list[dict[str, Any]] = []
+    for bin_entry in bins:
+        if not isinstance(bin_entry, dict):
+            return None
+        label = bin_entry.get("label")
+        count = bin_entry.get("count")
+        if not isinstance(label, str) or not label:
+            return None
+        if not _is_non_negative_integer(count):
+            return None
+        bounded_bins.append({"label": label, "count": count})
+    return {"bins": bounded_bins}
+
+
+def _bounded_regression_diagnostics(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0228: bounded public regression_diagnostics projection,
+    only for a valid analytical-visualizations.v3 artifact. Returns None
+    (never a partially projected, unverified result) unless both
+    actual_vs_predicted and residual_distribution independently re-validate
+    -- the caller treats None as fail-closed to the unavailable state."""
+    actual_vs_predicted = _bounded_actual_vs_predicted(visualizations)
+    residual_distribution = _bounded_residual_distribution(visualizations)
+    if actual_vs_predicted is None or residual_distribution is None:
+        return None
+    return {
+        "actual_vs_predicted": actual_vs_predicted,
+        "residual_distribution": residual_distribution,
+    }
+
+
 def _safe_projection(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -391,6 +491,20 @@ def load_public_visualizations(
     confusion_matrix = _bounded_confusion_matrix(visualizations)
     if confusion_matrix is not None:
         payload["confusion_matrix"] = confusion_matrix
+
+    # Project Spec S0228: a v3 continuous-regression artifact always
+    # projects an explicit target_distribution_kind discriminator plus a
+    # bounded regression_diagnostics shape. Malformed v3 diagnostic evidence
+    # fails closed to the existing bounded unavailable state rather than
+    # partially projecting unverified diagnostics.
+    if visualizations.get("schema_version") == _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3:
+        regression_diagnostics = _bounded_regression_diagnostics(visualizations)
+        if regression_diagnostics is None:
+            raise PublicVisualizationsUnavailableError(
+                "Visualizations are not available for this release."
+            )
+        payload["target_distribution_kind"] = "continuous_histogram"
+        payload["regression_diagnostics"] = regression_diagnostics
 
     projection = _safe_projection(payload)
     if not isinstance(projection, dict):

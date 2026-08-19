@@ -2535,3 +2535,198 @@ describe("DatasetPage multiclass confusion matrix and Performance Summary filter
     expect(container.querySelectorAll(".dataset-detail-visualization")).toHaveLength(2);
   });
 });
+
+// Project Spec S0228: the public page gates RegressionDiagnostics from the
+// same release-bound result contract authority as Performance Summary, and
+// renders continuous Target Distribution as a Cartesian histogram instead
+// of the classification donut -- binary/multiclass Dataset Detail stays
+// visually unchanged.
+describe("DatasetPage continuous-regression diagnostics (Project Spec S0228)", () => {
+  const regressionResultContractAvailable = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "continuous-regression-result-semantics.v1" as const,
+      problem_type: "continuous_regression" as const,
+      result_schema_version: "continuous-regression-result.v1" as const,
+      primary_output: "predicted_value" as const,
+      output_value_kind: "continuous_numeric" as const,
+      model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+    },
+  };
+
+  const regressionVisualizationsPayload = {
+    charts: [
+      {
+        id: "target_distribution",
+        title: "Target Distribution",
+        type: "bar" as const,
+        x_label: "Strength",
+        y_label: "Rows",
+        data: [
+          { name: "10 to 20", value: 6 },
+          { name: "20 to 30", value: 4 },
+        ],
+      },
+      {
+        id: "feature_importance",
+        title: "Feature Importance",
+        type: "bar" as const,
+        x_label: "Feature",
+        y_label: "Importance",
+        data: [
+          { name: "cement", value: 0.6 },
+          { name: "water", value: 0.4 },
+        ],
+      },
+    ],
+    dataset_statistics: { instance_count: 10 },
+    target_distribution_kind: "continuous_histogram" as const,
+    regression_diagnostics: {
+      actual_vs_predicted: {
+        points: [
+          { actual_mean: 15.5, predicted_mean: 16.1, count: 6 },
+          { actual_mean: 25.5, predicted_mean: 24.3, count: 4 },
+        ],
+      },
+      residual_distribution: {
+        bins: [
+          { label: "-2 to 0", count: 4 },
+          { label: "0 to 2", count: 6 },
+        ],
+      },
+    },
+  };
+
+  function installRegressionFetchMock() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: regressionVisualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: regressionResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("renders Actual vs Predicted and Residual Distribution below the primary analytics grid for a continuous-regression release", async () => {
+    installRegressionFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Actual vs Predicted" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Residual Distribution" })).toBeInTheDocument();
+
+    const regressionSection = container.querySelector(".dataset-detail-overview__regression-diagnostics");
+    expect(regressionSection).toBeInTheDocument();
+    expect(regressionSection?.querySelector(".dataset-detail-visualization--actual-vs-predicted")).toBeInTheDocument();
+    expect(regressionSection?.querySelector(".dataset-detail-visualization--residual-distribution")).toBeInTheDocument();
+
+    // Bounded aggregate values render from the endpoint payload's own
+    // regression_diagnostics -- never fabricated or derived in the browser.
+    expect(screen.getByText("Actual 15.5 vs Predicted 16.1")).toBeInTheDocument();
+    expect(screen.getByText("n=6")).toBeInTheDocument();
+    expect(screen.getByText("-2 to 0")).toBeInTheDocument();
+    expect(screen.getByText("0 to 2")).toBeInTheDocument();
+
+    expect(screen.queryByRole("heading", { name: "Confusion Matrix" })).not.toBeInTheDocument();
+  });
+
+  it("renders continuous Target Distribution as a Cartesian histogram, not the classification donut", async () => {
+    installRegressionFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    const targetDistributionHeading = await screen.findByRole("heading", { name: "Target Distribution" });
+    const targetDistributionCard = targetDistributionHeading.closest(".atlas-card");
+    expect(targetDistributionCard).toHaveClass("dataset-detail-visualization--histogram");
+    expect(container.querySelector(".dataset-detail-visualization--donut")).not.toBeInTheDocument();
+
+    expect(screen.getByText("10 to 20")).toBeInTheDocument();
+    expect(screen.getByText("20 to 30")).toBeInTheDocument();
+  });
+
+  it("renders no regression diagnostics for a binary release", async () => {
+    installDatasetPageFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByText("Binary Classification");
+    expect(screen.queryByRole("heading", { name: "Actual vs Predicted" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Residual Distribution" })).not.toBeInTheDocument();
+  });
+
+  it("renders no regression diagnostics for a multiclass release, and Confusion Matrix stays intact", async () => {
+    const localMulticlassVisualizationsPayload = {
+      charts: [],
+      confusion_matrix: {
+        ordered_class_ids: ["class-a", "class-b", "class-c"],
+        matrix: [
+          [0.9, 0.1, 0],
+          [0.05, 0.85, 0.1],
+          [0, 0.2, 0.8],
+        ],
+        row_axis: "true_class",
+        column_axis: "predicted_class",
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: localMulticlassVisualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: multiclassResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Confusion Matrix" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Actual vs Predicted" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Residual Distribution" })).not.toBeInTheDocument();
+  });
+
+  it("does not send an additional visualizations request for the regression diagnostics section", async () => {
+    const fetchMock = installRegressionFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Actual vs Predicted" });
+    const visualizationsCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).endsWith(`/datasets/${slug}/visualizations`),
+    );
+    expect(visualizationsCalls).toHaveLength(1);
+  });
+});

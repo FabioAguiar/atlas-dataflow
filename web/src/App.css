@@ -918,6 +918,23 @@ h1 {
   grid-column: 1 / -1;
 }
 
+/*
+ * Project Spec S0228: the continuous-regression diagnostics section renders
+ * below the primary analytics grid and stacks to a single column on mobile,
+ * matching S0221's Confusion Matrix full-row rule above only in that
+ * neither rule is disturbed by the other -- Confusion Matrix and regression
+ * diagnostics never render on the same release.
+ */
+.dataset-detail-overview__regression-diagnostics {
+  display: grid;
+  gap: var(--atlas-space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.dataset-detail-overview__regression-diagnostics > * {
+  min-width: 0;
+}
+
 .dataset-detail-overview__problem-summary h3 {
   margin: 0;
 }
@@ -1348,6 +1365,26 @@ h1 {
 }
 
 /*
+ * Project Spec S0228: continuous Target Distribution renders as a Cartesian
+ * histogram + legend list instead of the classification donut.
+ */
+.target-distribution__histogram-layout {
+  display: grid;
+  gap: var(--atlas-space-4);
+  min-height: 300px;
+}
+
+.target-distribution__histogram {
+  width: 100%;
+  min-height: 220px;
+}
+
+.target-distribution__legend--histogram {
+  max-width: none;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+}
+
+/*
  * Project Spec S0124: Feature Importance renders as a compact ranked
  * horizontal-bar list (matching the reference grammar) instead of a generic
  * Cartesian chart. Bar width is normalized for visual comparison only --
@@ -1401,6 +1438,54 @@ h1 {
   .feature-importance__row {
     grid-template-columns: minmax(6rem, 8rem) 1fr auto;
   }
+}
+
+/*
+ * Project Spec S0228: Actual vs Predicted (scatter + identity reference
+ * line) and Residual Distribution (bar histogram) share the same chart +
+ * legend-list grammar as Target Distribution/Feature Importance above.
+ */
+.regression-diagnostics__scatter-layout,
+.regression-diagnostics__bar-layout {
+  display: grid;
+  gap: var(--atlas-space-4);
+  min-height: 300px;
+}
+
+.regression-diagnostics__chart {
+  width: 100%;
+  min-height: 220px;
+}
+
+.regression-diagnostics__legend {
+  display: grid;
+  gap: var(--atlas-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.regression-diagnostics__legend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--atlas-space-2);
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+}
+
+.regression-diagnostics__legend-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.regression-diagnostics__legend-value {
+  flex: 0 0 auto;
+  color: var(--atlas-color-text);
+  font-weight: 700;
 }
 
 /*
@@ -2027,6 +2112,10 @@ h1 {
 
   .dataset-detail-overview__analytics > * {
     height: 100%;
+  }
+
+  .dataset-detail-overview__regression-diagnostics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   /*

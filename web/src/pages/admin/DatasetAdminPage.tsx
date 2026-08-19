@@ -18,6 +18,7 @@ import PerformanceSummary from "../../components/DatasetDetail/PerformanceSummar
 import TargetDistribution from "../../components/DatasetDetail/TargetDistribution";
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import ConfusionMatrix from "../../components/DatasetDetail/ConfusionMatrix";
+import RegressionDiagnostics from "../../components/DatasetDetail/RegressionDiagnostics";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../../components/ResultCard/MulticlassClassificationResult";
 import ResultCardShell from "../../components/ResultCard/ResultCardShell";
@@ -540,6 +541,13 @@ type ReadOnlyData = {
   contract: SectionState<ContractPayload>;
   inferenceGuidance: SectionState<unknown>;
   resultContract: ResultContractState;
+  // Project Spec S0228: mirrors DatasetPage.tsx's release-bound continuous-
+  // regression detection, without widening ResultContractState's binary/
+  // multiclass "available" shape (out of scope: no regression result
+  // presentation configuration is added to ResultCardLivePreview). Derived
+  // once from the same raw result_contract payload classifyResultContract
+  // consumes, at the same point resultContract itself is classified.
+  isContinuousRegressionResult: boolean;
   metrics: SectionState<MetricsPayload>;
   visualizations: SectionState<unknown>;
   views: SectionState<PredictView[]>;
@@ -994,6 +1002,7 @@ const emptyReadOnlyData: ReadOnlyData = {
   contract: { status: "idle" },
   inferenceGuidance: { status: "idle" },
   resultContract: { status: "idle" },
+  isContinuousRegressionResult: false,
   metrics: { status: "idle" },
   visualizations: { status: "idle" },
   views: { status: "idle" },
@@ -1992,6 +2001,28 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
     return { status: "incompatible", message: "The active release must expose exactly three governed risk bands." };
   }
   return { status: "available", semantics: value.semantics };
+}
+
+// Project Spec S0228: reads the same raw envelope.result_contract payload
+// classifyResultContract consumes, to detect an available continuous-
+// regression release without widening ResultContractState's binary/
+// multiclass "available" shape (ResultCard/types.ts is not extended for
+// continuous_regression -- out of scope for this Project Spec). Mirrors
+// DatasetPage.tsx's local guard for the same release-bound
+// result_contract.semantics.problem_type field.
+function isAvailableContinuousRegressionResult(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.status !== "available") {
+    return false;
+  }
+  const semantics = record.semantics;
+  if (!semantics || typeof semantics !== "object") {
+    return false;
+  }
+  return (semantics as Record<string, unknown>).problem_type === "continuous_regression";
 }
 
 // Project Spec S0143: adapts the private authoring read model's richer
@@ -4412,6 +4443,15 @@ function DatasetDetailLivePreview({
   // ConfusionMatrix renderer, fed by the same already-loaded visualizations
   // payload above -- it never synthesizes or edits matrix data itself.
   const confusionMatrixContent = <ConfusionMatrix visualizations={visualizations} />;
+  // Project Spec S0228: Admin Live Preview reuses the exact same shared
+  // RegressionDiagnostics renderer, fed by the same already-loaded
+  // visualizations payload above, gated on the same private dataset-bound
+  // result-contract authority Performance Summary already uses -- it never
+  // synthesizes diagnostics from draft form data and never issues a second
+  // request.
+  const regressionDiagnosticsContent = readOnlyData.isContinuousRegressionResult ? (
+    <RegressionDiagnostics visualizations={visualizations} />
+  ) : null;
 
   // Project Spec S0143: the Dataset Detail Live Preview Inference tab now
   // owns one real, executable InferenceForm lifecycle -- the same
@@ -4475,6 +4515,7 @@ function DatasetDetailLivePreview({
       performanceFocusId={preview.performanceFocusId}
       problemSummaryBody={preview.problemSummaryBody}
       problemSummaryTitle={preview.problemSummaryTitle}
+      regressionDiagnosticsContent={regressionDiagnosticsContent}
       targetDistributionContent={targetDistributionContent}
       themePresetId={form.theme_preset}
     />
@@ -5219,6 +5260,7 @@ export default function DatasetAdminPage() {
         contract: { status: "loading" },
         inferenceGuidance: { status: "loading" },
         resultContract: { status: "loading" },
+        isContinuousRegressionResult: false,
         metrics: { status: "loading" },
         visualizations: { status: "loading" },
         views: { status: "loading" },
@@ -5243,6 +5285,7 @@ export default function DatasetAdminPage() {
           contract: { status: "unavailable", message },
           inferenceGuidance: { status: "unavailable", message },
           resultContract: { status: "transport_failure", message },
+          isContinuousRegressionResult: false,
           metrics: { status: "unavailable", message },
           visualizations: { status: "unavailable", message },
           views: { status: "unavailable", message },
@@ -5258,6 +5301,8 @@ export default function DatasetAdminPage() {
             status: "transport_failure",
             message: "message" in contractResource ? contractResource.message : "Result contract request did not complete.",
           };
+      const isContinuousRegressionResult = contractResource.status === "ready"
+        && isAvailableContinuousRegressionResult(contractResource.data.result_contract);
 
       setReadOnlyData({
         dataset: authoringResourceState<AuthoringDatasetProjection>(envelope.dataset),
@@ -5265,6 +5310,7 @@ export default function DatasetAdminPage() {
         contract: mapSection(contractResource, (data) => data.contract),
         inferenceGuidance: authoringResourceState<unknown>(envelope.inference_guidance),
         resultContract,
+        isContinuousRegressionResult,
         metrics: authoringResourceState<MetricsPayload>(envelope.metrics),
         visualizations: authoringResourceState<unknown>(envelope.visualizations),
         views: authoringResourceState<PredictView[]>(envelope.views),

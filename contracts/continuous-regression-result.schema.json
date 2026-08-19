@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/contracts/continuous-regression-result.schema.json",
+  "title": "continuous-regression-result.v1",
+  "description": "Project Spec S0226: strict persisted schema for a governed internal continuous-regression runtime prediction result. Mirrors contracts/multiclass-classification-result.schema.json's shape discipline for the S0223/S0225 continuous-regression semantics -- a single finite numeric predicted_value plus the governed model_descriptor. Never defines a class, a probability, a threshold, a decision strategy, an interpretation/risk band, a confidence field, a unit, a confidence/prediction interval, a residual, or a multi-output value -- those remain out of scope. Standard JSON Schema numeric validation does not by itself reject non-finite Python floats (NaN/Infinity); runtime code must separately enforce math.isfinite(predicted_value) before this schema is used.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "problem_type",
+    "predicted_value",
+    "model_descriptor"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "continuous-regression-result.v1"
+    },
+    "problem_type": {
+      "type": "string",
+      "const": "continuous_regression"
+    },
+    "predicted_value": {
+      "type": "number",
+      "description": "Finite numeric runtime prediction. Never rounded, bucketed, or dataset-unit-labeled by this contract."
+    },
+    "model_descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_family", "display_name"],
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "enum": [
+            "gradient_boosting",
+            "random_forest"
+          ],
+          "description": "Bounded to the Project Spec S0224/S0225 Atlas-native fixed-configuration continuous-regression model families -- continuous regression has no external fitted-model source."
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -117,6 +117,17 @@ _GOVERNED_MULTICLASS_MODEL_FAMILIES = (
     "hist_gradient_boosting",
 )
 
+# Project Spec S0224/S0225/S0226: the closed set of governed continuous-
+# regression result model families -- the two Atlas-native fixed-
+# configuration continuous-regression estimator families. Continuous
+# regression has no external fitted-model source, so this is disjoint from
+# neither _GOVERNED_RESULT_MODEL_FAMILIES nor _GOVERNED_MULTICLASS_MODEL_FAMILIES
+# by design (it happens to overlap both, but is validated independently).
+_GOVERNED_CONTINUOUS_REGRESSION_MODEL_FAMILIES = (
+    "gradient_boosting",
+    "random_forest",
+)
+
 # Project Spec S0210: deterministic, repository-local resolution for the
 # persisted multiclass-classification-result.v1 schema. Never resolved from
 # request data, bundle metadata, dataset metadata, or the network -- mirrors
@@ -125,6 +136,14 @@ _GOVERNED_MULTICLASS_MODEL_FAMILIES = (
 # be shared with tooling outside this module without duplication.
 _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent / "contracts" / "multiclass-classification-result.schema.json"
+)
+
+# Project Spec S0226: deterministic, repository-local resolution for the
+# persisted continuous-regression-result.v1 schema. Mirrors
+# _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_PATH -- never resolved from
+# request data, bundle metadata, dataset metadata, or the network.
+_CONTINUOUS_REGRESSION_RESULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parent.parent / "contracts" / "continuous-regression-result.schema.json"
 )
 
 # In-memory JSON Schema for binary-classification-result.v1. Deliberately not
@@ -574,6 +593,65 @@ def validate_multiclass_classification_result(result: Mapping[str, Any]) -> None
         ) from exc
 
 
+def _load_continuous_regression_result_schema() -> dict[str, Any]:
+    """Deterministic, repository-local schema load. Fails closed (sanitized)
+    on a missing, unreadable, or invalid schema file -- mirrors
+    ``_load_multiclass_classification_result_schema``."""
+
+    try:
+        raw = _CONTINUOUS_REGRESSION_RESULT_SCHEMA_PATH.read_text(encoding="utf-8")
+        schema = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise BundleValidationError(
+            "continuous_regression_result_schema_unavailable",
+            "Continuous regression result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+
+    if not isinstance(schema, Mapping):
+        raise BundleValidationError(
+            "continuous_regression_result_schema_unavailable",
+            "Continuous regression result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        )
+
+    return schema
+
+
+def validate_continuous_regression_result(result: Mapping[str, Any]) -> None:
+    """Strictly validate a serialized result against continuous-regression-result.v1.
+
+    Exposed as a public defense-in-depth validator, mirroring
+    ``validate_multiclass_classification_result``. The schema is read from
+    the single repository-owned persisted artifact
+    (``contracts/continuous-regression-result.schema.json``). Standard JSON
+    Schema numeric validation does not by itself reject a non-finite Python
+    float -- callers that construct a result (``_execute_continuous_regression_prediction``)
+    must separately enforce ``math.isfinite(predicted_value)`` before this
+    validator is ever reached.
+    """
+
+    schema = _load_continuous_regression_result_schema()
+    try:
+        jsonschema.validate(result, schema)
+    except jsonschema.ValidationError as exc:
+        raise BundleValidationError(
+            "invalid_continuous_regression_result",
+            "Continuous regression result failed schema validation.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+    except jsonschema.SchemaError as exc:
+        raise BundleValidationError(
+            "continuous_regression_result_schema_unavailable",
+            "Continuous regression result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+
+
 def load_joblib_sklearn_model(model_path: Path, declaration: Mapping[str, Any]) -> Any:
     """The single explicit ``joblib_sklearn_predict`` production loader strategy.
 
@@ -624,20 +702,23 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
     validates already-loaded bundle JSON metadata. Returns either
     ``{"status": "available", "semantics": {...}}`` or
     ``{"status": "unavailable", "reason": "binary_result_semantics_unavailable"}``
-    (the reason string is preserved verbatim across binary and multiclass for
-    caller compatibility -- api/main.py's own fallback hardcodes the same
-    literal string). Historical/incompatible bundles never receive invented
-    defaults. Project Spec S0210: variant-aware via the same closed
-    result-semantics discriminators used by execution dispatch; multiclass
-    never loads model bytes or exposes external evidence.
+    (the reason string is preserved verbatim across binary, multiclass, and
+    continuous regression for caller compatibility -- api/main.py's own
+    fallback hardcodes the same literal string). Historical/incompatible
+    bundles never receive invented defaults. Project Spec S0210/S0226:
+    variant-aware via the same closed result-semantics discriminators used
+    by execution dispatch; multiclass and continuous regression never load
+    model bytes or expose external evidence.
     """
 
     try:
         variant = _resolve_result_semantics_variant(declaration)
         if variant == "binary":
             semantics = _validate_binary_result_semantics(declaration)
-        else:
+        elif variant == "multiclass":
             semantics = _validate_multiclass_result_semantics(declaration)
+        else:
+            semantics = _validate_continuous_regression_result_semantics(declaration)
     except BundleValidationError:
         return {"status": "unavailable", "reason": "binary_result_semantics_unavailable"}
 
@@ -660,16 +741,29 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
             },
         }
 
+    if variant == "multiclass":
+        return {
+            "status": "available",
+            "semantics": {
+                "schema_version": semantics["schema_version"],
+                "problem_type": semantics["problem_type"],
+                "result_schema_version": semantics["result_schema_version"],
+                "classes": [dict(class_entry) for class_entry in semantics["classes"]],
+                "primary_output": semantics["primary_output"],
+                "probability_output": semantics["probability_output"],
+                "decision": dict(semantics["decision"]),
+                "model_descriptor": dict(semantics["model_descriptor"]),
+            },
+        }
+
     return {
         "status": "available",
         "semantics": {
             "schema_version": semantics["schema_version"],
             "problem_type": semantics["problem_type"],
             "result_schema_version": semantics["result_schema_version"],
-            "classes": [dict(class_entry) for class_entry in semantics["classes"]],
             "primary_output": semantics["primary_output"],
-            "probability_output": semantics["probability_output"],
-            "decision": dict(semantics["decision"]),
+            "output_value_kind": semantics["output_value_kind"],
             "model_descriptor": dict(semantics["model_descriptor"]),
         },
     }
@@ -1273,13 +1367,15 @@ def _is_string_sequence(value: Any) -> bool:
 
 
 def _resolve_result_semantics_variant(declaration: Mapping[str, Any]) -> str:
-    """Project Spec S0210: closed result-semantics dispatch resolver.
+    """Project Spec S0210/S0226: closed result-semantics dispatch resolver.
 
     Dispatches only from the governed discriminator pairs declared on
     ``result_semantics`` itself (``binary-result-semantics.v1`` +
-    ``binary_classification``, or ``multiclass-result-semantics.v1`` +
-    ``multiclass_classification``) -- never from dataset slug, number of
-    classes, model family alone, or feature names. Unknown/malformed
+    ``binary_classification``, ``multiclass-result-semantics.v1`` +
+    ``multiclass_classification``, or
+    ``continuous-regression-result-semantics.v1`` + ``continuous_regression``)
+    -- never from dataset slug, number of classes, model family alone,
+    output prediction type alone, or feature names. Unknown/malformed
     semantics fail closed with ``BundleValidationError`` rather than
     returning an unrecognized variant string.
     """
@@ -1298,6 +1394,11 @@ def _resolve_result_semantics_variant(declaration: Mapping[str, Any]) -> str:
         return "binary"
     if schema_version == "multiclass-result-semantics.v1" and problem_type == "multiclass_classification":
         return "multiclass"
+    if (
+        schema_version == "continuous-regression-result-semantics.v1"
+        and problem_type == "continuous_regression"
+    ):
+        return "continuous_regression"
 
     raise BundleValidationError(
         "unsupported_result_semantics_variant",
@@ -1311,18 +1412,32 @@ def _execute_governed_prediction(
     validated_payload: Mapping[str, Any],
     runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None,
 ) -> dict[str, Any]:
-    """Project Spec S0210: closed governed production execution dispatch.
+    """Project Spec S0210/S0226: closed governed production execution dispatch.
 
     binary semantics -> the existing, unchanged ``_execute_binary_prediction``.
-    multiclass semantics -> the new ``_execute_multiclass_prediction``.
+    multiclass semantics -> ``_execute_multiclass_prediction``.
+    continuous_regression semantics -> the new
+    ``_execute_continuous_regression_prediction``.
     Unknown semantics fail closed via ``_resolve_result_semantics_variant``
-    raising before either branch is reached.
+    raising before any branch is reached; an explicit else still fails
+    closed rather than falling through to an implicit family selector.
     """
 
     variant = _resolve_result_semantics_variant(adapter.declaration)
     if variant == "binary":
         return _execute_binary_prediction(adapter, validated_payload, runtime_feature_metadata)
-    return _execute_multiclass_prediction(adapter, validated_payload, runtime_feature_metadata)
+    if variant == "multiclass":
+        return _execute_multiclass_prediction(adapter, validated_payload, runtime_feature_metadata)
+    if variant == "continuous_regression":
+        return _execute_continuous_regression_prediction(
+            adapter, validated_payload, runtime_feature_metadata
+        )
+
+    raise BundleValidationError(
+        "unsupported_result_semantics_variant",
+        "Inference bundle result semantics variant is unsupported.",
+        field="result_semantics.schema_version",
+    )
 
 
 def _validate_binary_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]:
@@ -1875,6 +1990,217 @@ def _cross_check_multiclass_external_evidence(
             "Inference bundle external readiness decision strategy is invalid.",
             field="external_model_evidence.readiness.decision_strategy",
         )
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0226: strict continuous-regression result_semantics
+# validation, the continuous-regression counterpart to
+# _validate_binary_result_semantics / _validate_multiclass_result_semantics
+# above. Never defines a class, a probability, a threshold, a decision
+# strategy, or an interpretation/risk band -- those remain exclusively
+# binary/multiclass concepts.
+# ---------------------------------------------------------------------------
+
+
+def _validate_continuous_regression_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """Strictly validate the S0223/S0225 continuous_regression result_semantics
+    block. Never invents defaults. Also cross-checks the bundle's declared
+    ``output_schema`` (prediction_type=number, no class_labels, no
+    probability_output) and provenance (``model_provenance_origin`` must be
+    absent or ``atlas_internal_training``; ``external_model_evidence`` must
+    be absent) -- both are bundle-level JSON metadata checks that never
+    require loading the model.
+    """
+
+    semantics = declaration.get("result_semantics")
+    if not isinstance(semantics, Mapping):
+        raise BundleValidationError(
+            "missing_result_semantics",
+            "Inference bundle continuous regression result semantics are not defined.",
+            field="result_semantics",
+        )
+
+    if semantics.get("schema_version") != "continuous-regression-result-semantics.v1":
+        raise BundleValidationError(
+            "invalid_result_semantics_schema_version",
+            "Inference bundle result semantics schema version is unsupported.",
+            field="result_semantics.schema_version",
+        )
+    if semantics.get("problem_type") != "continuous_regression":
+        raise BundleValidationError(
+            "invalid_result_semantics_problem_type",
+            "Inference bundle problem type is not continuous regression.",
+            field="result_semantics.problem_type",
+        )
+    if semantics.get("result_schema_version") != "continuous-regression-result.v1":
+        raise BundleValidationError(
+            "invalid_result_semantics_result_schema_version",
+            "Inference bundle result schema version is unsupported.",
+            field="result_semantics.result_schema_version",
+        )
+    if semantics.get("primary_output") != "predicted_value":
+        raise BundleValidationError(
+            "invalid_result_semantics_primary_output",
+            "Inference bundle primary output is not predicted_value.",
+            field="result_semantics.primary_output",
+        )
+    if semantics.get("output_value_kind") != "continuous_numeric":
+        raise BundleValidationError(
+            "invalid_result_semantics_output_value_kind",
+            "Inference bundle output value kind is not continuous_numeric.",
+            field="result_semantics.output_value_kind",
+        )
+
+    model_descriptor = semantics.get("model_descriptor")
+    if not isinstance(model_descriptor, Mapping):
+        raise BundleValidationError(
+            "missing_model_descriptor",
+            "Inference bundle model descriptor is not defined.",
+            field="result_semantics.model_descriptor",
+        )
+    model_family = model_descriptor.get("model_family")
+    display_name = model_descriptor.get("display_name")
+    if model_family not in _GOVERNED_CONTINUOUS_REGRESSION_MODEL_FAMILIES:
+        raise BundleValidationError(
+            "invalid_model_family",
+            "Inference bundle model family is invalid.",
+            field="result_semantics.model_descriptor.model_family",
+        )
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise BundleValidationError(
+            "invalid_model_display_name",
+            "Inference bundle model display name is not defined.",
+            field="result_semantics.model_descriptor.display_name",
+        )
+
+    _cross_check_continuous_regression_output_schema(declaration)
+    _cross_check_continuous_regression_provenance(declaration)
+
+    return {
+        "schema_version": semantics["schema_version"],
+        "problem_type": semantics["problem_type"],
+        "result_schema_version": semantics["result_schema_version"],
+        "primary_output": semantics["primary_output"],
+        "output_value_kind": semantics["output_value_kind"],
+        "model_descriptor": {"model_family": model_family, "display_name": display_name},
+    }
+
+
+def _cross_check_continuous_regression_output_schema(declaration: Mapping[str, Any]) -> None:
+    """Runtime-relevant bundle projection cross-check: prediction_type must
+    be exactly ``number``, and neither ``class_labels`` nor
+    ``probability_output`` may be declared -- those remain exclusively
+    binary/multiclass output_schema concepts."""
+
+    output_schema = declaration.get("output_schema")
+    if not isinstance(output_schema, Mapping):
+        raise BundleValidationError(
+            "missing_output_schema",
+            "Inference bundle output schema is not defined.",
+            field="output_schema",
+        )
+    if output_schema.get("prediction_type") != "number":
+        raise BundleValidationError(
+            "invalid_output_schema_prediction_type",
+            "Inference bundle output schema prediction type must be number for continuous regression results.",
+            field="output_schema.prediction_type",
+        )
+    if "class_labels" in output_schema:
+        raise BundleValidationError(
+            "continuous_regression_output_schema_forbidden_field",
+            "Inference bundle continuous regression output schema declares a classification-only field.",
+            field="output_schema.class_labels",
+        )
+    if "probability_output" in output_schema:
+        raise BundleValidationError(
+            "continuous_regression_output_schema_forbidden_field",
+            "Inference bundle continuous regression output schema declares a classification-only field.",
+            field="output_schema.probability_output",
+        )
+
+
+def _cross_check_continuous_regression_provenance(declaration: Mapping[str, Any]) -> None:
+    """Continuous regression has no external fitted-model source: provenance
+    must be absent or explicitly ``atlas_internal_training``, and
+    ``external_model_evidence`` must never be present."""
+
+    provenance = declaration.get("model_provenance_origin")
+    if provenance is not None and provenance != "atlas_internal_training":
+        raise BundleValidationError(
+            "invalid_model_provenance_origin",
+            "Inference bundle continuous regression provenance must be Atlas-internal training.",
+            field="model_provenance_origin",
+        )
+    if "external_model_evidence" in declaration:
+        raise BundleValidationError(
+            "continuous_regression_external_model_evidence_forbidden",
+            "Inference bundle continuous regression declares forbidden external model evidence.",
+            field="external_model_evidence",
+        )
+
+
+def _execute_continuous_regression_prediction(
+    adapter: RuntimeBundleAdapter,
+    validated_payload: Mapping[str, Any],
+    runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Project Spec S0226: the continuous-regression counterpart to
+    ``_execute_binary_prediction`` / ``_execute_multiclass_prediction``.
+    Reuses ``_build_ordered_row`` (same governed feature_order/runtime
+    contract path). Requires only ``model.predict`` -- never
+    ``predict_proba``, never inspects ``model.classes_``."""
+
+    semantics = _validate_continuous_regression_result_semantics(adapter.declaration)
+
+    row = _build_ordered_row(
+        adapter.metadata.feature_order, validated_payload, runtime_feature_metadata
+    )
+
+    model = adapter.bundle
+    predict = getattr(model, "predict", None)
+    if not callable(predict):
+        raise BundleExecutionError(
+            "Inference model does not expose a continuous regression prediction interface.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    try:
+        raw_prediction = predict(row)
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
+
+    predicted_values = _as_flat_list(raw_prediction)
+    if len(predicted_values) != 1:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    raw_value = predicted_values[0]
+    if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool):
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+    predicted_value = float(raw_value)
+    if not math.isfinite(predicted_value):
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    result: dict[str, Any] = {
+        "schema_version": "continuous-regression-result.v1",
+        "problem_type": "continuous_regression",
+        "predicted_value": predicted_value,
+        "model_descriptor": dict(semantics["model_descriptor"]),
+    }
+
+    validate_continuous_regression_result(result)
+    return result
 
 
 def _build_ordered_row(

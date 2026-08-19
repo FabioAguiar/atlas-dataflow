@@ -13,6 +13,7 @@ from runtime.inference import (
     DIAGNOSTIC_RESULT_VALIDATION_FAILED,
     InferenceRuntimeError,
     validate_binary_classification_result,
+    validate_continuous_regression_result,
     validate_multiclass_classification_result,
 )
 
@@ -26,6 +27,11 @@ _MULTICLASS_EXPECTED = (
     "multiclass-result-semantics.v1",
     "multiclass_classification",
     "multiclass-classification-result.v1",
+)
+_CONTINUOUS_REGRESSION_EXPECTED = (
+    "continuous-regression-result-semantics.v1",
+    "continuous_regression",
+    "continuous-regression-result.v1",
 )
 
 
@@ -55,6 +61,9 @@ def validate_inference_result(
     elif discriminator == _MULTICLASS_EXPECTED:
         expected_result_discriminator = _MULTICLASS_EXPECTED[1:]
         validator = validate_multiclass_classification_result
+    elif discriminator == _CONTINUOUS_REGRESSION_EXPECTED:
+        expected_result_discriminator = _CONTINUOUS_REGRESSION_EXPECTED[1:]
+        validator = validate_continuous_regression_result
     else:
         raise _result_validation_failure()
 

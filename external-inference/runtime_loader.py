@@ -217,6 +217,29 @@ _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA: dict[str, Any] = {
     },
 }
 
+# Project Spec S0226: local, self-contained continuous-regression result
+# schema representation -- consistent with the canonical persisted
+# contracts/continuous-regression-result.schema.json, but this isolated
+# service is deliberately self-contained and never imports it directly
+# (different Python runtime/dependency pins than the Atlas api image).
+_CONTINUOUS_REGRESSION_RESULT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["schema_version", "problem_type", "predicted_value", "model_descriptor"],
+    "properties": {
+        "schema_version": {"const": "continuous-regression-result.v1"},
+        "problem_type": {"const": "continuous_regression"},
+        "predicted_value": {"type": "number"},
+        "model_descriptor": {
+            "type": "object", "additionalProperties": False, "required": ["model_family", "display_name"],
+            "properties": {
+                "model_family": {"type": "string", "enum": ["gradient_boosting", "random_forest"]},
+                "display_name": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
+
 
 class LoadSafeGateError(Exception):
     """Carries a closed diagnostic code and (when applicable) a runtime_compatibility_status."""
@@ -841,6 +864,41 @@ def _validate_multiclass_plan(bundle: Mapping[str, Any], common: dict[str, Any])
     )
 
 
+def _validate_continuous_regression_plan(bundle: Mapping[str, Any], common: dict[str, Any]) -> PredictionPlan:
+    """Project Spec S0226: the continuous-regression counterpart to
+    ``_validate_binary_plan`` / ``_validate_multiclass_plan``. Selected only
+    from the bundle's governed semantics pair
+    (``continuous-regression-result-semantics.v1`` + ``continuous_regression``).
+    Requires Atlas-owned provenance -- never interprets a
+    ``validated_external_fitted_model`` declaration as a regression source."""
+
+    semantics = bundle.get("result_semantics")
+    output = bundle.get("output_schema")
+    if (
+        not isinstance(semantics, Mapping)
+        or semantics.get("schema_version") != "continuous-regression-result-semantics.v1"
+        or semantics.get("problem_type") != "continuous_regression"
+        or semantics.get("result_schema_version") != "continuous-regression-result.v1"
+        or semantics.get("primary_output") != "predicted_value"
+        or semantics.get("output_value_kind") != "continuous_numeric"
+        or not isinstance(output, Mapping)
+        or output.get("prediction_type") != "number"
+        or "class_labels" in output
+        or "probability_output" in output
+    ):
+        raise _bundle_error("Governed continuous regression result semantics are invalid.")
+    provenance = bundle.get("model_provenance_origin")
+    if (provenance is not None and provenance != "atlas_internal_training") or "external_model_evidence" in bundle:
+        raise _bundle_error("Governed continuous regression provenance must be Atlas-internal training.")
+    model_descriptor = _validate_model_descriptor(semantics.get("model_descriptor"))
+    if model_descriptor["model_family"] not in ("gradient_boosting", "random_forest"):
+        raise _bundle_error("Governed continuous regression model family is invalid.")
+    return PredictionPlan(
+        result_variant="continuous_regression", output_classes=(),
+        model_descriptor=model_descriptor, **common,
+    )
+
+
 def _build_prediction_plan(bundle: Mapping[str, Any], runtime_contract: Mapping[str, Any]) -> PredictionPlan:
     input_schema = bundle.get("input_schema")
     contract_references = bundle.get("contract_references")
@@ -873,6 +931,8 @@ def _build_prediction_plan(bundle: Mapping[str, Any], runtime_contract: Mapping[
         return _validate_binary_plan(bundle, common)
     if pair == ("multiclass-result-semantics.v1", "multiclass_classification"):
         return _validate_multiclass_plan(bundle, common)
+    if pair == ("continuous-regression-result-semantics.v1", "continuous_regression"):
+        return _validate_continuous_regression_plan(bundle, common)
     raise _bundle_error("Governed result semantics variant is unavailable.")
 
 
@@ -1071,6 +1131,63 @@ def _validate_probabilities(raw_row: Any, expected_count: int) -> list[float]:
     return probabilities
 
 
+def _execute_continuous_regression_prediction(model: Any, frame: Any, plan: PredictionPlan) -> dict:
+    """Project Spec S0226: isolated continuous-regression execution. Requires
+    only ``model.predict`` -- never calls ``predict_proba``, never resolves
+    ``classes_``."""
+
+    predict = getattr(model, "predict", None)
+    if not callable(predict):
+        raise LoadSafeGateError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    try:
+        raw_prediction = predict(frame)
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise LoadSafeGateError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
+
+    try:
+        predicted_values = list(raw_prediction)
+    except TypeError as exc:
+        raise LoadSafeGateError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
+
+    if len(predicted_values) != 1:
+        raise LoadSafeGateError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    raw_value = predicted_values[0]
+    if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool):
+        raise LoadSafeGateError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+    predicted_value = float(raw_value)
+    if not math.isfinite(predicted_value):
+        raise LoadSafeGateError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    result = {
+        "schema_version": "continuous-regression-result.v1",
+        "problem_type": "continuous_regression",
+        "predicted_value": predicted_value,
+        "model_descriptor": dict(plan.model_descriptor),
+    }
+    validate_bounded_prediction_result(result)
+    return result
+
+
 def execute_prediction(model: Any, feature_payload: Mapping[str, Any], plan: PredictionPlan) -> dict:
     try:
         import pandas as pd
@@ -1097,6 +1214,9 @@ def execute_prediction(model: Any, feature_payload: Mapping[str, Any], plan: Pre
         else:
             row[feature_name] = float("nan")
     frame = pd.DataFrame([row], columns=list(plan.feature_order))
+
+    if plan.result_variant == "continuous_regression":
+        return _execute_continuous_regression_prediction(model, frame, plan)
 
     predict = getattr(model, "predict", None)
     predict_proba = getattr(model, "predict_proba", None)
@@ -1202,10 +1322,27 @@ def execute_prediction(model: Any, feature_payload: Mapping[str, Any], plan: Pre
 
 
 def validate_bounded_prediction_result(result: Mapping[str, Any]) -> None:
+    """Project Spec S0226: closed, explicit three-family bounded-result
+    dispatch. Never an ``if multiclass: ... else: binary`` fallback --
+    an unrecognized ``problem_type`` fails closed rather than silently
+    validating against binary's schema."""
+
     import jsonschema
 
+    problem_type = result.get("problem_type")
+    if problem_type == "binary_classification":
+        schema = _BINARY_CLASSIFICATION_RESULT_SCHEMA
+    elif problem_type == "multiclass_classification":
+        schema = _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA
+    elif problem_type == "continuous_regression":
+        schema = _CONTINUOUS_REGRESSION_RESULT_SCHEMA
+    else:
+        raise LoadSafeGateError(
+            "Bounded prediction result failed schema validation.",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        )
+
     try:
-        schema = _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA if result.get("problem_type") == "multiclass_classification" else _BINARY_CLASSIFICATION_RESULT_SCHEMA
         jsonschema.validate(result, schema)
     except jsonschema.ValidationError as exc:
         raise LoadSafeGateError(

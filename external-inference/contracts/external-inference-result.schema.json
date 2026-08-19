@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/external-inference/external-inference-result.schema.json",
   "title": "external_inference_result.v1",
-  "description": "Strict, versioned internal result contract returned by the isolated external-inference service. Carries status, the closed S0159 runtime-compatibility vocabulary, an existing Atlas RUNTIME_DIAGNOSTIC_CODES member or null, and a bounded binary- or multiclass-classification result or null.",
+  "description": "Strict, versioned internal result contract returned by the isolated external-inference service. Carries status, the closed S0159 runtime-compatibility vocabulary, an existing Atlas RUNTIME_DIAGNOSTIC_CODES member or null, and a bounded binary-classification, multiclass-classification, or continuous-regression result or null. Project Spec S0226 adds continuous_regression_result -- contract_version remains external_inference_result.v1.",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "status", "runtime_compatibility_status", "diagnostic_code", "result"],
@@ -53,7 +53,8 @@
       "anyOf": [
         { "type": "null" },
         { "$ref": "#/$defs/binary_classification_result" },
-        { "$ref": "#/$defs/multiclass_classification_result" }
+        { "$ref": "#/$defs/multiclass_classification_result" },
+        { "$ref": "#/$defs/continuous_regression_result" }
       ]
     }
   },
@@ -77,7 +78,8 @@
           "result": {
             "oneOf": [
               { "$ref": "#/$defs/binary_classification_result" },
-              { "$ref": "#/$defs/multiclass_classification_result" }
+              { "$ref": "#/$defs/multiclass_classification_result" },
+              { "$ref": "#/$defs/continuous_regression_result" }
             ]
           },
           "diagnostic_code": { "const": null },
@@ -228,6 +230,26 @@
       "properties": {
         "class_id": { "type": "string", "minLength": 1 },
         "display_label": { "type": "string", "minLength": 1 }
+      }
+    },
+    "continuous_regression_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0226: strict continuous-regression result, matching the canonical contracts/continuous-regression-result.schema.json shape and bounded model-family vocabulary. Never defines a class, a probability, a threshold, a decision strategy, or an interpretation/risk band.",
+      "required": ["schema_version", "problem_type", "predicted_value", "model_descriptor"],
+      "properties": {
+        "schema_version": { "const": "continuous-regression-result.v1" },
+        "problem_type": { "const": "continuous_regression" },
+        "predicted_value": { "type": "number" },
+        "model_descriptor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "display_name"],
+          "properties": {
+            "model_family": { "type": "string", "enum": ["gradient_boosting", "random_forest"] },
+            "display_name": { "type": "string", "minLength": 1 }
+          }
+        }
       }
     }
   }

@@ -490,9 +490,10 @@
     "result_semantics": {
       "oneOf": [
         { "$ref": "#/$defs/binary_result_semantics" },
-        { "$ref": "#/$defs/multiclass_result_semantics" }
+        { "$ref": "#/$defs/multiclass_result_semantics" },
+        { "$ref": "#/$defs/continuous_regression_result_semantics" }
       ],
-      "description": "Project Spec S0108: optional, backward-compatible normalized binary-result release metadata. Present only on newly generated binary bundles whose execution contract carries a reviewed, materialized result_semantics; absent (never null) for historical bundles. Project Spec S0209 closes this into a binary/multiclass union -- exactly one of binary_result_semantics or multiclass_result_semantics may match, both additionalProperties: false with disjoint required-field shapes. Strictly validated when present."
+      "description": "Project Spec S0108: optional, backward-compatible normalized binary-result release metadata. Present only on newly generated binary bundles whose execution contract carries a reviewed, materialized result_semantics; absent (never null) for historical bundles. Project Spec S0209 closes this into a binary/multiclass union -- exactly one of binary_result_semantics or multiclass_result_semantics may match, both additionalProperties: false with disjoint required-field shapes. Project Spec S0225 closes this further into a binary/multiclass/continuous-regression union by adding continuous_regression_result_semantics -- never a positive/negative class, classes, a probability output, a threshold, a decision strategy, or an interpretation/risk band. Strictly validated when present."
     },
     "model_provenance_origin": {
       "type": "string",
@@ -1050,6 +1051,62 @@
                 "hist_gradient_boosting"
               ],
               "description": "Bounded to the four Project Spec S0208 external fitted-model v2 estimator families -- multiclass bundle generation in Project Spec S0209 has no internal Atlas training source."
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Deterministic projection of model_family via a fixed code mapping. Never editable profile copy."
+            }
+          }
+        }
+      }
+    },
+    "continuous_regression_result_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0225: strict continuous-regression release result semantics, mirroring contracts/execution-contract.schema.json's Project Spec S0223 continuous_regression_result_semantics plus a deterministic model_descriptor (analogous to binary_result_semantics.model_descriptor and multiclass_result_semantics.model_descriptor). Never defines a positive/negative class, classes, a probability output, a threshold, a decision strategy, an interpretation/risk band, count/exposure/offset semantics, or a multi-output target -- those remain exclusively binary/multiclass concepts.",
+      "required": [
+        "schema_version",
+        "problem_type",
+        "result_schema_version",
+        "primary_output",
+        "output_value_kind",
+        "model_descriptor"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "continuous-regression-result-semantics.v1"
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "continuous_regression"
+        },
+        "result_schema_version": {
+          "type": "string",
+          "const": "continuous-regression-result.v1",
+          "description": "Identifies the future continuous-regression response family this release's metadata is compatible with. Project Spec S0225 does not create or implement the runtime response payload for that version -- see Project Spec S0226."
+        },
+        "primary_output": {
+          "type": "string",
+          "const": "predicted_value"
+        },
+        "output_value_kind": {
+          "type": "string",
+          "const": "continuous_numeric"
+        },
+        "model_descriptor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_family", "display_name"],
+          "properties": {
+            "model_family": {
+              "type": "string",
+              "enum": [
+                "gradient_boosting",
+                "random_forest"
+              ],
+              "description": "Bounded to the Project Spec S0224 Atlas-native fixed-configuration continuous-regression model families -- continuous-regression bundle generation in Project Spec S0225 has no external fitted-model source."
             },
             "display_name": {
               "type": "string",

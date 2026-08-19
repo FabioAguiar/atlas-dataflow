@@ -69,6 +69,15 @@ _EXTERNAL_GOVERNED_ESTIMATOR_IDENTITIES: dict[str, dict[str, str]] = {
 }
 BINARY_RESULT_SEMANTICS_SCHEMA_VERSION = "binary-result-semantics.v1"
 BINARY_CLASSIFICATION_RESULT_SCHEMA_VERSION = "binary-classification-result.v1"
+# Project Spec S0225: Atlas-native fixed-configuration continuous-regression
+# bundle generation. Bounded to exactly the S0224 v3 regression families --
+# never widened just because another classification/external family already
+# exists elsewhere in this module (e.g. hist_gradient_boosting above).
+CONTINUOUS_REGRESSION_MODEL_FAMILIES = frozenset({"gradient_boosting", "random_forest"})
+CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regression-result-semantics.v1"
+CONTINUOUS_REGRESSION_RESULT_SCHEMA_VERSION = "continuous-regression-result.v1"
+TRAINING_PARAMETER_RECORD_V3_SCHEMA_VERSION = "training-parameter-record.v3"
+TRAINING_METRICS_V3_SCHEMA_VERSION = "training-metrics.v3"
 SUPPORTED_PREDICTION_TYPES = frozenset({"number", "integer", "string", "boolean"})
 SUPPORTED_ENCODINGS = frozenset({"onehot", "ordinal", "target_encode", "binary"})
 SUPPORTED_NUMERIC_HANDLING = frozenset({"standardize", "normalize", "passthrough"})
@@ -710,6 +719,174 @@ def _resolve_internal_multiclass_result_semantics(
     }
 
 
+def _validate_continuous_regression_evidence_v3(evidence: Any, field_prefix: str) -> None:
+    """Cross-check a training-parameter-record.v3 or training-metrics.v3
+    `regression_evidence` block (Project Spec S0224) before it is trusted.
+
+    Never invents defaults -- a missing block, or any field disagreeing
+    with the governed continuous-regression identity, blocks before a
+    bundle is written.
+    """
+    if not isinstance(evidence, dict):
+        raise BundleGenerationError(
+            "missing_required_field",
+            f"{field_prefix} must be present as an object.",
+            field=field_prefix,
+        )
+    if evidence.get("problem_type") != "continuous_regression":
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            f"{field_prefix}.problem_type must be exactly continuous_regression.",
+            field=f"{field_prefix}.problem_type",
+        )
+    if evidence.get("result_semantics_schema_version") != CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            f"{field_prefix}.result_semantics_schema_version must equal "
+            f"{CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION!r}.",
+            field=f"{field_prefix}.result_semantics_schema_version",
+        )
+    if evidence.get("output_value_kind") != "continuous_numeric":
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            f"{field_prefix}.output_value_kind must be exactly continuous_numeric.",
+            field=f"{field_prefix}.output_value_kind",
+        )
+
+
+def _resolve_internal_continuous_regression_model_descriptor(
+    training_record: dict[str, Any],
+) -> dict[str, str]:
+    """training-parameter-record.v3 (Project Spec S0224, Atlas-native
+    fixed-configuration continuous regression) model_descriptor resolution.
+
+    Never trusts a positive-class or ordered-class concept -- continuous
+    regression has neither. Bounded to exactly the S0224 fixed-configuration
+    families and requires the fixed-finalization protocol evidence (no
+    model selection ever occurred) before the model_family is trusted.
+    """
+    training_parameters = _require_mapping(training_record, "training_parameters")
+    model_family = _require_string(training_parameters, "model_family")
+    if model_family not in CONTINUOUS_REGRESSION_MODEL_FAMILIES:
+        raise BundleGenerationError(
+            "unsupported_model_family",
+            "model_family is not supported by the continuous-regression "
+            "result_semantics model_descriptor mapping.",
+            field="training_parameters.model_family",
+        )
+    if training_parameters.get("selection_mode") != "fixed_configuration":
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training_parameters.selection_mode must be fixed_configuration "
+            "for a continuous-regression bundle.",
+            field="training_parameters.selection_mode",
+        )
+    if training_parameters.get("model_selection_performed") is not False:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training_parameters.model_selection_performed must be false "
+            "for a continuous-regression bundle.",
+            field="training_parameters.model_selection_performed",
+        )
+    return {
+        "model_family": model_family,
+        "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
+    }
+
+
+def _resolve_internal_continuous_regression_result_semantics(
+    training_record: dict[str, Any],
+    metrics: dict[str, Any] | None,
+    output_schema: dict[str, Any],
+    result_semantics_source: dict[str, Any],
+) -> dict[str, Any]:
+    """Project an internal (Atlas-native) continuous-regression execution
+    contract result_semantics into the bundle (Project Spec S0225). Mirrors
+    `_resolve_internal_multiclass_result_semantics`'s validation discipline,
+    but is sourced from the training-parameter-record.v3 /
+    training-metrics.v3 pair (Project Spec S0224) rather than a governed
+    classification_evidence claim -- there is no positive class, no ordered
+    class set, and no probability output for continuous regression.
+    """
+    if result_semantics_source.get("schema_version") != CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            f"result_semantics.schema_version must equal "
+            f"{CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION!r}.",
+            field="result_semantics.schema_version",
+        )
+    if result_semantics_source.get("primary_output") != "predicted_value":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.primary_output must be exactly predicted_value.",
+            field="result_semantics.primary_output",
+        )
+    if result_semantics_source.get("output_value_kind") != "continuous_numeric":
+        raise BundleGenerationError(
+            "invalid_result_semantics",
+            "result_semantics.output_value_kind must be exactly continuous_numeric.",
+            field="result_semantics.output_value_kind",
+        )
+
+    if training_record.get("schema_version") != TRAINING_PARAMETER_RECORD_V3_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "internal continuous-regression result_semantics requires a "
+            f"{TRAINING_PARAMETER_RECORD_V3_SCHEMA_VERSION!r} training parameter record.",
+            field="schema_version",
+        )
+    if training_record.get("problem_type") != "continuous_regression":
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training_parameter_record.problem_type must be exactly continuous_regression.",
+            field="problem_type",
+        )
+    _validate_continuous_regression_evidence_v3(
+        training_record.get("regression_evidence"), "training_parameter_record.regression_evidence"
+    )
+
+    if not isinstance(metrics, dict) or metrics.get("schema_version") != TRAINING_METRICS_V3_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "internal continuous-regression result_semantics requires a "
+            f"{TRAINING_METRICS_V3_SCHEMA_VERSION!r} training metrics artifact.",
+            field="training_metrics.schema_version",
+        )
+    _validate_continuous_regression_evidence_v3(
+        metrics.get("regression_evidence"), "training_metrics.regression_evidence"
+    )
+
+    if output_schema.get("prediction_type") != "number":
+        raise BundleGenerationError(
+            "invalid_output_schema",
+            "output_schema.prediction_type must be exactly number for continuous regression.",
+            field="output_schema.prediction_type",
+        )
+    if "class_labels" in output_schema:
+        raise BundleGenerationError(
+            "invalid_output_schema",
+            "output_schema.class_labels must be absent for continuous regression.",
+            field="output_schema.class_labels",
+        )
+    if "probability_output" in output_schema:
+        raise BundleGenerationError(
+            "invalid_output_schema",
+            "output_schema.probability_output must be absent for continuous regression.",
+            field="output_schema.probability_output",
+        )
+
+    model_descriptor = _resolve_internal_continuous_regression_model_descriptor(training_record)
+
+    return {
+        "schema_version": CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": "continuous_regression",
+        "result_schema_version": CONTINUOUS_REGRESSION_RESULT_SCHEMA_VERSION,
+        "primary_output": "predicted_value",
+        "output_value_kind": "continuous_numeric",
+        "model_descriptor": model_descriptor,
+    }
+
+
 def _resolve_result_semantics(
     execution_contract: dict[str, Any],
     training_record: dict[str, Any],
@@ -717,6 +894,7 @@ def _resolve_result_semantics(
     *,
     model_selection: dict[str, Any] | None = None,
     decision_threshold_override: Any = None,
+    metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Project the execution contract's result_semantics into the bundle, or None.
 
@@ -776,10 +954,28 @@ def _resolve_result_semantics(
             training_record, output_schema, result_semantics_source
         )
 
+    # Project Spec S0225: an internal (Atlas-native) continuous-regression
+    # bundle dispatches to its own dedicated resolver, sourced from a
+    # training-parameter-record.v3 / training-metrics.v3 pair. There is no
+    # external fitted-model continuous-regression path -- `metrics` is only
+    # ever supplied by the internal build path, so a caller reaching here
+    # without it (i.e. the external path) fails closed inside the resolver
+    # rather than fabricating regression evidence.
+    if result_semantics_source.get("problem_type") == "continuous_regression":
+        return _resolve_internal_continuous_regression_result_semantics(
+            training_record, metrics, output_schema, result_semantics_source
+        )
+
+    # Explicit closed dispatch (Project Spec S0225): any problem_type other
+    # than the three governed families above -- including a future
+    # count_regression, multi_output_regression, forecasting, survival,
+    # anomaly, or ranking value -- fails closed here rather than being
+    # silently accepted or misrouted into the binary path below.
     if result_semantics_source.get("problem_type") != "binary_classification":
         raise BundleGenerationError(
             "invalid_result_semantics",
-            "result_semantics.problem_type must be exactly binary_classification.",
+            "result_semantics.problem_type must be exactly binary_classification, "
+            "multiclass_classification, or continuous_regression.",
             field="result_semantics.problem_type",
         )
 
@@ -1172,10 +1368,19 @@ def _build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     result_semantics = _resolve_result_semantics(
-        execution_contract, training_record, bundle["output_schema"]
+        execution_contract, training_record, bundle["output_schema"], metrics=metrics
     )
     if result_semantics is not None:
         bundle["result_semantics"] = result_semantics
+        # Project Spec S0225 Desired Change H: a generated continuous-
+        # regression bundle explicitly declares atlas_internal_training
+        # provenance. Historical binary/multiclass bundles keep omitting
+        # model_provenance_origin -- unchanged backward-compatible default
+        # behavior (contracts/inference-bundle.schema.json's schema
+        # condition already treats omission the same as
+        # atlas_internal_training).
+        if result_semantics.get("problem_type") == "continuous_regression":
+            bundle["model_provenance_origin"] = "atlas_internal_training"
 
     _validate_bundle_schema(bundle, schema_path)
     return bundle

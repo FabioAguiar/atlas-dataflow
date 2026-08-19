@@ -52,6 +52,11 @@ _METRIC_ALIASES: dict[str, str] = {
     "f1_weighted": "f1_weighted",
     "precision_macro": "precision_macro",
     "recall_macro": "recall_macro",
+    # Project Spec S0227: bounded explicit continuous-regression metric ids,
+    # each projected 1:1 -- never aliased into a classification metric id.
+    "r2": "r2",
+    "mae": "mae",
+    "rmse": "rmse",
 }
 
 # Project Spec S0191: schema_version discriminator for the external
@@ -64,6 +69,9 @@ _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION_V2 = "training-metrics.external-fi
 # Project Spec S0216: the internal (Atlas-native) multiclass fixed-
 # configuration training-metrics profile, dispatched on explicitly.
 _INTERNAL_MULTICLASS_METRICS_SCHEMA_VERSION_V2 = "training-metrics.v2"
+# Project Spec S0227: the internal (Atlas-native) continuous-regression
+# fixed-configuration training-metrics profile, dispatched on explicitly.
+_INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION_V3 = "training-metrics.v3"
 
 # Top-level keys that are never themselves metric declarations, used only
 # by the bounded flat top-level fallback (case 3 below) to avoid mistaking
@@ -477,6 +485,55 @@ def _project_internal_multiclass_metrics_v2(payload: dict) -> dict:
     return {"evaluation": evaluation}
 
 
+def _project_internal_continuous_regression_metrics_v3(payload: dict) -> dict:
+    """Project Spec S0227: public projector for training-metrics.v3
+    (internal Atlas-native continuous-regression fixed-configuration
+    training). Mirrors `_project_internal_multiclass_metrics_v2`'s
+    partition-selection discipline (completed final_test_evaluation when
+    present, otherwise validation_evaluation -- this internal profile never
+    carries a cross_validation_summary at all, so there is no train-
+    partition candidate to ever accidentally select). Only the bounded
+    r2/mae/rmse regression metric ids are ever projected -- unknown metric
+    names remain omitted, and non-finite/boolean values are never accepted.
+    The internal schema does not designate a primary metric, so
+    primary_metric_id is never fabricated and remains None. No
+    regression_evidence internals, training_run_identity, path/hash
+    references, raw predictions, or residual rows are ever projected."""
+    final_test = payload.get("final_test_evaluation")
+    validation = payload.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    split_name = None
+    sample_size = None
+    entries: list[tuple[Any, Any, bool]] = []
+    if isinstance(selected, dict):
+        split_name = _optional_str(selected.get("partition_role"))
+        sample_size = _optional_int(selected.get("row_count"))
+        raw_metrics = selected.get("metrics")
+        if isinstance(raw_metrics, list):
+            entries = [
+                (item.get("name"), item.get("value"), False)
+                for item in raw_metrics
+                if isinstance(item, dict)
+            ]
+
+    metrics, metric_order = _project_metric_entries(entries)
+
+    return {
+        "evaluation": {
+            "split_name": split_name,
+            "sample_size": sample_size,
+            "primary_metric_id": None,
+            "metrics": metrics,
+            "metric_order": metric_order,
+        }
+    }
+
+
 def _project_public_metrics(payload: dict) -> dict:
     if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION:
         return _project_external_fitted_model_metrics(payload)
@@ -484,6 +541,8 @@ def _project_public_metrics(payload: dict) -> dict:
         return _project_external_fitted_model_metrics_v2(payload)
     if payload.get("schema_version") == _INTERNAL_MULTICLASS_METRICS_SCHEMA_VERSION_V2:
         return _project_internal_multiclass_metrics_v2(payload)
+    if payload.get("schema_version") == _INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION_V3:
+        return _project_internal_continuous_regression_metrics_v3(payload)
     metrics_block = payload.get("metrics")
     if isinstance(metrics_block, dict) and isinstance(metrics_block.get("primary_metric"), dict):
         return _project_training_metrics_v1(payload)

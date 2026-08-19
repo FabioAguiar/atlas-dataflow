@@ -475,10 +475,19 @@ _CAPABILITY_SUPPORT_STATUS_OPERATIONAL = "current_supported"
 _SUPPORTED_CAPABILITY_IDENTITIES = frozenset({
     "binary-predictive-classification",
     "multiclass-predictive-classification",
+    # Project Spec S0227: recognized capability identity only. The real
+    # committed continuous-predictive-regression.v1 profile still declares
+    # support_status: requires_future_contract_evolution, so
+    # _verify_capability_binding's own support_status check below still
+    # rejects a real regression candidate regardless of this set's
+    # membership -- only a synthetic support_status: current_supported
+    # profile clone (test-only) reaches acceptance.
+    "continuous-predictive-regression",
 })
 _CAPABILITY_EXPECTED_RESULT_PROBLEM_TYPE = {
     "binary-predictive-classification": "binary_classification",
     "multiclass-predictive-classification": "multiclass_classification",
+    "continuous-predictive-regression": "continuous_regression",
 }
 
 
@@ -999,6 +1008,24 @@ def validate_candidate(
                     json_artifacts.get("metrics"),
                 )
             )
+        elif (
+            isinstance(_native_result_semantics, dict)
+            and _native_result_semantics.get("problem_type") == "continuous_regression"
+        ):
+            # Project Spec S0227: no visualizations compatibility check is
+            # dispatched here (desired change G) -- the existing generic
+            # required-role/schema validation above continues to govern the
+            # visualizations role for a regression candidate unchanged.
+            rejection_reasons.extend(
+                _internal_native_continuous_regression_predictive_bundle_compatibility(
+                    _native_predictive_bundle_data
+                )
+            )
+            rejection_reasons.extend(
+                _internal_native_continuous_regression_metrics_public_projection_check(
+                    json_artifacts.get("metrics"), _native_predictive_bundle_data
+                )
+            )
 
     # --- Model artifact / predictive bundle cross-consistency (Project Spec
     # S0107). The model is binary and never JSON-parsed itself; only its
@@ -1414,6 +1441,189 @@ def _external_multiclass_predictive_bundle_compatibility(
 # bundles never carry one).
 _INTERNAL_METRICS_SCHEMA_VERSION_V2 = "training-metrics.v2"
 _INTERNAL_VISUALIZATIONS_SCHEMA_VERSION_V2 = "analytical-visualizations.v2"
+
+# ---------------------------------------------------------------------------
+# Internal native continuous-regression public-release compatibility
+# (Project Spec S0227)
+#
+# Mirrors the internal native multiclass compatibility discipline directly
+# above, for a native (Atlas-internal) continuous-regression candidate's
+# predictive bundle and training-metrics.v3 artifact. Gated exclusively on
+# the predictive bundle's own declared result_semantics.problem_type ==
+# continuous_regression while NOT a validated_external_fitted_model
+# candidate -- historical/internal binary and multiclass candidates never
+# reach these functions, so their acceptance behavior is unchanged. There is
+# deliberately no external-fitted-model regression branch (Project Spec
+# S0227 desired change E) and no regression-visualization compatibility
+# function (desired change G): the existing generic required-role/schema
+# validation continues to govern the visualizations role for a regression
+# candidate unchanged, so a real regression release remains incomplete
+# until a future spec defines analytical-visualizations.v3.
+# ---------------------------------------------------------------------------
+
+_INTERNAL_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regression-result-semantics.v1"
+_INTERNAL_CONTINUOUS_REGRESSION_RESULT_SCHEMA_VERSION = "continuous-regression-result.v1"
+_INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION = "training-metrics.v3"
+_INTERNAL_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_EVIDENCE_SCHEMA_VERSION = (
+    "continuous-regression-result-semantics.v1"
+)
+# Project Spec S0227 Desired Change E: the exact, bounded classification-only
+# result_semantics keys that must never appear on a continuous-regression
+# bundle -- their presence (regardless of value) is rejected. "decision" is
+# included whole (not just decision.threshold) because the real
+# continuous_regression_result_semantics schema (additionalProperties:
+# false) never carries a decision object at all -- any decision strategy,
+# including argmax, is classification-only semantics here.
+_CONTINUOUS_REGRESSION_FORBIDDEN_RESULT_SEMANTICS_KEYS = (
+    "positive_class",
+    "negative_class",
+    "classes",
+    "class_probabilities",
+    "decision",
+)
+_PUBLIC_PROJECTABLE_CONTINUOUS_REGRESSION_METRIC_IDS = frozenset({"r2", "mae", "rmse"})
+
+
+def _continuous_regression_bundle_has_classification_semantics(
+    predictive_bundle_data: dict, result_semantics: dict, output_schema: dict | None
+) -> bool:
+    for key in _CONTINUOUS_REGRESSION_FORBIDDEN_RESULT_SEMANTICS_KEYS:
+        if key in result_semantics:
+            return True
+    if result_semantics.get("probability_output") is True:
+        return True
+    if "educational_threshold" in predictive_bundle_data or "operational_threshold" in predictive_bundle_data:
+        return True
+    if isinstance(output_schema, dict) and (
+        output_schema.get("probability_output") is True or "class_labels" in output_schema
+    ):
+        return True
+    return False
+
+
+def _internal_native_continuous_regression_predictive_bundle_compatibility(
+    predictive_bundle_data: dict | None,
+) -> list[dict]:
+    if not isinstance(predictive_bundle_data, dict):
+        return []
+    result_semantics = predictive_bundle_data.get("result_semantics")
+    output_schema = predictive_bundle_data.get("output_schema")
+
+    if (
+        not isinstance(result_semantics, dict)
+        or result_semantics.get("schema_version") != _INTERNAL_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION
+        or result_semantics.get("problem_type") != "continuous_regression"
+        or result_semantics.get("result_schema_version") != _INTERNAL_CONTINUOUS_REGRESSION_RESULT_SCHEMA_VERSION
+        or result_semantics.get("primary_output") != "predicted_value"
+        or result_semantics.get("output_value_kind") != "continuous_numeric"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native continuous-regression predictive bundle is missing compatible "
+            "continuous-regression result_semantics required for public release compatibility.",
+            "predictive_bundle",
+            "native_continuous_regression_result_semantics_missing",
+        )]
+
+    if _continuous_regression_bundle_has_classification_semantics(
+        predictive_bundle_data, result_semantics, output_schema
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native continuous-regression predictive bundle must not carry classification-only "
+            "semantics (class/probability/threshold/decision fields).",
+            "predictive_bundle",
+            "native_continuous_regression_classification_semantics_present",
+        )]
+
+    if not isinstance(output_schema, dict) or output_schema.get("prediction_type") != "number":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native continuous-regression output_schema.prediction_type must be 'number'.",
+            "predictive_bundle",
+            "native_continuous_regression_prediction_type_mismatch",
+        )]
+
+    if predictive_bundle_data.get("model_provenance_origin") != "atlas_internal_training":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native continuous-regression predictive bundle must declare "
+            "model_provenance_origin=atlas_internal_training.",
+            "predictive_bundle",
+            "native_continuous_regression_provenance_mismatch",
+        )]
+
+    return []
+
+
+def _internal_native_continuous_regression_metrics_public_projection_check(
+    metrics_data: dict | None, predictive_bundle_data: dict | None = None
+) -> list[dict]:
+    """Require a native continuous-regression candidate's metrics artifact to
+    declare training-metrics.v3, agree on regression_evidence, and contain
+    at least one finite, non-boolean, projectable regression metric (r2,
+    mae, rmse) in its selected public evaluation partition (completed
+    final_test_evaluation when present, otherwise validation_evaluation --
+    training rows are never selected)."""
+    if not isinstance(metrics_data, dict):
+        return []
+    if metrics_data.get("schema_version") != _INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            f"Native continuous-regression candidate metrics artifact does not declare "
+            f"{_INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION!r}.",
+            "metrics",
+            "native_regression_metrics_schema_version_missing",
+        )]
+
+    regression_evidence = metrics_data.get("regression_evidence")
+    if (
+        not isinstance(regression_evidence, dict)
+        or regression_evidence.get("problem_type") != "continuous_regression"
+        or regression_evidence.get("result_semantics_schema_version")
+        != _INTERNAL_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_EVIDENCE_SCHEMA_VERSION
+        or regression_evidence.get("output_value_kind") != "continuous_numeric"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native continuous-regression candidate metrics artifact regression_evidence does "
+            "not agree with the required continuous-regression evidence contract.",
+            "metrics",
+            "native_regression_metrics_evidence_mismatch",
+        )]
+
+    final_test = metrics_data.get("final_test_evaluation")
+    validation = metrics_data.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    raw_metrics = selected.get("metrics") if isinstance(selected, dict) else None
+    has_projectable_metric = False
+    if isinstance(raw_metrics, list):
+        for item in raw_metrics:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if (
+                isinstance(name, str)
+                and name.strip().lower() in _PUBLIC_PROJECTABLE_CONTINUOUS_REGRESSION_METRIC_IDS
+                and _is_finite_numeric(item.get("value"))
+            ):
+                has_projectable_metric = True
+                break
+
+    if not has_projectable_metric:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native continuous-regression candidate metrics selected public evaluation "
+            "partition yields no supported public metric.",
+            "metrics",
+            "native_regression_metrics_no_public_metric",
+        )]
+    return []
 
 
 def _internal_native_multiclass_predictive_bundle_compatibility(

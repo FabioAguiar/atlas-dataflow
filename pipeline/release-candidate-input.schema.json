@@ -251,13 +251,15 @@
                 "contract_version": {
                   "enum": [
                     "training-parameter-record.v1",
+                    "training-parameter-record.v2",
+                    "training-parameter-record.v3",
                     "training-parameter-record.external-fitted-model.v1"
                   ]
                 }
               }
             }
           ],
-          "description": "Project Spec S0180: source_stage/contract_version are M24/training-parameter-record.v1 for internal training, or manual_governed_input/training-parameter-record.external-fitted-model.v1 for a validated external fitted model (Project Spec S0157). Discriminated by the referenced artifact's own declared schema_version, never by dataset_slug."
+          "description": "Project Spec S0180: source_stage/contract_version are M24/training-parameter-record.v1 for internal training, or manual_governed_input/training-parameter-record.external-fitted-model.v1 for a validated external fitted model (Project Spec S0157). Discriminated by the referenced artifact's own declared schema_version, never by dataset_slug. Project Spec S0227 additively admits the internal M24 training-parameter-record.v2 (Project Spec S0216, native multiclass) and training-parameter-record.v3 (native continuous-regression) vocabulary without removing v1 or changing the external fitted-model vocabulary above."
         },
         "model_artifact": {
           "allOf": [
@@ -296,13 +298,15 @@
                 "contract_version": {
                   "enum": [
                     "training-metrics.v1",
+                    "training-metrics.v2",
+                    "training-metrics.v3",
                     "training-metrics.external-fitted-model.v1"
                   ]
                 }
               }
             }
           ],
-          "description": "Project Spec S0180: source_stage/contract_version are M24/training-metrics.v1 for internal training, or manual_governed_input/training-metrics.external-fitted-model.v1 for a validated external fitted model (Project Spec S0157)."
+          "description": "Project Spec S0180: source_stage/contract_version are M24/training-metrics.v1 for internal training, or manual_governed_input/training-metrics.external-fitted-model.v1 for a validated external fitted model (Project Spec S0157). Project Spec S0227 additively admits the internal M24 training-metrics.v2 (Project Spec S0216, native multiclass) and training-metrics.v3 (native continuous-regression) vocabulary without removing v1 or changing the external fitted-model vocabulary above."
         },
         "model_card": {
           "allOf": [
@@ -350,12 +354,16 @@
                   "const": "M24"
                 },
                 "contract_version": {
-                  "const": "analytical-visualizations.v1"
+                  "enum": [
+                    "analytical-visualizations.v1",
+                    "analytical-visualizations.v2",
+                    "analytical-visualizations.v3"
+                  ]
                 }
               }
             }
           ],
-          "description": "Project Spec S0128: required, release-bound analytical visualizations artifact reference (Target Distribution and Feature Importance), produced during governed training."
+          "description": "Project Spec S0128: required, release-bound analytical visualizations artifact reference (Target Distribution and Feature Importance), produced during governed training. Project Spec S0227 additively admits the analytical-visualizations.v2 (Project Spec S0216, native multiclass) contract-version vocabulary already produced by governed training, and reserves analytical-visualizations.v3 as future continuous-regression contract-version vocabulary only -- no v3 visualization schema/content is defined by this spec, and the visualization role remains required (never optional) for every provenance."
         },
         "inference_bundle": {
           "allOf": [

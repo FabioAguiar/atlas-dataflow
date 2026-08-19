@@ -429,7 +429,13 @@ type PublicationProjectionState =
 type DraftState =
   | { status: "idle"; message: string }
   | { status: "loading" }
-  | { status: "ready"; draftExists: boolean; profile: ProfileDraft | null }
+  // Project Spec S0220: datasetSlug is the resolved dataset identity this
+  // ready state actually belongs to -- set from the fetch's own request
+  // closure, never inferred from the current selectedSlug at read time, so a
+  // consumer can tell a genuinely current ready state apart from residue
+  // still visible from the previously selected dataset (see the rebind
+  // effect and boundPredictViewId below).
+  | { status: "ready"; draftExists: boolean; profile: ProfileDraft | null; datasetSlug: string }
   | { status: "saved"; profile: ProfileDraft }
   | { status: "invalid"; errors: DraftError[] }
   | { status: "unavailable"; message: string };
@@ -4923,6 +4929,13 @@ export default function DatasetAdminPage() {
   // sufficient because this repo's test fetch mocks do not honor
   // AbortSignal.
   const publicationProjectionRequestRef = useRef(0);
+  // Project Spec S0220: guards the profile-draft/hydration fetch below
+  // against a late response from a superseded dataset selection applying
+  // itself (mirrors customizationRequestRef/authoringContextRequestRef --
+  // this repo's test fetch mocks do not honor AbortSignal). Previously this
+  // effect had no such guard, so a slow prior-dataset response could
+  // overwrite an already-settled later selection's draftState/draftForm.
+  const profileDraftRequestRef = useRef(0);
   const loadedDatasetSlugRef = useRef("");
   // Project Spec S0121: own request-id/background-refresh tracking for the
   // dedicated authoring-context effect below, kept separate from
@@ -5027,6 +5040,14 @@ export default function DatasetAdminPage() {
   }, [refreshRevision]);
 
   useEffect(() => {
+    // Project Spec S0220: bump the request identity on every effect run,
+    // regardless of which branch below is taken (mirrors the customization
+    // effect's own established pattern) -- this invalidates any still-in-
+    // flight previous request so a late response from a superseded
+    // selection can never apply itself after the identity has moved on.
+    const requestId = profileDraftRequestRef.current + 1;
+    profileDraftRequestRef.current = requestId;
+
     if (!selectedSlug) {
       setDraftForm(emptyDraftForm());
       setCustomizationEditorState(emptyCustomizationEditorState);
@@ -5088,6 +5109,9 @@ export default function DatasetAdminPage() {
       signal: controller.signal,
     })
       .then((response) => {
+        if (profileDraftRequestRef.current !== requestId) {
+          return null;
+        }
         if (response.status === 404) {
           setDraftState({
             status: "unavailable",
@@ -5107,7 +5131,7 @@ export default function DatasetAdminPage() {
         }>;
       })
       .then((data) => {
-        if (!data) {
+        if (!data || profileDraftRequestRef.current !== requestId) {
           return;
         }
         const canonicalDate = canonicalDateBySlugRef.current[selectedSlug] ?? "";
@@ -5131,7 +5155,12 @@ export default function DatasetAdminPage() {
         if (!isBackgroundRefresh || !hasDirtyFields) {
           setDraftForm(formFromProfile(hydrationProfile, selectedSlug));
         }
-        setDraftState({ status: "ready", draftExists: data.draft_exists, profile: hydrationProfile });
+        setDraftState({
+          status: "ready",
+          draftExists: data.draft_exists,
+          profile: hydrationProfile,
+          datasetSlug: selectedSlug,
+        });
         if (publishedProfile) {
           setPublicationState(() => ({
             status: "idle",
@@ -5141,7 +5170,7 @@ export default function DatasetAdminPage() {
         }
       })
       .catch((err: Error) => {
-        if (err.name !== "AbortError") {
+        if (err.name !== "AbortError" && profileDraftRequestRef.current === requestId) {
           setDraftState({ status: "unavailable", message: "Content could not be loaded. Check API reachability." });
         }
       });
@@ -5272,11 +5301,31 @@ export default function DatasetAdminPage() {
   // draft form state -- it never calls the API and never touches the
   // published snapshot, so it participates in the existing dirty-state and
   // Publish changes flow exactly like any other manual field edit.
+  //
+  // Project Spec S0220: "ready" status alone is not enough to trust either
+  // resource. React commits the render that changes selectedSlug before the
+  // sibling reset effects above run, so on that first transitional render
+  // this effect can still observe draftState/readOnlyData exactly as they
+  // were for the *previously* selected dataset (still "ready"), with
+  // predictViewRebindAppliedSlugRef already cleared for the new selectedSlug
+  // -- evaluating the guard there would consume it from the wrong dataset's
+  // stale views/profile and permanently skip the real rebind once the
+  // current dataset's own data actually arrives. draftState.datasetSlug (set
+  // from the fetch's own request closure, not read back from selectedSlug)
+  // and readOnlyData.dataset's own dataset_slug are real resolved content
+  // identities, not a timing inference, so comparing them against the
+  // current selectedSlug is what actually distinguishes current data from
+  // same-status residue.
   useEffect(() => {
-    if (!selectedSlug || draftState.status !== "ready") {
+    if (!selectedSlug || draftState.status !== "ready" || draftState.datasetSlug !== selectedSlug) {
       return;
     }
-    if (readOnlyData.views.status !== "ready") {
+    const currentViewsDataset = stateValue(readOnlyData.dataset);
+    if (
+      readOnlyData.views.status !== "ready" ||
+      !currentViewsDataset ||
+      currentViewsDataset.dataset_slug !== selectedSlug
+    ) {
       return;
     }
     if (predictViewRebindAppliedSlugRef.current === selectedSlug) {
@@ -5298,7 +5347,7 @@ export default function DatasetAdminPage() {
       }
       return { ...current, bound_predict_view_id: nextBinding };
     });
-  }, [selectedSlug, draftState.status, readOnlyData.views]);
+  }, [selectedSlug, draftState, readOnlyData.views, readOnlyData.dataset]);
 
   const datasets = state.status === "ready" ? state.datasets : [];
   const selectedDataset = useMemo(
@@ -5437,7 +5486,17 @@ export default function DatasetAdminPage() {
     setDraftForm((current) => ({ ...current, [key]: value }));
   }
 
-  const boundPredictViewId = draftForm.bound_predict_view_id;
+  // Project Spec S0220: on the transitional render right after selectedSlug
+  // changes (before the reset effects above have applied), draftForm can
+  // still hold the previously selected dataset's bound_predict_view_id.
+  // Every consumer below (the customization bootstrap effect and the Live
+  // Preview inference simulate action) must never issue a request that
+  // pairs the current selectedSlug with a stale, cross-dataset view id, so
+  // this only ever resolves to a real value once draftState has confirmed
+  // its ready content actually belongs to selectedSlug -- treated as
+  // unbound (never the possibly-stale draftForm value) otherwise.
+  const boundPredictViewId =
+    draftState.status === "ready" && draftState.datasetSlug === selectedSlug ? draftForm.bound_predict_view_id : "";
 
   // Project Spec S0061: Publish changes sends the current form payload
   // directly to the direct publish boundary -- no persisted profile-draft is

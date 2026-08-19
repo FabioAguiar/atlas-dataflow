@@ -31,6 +31,19 @@
       },
       "review_status": "ready",
       "dataset_detail_updated_at": "2026-08-11T21:48:52Z"
+    },
+    {
+      "dataset_slug": "dry-bean",
+      "active_release": "release-20260818-002",
+      "public_metadata": {
+        "title": "Dry Bean",
+        "summary": "Predict the Dry Bean class from the governed morphological input features.",
+        "domain": "general",
+        "visibility": "public",
+        "tags": []
+      },
+      "review_status": "needs_review",
+      "dataset_detail_updated_at": "2026-08-17T10:41:12Z"
     }
   ]
 }

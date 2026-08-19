@@ -8339,3 +8339,468 @@ describe("Dry Bean native Predict View authoring bootstrap (Project Spec S0218)"
     });
   });
 });
+
+describe("Dataset-switch-safe Predict View rebinding and inference form bootstrap (Project Spec S0220)", () => {
+  const dryBeanSlug = "dry-bean";
+  const dryBeanViewId = "dry-bean-classification";
+  // The real 16 governed Dry Bean public-contract feature names (Project
+  // Specs S0216/S0218), matching the S0218 describe block's own fixture.
+  const dryBeanFields = [
+    "Area",
+    "Perimeter",
+    "MajorAxisLength",
+    "MinorAxisLength",
+    "AspectRatio",
+    "Eccentricity",
+    "ConvexArea",
+    "EquivDiameter",
+    "Extent",
+    "Solidity",
+    "Roundness",
+    "Compactness",
+    "ShapeFactor1",
+    "ShapeFactor2",
+    "ShapeFactor3",
+    "ShapeFactor4",
+  ];
+
+  beforeEach(() => {
+    Element.prototype.setPointerCapture = vi.fn();
+    document.elementFromPoint = vi.fn(() => null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function telcoAuthoringContextEnvelope(): Record<string, unknown> {
+    return {
+      dataset_slug: datasetSlug,
+      active_release: "release-20260619-001",
+      dataset: {
+        status: "ready",
+        data: {
+          dataset_slug: datasetSlug,
+          title: "Telco Customer Churn",
+          display_title: null,
+          summary: "Customer churn prediction dataset",
+          domain: "telecom",
+          tags: ["telecom"],
+          active_release: "release-20260619-001",
+          publication_status: "ready",
+        },
+      },
+      context: {
+        status: "ready",
+        data: {
+          title: "Telco Customer Churn",
+          summary: "Baseline churn problem summary",
+          domain: "telecom",
+          tags: ["telecom"],
+          problem_type: "binary_classification",
+          prediction_target_description: "Customer churn",
+        },
+      },
+      contract: {
+        status: "ready",
+        data: {
+          contract: {
+            schema_version: "1.0.0",
+            features: [
+              { name: "tenure", label: "Tenure", input_type: "number", optional: true, display_order: 1 },
+              { name: "MonthlyCharges", label: "Monthly charges", input_type: "number", optional: true, display_order: 2 },
+            ],
+          },
+          result_contract: {
+            status: "available",
+            semantics: {
+              schema_version: "binary-result-semantics.v1",
+              problem_type: "binary_classification",
+              result_schema_version: "binary-classification-result.v1",
+              primary_output: "positive_class_probability",
+              positive_class: { class_id: "churn", event_label: "Customer churn" },
+              negative_class: { class_id: "retained" },
+              decision: { threshold: 0.6 },
+              interpretation: {
+                preset: "risk",
+                bands: [
+                  { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+                  { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+                  { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+                ],
+              },
+              model_descriptor: { model_family: "linear", display_name: "Retention model" },
+            },
+          },
+        },
+      },
+      inference_guidance: { status: "ready", data: [] },
+      metrics: { status: "ready", data: { evaluation: { metrics: { auc_roc: 0.93, accuracy: 0.86 } } } },
+      visualizations: { status: "ready", data: {} },
+      views: { status: "ready", data: [{ view_id: viewId, display: { title: "Churn risk overview" } }] },
+    };
+  }
+
+  function dryBeanAuthoringContextEnvelope(): Record<string, unknown> {
+    return {
+      dataset_slug: dryBeanSlug,
+      active_release: "release-20260818-101",
+      dataset: {
+        status: "ready",
+        data: {
+          dataset_slug: dryBeanSlug,
+          title: "Dry Bean",
+          display_title: null,
+          summary: "Predict the Dry Bean class from the governed morphological input features.",
+          domain: "general",
+          tags: ["dry-bean", "classification", "multiclass"],
+          active_release: "release-20260818-101",
+          publication_status: "needs_review",
+        },
+      },
+      context: {
+        status: "ready",
+        data: {
+          title: "Dry Bean",
+          summary: "Predict the Dry Bean class from the governed morphological input features.",
+          domain: "general",
+          tags: ["dry-bean", "classification", "multiclass"],
+          problem_type: "multiclass_classification",
+          prediction_target_description: "Dry bean class",
+        },
+      },
+      contract: {
+        status: "ready",
+        data: {
+          contract: {
+            schema_version: "1.0.0",
+            features: dryBeanFields.map((name, index) => ({
+              name,
+              label: name,
+              input_type: "number",
+              optional: false,
+              display_order: index + 1,
+            })),
+          },
+          result_contract: {
+            status: "available",
+            semantics: {
+              schema_version: "multiclass-result-semantics.v1",
+              problem_type: "multiclass_classification",
+              result_schema_version: "multiclass-classification-result.v1",
+              primary_output: "predicted_class",
+              probability_output: "class_probabilities",
+              classes: [
+                { class_id: "SEKER", display_label: "Seker" },
+                { class_id: "BARBUNYA", display_label: "Barbunya" },
+                { class_id: "BOMBAY", display_label: "Bombay" },
+                { class_id: "CALI", display_label: "Cali" },
+                { class_id: "DERMASON", display_label: "Dermason" },
+                { class_id: "HOROZ", display_label: "Horoz" },
+                { class_id: "SIRA", display_label: "Sira" },
+              ],
+              decision: { strategy: "argmax" },
+              model_descriptor: { model_family: "hist_gradient_boosting", display_name: "Dry Bean classifier" },
+            },
+          },
+        },
+      },
+      inference_guidance: { status: "ready", data: [] },
+      metrics: { status: "ready", data: { evaluation: { metrics: { f1_macro: 0.91, accuracy: 0.92 } } } },
+      visualizations: { status: "ready", data: {} },
+      views: { status: "ready", data: [{ view_id: dryBeanViewId, display: { title: "Dry Bean Classification" } }] },
+    };
+  }
+
+  function telcoPublicationState(): Record<string, unknown> {
+    return {
+      dataset_slug: datasetSlug,
+      active_release: "release-20260619-001",
+      visibility: {
+        configured_visible: true,
+        source: "explicit_record",
+        record_status: "valid",
+        updated_at: "2026-07-03T17:35:00Z",
+        effective_visible: true,
+      },
+      review: { status: "ready", approval_allowed: false, approval_blockers: [] },
+      snapshot: {
+        status: "current_release",
+        exists: true,
+        published_at: "2026-07-11T14:00:00Z",
+        active_release_at_publish_time: "release-20260619-001",
+        matches_active_release: true,
+      },
+      public_access: { reachable: true, blockers: [], observations: [] },
+    };
+  }
+
+  function dryBeanPublicationState(): Record<string, unknown> {
+    return {
+      dataset_slug: dryBeanSlug,
+      active_release: "release-20260818-101",
+      visibility: {
+        configured_visible: true,
+        source: "explicit_record",
+        record_status: "valid",
+        updated_at: "2026-08-18T00:00:00Z",
+        effective_visible: false,
+      },
+      review: { status: "needs_review", approval_allowed: false, approval_blockers: ["dataset_needs_review"] },
+      snapshot: {
+        status: "missing",
+        exists: false,
+        published_at: null,
+        active_release_at_publish_time: null,
+        matches_active_release: null,
+      },
+      public_access: { reachable: false, blockers: ["dataset_needs_review"], observations: [] },
+    };
+  }
+
+  // Real production topology (Project Spec S0220 Section I): the public
+  // /datasets listing carries only Telco (Dry Bean is not yet publicly
+  // visible), while the private /admin/datasets listing carries both. Both
+  // datasets' profile-draft/authoring-context routes can be armed to defer
+  // their *second* response (i.e. a later re-selection, never the first
+  // load that establishes genuine readiness) so a late-response variant can
+  // prove a stale prior-dataset response cannot alter an already-settled
+  // later selection.
+  function installDatasetSwitchFetchMock() {
+    let telcoAuthoringContextVisits = 0;
+    let telcoProfileDraftVisits = 0;
+    let deferTelcoAuthoringContextOnNextRevisit = false;
+    let deferTelcoProfileDraftOnNextRevisit = false;
+    let releaseDeferredTelcoAuthoringContext: (() => void) | null = null;
+    let releaseDeferredTelcoProfileDraft: (() => void) | null = null;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: datasetSlug,
+              title: "Telco Customer Churn",
+              display_title: null,
+              summary: "Customer churn prediction dataset",
+              domain: "telecom",
+              tags: ["telecom"],
+              active_release: "release-20260619-001",
+              publication_status: "ready",
+              last_updated: "2026-06-19T12:00:00Z",
+            },
+            {
+              dataset_slug: dryBeanSlug,
+              title: "Dry Bean",
+              display_title: null,
+              summary: "Predict the Dry Bean class from the governed morphological input features.",
+              domain: "general",
+              tags: ["dry-bean", "classification", "multiclass"],
+              active_release: "release-20260818-101",
+              publication_status: "needs_review",
+              last_updated: "2026-08-18T00:00:00Z",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: datasetSlug,
+              title: "Telco Customer Churn",
+              summary: "Customer churn prediction dataset",
+              domain: "telecom",
+              visibility: "public",
+              tags: ["telecom"],
+              problem_type: "binary_classification",
+            },
+          ],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+        telcoAuthoringContextVisits += 1;
+        if (deferTelcoAuthoringContextOnNextRevisit && telcoAuthoringContextVisits === 2) {
+          return new Promise<MockResponse>((resolve) => {
+            releaseDeferredTelcoAuthoringContext = () => resolve(jsonResponse(telcoAuthoringContextEnvelope()));
+          });
+        }
+        return jsonResponse(telcoAuthoringContextEnvelope());
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/authoring-context`)) {
+        return jsonResponse(dryBeanAuthoringContextEnvelope());
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
+        telcoProfileDraftVisits += 1;
+        if (deferTelcoProfileDraftOnNextRevisit && telcoProfileDraftVisits === 2) {
+          return new Promise<MockResponse>((resolve) => {
+            releaseDeferredTelcoProfileDraft = () =>
+              resolve(jsonResponse({ draft_exists: true, profile: publicProfile }));
+          });
+        }
+        return jsonResponse({ draft_exists: true, profile: publicProfile });
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/profile-draft`)) {
+        // Project Spec S0220 Section I: no saved profile binding for Dry
+        // Bean yet.
+        return jsonResponse({ draft_exists: false, profile: null });
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`)) {
+        return jsonResponse(telcoPublicationState());
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/publication-state`)) {
+        return jsonResponse(dryBeanPublicationState());
+      }
+      if (url.endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`)) {
+        return jsonResponse({
+          customization_exists: true,
+          compatibility_status: "compatible",
+          customization,
+          errors: [],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/views/${dryBeanViewId}/customization`)) {
+        // Project Spec S0220 Section I: no stored customization for Dry Bean
+        // yet -- the absent-customization clean contract-derived draft path.
+        return jsonResponse({
+          customization_exists: false,
+          compatibility_status: "absent",
+          customization: null,
+          errors: [],
+        });
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return Object.assign(fetchMock, {
+      armDeferredTelcoRevisit: () => {
+        deferTelcoAuthoringContextOnNextRevisit = true;
+        deferTelcoProfileDraftOnNextRevisit = true;
+      },
+      releaseDeferredTelcoResponses: () => {
+        releaseDeferredTelcoAuthoringContext?.();
+        releaseDeferredTelcoProfileDraft?.();
+      },
+    });
+  }
+
+  async function waitForTelcoReadyAndBound() {
+    await loadDraftAndCustomization();
+    // Confirms Telco's own compatible churn-risk-overview customization
+    // (tenure/MonthlyCharges) actually loaded -- i.e. Telco is genuinely
+    // ready and bound, not merely selected -- before any switch below.
+    expect(await screen.findByRole("button", { name: "Drag field Tenure" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Drag field Monthly charges" })).toBeInTheDocument();
+  }
+
+  async function selectDataset(label: string) {
+    const selector = await screen.findByRole("button", { name: "Dataset" });
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole("option", { name: label }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: `Dataset — ${label}` })).toBeInTheDocument());
+  }
+
+  function assertSettledDryBeanState() {
+    // Item J / acceptance 3-16, 19-26: identity-consistent rebinding, no
+    // manual selector for one eligible view, and the correct (never
+    // churn-risk-overview) Dry Bean customization request.
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(screen.queryByText("No predict view bound")).not.toBeInTheDocument();
+    const noSubgroupZone = screen.getByLabelText("No subgroup fields");
+    for (const fieldName of dryBeanFields) {
+      expect(within(noSubgroupZone).getByText(fieldName)).toBeInTheDocument();
+    }
+    expect(
+      screen.getByText("No subgroups defined. Visible fields without a subgroup render in No subgroup below."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add subgroup" })).toBeInTheDocument();
+    const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+    expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
+  }
+
+  it("rebinds to dry-bean-classification after switching from a fully ready, bound Telco selection, never requesting churn-risk-overview for Dry Bean", async () => {
+    const fetchMock = installDatasetSwitchFetchMock();
+    renderAdminPage();
+
+    await waitForTelcoReadyAndBound();
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`),
+      ),
+    ).toBe(true);
+
+    await selectDataset("Dry Bean");
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await screen.findByLabelText("No subgroup fields");
+
+    assertSettledDryBeanState();
+
+    // Acceptance 15/16: the correct Dry Bean customization GET occurred and
+    // the forbidden churn-risk-overview pairing never did.
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).endsWith(`/admin/datasets/${dryBeanSlug}/views/${dryBeanViewId}/customization`),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).endsWith(`/admin/datasets/${dryBeanSlug}/views/${viewId}/customization`),
+      ),
+    ).toBe(false);
+    // Acceptance 17/18: automatic bootstrap issues no PUT of any kind.
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith(`/admin/datasets/${dryBeanSlug}/views/${dryBeanViewId}/customization`) &&
+          init?.method === "PUT",
+      ),
+    ).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/admin/datasets/${dryBeanSlug}/publish`)),
+    ).toBe(false);
+  });
+
+  it("keeps settled Dry Bean state correct when a stale Telco profile-draft/authoring-context response resolves after a later re-selection (late-response variant)", async () => {
+    const fetchMock = installDatasetSwitchFetchMock();
+    renderAdminPage();
+
+    await waitForTelcoReadyAndBound();
+    await selectDataset("Dry Bean");
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await screen.findByLabelText("No subgroup fields");
+    assertSettledDryBeanState();
+
+    // Re-select Telco -- a genuine new request identity, now armed to defer
+    // its *second* profile-draft/authoring-context responses (the first,
+    // already-resolved visit is what established genuine readiness above).
+    fetchMock.armDeferredTelcoRevisit();
+    await selectDataset("Telco Customer Churn");
+
+    // Switch back to Dry Bean before releasing Telco's still-pending second
+    // response -- Dry Bean must settle again from its own real data.
+    await selectDataset("Dry Bean");
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+    await screen.findByLabelText("No subgroup fields");
+    assertSettledDryBeanState();
+
+    // Now release the stale Telco responses -- Project Spec S0220 Section H:
+    // they must never restore Telco's view list, contract, or profile
+    // binding under the currently selected Dry Bean identity.
+    fetchMock.releaseDeferredTelcoResponses();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole("heading", { name: "Dataset — Dry Bean" })).toBeInTheDocument();
+    assertSettledDryBeanState();
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).endsWith(`/admin/datasets/${dryBeanSlug}/views/${viewId}/customization`),
+      ),
+    ).toBe(false);
+  });
+});

@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "dry-bean",
+  "published_at": "2026-08-19T10:41:12Z",
+  "active_release_at_publish_time": "release-20260818-002",
+  "profile": {
+    "display": {
+      "title": "Dry Bean",
+      "release_date_label": "2026-08-17",
+      "date_format": "dd/mm/yyyy",
+      "canonical_name_fallback": true
+    },
+    "home_card": {
+      "background_image_ref": null,
+      "primary_metric_key": null
+    },
+    "performance_focus": {
+      "focus_id": "balanced_classification",
+      "highlighted_score_id": "balanced_accuracy",
+      "visible_scores": [
+        {
+          "score_id": "balanced_accuracy",
+          "display_label": "Balanced Accuracy",
+          "value": "0",
+          "value_source": "manual",
+          "order": 0
+        },
+        {
+          "score_id": "accuracy",
+          "display_label": "Accuracy",
+          "value": "0",
+          "value_source": "manual",
+          "order": 1
+        },
+        {
+          "score_id": "f1_macro",
+          "display_label": "F1 Macro",
+          "value": "0",
+          "value_source": "manual",
+          "order": 2
+        }
+      ]
+    },
+    "theme": {
+      "preset": "atlas-green"
+    },
+    "inference_presentation": {
+      "bound_predict_view_id": "dry-bean-classification"
+    },
+    "result_card": {
+      "schema_version": "multiclass-result-presentation.v1",
+      "predicted_class_label": "Predicted class",
+      "class_probability_distribution_label": "Class probability distribution",
+      "model_section_label": "Model"
+    }
+  },
+  "source_draft_schema_version": "1.0.0"
+}

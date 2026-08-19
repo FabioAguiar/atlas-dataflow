@@ -1668,7 +1668,11 @@ describe("DatasetPage Release hint and monotonic score presentation (Project Spe
     expect(ddText.indexOf("↑")).toBeLessThan(ddText.indexOf("↓"));
 
     expect(within(score).getByText("Highlighted")).toBeInTheDocument();
-    expect(within(score).getByText("Higher is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(score.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Higher is better",
+    );
     // "unfavorable" contains "favorable" as a substring, so this single
     // assertion proves neither visible word is rendered.
     expect(score).not.toHaveTextContent("favorable");
@@ -2420,11 +2424,19 @@ describe("DatasetPage performance metric optimization orientation (Project Spec 
 
     const rocScore = (await screen.findByText("ROC-AUC")).closest(".performance-summary__score") as HTMLElement;
     expect(within(rocScore).getByText("Highlighted")).toBeInTheDocument();
-    expect(within(rocScore).getByText("Higher is better")).toBeInTheDocument();
+    expect(within(rocScore).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(rocScore.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Higher is better",
+    );
 
     const logLossScore = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
     expect(within(logLossScore).queryByText("Highlighted")).not.toBeInTheDocument();
-    expect(within(logLossScore).getByText("Lower is better")).toBeInTheDocument();
+    expect(within(logLossScore).queryByText("Lower is better")).not.toBeInTheDocument();
+    expect(logLossScore.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Lower is better",
+    );
 
     const mysteryScore = screen.getByText("Mystery Metric").closest(".performance-summary__score") as HTMLElement;
     expect(mysteryScore.querySelector(".performance-summary__score-orientation")).not.toBeInTheDocument();

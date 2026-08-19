@@ -57,14 +57,18 @@ function formatScore(value: number): string {
 }
 
 /**
- * Project Spec S0203: the monotonic ↑/↓ pair rendered directly beside the
- * score value -- always in ↑-then-↓ order regardless of direction, with only
- * the favorable/unfavorable color class swapped between higher-is-better and
- * lower-is-better. The glyphs are aria-hidden because the visible "Higher is
- * better"/"Lower is better" text in ScoreDirection carries the same meaning
- * accessibly; no visible "favorable"/"unfavorable" word is ever rendered.
- * Renders nothing for a target-based metric, which keeps its neutral
- * "Closer to X is better" guidance instead.
+ * Project Spec S0203/S0221: the monotonic ↑/↓ pair rendered directly beside
+ * the score value -- always in ↑-then-↓ order regardless of direction, with
+ * only the favorable/unfavorable color class swapped between
+ * higher-is-better and lower-is-better; no visible "favorable"/"unfavorable"
+ * word is ever rendered. As of S0221 there is no visible "Higher is
+ * better"/"Lower is better" line anymore, so the two glyphs stay
+ * individually aria-hidden while the wrapping group itself carries the
+ * orientation as a single accessible name (role="img" + aria-label) --
+ * that keeps the meaning available to assistive technology, never relying
+ * on color alone, without the hidden glyphs also being announced and
+ * duplicating it. Renders nothing for a target-based metric, which keeps
+ * its neutral "Closer to X is better" guidance instead.
  */
 function ScoreArrows({ optimization }: { optimization: OptimizationSemantics }) {
   if (optimization.kind === "target_is_better") {
@@ -72,8 +76,9 @@ function ScoreArrows({ optimization }: { optimization: OptimizationSemantics }) 
   }
 
   const upIsFavorable = optimization.kind === "higher_is_better";
+  const orientationLabel = upIsFavorable ? "Higher is better" : "Lower is better";
   return (
-    <span className="performance-summary__score-arrows">
+    <span className="performance-summary__score-arrows" role="img" aria-label={orientationLabel}>
       <span
         className={`performance-summary__score-orientation-arrow performance-summary__score-orientation-arrow--${upIsFavorable ? "favorable" : "unfavorable"}`}
         aria-hidden="true"
@@ -91,25 +96,23 @@ function ScoreArrows({ optimization }: { optimization: OptimizationSemantics }) 
 }
 
 /**
- * Project Spec S0200/S0203: the explanatory-only orientation text for a
- * score tile, sourced exclusively from the shared performanceMetricMetadata
- * module so public rendering can never diverge from Admin's. Rendered as a
- * secondary line below the score value, never relying on the arrow pair or
- * color alone.
+ * Project Spec S0200/S0203/S0221: the explanatory target-based orientation
+ * text for a score tile, sourced exclusively from the shared
+ * performanceMetricMetadata module so public rendering can never diverge
+ * from Admin's. As of S0221, a monotonic (higher/lower-is-better) score no
+ * longer renders a visible secondary line here at all -- that orientation
+ * is carried only by ScoreArrows' accessible group label above. Only the
+ * neutral target-based guidance still renders visibly, never relying on the
+ * arrow pair or color alone.
  */
 function ScoreDirection({ optimization }: { optimization: OptimizationSemantics }) {
-  if (optimization.kind === "target_is_better") {
-    return (
-      <p className="performance-summary__score-orientation performance-summary__score-orientation--target">
-        <span aria-hidden="true">◎</span> Closer to {optimization.target} is better
-      </p>
-    );
+  if (optimization.kind !== "target_is_better") {
+    return null;
   }
 
-  const higherIsBetter = optimization.kind === "higher_is_better";
   return (
-    <p className="performance-summary__score-orientation performance-summary__score-orientation--monotonic">
-      {higherIsBetter ? "Higher is better" : "Lower is better"}
+    <p className="performance-summary__score-orientation performance-summary__score-orientation--target">
+      <span aria-hidden="true">◎</span> Closer to {optimization.target} is better
     </p>
   );
 }

@@ -7793,7 +7793,12 @@ describe("Performance metric optimization semantics (Project Spec S0200)", () =>
     expect(screen.getByLabelText("Precision value")).toHaveValue("0.77");
   });
 
-  it("gives Admin and Live Preview the same shared-metadata orientation text for a visible score", async () => {
+  // Project Spec S0221: Metadata & Card authoring guidance keeps its visible
+  // "Lower is better" line (it is a configuration aid, out of this spec's
+  // scope), while Live Preview -- rendering the shared, simplified
+  // PerformanceSummary -- shows the same orientation only as an accessible
+  // group label on its arrow pair, never as visible text.
+  it("keeps Admin Metadata & Card authoring guidance visible while Live Preview's shared Performance Summary omits the visible line but keeps the orientation accessible", async () => {
     installFetchMock();
     renderAdminPage();
     await openMetadataCardTab();
@@ -7805,7 +7810,11 @@ describe("Performance metric optimization semantics (Project Spec S0200)", () =>
     fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
 
     const previewScore = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
-    expect(within(previewScore).getByText("Lower is better")).toBeInTheDocument();
+    expect(within(previewScore).queryByText("Lower is better")).not.toBeInTheDocument();
+    expect(previewScore.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Lower is better",
+    );
     // The public shared component never shows an opposing favorable/
     // unfavorable arrow pair -- only the single-arrow public orientation.
     expect(previewScore.querySelectorAll(".performance-metric-orientation__arrow")).toHaveLength(0);

@@ -907,6 +907,17 @@ h1 {
   min-width: 0;
 }
 
+/*
+ * Project Spec S0221: the Confusion Matrix card always spans the full
+ * analytics grid row whenever it is rendered, keyed to its own card
+ * identity (not child position/count) so it applies identically across the
+ * single-column mobile grid and every wider multi-column tablet/desktop
+ * grid below without a dataset-slug or class-count special case.
+ */
+.dataset-detail-overview__analytics > .dataset-detail-visualization--confusion-matrix {
+  grid-column: 1 / -1;
+}
+
 .dataset-detail-overview__problem-summary h3 {
   margin: 0;
 }
@@ -1226,13 +1237,16 @@ h1 {
 }
 
 /*
- * Project Spec S0203: the monotonic arrow pair renders immediately beside
- * the score value (see .performance-summary__score dd above) -- both
+ * Project Spec S0203/S0221: the monotonic arrow pair renders immediately
+ * beside the score value (see .performance-summary__score dd above) -- both
  * directions always shown together, ↑ then ↓, each carrying only its
  * favorable/unfavorable color semantic (never a visible "favorable"/
- * "unfavorable" word) so direction is explained instead by the visible
- * "Higher is better"/"Lower is better" text in
- * .performance-summary__score-orientation.
+ * "unfavorable" word). As of S0221 the pair's wrapper carries the
+ * higher/lower-is-better meaning as an accessible-only group label (see
+ * ScoreArrows in PerformanceSummary.tsx) instead of a visible secondary
+ * line -- .performance-summary__score-orientation below is now used only
+ * for the target-based "Closer to X is better" guidance, which stays
+ * visible.
  */
 .performance-summary__score-arrows {
   display: inline-flex;

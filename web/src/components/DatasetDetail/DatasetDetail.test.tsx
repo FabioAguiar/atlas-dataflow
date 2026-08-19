@@ -548,6 +548,41 @@ describe("Dataset Detail tab panel hidden-state CSS contract (S0140)", () => {
   });
 });
 
+// Project Spec S0221: the Confusion Matrix card must span the complete
+// analytics grid row whenever it is rendered, keyed to its own card
+// identity -- never to child ordinal/last-child position, dataset slug, or
+// class count -- so it applies identically at every grid width without a
+// special case.
+describe("Confusion Matrix full analytics-grid-row CSS contract (Project Spec S0221)", () => {
+  const appCss = readFileSync(`${process.cwd()}/src/App.css`, "utf8");
+
+  function ruleBody(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = appCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+    expect(match, `expected a CSS rule for selector "${selector}"`).not.toBeNull();
+    return match![1];
+  }
+
+  it("spans the confusion matrix card across the full analytics grid row, keyed to the card's own identity class", () => {
+    expect(
+      ruleBody(".dataset-detail-overview__analytics > .dataset-detail-visualization--confusion-matrix"),
+    ).toMatch(/grid-column:\s*1\s*\/\s*-1/);
+  });
+
+  it("does not key the full-row rule to child ordinal, last-child position, or a fixed class count", () => {
+    expect(appCss).not.toMatch(
+      /:last-child:nth-child\(\d+\)\s*\{\s*grid-column:\s*1\s*\/\s*-1[^}]*\}\s*[^{]*confusion-matrix/,
+    );
+    expect(appCss).not.toContain(".dataset-detail-visualization--confusion-matrix:nth-child");
+    expect(appCss).not.toContain(".dataset-detail-visualization--confusion-matrix:last-child");
+  });
+
+  it("preserves the confusion matrix's own internal horizontal overflow fallback", () => {
+    expect(ruleBody(".confusion-matrix__scroll")).toMatch(/overflow-x:\s*auto/);
+    expect(ruleBody(".confusion-matrix__table")).toMatch(/width:\s*100%/);
+  });
+});
+
 describe("Dataset Detail semantic chart colors", () => {
   it("passes scoped primary, secondary, and grid variables to both active chart surfaces", () => {
     const visualizations = {
@@ -836,13 +871,16 @@ describe("DatasetDetailSurface exact tab card ownership (S0138)", () => {
   });
 });
 
-// Project Spec S0200: PerformanceSummary consumes the shared
+// Project Spec S0200/S0221: PerformanceSummary consumes the shared
 // performanceMetricMetadata module for both its performance_focus.visible_scores
-// path and its normalizeEvaluation(metrics) fallback path, rendering a
-// single-line, explanatory-only optimization orientation that never becomes
-// a second independent direction map, never persists into public profiles
-// (this component receives only presentation props), and never invents a
-// direction for an unknown score.
+// path and its normalizeEvaluation(metrics) fallback path, exposing an
+// explanatory-only optimization orientation that never becomes a second
+// independent direction map, never persists into public profiles (this
+// component receives only presentation props), and never invents a
+// direction for an unknown score. As of S0221 a monotonic (higher/lower)
+// direction is exposed only as an accessible group label on the arrow pair
+// -- never a visible line -- while a target-based direction still renders
+// its neutral "Closer to X is better" line visibly.
 describe("PerformanceSummary optimization orientation (Project Spec S0200)", () => {
   it("renders only the favorable-direction hint for a higher-is-better score (ROC-AUC 0.8402)", () => {
     render(
@@ -859,8 +897,12 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     );
 
     const score = screen.getByText("ROC-AUC").closest(".performance-summary__score") as HTMLElement;
-    expect(within(score).getByText("Higher is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
     expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
+    expect(score.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Higher is better",
+    );
     expect(score).toHaveTextContent("0.8402");
   });
 
@@ -879,8 +921,12 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     );
 
     const score = screen.getByText("Brier Score").closest(".performance-summary__score") as HTMLElement;
-    expect(within(score).getByText("Lower is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
     expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(score.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Lower is better",
+    );
     expect(score).toHaveTextContent("0.1394");
   });
 
@@ -966,14 +1012,23 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     const prAucScore = screen.getByText("PR-AUC").closest(".performance-summary__score") as HTMLElement;
     expect(within(prAucScore).getByText("Highlighted")).toBeInTheDocument();
     expect(prAucScore).toHaveTextContent("0.6413");
-    expect(within(prAucScore).getByText("Higher is better")).toBeInTheDocument();
+    expect(within(prAucScore).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(prAucScore.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Higher is better",
+    );
 
     const rocAucScore = screen.getByText("ROC-AUC").closest(".performance-summary__score") as HTMLElement;
     expect(within(rocAucScore).queryByText("Highlighted")).not.toBeInTheDocument();
     expect(rocAucScore).toHaveTextContent("0.8402");
   });
 
-  it("expresses direction as visible accessible text, with the arrow glyph aria-hidden rather than color-only (log_loss 0.4207)", () => {
+  // Project Spec S0221: monotonic direction is expressed only as an
+  // accessible group label on the arrow pair -- the individual glyphs stay
+  // aria-hidden (so they are never announced a second time), and no visible
+  // "Lower is better" text is rendered anywhere in the score tile, never
+  // relying on color alone.
+  it("expresses direction only as an accessible group label on the arrow pair, with individual glyphs aria-hidden and no visible text (log_loss 0.4207)", () => {
     render(
       <PerformanceSummary
         metrics={{}}
@@ -990,24 +1045,35 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     const score = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
     const arrow = within(score).getByText("↓");
     expect(arrow).toHaveAttribute("aria-hidden", "true");
-    expect(score).toHaveTextContent("Lower is better");
+    expect(score).not.toHaveTextContent("Lower is better");
+    const arrows = score.querySelector(".performance-summary__score-arrows") as HTMLElement;
+    expect(arrows).toHaveAttribute("role", "img");
+    expect(arrows).toHaveAttribute("aria-label", "Lower is better");
   });
 
   it("also applies the shared optimization metadata when rendering from normalizeEvaluation(metrics) directly, preserving existing normalized labels/values", () => {
     render(<PerformanceSummary metrics={{ auc_roc: 0.87, log_loss: 0.42 }} />);
 
     const rocScore = screen.getByText("AUC ROC").closest(".performance-summary__score") as HTMLElement;
-    expect(within(rocScore).getByText("Higher is better")).toBeInTheDocument();
+    expect(within(rocScore).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(rocScore.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Higher is better",
+    );
 
     const logLossScore = screen.getByText("Log Loss").closest(".performance-summary__score") as HTMLElement;
-    expect(within(logLossScore).getByText("Lower is better")).toBeInTheDocument();
+    expect(within(logLossScore).queryByText("Lower is better")).not.toBeInTheDocument();
+    expect(logLossScore.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Lower is better",
+    );
   });
 
-  // Project Spec S0201/S0203: a monotonic public score always shows both
-  // the favorable and unfavorable direction, each carrying the correct
-  // favorable/unfavorable class -- direction is explained by the visible
-  // "Higher/Lower is better" text, never by a visible "favorable"/
-  // "unfavorable" word or by color alone.
+  // Project Spec S0201/S0203/S0221: a monotonic public score always shows
+  // both the favorable and unfavorable direction, each carrying the correct
+  // favorable/unfavorable class -- direction is explained by the arrow
+  // pair's accessible group label, never by a visible "Higher/Lower is
+  // better" line, a visible "favorable"/"unfavorable" word, or color alone.
   it("shows both up and down arrows, correctly classed favorable/unfavorable, for a higher-is-better score (ROC-AUC)", () => {
     render(
       <PerformanceSummary
@@ -1027,7 +1093,11 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     const unfavorable = score.querySelector(".performance-summary__score-orientation-arrow--unfavorable")!;
     expect(favorable).toHaveTextContent("↑");
     expect(unfavorable).toHaveTextContent("↓");
-    expect(within(score).getByText("Higher is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(score.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Higher is better",
+    );
     // "unfavorable" contains "favorable" as a substring, so this single
     // assertion proves neither visible word is rendered.
     expect(score).not.toHaveTextContent("favorable");
@@ -1052,7 +1122,11 @@ describe("PerformanceSummary optimization orientation (Project Spec S0200)", () 
     const unfavorable = score.querySelector(".performance-summary__score-orientation-arrow--unfavorable")!;
     expect(favorable).toHaveTextContent("↓");
     expect(unfavorable).toHaveTextContent("↑");
-    expect(within(score).getByText("Lower is better")).toBeInTheDocument();
+    expect(within(score).queryByText("Lower is better")).not.toBeInTheDocument();
+    expect(score.querySelector(".performance-summary__score-arrows")).toHaveAttribute(
+      "aria-label",
+      "Lower is better",
+    );
     expect(score).not.toHaveTextContent("favorable");
   });
 

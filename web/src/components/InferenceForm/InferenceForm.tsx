@@ -2,14 +2,17 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import ResultCardShell from "../ResultCard/ResultCardShell";
 import BinaryClassificationResult from "../ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../ResultCard/MulticlassClassificationResult";
+import ContinuousRegressionResult from "../ResultCard/ContinuousRegressionResult";
 import {
+  GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION,
   GENERIC_MULTICLASS_RESULT_PRESENTATION,
   GENERIC_RESULT_PRESENTATION,
   isAvailableBinaryResultContract,
+  isAvailableContinuousRegressionResultContract,
   isAvailableMulticlassResultContract,
   projectBinaryClassificationResult,
   resultForContract,
-  type ClassificationResult,
+  type ResultData,
   type ResultContract,
   type ResultPresentation,
 } from "../ResultCard/types";
@@ -148,7 +151,7 @@ export type PredictViewCustomization = {
 type SubmissionState =
   | { status: "idle" }
   | { status: "submitting" }
-  | { status: "success"; data: ClassificationResult }
+  | { status: "success"; data: ResultData }
   | { status: "error"; message: string };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -694,11 +697,14 @@ export default function InferenceForm({
   );
   const binaryContractAvailable = isAvailableBinaryResultContract(resultContract);
   const multiclassContractAvailable = isAvailableMulticlassResultContract(resultContract);
-  const contractAvailable = !previewMode && (binaryContractAvailable || multiclassContractAvailable);
+  const continuousRegressionContractAvailable = isAvailableContinuousRegressionResultContract(resultContract);
+  const contractAvailable = !previewMode && (binaryContractAvailable || multiclassContractAvailable || continuousRegressionContractAvailable);
   const effectiveBinaryPresentation = resultPresentation?.schema_version === "binary-result-presentation.v1"
     ? resultPresentation : GENERIC_RESULT_PRESENTATION;
   const effectiveMulticlassPresentation = resultPresentation?.schema_version === "multiclass-result-presentation.v1"
     ? resultPresentation : GENERIC_MULTICLASS_RESULT_PRESENTATION;
+  const effectiveContinuousRegressionPresentation = resultPresentation?.schema_version === "continuous-regression-result-presentation.v1"
+    ? resultPresentation : GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION;
 
   // Project Spec S0141: the local zero-probability initial projection is
   // built through the same shared technical-result boundary the real
@@ -907,8 +913,10 @@ export default function InferenceForm({
         <ResultCardShell state="success">
           {submission.data.problem_type === "binary_classification" ? (
             <BinaryClassificationResult result={submission.data} presentation={effectiveBinaryPresentation} />
-          ) : (
+          ) : submission.data.problem_type === "multiclass_classification" ? (
             <MulticlassClassificationResult result={submission.data} presentation={effectiveMulticlassPresentation} />
+          ) : (
+            <ContinuousRegressionResult result={submission.data} presentation={effectiveContinuousRegressionPresentation} />
           )}
         </ResultCardShell>
       )}

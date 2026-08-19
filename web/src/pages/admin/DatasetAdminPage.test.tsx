@@ -3554,6 +3554,143 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0229: continuous-regression Result Card authoring --
+  // release-derived family (never operator-selectable), read-only technical
+  // summary, editable fields limited to predicted-value label/decimal
+  // places/unit label/model-section label, Value band remains locked, the
+  // illustrative preview executes no inference and persists no synthetic
+  // sample, and the real Live Preview InferenceForm accepts/renders a real
+  // continuous-regression inference result.
+  describe("Dataset Admin continuous-regression Result Card authoring and Live Preview (Project Spec S0229)", () => {
+    const regressionResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "continuous-regression-result-semantics.v1",
+        problem_type: "continuous_regression",
+        result_schema_version: "continuous-regression-result.v1",
+        primary_output: "predicted_value",
+        output_value_kind: "continuous_numeric",
+        model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+      },
+    };
+
+    it("shows the read-only technical summary, limits editable fields, and keeps Value band locked", async () => {
+      installFetchMock({ resultContractOverride: regressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+
+      expect(screen.getByText("continuous_regression")).toBeInTheDocument();
+      expect(screen.getByText("predicted_value")).toBeInTheDocument();
+      expect(screen.getByText("continuous_numeric")).toBeInTheDocument();
+      expect(screen.getByText(/Gradient Boosting Regressor \(gradient_boosting\)/)).toBeInTheDocument();
+
+      expect(screen.getByLabelText("Predicted value label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Decimal places")).toBeInTheDocument();
+      expect(screen.getByLabelText("Optional unit label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Model section label")).toBeInTheDocument();
+
+      // No binary/multiclass editable fields leak into the regression form.
+      expect(screen.queryByLabelText("Positive-class probability label")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Predicted class label")).not.toBeInTheDocument();
+      // Value band (badge preset) remains unavailable -- no governed band
+      // contract exists for continuous_regression, so the preset selector
+      // never renders at all (never shown as a clickable-but-locked option).
+      expect(screen.queryByLabelText("Badge preset")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Value band/ })).not.toBeInTheDocument();
+    });
+
+    it("round-trips exactly the continuous-regression presentation on Publish changes, with no hybrid keys", async () => {
+      const fetchMock = installFetchMock({ resultContractOverride: regressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+      fireEvent.change(screen.getByLabelText("Predicted value label"), { target: { value: "Predicted compressive strength" } });
+      fireEvent.change(screen.getByLabelText("Decimal places"), { target: { value: "1" } });
+      fireEvent.change(screen.getByLabelText("Optional unit label"), { target: { value: "MPa" } });
+      fireEvent.change(screen.getByLabelText("Model section label"), { target: { value: "Model" } });
+
+      const callsBeforeSave = fetchMock.mock.calls.length;
+      fireEvent.click(
+        within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+          name: "Publish changes",
+        }),
+      );
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+            name: "Publish changes",
+          }),
+        ).toBeDisabled(),
+      );
+
+      const saveCall = fetchMock.mock.calls
+        .slice(callsBeforeSave)
+        .find(
+          (call: unknown[]) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        );
+      expect(saveCall).toBeDefined();
+      const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+        result_card?: Record<string, unknown>;
+      };
+      expect(body.result_card).toEqual({
+        schema_version: "continuous-regression-result-presentation.v1",
+        predicted_value_label: "Predicted compressive strength",
+        model_section_label: "Model",
+        decimal_places: 1,
+        value_unit_label: "MPa",
+      });
+    });
+
+    it("renders an illustrative preview using the shared renderer, executing no inference request and persisting no sample value", async () => {
+      const fetchMock = installFetchMock({ resultContractOverride: regressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+
+      expect(screen.getByText(/Illustrative preview only/)).toBeInTheDocument();
+      expect(screen.getByText("42.73")).toBeInTheDocument();
+      expect(screen.getByText("Gradient Boosting Regressor")).toBeInTheDocument();
+
+      const inferenceCalls = fetchMock.mock.calls.filter((call) =>
+        String(call[0]).includes("/inference"),
+      );
+      expect(inferenceCalls.length).toBe(0);
+
+      // The illustrative sample predicted_value (42.73) is synthesized only
+      // for the preview render -- profileFromForm never carries a
+      // predicted_value/predicted_class/positive_class_probability field for
+      // any presentation variant (round-tripped explicitly by the sibling
+      // "round-trips exactly the continuous-regression presentation" test),
+      // so it can never be persisted into the profile.
+    });
+
+    it("Live Preview's real InferenceForm accepts and renders a real continuous-regression inference result", async () => {
+      installFetchMock({
+        resultContractOverride: regressionResultContract,
+        adminInferenceResult: {
+          schema_version: "continuous-regression-result.v1",
+          problem_type: "continuous_regression",
+          predicted_value: 55.12,
+          model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+        },
+      });
+      renderAdminPage();
+      await loadDraftAndCustomization();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(within(await screen.findByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", { name: "Inference" }));
+      fireEvent.click(screen.getByRole("button", { name: "Run prediction" }));
+
+      expect(await screen.findByText("55.12")).toBeInTheDocument();
+    });
+  });
+
   // Project Spec S0120: Dataset Detail Live Preview now renders the exact
   // shared DatasetDetailSurface (S0119) used by /dataset/:slug -- one
   // instance, its own real three-tab system (Overview/Inference/

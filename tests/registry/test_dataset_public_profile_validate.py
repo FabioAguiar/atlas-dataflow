@@ -20,6 +20,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from registry.dataset_public_profile_validate import (  # noqa: E402
     normalize_binary_result_presentation,
+    normalize_continuous_regression_result_presentation,
     normalize_multiclass_result_presentation,
     normalize_result_presentation,
     validate_profile_references,
@@ -313,6 +314,112 @@ def test_multiclass_result_card_normalization_is_copy_only_and_idempotent():
     }
     assert normalize_result_presentation(normalized) == normalized
     assert normalize_result_presentation(None, "multiclass_classification")["schema_version"] == "multiclass-result-presentation.v1"
+
+
+# ---------------------------------------------------------------------------
+# Continuous regression presentation (Project Spec S0229)
+# ---------------------------------------------------------------------------
+
+def test_continuous_regression_result_card_normalization_is_copy_only_and_idempotent():
+    normalized = normalize_continuous_regression_result_presentation({
+        "predicted_value_label": "  Predicted compressive strength  ",
+        "model_section_label": " ",
+        "decimal_places": 3,
+        "value_unit_label": "  MPa  ",
+        "predicted_value": 42.73,
+        "threshold": 0.5,
+    })
+    assert normalized == {
+        "schema_version": "continuous-regression-result-presentation.v1",
+        "predicted_value_label": "Predicted compressive strength",
+        "model_section_label": "Model",
+        "decimal_places": 3,
+        "value_unit_label": "MPa",
+    }
+    assert normalize_continuous_regression_result_presentation(normalized) == normalized
+    assert normalize_result_presentation(normalized) == normalized
+    assert (
+        normalize_result_presentation(None, "continuous_regression")["schema_version"]
+        == "continuous-regression-result-presentation.v1"
+    )
+
+
+def test_continuous_regression_decimal_places_bounded_and_defaults():
+    assert normalize_continuous_regression_result_presentation(
+        {"decimal_places": 0}
+    )["decimal_places"] == 0
+    assert normalize_continuous_regression_result_presentation(
+        {"decimal_places": 6}
+    )["decimal_places"] == 6
+    assert normalize_continuous_regression_result_presentation(
+        {"decimal_places": 7}
+    )["decimal_places"] == 2
+    assert normalize_continuous_regression_result_presentation(
+        {"decimal_places": -1}
+    )["decimal_places"] == 2
+    assert normalize_continuous_regression_result_presentation(
+        {"decimal_places": True}
+    )["decimal_places"] == 2
+    assert normalize_continuous_regression_result_presentation(
+        {"decimal_places": "2"}
+    )["decimal_places"] == 2
+    assert normalize_continuous_regression_result_presentation({})["decimal_places"] == 2
+
+
+def test_continuous_regression_value_unit_label_optional_presentation_only():
+    without_unit = normalize_continuous_regression_result_presentation({"predicted_value_label": "Predicted value"})
+    assert "value_unit_label" not in without_unit
+    assert normalize_continuous_regression_result_presentation({"value_unit_label": "   "}).get("value_unit_label") is None
+
+
+def test_malformed_continuous_regression_result_card_normalizes_deterministically():
+    assert normalize_continuous_regression_result_presentation(None) == normalize_continuous_regression_result_presentation({})
+    assert normalize_continuous_regression_result_presentation("not-a-dict") == normalize_continuous_regression_result_presentation({})
+
+
+def test_regression_performance_focus_passes():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="r2",
+            visible_scores=[
+                {"score_id": "r2", "display_label": "R²", "value": "0.87", "value_source": "canonical", "order": 0},
+                {"score_id": "mae", "display_label": "MAE", "value": "3.21", "value_source": "canonical", "order": 1},
+                {"score_id": "rmse", "display_label": "RMSE", "value": "4.55", "value_source": "canonical", "order": 2},
+            ],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result == {"valid": True, "errors": []}
+
+
+def test_classification_focus_rejects_regression_score():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="positive_class_detection",
+            highlighted_score_id="r2",
+            visible_scores=[{"score_id": "r2", "display_label": "R²", "value": "0.87", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS" in _codes(result)
+
+
+def test_regression_focus_rejects_classification_score():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="accuracy",
+            visible_scores=[{"score_id": "accuracy", "display_label": "Accuracy", "value": "0.9", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS" in _codes(result)
 
 
 if __name__ == "__main__":

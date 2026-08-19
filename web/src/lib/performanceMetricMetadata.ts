@@ -74,6 +74,14 @@ export const PERFORMANCE_FOCUS_CATALOG = {
     ["false_positives_at_k", "False Positives at K"],
     ["false_negatives_at_k", "False Negatives at K"],
   ],
+  // Project Spec S0229: regression_performance is not added here -- per its
+  // own Desired change Section H, the continuous-regression Performance
+  // focus is added only to the profile schemas and the backend
+  // registry/dataset_public_profile_validate.py PERFORMANCE_SCORE_CATALOG,
+  // not to this frontend Admin-authoring catalog. A continuous_regression
+  // release's Performance Summary renders through the canonical fallback
+  // path (metricsNormalization.ts + isPerformanceScoreApplicable below),
+  // never through a curated Admin-selected regression_performance focus.
 } as const;
 
 export type PerformanceFocusId = keyof typeof PERFORMANCE_FOCUS_CATALOG;
@@ -188,6 +196,15 @@ const METRIC_METADATA: ReadonlyMap<string, PerformanceMetricMetadata> = (() => {
     display_label: "Average Precision",
     optimization: { kind: "higher_is_better" },
   });
+  // Project Spec S0229: r2/mae/rmse are metadata-only entries, following the
+  // same pattern as average_precision above -- never added to
+  // PERFORMANCE_FOCUS_CATALOG (not a selectable Admin-authoring score), but
+  // still resolvable so the public PerformanceSummary's canonical-fallback
+  // and any published performance_focus rendering path can look up their
+  // direction/label deterministically.
+  map.set("r2", { score_id: "r2", display_label: "R²", optimization: { kind: "higher_is_better" } });
+  map.set("mae", { score_id: "mae", display_label: "MAE", optimization: { kind: "lower_is_better" } });
+  map.set("rmse", { score_id: "rmse", display_label: "RMSE", optimization: { kind: "lower_is_better" } });
   return map;
 })();
 
@@ -209,7 +226,7 @@ export function getPerformanceMetricMetadata(scoreId: string): PerformanceMetric
 // further filtered by MULTICLASS_COMPATIBLE_SCORE_IDS below, since not
 // every score in those two foci is multiclass-compatible.
 
-export type ProblemType = "binary_classification" | "multiclass_classification";
+export type ProblemType = "binary_classification" | "multiclass_classification" | "continuous_regression";
 
 const FOCUS_PROBLEM_TYPES: Readonly<Record<PerformanceFocusId, readonly ProblemType[]>> = {
   overall_discrimination: ["binary_classification"],
@@ -237,6 +254,10 @@ const MULTICLASS_COMPATIBLE_SCORE_IDS: ReadonlySet<string> = new Set([
   "log_loss",
 ]);
 
+// Project Spec S0229: the bounded set of score ids compatible with
+// continuous_regression. Never shared with a classification focus/score id.
+const REGRESSION_COMPATIBLE_SCORE_IDS: ReadonlySet<string> = new Set(["r2", "mae", "rmse"]);
+
 /** Whether a Performance focus applies to the given problem type. */
 export function isPerformanceFocusApplicable(focusId: string, problemType: ProblemType): boolean {
   const applicable = (FOCUS_PROBLEM_TYPES as Record<string, readonly ProblemType[]>)[focusId];
@@ -250,6 +271,12 @@ export function isPerformanceFocusApplicable(focusId: string, problemType: Probl
  * only the bounded MULTICLASS_COMPATIBLE_SCORE_IDS set is applicable.
  */
 export function isPerformanceScoreApplicable(scoreId: string, problemType: ProblemType): boolean {
+  if (problemType === "continuous_regression") {
+    return REGRESSION_COMPATIBLE_SCORE_IDS.has(scoreId);
+  }
+  if (REGRESSION_COMPATIBLE_SCORE_IDS.has(scoreId)) {
+    return false;
+  }
   if (problemType === "binary_classification") {
     return true;
   }

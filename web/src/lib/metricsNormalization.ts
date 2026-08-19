@@ -13,7 +13,13 @@ export type NormalizedMetricKey =
   | "f1_macro"
   | "f1_weighted"
   | "precision_macro"
-  | "recall_macro";
+  | "recall_macro"
+  // Project Spec S0229: the bounded continuous-regression score set --
+  // never applicable to classification, never collapsed into a
+  // classification metric id.
+  | "r2"
+  | "mae"
+  | "rmse";
 
 export type NormalizedMetrics = Partial<Record<NormalizedMetricKey, number>>;
 
@@ -37,6 +43,9 @@ const KNOWN_METRIC_KEYS: NormalizedMetricKey[] = [
   "f1_weighted",
   "precision_macro",
   "recall_macro",
+  "r2",
+  "mae",
+  "rmse",
 ];
 
 const METRIC_ALIASES: Record<NormalizedMetricKey, string[]> = {
@@ -54,6 +63,10 @@ const METRIC_ALIASES: Record<NormalizedMetricKey, string[]> = {
   f1_weighted: ["f1_weighted"],
   precision_macro: ["precision_macro"],
   recall_macro: ["recall_macro"],
+  // Project Spec S0229: continuous-regression scores, projected 1:1.
+  r2: ["r2"],
+  mae: ["mae"],
+  rmse: ["rmse"],
 };
 
 function readScore(source: Record<string, unknown>, aliases: string[]): number | null {

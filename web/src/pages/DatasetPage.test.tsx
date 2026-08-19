@@ -2616,6 +2616,16 @@ describe("DatasetPage continuous-regression diagnostics (Project Spec S0228)", (
           result_contract: regressionResultContractAvailable,
         });
       }
+      if (url.endsWith(`/datasets/${slug}/inference`)) {
+        return jsonResponse({
+          result: {
+            schema_version: "continuous-regression-result.v1",
+            problem_type: "continuous_regression",
+            predicted_value: 42.73,
+            model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+          },
+        });
+      }
       if (url.endsWith(`/datasets/${slug}`)) {
         return jsonResponse(datasetMetadata);
       }
@@ -2624,6 +2634,19 @@ describe("DatasetPage continuous-regression diagnostics (Project Spec S0228)", (
     vi.stubGlobal("fetch", fetchMock);
     return fetchMock;
   }
+
+  it("uses the shared governed result-family dispatch to render a continuous regression result on the Inference tab (Project Spec S0229)", async () => {
+    installRegressionFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByText("Synthetic Feature");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("42.73")).toBeInTheDocument();
+    expect(screen.getByText("Gradient Boosting Regressor")).toBeInTheDocument();
+  });
 
   it("renders Actual vs Predicted and Residual Distribution below the primary analytics grid for a continuous-regression release", async () => {
     installRegressionFetchMock();

@@ -188,7 +188,7 @@
       "properties": {
         "focus_id": {
           "type": "string",
-          "enum": ["overall_discrimination", "positive_class_detection", "balanced_classification", "probability_quality", "operational_decision"]
+          "enum": ["overall_discrimination", "positive_class_detection", "balanced_classification", "probability_quality", "operational_decision", "regression_performance"]
         },
         "highlighted_score_id": {
           "type": "string",
@@ -275,6 +275,7 @@
       "oneOf": [
         {"$ref": "#/definitions/canonical_result_card"},
         {"$ref": "#/definitions/multiclass_result_card"},
+        {"$ref": "#/definitions/continuous_regression_result_card"},
         {"$ref": "#/definitions/legacy_result_card"}
       ]
     },
@@ -301,6 +302,18 @@
         "predicted_class_label": {"$ref": "#/definitions/result_card_short_copy"},
         "class_probability_distribution_label": {"$ref": "#/definitions/result_card_short_copy"},
         "model_section_label": {"$ref": "#/definitions/result_card_short_copy"}
+      }
+    },
+    "continuous_regression_result_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "predicted_value_label", "model_section_label", "decimal_places"],
+      "properties": {
+        "schema_version": {"const": "continuous-regression-result-presentation.v1"},
+        "predicted_value_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "model_section_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "decimal_places": {"type": "integer", "minimum": 0, "maximum": 6},
+        "value_unit_label": {"$ref": "#/definitions/result_card_short_copy"}
       }
     },
     "legacy_result_card": {

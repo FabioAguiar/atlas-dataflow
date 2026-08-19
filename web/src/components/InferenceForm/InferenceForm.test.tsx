@@ -152,6 +152,88 @@ describe("InferenceForm multiclass result dispatch (S0214)", () => {
   });
 });
 
+describe("InferenceForm continuous regression result dispatch (S0229)", () => {
+  const regressionContract: ResultContract = {
+    status: "available",
+    semantics: {
+      schema_version: "continuous-regression-result-semantics.v1",
+      problem_type: "continuous_regression",
+      result_schema_version: "continuous-regression-result.v1",
+      primary_output: "predicted_value",
+      output_value_kind: "continuous_numeric",
+      model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+    },
+  };
+  const regressionResult = {
+    schema_version: "continuous-regression-result.v1",
+    problem_type: "continuous_regression",
+    predicted_value: 42.73,
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+  };
+
+  it("enables submit and renders a contract-matched continuous regression result with no fabricated initial prediction", async () => {
+    const events: InferenceLifecycleEvent[] = [];
+    render(<InferenceForm contract={contract} slug={slug} resultContract={regressionContract}
+      executeInference={async () => ({ ok: true, result: regressionResult })}
+      onLifecycleEvent={(event) => events.push(event)} initialResultProbability={0} />);
+    expect(screen.getByRole("button", { name: "Submit" })).not.toBeDisabled();
+    // Project Spec S0229: continuous regression behaves like multiclass in
+    // idle state -- initialResultProbability is binary-only and must never
+    // fabricate a regression card.
+    expect(screen.getByText("Submit the form to see the prediction.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByText("42.73")).toBeInTheDocument();
+    expect(screen.getByText("Gradient Boosting Regressor")).toBeInTheDocument();
+    expect(events).toEqual([{ type: "started" }, { type: "succeeded" }]);
+  });
+
+  it("fails safely when the response family does not match (binary result against a regression contract)", async () => {
+    render(<InferenceForm contract={contract} slug={slug} resultContract={regressionContract}
+      executeInference={async () => ({ ok: true, result: validResult })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
+  it("fails safely for a non-finite predicted_value", async () => {
+    render(<InferenceForm contract={contract} slug={slug} resultContract={regressionContract}
+      executeInference={async () => ({ ok: true, result: { ...regressionResult, predicted_value: Number.POSITIVE_INFINITY } })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
+  it("fails safely for a boolean predicted_value", async () => {
+    render(<InferenceForm contract={contract} slug={slug} resultContract={regressionContract}
+      executeInference={async () => ({ ok: true, result: { ...regressionResult, predicted_value: true } })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
+  it("fails safely for a model descriptor mismatch against the active contract", async () => {
+    render(<InferenceForm contract={contract} slug={slug} resultContract={regressionContract}
+      executeInference={async () => ({
+        ok: true,
+        result: { ...regressionResult, model_descriptor: { model_family: "random_forest", display_name: "Random Forest Regressor" } },
+      })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
+  it("fails safely for a wrong result schema version", async () => {
+    render(<InferenceForm contract={contract} slug={slug} resultContract={regressionContract}
+      executeInference={async () => ({ ok: true, result: { ...regressionResult, schema_version: "continuous-regression-result.v2" } })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
+  it("fails safely for extra/unknown technical keys", async () => {
+    render(<InferenceForm contract={contract} slug={slug} resultContract={regressionContract}
+      executeInference={async () => ({ ok: true, result: { ...regressionResult, confidence: 0.9 } })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+});
+
 describe("InferenceForm private numeric guidance (Project Spec S0148)", () => {
   it("renders decimal min/max/step and associates description plus range guidance", () => {
     const describedContract: ContractPayload = {

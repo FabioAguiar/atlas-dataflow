@@ -426,6 +426,83 @@ describe("DatasetViewPage shared Result Card surface (Project Spec S0112)", () =
   });
 });
 
+// Project Spec S0229: proves the shared Predict View route can render
+// continuous-regression inference through the same shared InferenceForm/
+// ResultContract/ResultPresentation types (S0112/S0154), with no production
+// fork -- DatasetViewPage.tsx itself requires no changes for this family.
+describe("DatasetViewPage continuous regression through the shared InferenceForm (Project Spec S0229)", () => {
+  const regressionResultContractAvailable = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "continuous-regression-result-semantics.v1",
+      problem_type: "continuous_regression" as const,
+      result_schema_version: "continuous-regression-result.v1" as const,
+      primary_output: "predicted_value" as const,
+      output_value_kind: "continuous_numeric" as const,
+      model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+    },
+  };
+
+  const regressionResultCardPresentation = {
+    schema_version: "continuous-regression-result-presentation.v1",
+    predicted_value_label: "Predicted compressive strength",
+    model_section_label: "Model",
+    decimal_places: 1,
+    value_unit_label: "MPa",
+  };
+
+  const regressionResult = {
+    schema_version: "continuous-regression-result.v1",
+    problem_type: "continuous_regression",
+    predicted_value: 42.73,
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+  };
+
+  function installRegressionFetchMock() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/views/${viewId}/customization`)) {
+        return jsonResponse({}, 404);
+      }
+      if (url.endsWith(`/datasets/${slug}/views/${viewId}`)) {
+        return jsonResponse(viewPayload);
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: regressionResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          context: { legacy_submit_button_label: null, result_card: regressionResultCardPresentation },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/inference`) && init?.method === "POST") {
+        return jsonResponse({ dataset_slug: slug, result: regressionResult });
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("parses body.result on success and renders the shared ContinuousRegressionResult", async () => {
+    installRegressionFetchMock();
+    const { container } = renderDatasetViewPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("Predicted compressive strength")).toBeInTheDocument();
+    expect(screen.getByText("42.7")).toBeInTheDocument();
+    expect(screen.getByText("MPa")).toBeInTheDocument();
+    expect(screen.getByText("Gradient Boosting Regressor")).toBeInTheDocument();
+    expect(container.querySelector(".continuous-regression-result")).not.toHaveTextContent(/confidence|probability|threshold|risk/i);
+  });
+});
+
 // Project Spec S0146: a contract-required checkbox must remain a complete
 // two-state boolean field on the public Predict View -- leaving it unchecked
 // must still reach the shared public inference execution path (never

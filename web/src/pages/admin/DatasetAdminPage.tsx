@@ -21,16 +21,21 @@ import ConfusionMatrix from "../../components/DatasetDetail/ConfusionMatrix";
 import RegressionDiagnostics from "../../components/DatasetDetail/RegressionDiagnostics";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../../components/ResultCard/MulticlassClassificationResult";
+import ContinuousRegressionResult from "../../components/ResultCard/ContinuousRegressionResult";
 import ResultCardShell from "../../components/ResultCard/ResultCardShell";
 import {
   GENERIC_RESULT_PRESENTATION,
   GENERIC_MULTICLASS_RESULT_PRESENTATION,
+  GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION,
   availableResultProblemType,
   isAvailableBinaryResultContract,
+  isAvailableContinuousRegressionResultContract,
   isAvailableMulticlassResultContract,
   isBinaryClassificationResult,
   type BinaryResultContract,
   type BinaryResultSemantics,
+  type ContinuousRegressionResult as ContinuousRegressionResultData,
+  type ContinuousRegressionResultSemantics,
   type MulticlassClassificationResult as MulticlassResultData,
   type MulticlassResultSemantics,
   type ResultContract,
@@ -198,7 +203,10 @@ type ProfileDraft = {
     bound_predict_view_id?: string | null;
   };
   result_card?: {
-    schema_version?: "binary-result-presentation.v1" | "multiclass-result-presentation.v1";
+    schema_version?:
+      | "binary-result-presentation.v1"
+      | "multiclass-result-presentation.v1"
+      | "continuous-regression-result-presentation.v1";
     positive_class_probability_label?: string;
     predicted_outcome_label?: string;
     positive_outcome_copy?: string;
@@ -210,6 +218,10 @@ type ProfileDraft = {
       preset?: "risk";
       labels?: { high?: string; medium?: string; low?: string };
     };
+    // Project Spec S0229: continuous-regression Result Card presentation copy.
+    predicted_value_label?: string;
+    decimal_places?: number;
+    value_unit_label?: string;
     // Bounded read-only migration input. Never serialized by profileFromForm.
     submit_button_label?: string;
   };
@@ -319,9 +331,16 @@ type DraftForm = {
   predicted_outcome_label: string;
   positive_outcome_copy: string;
   negative_outcome_copy: string;
-  result_presentation_schema_version: "binary-result-presentation.v1" | "multiclass-result-presentation.v1";
+  result_presentation_schema_version:
+    | "binary-result-presentation.v1"
+    | "multiclass-result-presentation.v1"
+    | "continuous-regression-result-presentation.v1";
   predicted_class_label: string;
   class_probability_distribution_label: string;
+  // Project Spec S0229: continuous-regression Result Card presentation copy.
+  predicted_value_label: string;
+  decimal_places: number;
+  value_unit_label: string;
   // Project Spec S0110: read-only migration context only -- the Result Card
   // tab no longer renders or edits this field, and profileFromForm never
   // writes it back. Populated by formFromProfile purely so the Inference
@@ -473,7 +492,7 @@ type ContractEnvelope = {
 
 type ResultContractState =
   | { status: "idle" | "loading" }
-  | { status: "available"; semantics: BinaryResultSemantics | MulticlassResultSemantics }
+  | { status: "available"; semantics: BinaryResultSemantics | MulticlassResultSemantics | ContinuousRegressionResultSemantics }
   | { status: "unavailable"; message: string }
   | { status: "transport_failure"; message: string }
   | { status: "incompatible"; message: string };
@@ -541,13 +560,6 @@ type ReadOnlyData = {
   contract: SectionState<ContractPayload>;
   inferenceGuidance: SectionState<unknown>;
   resultContract: ResultContractState;
-  // Project Spec S0228: mirrors DatasetPage.tsx's release-bound continuous-
-  // regression detection, without widening ResultContractState's binary/
-  // multiclass "available" shape (out of scope: no regression result
-  // presentation configuration is added to ResultCardLivePreview). Derived
-  // once from the same raw result_contract payload classifyResultContract
-  // consumes, at the same point resultContract itself is classified.
-  isContinuousRegressionResult: boolean;
   metrics: SectionState<MetricsPayload>;
   visualizations: SectionState<unknown>;
   views: SectionState<PredictView[]>;
@@ -1002,7 +1014,6 @@ const emptyReadOnlyData: ReadOnlyData = {
   contract: { status: "idle" },
   inferenceGuidance: { status: "idle" },
   resultContract: { status: "idle" },
-  isContinuousRegressionResult: false,
   metrics: { status: "idle" },
   visualizations: { status: "idle" },
   views: { status: "idle" },
@@ -1602,6 +1613,9 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     result_presentation_schema_version: "binary-result-presentation.v1",
     predicted_class_label: GENERIC_MULTICLASS_RESULT_PRESENTATION.predicted_class_label,
     class_probability_distribution_label: GENERIC_MULTICLASS_RESULT_PRESENTATION.class_probability_distribution_label,
+    predicted_value_label: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.predicted_value_label,
+    decimal_places: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.decimal_places,
+    value_unit_label: "",
     legacy_submit_button_label: "",
     model_section_label: GENERIC_RESULT_PRESENTATION.model_section_label,
     interpretation_preset: "risk",
@@ -1648,6 +1662,9 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     result_presentation_schema_version: profile.result_card?.schema_version ?? form.result_presentation_schema_version,
     predicted_class_label: profile.result_card?.predicted_class_label ?? form.predicted_class_label,
     class_probability_distribution_label: profile.result_card?.class_probability_distribution_label ?? form.class_probability_distribution_label,
+    predicted_value_label: profile.result_card?.predicted_value_label ?? form.predicted_value_label,
+    decimal_places: profile.result_card?.decimal_places ?? form.decimal_places,
+    value_unit_label: profile.result_card?.value_unit_label ?? "",
     legacy_submit_button_label: profile.result_card?.submit_button_label ?? "",
     model_section_label: profile.result_card?.model_section_label ?? form.model_section_label,
     interpretation_preset: "risk",
@@ -1734,6 +1751,12 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
     predicted_class_label: textValue(form.predicted_class_label),
     class_probability_distribution_label: textValue(form.class_probability_distribution_label),
     model_section_label: textValue(form.model_section_label),
+  } : form.result_presentation_schema_version === "continuous-regression-result-presentation.v1" ? {
+    schema_version: "continuous-regression-result-presentation.v1",
+    predicted_value_label: textValue(form.predicted_value_label),
+    model_section_label: textValue(form.model_section_label),
+    decimal_places: form.decimal_places,
+    value_unit_label: textValue(form.value_unit_label),
   } : {
     schema_version: "binary-result-presentation.v1",
     positive_class_probability_label: textValue(form.positive_class_probability_label),
@@ -1994,6 +2017,9 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
   if (isAvailableMulticlassResultContract(value)) {
     return { status: "available", semantics: value.semantics };
   }
+  if (isAvailableContinuousRegressionResultContract(value)) {
+    return { status: "available", semantics: value.semantics };
+  }
   if (!isAvailableBinaryResultContract(value)) {
     return { status: "incompatible", message: "The active release result contract is missing or incompatible." };
   }
@@ -2003,32 +2029,10 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
   return { status: "available", semantics: value.semantics };
 }
 
-// Project Spec S0228: reads the same raw envelope.result_contract payload
-// classifyResultContract consumes, to detect an available continuous-
-// regression release without widening ResultContractState's binary/
-// multiclass "available" shape (ResultCard/types.ts is not extended for
-// continuous_regression -- out of scope for this Project Spec). Mirrors
-// DatasetPage.tsx's local guard for the same release-bound
-// result_contract.semantics.problem_type field.
-function isAvailableContinuousRegressionResult(value: unknown): boolean {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  if (record.status !== "available") {
-    return false;
-  }
-  const semantics = record.semantics;
-  if (!semantics || typeof semantics !== "object") {
-    return false;
-  }
-  return (semantics as Record<string, unknown>).problem_type === "continuous_regression";
-}
-
 // Project Spec S0143: adapts the private authoring read model's richer
 // ResultContractState (idle/loading/available/unavailable/transport_failure/
 // incompatible) down to the shared public component's narrower
-// BinaryResultContract (available/unavailable) -- every non-"available"
+// ResultContract (available/unavailable) -- every non-"available"
 // authoring state renders as the same "unavailable" contract the public
 // InferenceForm already knows how to disable submission and render safely
 // for, exactly as the pre-existing synthetic Result Card preview did.
@@ -2037,6 +2041,9 @@ function toInferenceResultContract(state: ResultContractState): ResultContract {
     return { status: "available", semantics: state.semantics };
   }
   if (state.status === "available" && state.semantics.problem_type === "multiclass_classification") {
+    return { status: "available", semantics: state.semantics };
+  }
+  if (state.status === "available" && state.semantics.problem_type === "continuous_regression") {
     return { status: "available", semantics: state.semantics };
   }
   return {
@@ -2096,6 +2103,19 @@ function presentationFromForm(form: DraftForm): ResultPresentation {
       predicted_class_label: form.predicted_class_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.predicted_class_label,
       class_probability_distribution_label: form.class_probability_distribution_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.class_probability_distribution_label,
       model_section_label: form.model_section_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.model_section_label,
+    };
+  }
+  if (form.result_presentation_schema_version === "continuous-regression-result-presentation.v1") {
+    const decimalPlaces = Number.isInteger(form.decimal_places) && form.decimal_places >= 0 && form.decimal_places <= 6
+      ? form.decimal_places
+      : GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.decimal_places;
+    const unitLabel = form.value_unit_label.trim();
+    return {
+      schema_version: "continuous-regression-result-presentation.v1",
+      predicted_value_label: form.predicted_value_label.trim() || GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.predicted_value_label,
+      model_section_label: form.model_section_label.trim() || GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.model_section_label,
+      decimal_places: decimalPlaces,
+      ...(unitLabel ? { value_unit_label: unitLabel } : {}),
     };
   }
   return {
@@ -2422,7 +2442,13 @@ function MetadataCardTab({
 
   // Project Spec S0215: the selector offers only the supported multiclass
   // focus set for a multiclass release; binary or unavailable problem type
-  // preserves the existing full-catalog behavior exactly.
+  // preserves the existing full-catalog behavior exactly. Project Spec
+  // S0229 does not add a curated Admin-authoring Performance focus for
+  // continuous_regression (regression_performance is added only to the
+  // profile schemas and the backend PERFORMANCE_SCORE_CATALOG, per its own
+  // Desired change Section H) -- a continuous_regression release falls
+  // through to this same unfiltered classification catalog, unchanged from
+  // its pre-S0229 behavior.
   const performanceFocusOptions =
     problemType === "multiclass_classification"
       ? PERFORMANCE_FOCUS_OPTIONS.filter((option) =>
@@ -2551,7 +2577,7 @@ function MetadataCardTab({
               <h2>Problem type</h2>
             </div>
             <div aria-label="Problem type display" className="dataset-admin-problem-type-options">
-              <strong>{problemType === "binary_classification" ? "Binary Classification" : problemType === "multiclass_classification" ? "Multiclass Classification" : "Unavailable"}</strong>
+              <strong>{problemType === "binary_classification" ? "Binary Classification" : problemType === "multiclass_classification" ? "Multiclass Classification" : problemType === "continuous_regression" ? "Continuous Regression" : "Unavailable"}</strong>
               <small>Release-governed</small>
             </div>
           </Card>
@@ -3534,6 +3560,7 @@ function ResultCardTab({
   const semantics = resultContract.status === "available" ? resultContract.semantics : null;
   const binarySemantics = semantics?.problem_type === "binary_classification" ? semantics : null;
   const multiclassSemantics = semantics?.problem_type === "multiclass_classification" ? semantics : null;
+  const regressionSemantics = semantics?.problem_type === "continuous_regression" ? semantics : null;
   return (
     <TabWorkspace eyebrow="Result Card" helper="Edit public presentation labels only; model behavior remains read-only Atlas state.">
       <Card className="dataset-admin-technical-summary">
@@ -3554,6 +3581,7 @@ function ResultCardTab({
           {binarySemantics ? <ReadOnlyField label="Decision threshold" value={`${Math.round(binarySemantics.decision.threshold * 1000) / 10}%`} /> : null}
           {multiclassSemantics ? <ReadOnlyField label="Probability output" value={multiclassSemantics.probability_output} /> : null}
           {multiclassSemantics ? <ReadOnlyField label="Decision strategy" value={multiclassSemantics.decision.strategy} /> : null}
+          {regressionSemantics ? <ReadOnlyField label="Output value kind" value={regressionSemantics.output_value_kind} /> : null}
           <ReadOnlyField label="Model descriptor" value={semantics ? `${semantics.model_descriptor.display_name} (${semantics.model_descriptor.model_family})` : "Unavailable"} />
         </div>
         {binarySemantics ? (
@@ -3571,6 +3599,22 @@ function ResultCardTab({
           {multiclassSemantics ? <div className="dataset-admin-form-grid">
             <TextField label="Predicted class label" onChange={(value) => setField("predicted_class_label", value)} value={form.predicted_class_label} />
             <TextField label="Class probability distribution label" onChange={(value) => setField("class_probability_distribution_label", value)} value={form.class_probability_distribution_label} />
+            <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
+          </div> : regressionSemantics ? <div className="dataset-admin-form-grid">
+            <TextField label="Predicted value label" onChange={(value) => setField("predicted_value_label", value)} value={form.predicted_value_label} />
+            <label className="dataset-admin-native-select">
+              <span style={labelStyle}>Decimal places</span>
+              <select
+                onChange={(event) => setField("decimal_places", Number(event.target.value))}
+                style={inputStyle}
+                value={String(form.decimal_places)}
+              >
+                {[0, 1, 2, 3, 4, 5, 6].map((places) => (
+                  <option key={places} value={places}>{places}</option>
+                ))}
+              </select>
+            </label>
+            <TextField label="Optional unit label" onChange={(value) => setField("value_unit_label", value)} value={form.value_unit_label} />
             <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
           </div> : <div className="dataset-admin-form-grid">
             <TextField label="Positive-class probability label" onChange={(value) => setField("positive_class_probability_label", value)} value={form.positive_class_probability_label} />
@@ -3636,7 +3680,13 @@ function ResultCardTab({
             <h2>Example result</h2>
             <p>Compact preview fed by the current label fields.</p>
           </div>
-          {multiclassSemantics ? <MulticlassResultCardLivePreview form={form} semantics={multiclassSemantics} /> : <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />}
+          {multiclassSemantics ? (
+            <MulticlassResultCardLivePreview form={form} semantics={multiclassSemantics} />
+          ) : regressionSemantics ? (
+            <ContinuousRegressionResultCardLivePreview form={form} semantics={regressionSemantics} />
+          ) : (
+            <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />
+          )}
         </Card>
       </div>
     </TabWorkspace>
@@ -4449,9 +4499,10 @@ function DatasetDetailLivePreview({
   // result-contract authority Performance Summary already uses -- it never
   // synthesizes diagnostics from draft form data and never issues a second
   // request.
-  const regressionDiagnosticsContent = readOnlyData.isContinuousRegressionResult ? (
-    <RegressionDiagnostics visualizations={visualizations} />
-  ) : null;
+  const regressionDiagnosticsContent =
+    readOnlyData.resultContract.status === "available" && readOnlyData.resultContract.semantics.problem_type === "continuous_regression" ? (
+      <RegressionDiagnostics visualizations={visualizations} />
+    ) : null;
 
   // Project Spec S0143: the Dataset Detail Live Preview Inference tab now
   // owns one real, executable InferenceForm lifecycle -- the same
@@ -4587,6 +4638,36 @@ function MulticlassResultCardLivePreview({ form, semantics }: { form: DraftForm;
       <p style={mutedTextStyle}>Illustrative preview only — no inference request is executed or probabilities persisted.</p>
       <ResultCardShell state="initial">
         <MulticlassClassificationResult result={result} presentation={presentation} />
+      </ResultCardShell>
+    </div>
+  );
+}
+
+// Project Spec S0229: an illustrative continuous-regression preview,
+// mirroring MulticlassResultCardLivePreview's static illustrative-sample
+// pattern above -- a single synthetic predicted_value, never persisted into
+// the profile, never derived from a real inference request.
+function ContinuousRegressionResultCardLivePreview({
+  form,
+  semantics,
+}: {
+  form: DraftForm;
+  semantics: ContinuousRegressionResultSemantics;
+}) {
+  const result: ContinuousRegressionResultData = {
+    schema_version: "continuous-regression-result.v1",
+    problem_type: "continuous_regression",
+    predicted_value: 42.73,
+    model_descriptor: semantics.model_descriptor,
+  };
+  const projected = presentationFromForm(form);
+  const presentation = projected.schema_version === "continuous-regression-result-presentation.v1"
+    ? projected : GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION;
+  return (
+    <div className="dataset-admin-result-preview">
+      <p style={mutedTextStyle}>Illustrative preview only — no inference request is executed or the sample value persisted.</p>
+      <ResultCardShell state="initial">
+        <ContinuousRegressionResult result={result} presentation={presentation} />
       </ResultCardShell>
     </div>
   );
@@ -5260,7 +5341,6 @@ export default function DatasetAdminPage() {
         contract: { status: "loading" },
         inferenceGuidance: { status: "loading" },
         resultContract: { status: "loading" },
-        isContinuousRegressionResult: false,
         metrics: { status: "loading" },
         visualizations: { status: "loading" },
         views: { status: "loading" },
@@ -5285,7 +5365,6 @@ export default function DatasetAdminPage() {
           contract: { status: "unavailable", message },
           inferenceGuidance: { status: "unavailable", message },
           resultContract: { status: "transport_failure", message },
-          isContinuousRegressionResult: false,
           metrics: { status: "unavailable", message },
           visualizations: { status: "unavailable", message },
           views: { status: "unavailable", message },
@@ -5301,16 +5380,12 @@ export default function DatasetAdminPage() {
             status: "transport_failure",
             message: "message" in contractResource ? contractResource.message : "Result contract request did not complete.",
           };
-      const isContinuousRegressionResult = contractResource.status === "ready"
-        && isAvailableContinuousRegressionResult(contractResource.data.result_contract);
-
       setReadOnlyData({
         dataset: authoringResourceState<AuthoringDatasetProjection>(envelope.dataset),
         context: authoringResourceState<ContextPayload>(envelope.context),
         contract: mapSection(contractResource, (data) => data.contract),
         inferenceGuidance: authoringResourceState<unknown>(envelope.inference_guidance),
         resultContract,
-        isContinuousRegressionResult,
         metrics: authoringResourceState<MetricsPayload>(envelope.metrics),
         visualizations: authoringResourceState<unknown>(envelope.visualizations),
         views: authoringResourceState<PredictView[]>(envelope.views),
@@ -5326,7 +5401,9 @@ export default function DatasetAdminPage() {
     if (readOnlyData.resultContract.status !== "available") return;
     const schemaVersion = readOnlyData.resultContract.semantics.problem_type === "multiclass_classification"
       ? "multiclass-result-presentation.v1"
-      : "binary-result-presentation.v1";
+      : readOnlyData.resultContract.semantics.problem_type === "continuous_regression"
+        ? "continuous-regression-result-presentation.v1"
+        : "binary-result-presentation.v1";
     setDraftForm((current) => current.result_presentation_schema_version === schemaVersion
       ? current
       : { ...current, result_presentation_schema_version: schemaVersion });

@@ -65,12 +65,33 @@ const multiclassResultContract = {
   },
 };
 
+const regressionResultContract = {
+  status: "available" as const,
+  semantics: {
+    schema_version: "continuous-regression-result-semantics.v1" as const,
+    problem_type: "continuous_regression" as const,
+    result_schema_version: "continuous-regression-result.v1" as const,
+    primary_output: "predicted_value" as const,
+    output_value_kind: "continuous_numeric" as const,
+    model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+  },
+};
+
 describe("release-derived multiclass problem type", () => {
   it("overrides historical binary context on both previews", () => {
     expect(projectHomeCardPreview(dataset, draftForm, context, multiclassResultContract).problemType)
       .toBe("multiclass_classification");
     expect(projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, multiclassResultContract).analysisType)
       .toBe("multiclass_classification");
+  });
+});
+
+describe("release-derived continuous regression problem type (Project Spec S0229)", () => {
+  it("overrides historical binary context on both previews", () => {
+    expect(projectHomeCardPreview(dataset, draftForm, context, regressionResultContract).problemType)
+      .toBe("continuous_regression");
+    expect(projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, regressionResultContract).analysisType)
+      .toBe("continuous_regression");
   });
 });
 // Project Spec S0205: the bounded public visualizations projection Instances

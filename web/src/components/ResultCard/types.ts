@@ -71,7 +71,15 @@ export type MulticlassClassificationResult = {
   model_descriptor: BinaryModelDescriptor;
 };
 
-export type ClassificationResult = BinaryClassificationResult | MulticlassClassificationResult;
+/** Matches runtime/inference.py's continuous-regression-result.v1 exactly (S0223/S0229). */
+export type ContinuousRegressionResult = {
+  schema_version: "continuous-regression-result.v1";
+  problem_type: "continuous_regression";
+  predicted_value: number;
+  model_descriptor: BinaryModelDescriptor;
+};
+
+export type ResultData = BinaryClassificationResult | MulticlassClassificationResult | ContinuousRegressionResult;
 
 /** Matches GET /datasets/{slug}/contract's result_contract.semantics (no band_id selection yet). */
 export type BinaryResultSemantics = {
@@ -115,7 +123,23 @@ export type MulticlassResultSemantics = {
   model_descriptor: BinaryModelDescriptor;
 };
 export type AvailableMulticlassResultContract = { status: "available"; semantics: MulticlassResultSemantics };
-export type ResultContract = AvailableBinaryResultContract | AvailableMulticlassResultContract | UnavailableBinaryResultContract;
+
+/** Matches GET /datasets/{slug}/contract's result_contract.semantics for continuous_regression (S0223/S0229). */
+export type ContinuousRegressionResultSemantics = {
+  schema_version: string;
+  problem_type: "continuous_regression";
+  result_schema_version: "continuous-regression-result.v1";
+  primary_output: "predicted_value";
+  output_value_kind: "continuous_numeric";
+  model_descriptor: BinaryModelDescriptor;
+};
+export type AvailableContinuousRegressionResultContract = { status: "available"; semantics: ContinuousRegressionResultSemantics };
+
+export type ResultContract =
+  | AvailableBinaryResultContract
+  | AvailableMulticlassResultContract
+  | AvailableContinuousRegressionResultContract
+  | UnavailableBinaryResultContract;
 
 /** Bounded guard for the executable public binary result-contract capability. */
 export function isAvailableBinaryResultContract(value: unknown): value is AvailableBinaryResultContract {
@@ -150,9 +174,22 @@ export function isAvailableMulticlassResultContract(value: unknown): value is Av
   return isModelDescriptor(semantics.model_descriptor);
 }
 
-export function availableResultProblemType(value: unknown): "binary_classification" | "multiclass_classification" | null {
+export function isAvailableContinuousRegressionResultContract(value: unknown): value is AvailableContinuousRegressionResultContract {
+  if (!isRecord(value) || value.status !== "available" || !isRecord(value.semantics)) return false;
+  const semantics = value.semantics;
+  if (semantics.problem_type !== "continuous_regression") return false;
+  if (semantics.result_schema_version !== "continuous-regression-result.v1") return false;
+  if (semantics.primary_output !== "predicted_value") return false;
+  if (semantics.output_value_kind !== "continuous_numeric") return false;
+  return isModelDescriptor(semantics.model_descriptor);
+}
+
+export function availableResultProblemType(
+  value: unknown,
+): "binary_classification" | "multiclass_classification" | "continuous_regression" | null {
   if (isAvailableBinaryResultContract(value)) return "binary_classification";
   if (isAvailableMulticlassResultContract(value)) return "multiclass_classification";
+  if (isAvailableContinuousRegressionResultContract(value)) return "continuous_regression";
   return null;
 }
 
@@ -180,13 +217,29 @@ export type MulticlassResultPresentation = {
   class_probability_distribution_label: string;
   model_section_label: string;
 };
-export type ResultPresentation = BinaryResultPresentation | MulticlassResultPresentation;
+/** Matches GET /datasets/{slug}/context's result_card (continuous-regression-result-presentation.v1). */
+export type ContinuousRegressionResultPresentation = {
+  schema_version: "continuous-regression-result-presentation.v1";
+  predicted_value_label: string;
+  model_section_label: string;
+  decimal_places: number;
+  value_unit_label?: string;
+};
+
+export type ResultPresentation = BinaryResultPresentation | MulticlassResultPresentation | ContinuousRegressionResultPresentation;
 
 export const GENERIC_MULTICLASS_RESULT_PRESENTATION: MulticlassResultPresentation = {
   schema_version: "multiclass-result-presentation.v1",
   predicted_class_label: "Predicted class",
   class_probability_distribution_label: "Class probability distribution",
   model_section_label: "Model",
+};
+
+export const GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION: ContinuousRegressionResultPresentation = {
+  schema_version: "continuous-regression-result-presentation.v1",
+  predicted_value_label: "Predicted value",
+  model_section_label: "Model",
+  decimal_places: 2,
 };
 
 /**
@@ -396,9 +449,36 @@ export function isMulticlassClassificationResult(value: unknown): value is Multi
   return probabilities.find((entry) => entry.probability === maximum)?.class_id === predictedClass.class_id;
 }
 
-export function resultForContract(resultContract: unknown, result: unknown): ClassificationResult | null {
+/**
+ * Bounded runtime transport guard for a successful /inference response's
+ * `result` field when the active problem type is continuous_regression.
+ * Rejects NaN/Infinity/-Infinity, boolean-as-number, a missing
+ * predicted_value, extra/unknown keys, the wrong schema version/problem
+ * type, and a malformed model descriptor. Never accepts classification
+ * fields (class, probability, threshold, band).
+ */
+export function isContinuousRegressionResult(value: unknown): value is ContinuousRegressionResult {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    "schema_version", "problem_type", "predicted_value", "model_descriptor",
+  ])) return false;
+  if (value.schema_version !== "continuous-regression-result.v1") return false;
+  if (value.problem_type !== "continuous_regression") return false;
+  if (!isFiniteNumber(value.predicted_value)) return false;
+  if (!isRecord(value.model_descriptor) || !hasExactKeys(value.model_descriptor, ["model_family", "display_name"]) || !isModelDescriptor(value.model_descriptor)) return false;
+  return true;
+}
+
+export function resultForContract(resultContract: unknown, result: unknown): ResultData | null {
   if (isAvailableBinaryResultContract(resultContract)) {
     return isBinaryClassificationResult(result) ? result : null;
+  }
+  if (isAvailableContinuousRegressionResultContract(resultContract)) {
+    if (!isContinuousRegressionResult(result)) return null;
+    const expectedModel = resultContract.semantics.model_descriptor;
+    return expectedModel.model_family === result.model_descriptor.model_family
+      && expectedModel.display_name === result.model_descriptor.display_name
+      ? result
+      : null;
   }
   if (!isAvailableMulticlassResultContract(resultContract) || !isMulticlassClassificationResult(result)) return null;
   const classes = resultContract.semantics.classes;

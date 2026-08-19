@@ -207,6 +207,31 @@ def test_publish_preserves_multiclass_result_presentation(fake_repo):
     assert result["snapshot"]["profile"]["result_card"] == profile["result_card"]
 
 
+def test_publish_preserves_continuous_regression_result_presentation(fake_repo):
+    profile = _profile(result_card={
+        "schema_version": "continuous-regression-result-presentation.v1",
+        "predicted_value_label": "Predicted compressive strength",
+        "model_section_label": "Model",
+        "decimal_places": 2,
+        "value_unit_label": "MPa",
+    })
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"] == profile["result_card"]
+
+
+def test_publish_bounds_continuous_regression_decimal_places(fake_repo):
+    profile = _profile(result_card={
+        "schema_version": "continuous-regression-result-presentation.v1",
+        "predicted_value_label": "Predicted value",
+        "model_section_label": "Model",
+        "decimal_places": 7,
+    })
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+    assert result["published"] is False
+    assert "SCHEMA_VALIDATION_ERROR" in _codes(result)
+
+
 def test_publish_blocks_dropping_unmigrated_legacy_submit_copy(fake_repo):
     profile = _profile(
         inference_presentation={"bound_predict_view_id": "churn-risk-overview"},

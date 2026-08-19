@@ -371,10 +371,13 @@ def _load_real_continuous_regression_profile() -> dict:
     return json.loads(CAPABILITY_PROFILE_PATH.read_text(encoding="utf-8"))
 
 
-def test_real_continuous_regression_capability_profile_support_status_is_unchanged():
+def test_real_continuous_regression_capability_profile_support_status_is_current_supported():
+    # Project Spec S0229: flipped from requires_future_contract_evolution to
+    # current_supported -- the Result Card/Inference Form/public metrics/
+    # publisher-compatibility boundaries S0222/S0227 deferred are now complete.
     profile = _load_real_continuous_regression_profile()
     assert profile["capability_profile_id"] == "continuous-predictive-regression"
-    assert profile["support_status"] == "requires_future_contract_evolution"
+    assert profile["support_status"] == "current_supported"
 
 
 def test_continuous_capability_identity_is_a_recognized_release_layer_identity():
@@ -384,24 +387,11 @@ def test_continuous_capability_identity_is_a_recognized_release_layer_identity()
     )
 
 
-def test_real_continuous_regression_profile_still_rejected_by_release_policy():
+def test_real_continuous_regression_profile_now_accepted_by_release_policy():
+    # Project Spec S0229: the real, unmodified profile file on disk now
+    # proves release-layer identity+support-status acceptance directly --
+    # no synthetic current-supported clone is needed for this gate anymore.
     profile = _load_real_continuous_regression_profile()
-    capability_binding = {
-        "capability_profile_id": profile["capability_profile_id"],
-        "capability_profile_version": profile["capability_profile_version"],
-        "resolved_role_policy": [],
-    }
-
-    result = assemble_candidate.resolve_capability_release_policy(capability_binding, profile)
-
-    assert result.status == "rejected"
-    assert result.rejection_phase == assemble_candidate.CAPABILITY_REJECTION_PHASE_UNSUPPORTED
-    assert result.support_status == "requires_future_contract_evolution"
-
-
-def test_synthetic_current_supported_clone_proves_identity_recognition():
-    profile = dict(_load_real_continuous_regression_profile())
-    profile["support_status"] = "current_supported"
     capability_binding = {
         "capability_profile_id": profile["capability_profile_id"],
         "capability_profile_version": profile["capability_profile_version"],
@@ -412,9 +402,6 @@ def test_synthetic_current_supported_clone_proves_identity_recognition():
 
     assert result.status == "accepted"
     assert result.capability_profile_id == "continuous-predictive-regression"
-
-    # The real, unmodified profile file on disk is untouched by this test.
-    assert _load_real_continuous_regression_profile()["support_status"] == "requires_future_contract_evolution"
 
 
 # ===========================================================================
@@ -463,7 +450,10 @@ def test_verify_capability_binding_accepts_synthetic_current_supported_regressio
     assert reasons == []
 
 
-def test_verify_capability_binding_rejects_real_regression_support_status(tmp_path):
+def test_verify_capability_binding_accepts_real_regression_support_status(tmp_path):
+    # Project Spec S0229: the real, unmodified profile is now
+    # current_supported, so a matching problem type no longer produces an
+    # unsupported-status rejection reason.
     profile = _load_real_continuous_regression_profile()
     capability_binding = _write_capability_profile_and_binding(tmp_path, profile)
     candidate = {"capability_binding": capability_binding}
@@ -471,8 +461,7 @@ def test_verify_capability_binding_rejects_real_regression_support_status(tmp_pa
 
     reasons = validate._verify_capability_binding(candidate, tmp_path, predictive_bundle_data)
 
-    assert len(reasons) == 1
-    assert reasons[0]["code"] == validate._CAPABILITY_BINDING_UNSUPPORTED_STATUS_CODE
+    assert reasons == []
 
 
 def test_verify_capability_binding_rejects_problem_type_mismatch(tmp_path):

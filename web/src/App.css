@@ -1998,6 +1998,62 @@ h1 {
   }
 }
 
+.continuous-regression-result {
+  display: grid;
+  gap: var(--atlas-space-5);
+}
+
+.continuous-regression-result__prediction,
+.continuous-regression-result__model {
+  display: grid;
+  gap: var(--atlas-space-2);
+}
+
+.continuous-regression-result__label {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.continuous-regression-result__prediction-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--atlas-space-3);
+  margin: 0;
+  color: var(--atlas-color-text);
+}
+
+.continuous-regression-result__prediction-value strong {
+  color: var(--atlas-color-accent-strong);
+  font-size: var(--atlas-text-2xl);
+  font-weight: 700;
+}
+
+.continuous-regression-result__unit {
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-lg);
+  font-weight: 600;
+}
+
+.continuous-regression-result__model-value {
+  margin: 0;
+  color: var(--atlas-color-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .continuous-regression-result__prediction-value {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--atlas-space-1);
+  }
+}
+
 @media (max-width: 767px) {
   .dataset-detail-header__metadata {
     display: block;

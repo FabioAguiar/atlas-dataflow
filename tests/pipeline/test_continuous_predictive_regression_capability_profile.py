@@ -4,14 +4,17 @@ Contract.
 
 Proves the real, committed capability profile document at
 pipeline/capabilities/continuous-predictive-regression.v1.json is a
-governed, additive, non-operational capability profile:
-support_status: requires_future_contract_evolution, absent from every
-downstream contract-projection/release-layer operational supported-
-capability set, and free of any Concrete Compressive Strength-specific
-coupling. S0222 stops at the governed capability + semantic-authoring
-boundary; a later, separately scoped Project Spec must explicitly establish
-continuous-regression result semantics and execution-contract behavior
-before downstream support can be considered.
+governed, additive capability profile, free of any Concrete Compressive
+Strength-specific coupling. S0222 established the governed capability +
+semantic-authoring boundary with support_status:
+requires_future_contract_evolution; Project Spec S0229 (Continuous
+Regression Result Presentation, Inference Form and Admin Preview)
+completed the remaining Result Card/Inference Form/public metrics/
+publisher-compatibility boundaries S0222 deferred, so the profile now
+declares support_status: current_supported and downstream release-layer
+support -- proven here alongside the still-current
+CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS absence, a separate,
+deeper authoring/contract-derivation gate out of S0229's scope.
 
 Uses only the real repository profile files and the real capability-profile
 schema -- never a real model, never notebook execution, never a real
@@ -91,8 +94,11 @@ class TestIdentityVersionSupportStatus:
     def test_capability_profile_version(self):
         assert _load_profile()["capability_profile_version"] == "v1"
 
-    def test_support_status_is_requires_future_contract_evolution(self):
-        assert _load_profile()["support_status"] == "requires_future_contract_evolution"
+    def test_support_status_is_current_supported(self):
+        # Project Spec S0229: flipped from requires_future_contract_evolution
+        # to current_supported now that the Result Card/Inference Form/
+        # public metrics/publisher-compatibility boundaries are complete.
+        assert _load_profile()["support_status"] == "current_supported"
 
 
 class TestSemanticRuntimePublicationPolicy:
@@ -227,18 +233,23 @@ class TestBinaryAndMulticlassProfilesRemainUnchanged:
         assert _load_multiclass_profile()["prediction_runtime"]["mode"] == "single_model_multiclass_classification"
 
 
-class TestContinuousRegressionAbsentFromDownstreamOperationalSupport:
-    """S0222 stops at the governed capability + semantic-authoring boundary
-    -- the regression profile existing must never, by itself, make it
-    downstream operational support."""
+class TestContinuousRegressionDownstreamOperationalSupport:
+    """Project Spec S0227 already added continuous-predictive-regression to
+    the release-layer supported-capability set (candidate publisher
+    identity recognition), and Project Spec S0229 completed the remaining
+    Result Card/Inference Form/public metrics boundaries and flipped
+    support_status to current_supported. The deeper authoring/contract-
+    derivation gate (CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS,
+    pipeline/contract_derivation.py) remains a separate concern S0229 does
+    not authorize touching, and stays absent."""
 
     def test_absent_from_contract_projection_supported_capability_profile_ids(self):
         assert "continuous-predictive-regression" not in CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS
 
-    def test_absent_from_release_layer_supported_capability_profile_ids(self):
-        assert "continuous-predictive-regression" not in RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
+    def test_present_in_release_layer_supported_capability_profile_ids(self):
+        assert "continuous-predictive-regression" in RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
 
-    def test_profile_declares_requires_future_contract_evolution_not_current_supported(self):
+    def test_profile_declares_current_supported_not_requires_future_contract_evolution(self):
         profile = _load_profile()
-        assert profile["support_status"] != "current_supported"
-        assert profile["support_status"] == "requires_future_contract_evolution"
+        assert profile["support_status"] == "current_supported"
+        assert profile["support_status"] != "requires_future_contract_evolution"

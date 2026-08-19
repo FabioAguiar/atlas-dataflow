@@ -34,6 +34,7 @@ PERFORMANCE_FOCUS_LABELS = {
     "balanced_classification": "Balanced classification",
     "probability_quality": "Probability quality",
     "operational_decision": "Operational decision",
+    "regression_performance": "Regression performance",
 }
 
 PERFORMANCE_SCORE_CATALOG = {
@@ -73,10 +74,17 @@ PERFORMANCE_SCORE_CATALOG = {
         "false_positives_at_k": "False Positives at K",
         "false_negatives_at_k": "False Negatives at K",
     },
+    # Project Spec S0229: the bounded canonical continuous-regression score
+    # catalog. Never applicable to binary/multiclass, and never extended with
+    # classification-only scores.
+    "regression_performance": {
+        "r2": "R²", "mae": "MAE", "rmse": "RMSE",
+    },
 }
 
 BINARY_RESULT_PRESENTATION_SCHEMA_VERSION = "binary-result-presentation.v1"
 MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION = "multiclass-result-presentation.v1"
+CONTINUOUS_REGRESSION_RESULT_PRESENTATION_SCHEMA_VERSION = "continuous-regression-result-presentation.v1"
 _RESULT_CARD_FALLBACKS = {
     "positive_class_probability_label": "Positive class probability",
     "predicted_outcome_label": "Predicted outcome",
@@ -92,6 +100,11 @@ _MULTICLASS_RESULT_CARD_FALLBACKS = {
     "class_probability_distribution_label": "Class probability distribution",
     "model_section_label": "Model",
 }
+_CONTINUOUS_REGRESSION_RESULT_CARD_FALLBACKS = {
+    "predicted_value_label": "Predicted value",
+    "model_section_label": "Model",
+}
+_CONTINUOUS_REGRESSION_DECIMAL_PLACES_FALLBACK = 2
 
 
 def normalize_binary_result_presentation(result_card: object) -> dict:
@@ -157,14 +170,46 @@ def normalize_multiclass_result_presentation(result_card: object) -> dict:
     }
 
 
+def normalize_continuous_regression_result_presentation(result_card: object) -> dict:
+    """Return canonical copy-only continuous-regression presentation deterministically.
+
+    decimal_places is bounded 0..6, defaulting when absent/invalid. The
+    optional value_unit_label is presentation copy only and is included only
+    when it is a non-empty string; it never carries a fallback of its own.
+    """
+    source = result_card if isinstance(result_card, dict) else {}
+
+    def copy(key: str) -> str:
+        value = source.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else _CONTINUOUS_REGRESSION_RESULT_CARD_FALLBACKS[key]
+
+    decimal_places = source.get("decimal_places")
+    if not isinstance(decimal_places, int) or isinstance(decimal_places, bool) or not (0 <= decimal_places <= 6):
+        decimal_places = _CONTINUOUS_REGRESSION_DECIMAL_PLACES_FALLBACK
+
+    normalized = {
+        "schema_version": CONTINUOUS_REGRESSION_RESULT_PRESENTATION_SCHEMA_VERSION,
+        **{key: copy(key) for key in _CONTINUOUS_REGRESSION_RESULT_CARD_FALLBACKS},
+        "decimal_places": decimal_places,
+    }
+    value_unit_label = source.get("value_unit_label")
+    if isinstance(value_unit_label, str) and value_unit_label.strip():
+        normalized["value_unit_label"] = value_unit_label.strip()
+    return normalized
+
+
 def normalize_result_presentation(result_card: object, expected_problem_type: str | None = None) -> dict:
     """Dispatch only from trusted problem type or the governed schema version."""
     if expected_problem_type == "multiclass_classification":
         return normalize_multiclass_result_presentation(result_card)
+    if expected_problem_type == "continuous_regression":
+        return normalize_continuous_regression_result_presentation(result_card)
     if expected_problem_type == "binary_classification":
         return normalize_binary_result_presentation(result_card)
     if isinstance(result_card, dict) and result_card.get("schema_version") == MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION:
         return normalize_multiclass_result_presentation(result_card)
+    if isinstance(result_card, dict) and result_card.get("schema_version") == CONTINUOUS_REGRESSION_RESULT_PRESENTATION_SCHEMA_VERSION:
+        return normalize_continuous_regression_result_presentation(result_card)
     return normalize_binary_result_presentation(result_card)
 
 

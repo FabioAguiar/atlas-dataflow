@@ -11,7 +11,7 @@ import {
 type MetricsData = Record<string, unknown>;
 
 export type PerformanceFocus = {
-  focus_id: "overall_discrimination" | "positive_class_detection" | "balanced_classification" | "probability_quality" | "operational_decision";
+  focus_id: "overall_discrimination" | "positive_class_detection" | "balanced_classification" | "probability_quality" | "operational_decision" | "regression_performance";
   highlighted_score_id: string;
   visible_scores: Array<{
     score_id: string;
@@ -50,6 +50,10 @@ const SCORE_LABELS: Record<NormalizedMetricKey, string> = {
   f1_weighted: "F1 Weighted",
   precision_macro: "Precision Macro",
   recall_macro: "Recall Macro",
+  // Project Spec S0229: continuous-regression score labels.
+  r2: "R²",
+  mae: "MAE",
+  rmse: "RMSE",
 };
 
 function formatScore(value: number): string {
@@ -144,20 +148,25 @@ export default function PerformanceSummary({
 }: PerformanceSummaryProps) {
   const evaluation = normalizeEvaluation(metrics);
   const isMulticlass = problemType === "multiclass_classification";
+  // Project Spec S0229: a continuous-regression release must only ever
+  // render the bounded r2/mae/rmse catalog, never a classification score
+  // that happens to still be persisted from before the release became
+  // continuous_regression.
+  const isContinuousRegression = problemType === "continuous_regression";
   // Project Spec S0215: for a multiclass release, never present an
   // ambiguous binary-only published score id (f1_score, precision, recall,
   // specificity, g_mean, ...) as multiclass-compatible -- even if it was
   // persisted by Admin before the release became multiclass. Binary
   // rendering is completely unaffected.
   const publishedScores = performanceFocus?.visible_scores
-    .filter((score) => !isMulticlass || isPerformanceScoreApplicable(score.score_id, "multiclass_classification"))
+    .filter((score) => (!isMulticlass && !isContinuousRegression) || isPerformanceScoreApplicable(score.score_id, problemType!))
     .slice()
     .sort((left, right) => left.order - right.order || left.score_id.localeCompare(right.score_id));
   const hasPublishedFocus = Boolean(performanceFocus && publishedScores?.length);
-  // Project Spec S0215: the canonical fallback path also only renders
-  // recognized explicit multiclass ids for a multiclass release.
-  const fallbackOrder = isMulticlass
-    ? evaluation.order.filter((key) => isPerformanceScoreApplicable(key, "multiclass_classification"))
+  // Project Spec S0215/S0229: the canonical fallback path also only renders
+  // recognized explicit multiclass/regression ids for that release's problem type.
+  const fallbackOrder = isMulticlass || isContinuousRegression
+    ? evaluation.order.filter((key) => isPerformanceScoreApplicable(key, problemType!))
     : evaluation.order;
   const hasAnyScore = fallbackOrder.length > 0;
   // Project Spec S0204: the shared focus label authority is the single

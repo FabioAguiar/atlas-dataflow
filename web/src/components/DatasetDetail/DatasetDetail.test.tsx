@@ -22,6 +22,7 @@ import FeatureImportance from "./FeatureImportance";
 import TargetDistribution from "./TargetDistribution";
 import ConfusionMatrix from "./ConfusionMatrix";
 import { presentDatasetDateOnly, safePublicSourceUrl } from "../../lib/datasetPresentation";
+import { isPerformanceFocusApplicable } from "../../lib/performanceMetricMetadata";
 
 function renderHeader(
   metadata: DatasetDetailMetadataItem[],
@@ -298,6 +299,79 @@ describe("PerformanceSummary multiclass problem-type filtering (Project Spec S02
       />,
     );
     expect(container.querySelector(".performance-summary")).not.toBeInTheDocument();
+  });
+});
+
+// Project Spec S0229: the regression Performance Summary must recognize
+// r2/mae/rmse with the correct orientation and never present a classification
+// score for a continuous-regression release (or vice versa).
+describe("PerformanceSummary continuous-regression problem-type filtering and direction (Project Spec S0229)", () => {
+  const regressionFocus = {
+    focus_id: "regression_performance" as const,
+    highlighted_score_id: "r2",
+    visible_scores: [
+      { score_id: "r2", display_label: "R²", value: "0.87", value_source: "canonical" as const, order: 0 },
+      { score_id: "mae", display_label: "MAE", value: "3.21", value_source: "canonical" as const, order: 1 },
+      { score_id: "rmse", display_label: "RMSE", value: "4.55", value_source: "canonical" as const, order: 2 },
+    ],
+  };
+
+  it("renders r2/mae/rmse with the correct favorable-direction arrow orientation", () => {
+    render(<PerformanceSummary metrics={{}} performanceFocus={regressionFocus} problemType="continuous_regression" />);
+
+    const r2 = screen.getByText("R²").closest(".performance-summary__score") as HTMLElement;
+    expect(r2.querySelector(".performance-summary__score-arrows")).toHaveAttribute("aria-label", "Higher is better");
+    const mae = screen.getByText("MAE").closest(".performance-summary__score") as HTMLElement;
+    expect(mae.querySelector(".performance-summary__score-arrows")).toHaveAttribute("aria-label", "Lower is better");
+    const rmse = screen.getByText("RMSE").closest(".performance-summary__score") as HTMLElement;
+    expect(rmse.querySelector(".performance-summary__score-arrows")).toHaveAttribute("aria-label", "Lower is better");
+    // Project Spec S0221: never a visible "Higher/Lower is better" line.
+    expect(screen.queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(screen.queryByText("Lower is better")).not.toBeInTheDocument();
+  });
+
+  it("filters a stale classification score id out of a continuous-regression release", () => {
+    const staleClassificationFocus = {
+      focus_id: "regression_performance" as const,
+      highlighted_score_id: "r2",
+      visible_scores: [
+        { score_id: "r2", display_label: "R²", value: "0.87", value_source: "canonical" as const, order: 0 },
+        { score_id: "accuracy", display_label: "Accuracy", value: "0.9", value_source: "manual" as const, order: 1 },
+      ],
+    };
+    render(<PerformanceSummary metrics={{}} performanceFocus={staleClassificationFocus} problemType="continuous_regression" />);
+    expect(screen.getByText("R²")).toBeInTheDocument();
+    expect(screen.queryByText("Accuracy")).not.toBeInTheDocument();
+  });
+
+  it("renders explicit regression labels from the canonical fallback metrics", () => {
+    render(
+      <PerformanceSummary
+        metrics={{ evaluation: { metrics: { r2: 0.87, mae: 3.21, rmse: 4.55 } } }}
+        problemType="continuous_regression"
+      />,
+    );
+    expect(screen.getByText("R²")).toBeInTheDocument();
+    expect(screen.getByText("MAE")).toBeInTheDocument();
+    expect(screen.getByText("RMSE")).toBeInTheDocument();
+  });
+
+  it("never surfaces a classification canonical fallback metric for a continuous-regression release", () => {
+    render(
+      <PerformanceSummary
+        metrics={{ evaluation: { metrics: { accuracy: 0.9, f1_score: 0.77, r2: 0.87 } } }}
+        problemType="continuous_regression"
+      />,
+    );
+    expect(screen.getByText("R²")).toBeInTheDocument();
+    expect(screen.queryByText("Accuracy")).not.toBeInTheDocument();
+    expect(screen.queryByText("F1-score")).not.toBeInTheDocument();
+  });
+
+  it("classification focus applicability remains unchanged: regression_performance is never offered as a binary/multiclass focus", () => {
+    expect(isPerformanceFocusApplicable("regression_performance", "binary_classification")).toBe(false);
+    expect(isPerformanceFocusApplicable("regression_performance", "multiclass_classification")).toBe(false);
+    expect(isPerformanceFocusApplicable("overall_discrimination", "continuous_regression")).toBe(false);
   });
 });
 

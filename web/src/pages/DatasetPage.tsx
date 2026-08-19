@@ -14,6 +14,7 @@ import InferenceForm, { ContractPayload, PredictViewCustomization } from "../com
 import {
   availableResultProblemType,
   isAvailableBinaryResultContract,
+  isAvailableContinuousRegressionResultContract,
   type ResultContract,
   type ResultPresentation,
 } from "../components/ResultCard/types";
@@ -141,24 +142,6 @@ function resolveAnalysisType(
 ): string | null {
   const releaseBoundProblemType = availableResultProblemType(resultContract);
   return humanizeProblemType(releaseBoundProblemType) ?? humanizeProblemType(context?.problem_type) ?? null;
-}
-
-/**
- * Project Spec S0228: the same authoritative release-bound problem type
- * already established by availableResultProblemType (S0215/S0213) for
- * binary/multiclass, narrowed here to detect an available continuous-
- * regression result contract -- never dataset slug, context.problem_type,
- * or visualizations shape. ResultCard/types.ts is not extended for
- * continuous_regression (out of scope for this Project Spec), so this
- * local guard reads the same result_contract.semantics.problem_type field
- * without editing any ResultCard file.
- */
-function isAvailableContinuousRegressionResultContract(resultContract: ResultContract | null): boolean {
-  if (!resultContract || resultContract.status !== "available") {
-    return false;
-  }
-  const semantics = (resultContract as { semantics?: { problem_type?: unknown } }).semantics;
-  return semantics?.problem_type === "continuous_regression";
 }
 
 export default function DatasetPage() {

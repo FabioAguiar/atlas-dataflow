@@ -31,18 +31,6 @@
       },
       "review_status": "ready",
       "dataset_detail_updated_at": "2026-08-11T21:48:52Z"
-    },
-    {
-      "dataset_slug": "dry-bean",
-      "active_release": "release-20260818-001",
-      "public_metadata": {
-        "title": "Dry Bean",
-        "summary": "Published dataset: Dry Bean.",
-        "domain": "general",
-        "visibility": "public",
-        "tags": []
-      },
-      "review_status": "needs_review"
     }
   ]
 }

@@ -6,9 +6,9 @@
     "dataset_title": "Dry Bean"
   },
   "release_identity": {
-    "release_id": "release-20260818-001",
+    "release_id": "release-20260818-002",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-08-18T23:06:43Z"
+    "created_at": "2026-08-18T23:59:37Z"
   },
   "artifacts": [
     {
@@ -27,7 +27,7 @@
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "502e726d3c40bf2927a9b61a1881b60b7b568859e59a0ba6ea9ac4da2b46d773"
+      "hash_value": "a78bf05bffc1ca78c965c62a5562439cbce6db0638d20c187fbb9fdf8826bbcf"
     },
     {
       "role": "model_artifact",
@@ -39,13 +39,13 @@
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "4b2248c265b3070b24b57f07dc086325cbceb06d9b88a41400670efda2a82e01"
+      "hash_value": "467c5952686b40da5e4330cb4b4ca8d4725025d9a0e1e2ad0c7ad9fd1dcfc7fe"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "f5dc62064f113fb697b7dc8637477bf71206c4543ef7321a37460ef9a4c893de"
+      "hash_value": "1bbe8f3ee1266007f19557882e3ccebb1f5bfa2f22d03657f662f5df20d3d3c0"
     },
     {
       "role": "public_context",
@@ -57,19 +57,19 @@
       "role": "visualizations",
       "reference": "visualizations/visualizations.json",
       "hash_algorithm": "sha256",
-      "hash_value": "cec5410023d55e9ed96ecaae72882ac84e766a51b6560e3ed6f575744bb869a3"
+      "hash_value": "7dcdd61ff639027caf2fe2f52b8bf7944f8c1a4bac72b0df2c65771f27c12913"
     },
     {
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "3e135db7bfd09a8dadf32412d58d792dea95a930ac3fab9d62bc64e384706e05"
+      "hash_value": "19bd68c2f6164d050bf3a2cec824f30568597c4844ae00f231e1b3fc0dcbb36a"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "1687429e2940faea350f904eb2ce2a517b8dcff87cde8c4a856fa76d56c1c87d"
+      "hash_value": "1ddcf11b2ac7a4ab939263cf11ee989b26a16c4e6f4522feb197f0766f3887b1"
     }
   ],
   "required_hash_coverage": {

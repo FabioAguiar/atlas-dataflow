@@ -8,26 +8,26 @@
   "durable_references": {
     "inference_bundle": {
       "path": "pipeline/inference-bundles/dry-bean/inference-bundle.json",
-      "sha256": "502e726d3c40bf2927a9b61a1881b60b7b568859e59a0ba6ea9ac4da2b46d773"
+      "sha256": "a78bf05bffc1ca78c965c62a5562439cbce6db0638d20c187fbb9fdf8826bbcf"
     },
     "manifest": {
-      "path": "publisher/runs/validate-20260818T230644Z/manifest.json",
-      "sha256": "aa4f371c0c9fc594b10c4fed8a34b4309e21b7c2debb9670947d9ec0381a573d"
+      "path": "publisher/runs/validate-20260818T235938Z/manifest.json",
+      "sha256": "825b8267461756133b17bfb7ba69b5f369b9f535350549440ad4f5f36bae3607"
     },
     "materialization_result": null,
     "operational_readiness_source": null,
     "publisher_validation_result": {
-      "path": "publisher/runs/validate-20260818T230644Z/validation-result.json",
-      "sha256": "52b988f216be84838d979f36477131d1d3784af60ccd10ad3bfbd4b6acb272a4"
+      "path": "publisher/runs/validate-20260818T235938Z/validation-result.json",
+      "sha256": "2b5a53c33e8562a1214bd76d8314924e8bedc39e28a7a743fdc8e7c6e6030d07"
     },
     "release_candidate": {
-      "path": "releases/candidates/dry-bean/release-20260818-001/release-candidate.json",
-      "sha256": "1687429e2940faea350f904eb2ce2a517b8dcff87cde8c4a856fa76d56c1c87d"
+      "path": "releases/candidates/dry-bean/release-20260818-002/release-candidate.json",
+      "sha256": "1ddcf11b2ac7a4ab939263cf11ee989b26a16c4e6f4522feb197f0766f3887b1"
     }
   },
   "manifest_outcome": {
     "manifest_generated": true,
-    "manifest_path": "publisher/runs/validate-20260818T230644Z/manifest.json"
+    "manifest_path": "publisher/runs/validate-20260818T235938Z/manifest.json"
   },
   "model_source_mode": "atlas_internal_training",
   "operational_readiness": {
@@ -41,9 +41,9 @@
   "promotion_eligibility": true,
   "reasons": [],
   "run_identity": {
-    "created_at": "2026-08-18T23:06:44+00:00",
+    "created_at": "2026-08-18T23:59:38+00:00",
     "dataset_slug": "dry-bean",
-    "run_id": "train-20260818T230643Z"
+    "run_id": "train-20260818T235937Z"
   },
   "schema_version": "validated-run-terminal-result.v1",
   "status": "completed",

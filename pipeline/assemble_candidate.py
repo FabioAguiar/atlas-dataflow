@@ -60,6 +60,16 @@ _REQUIRED_REAL_INPUTS = [
 ]
 
 _CANDIDATE_STAGING_PREFIX = "releases/candidates"
+_PROMOTED_RELEASES_PREFIX = "releases"
+
+# Release identity reservation (Project Spec S0219): the write-time collision
+# gate that makes an assembled candidate's release_id immutable once
+# reserved by a promoted release or by any dataset's existing candidate.
+RELEASE_IDENTITY_REJECTION_PHASE = "release_identity_reservation"
+RELEASE_IDENTITY_REJECTION_REASON = "candidate_release_identity_already_reserved"
+RELEASE_IDENTITY_SUBREASON_PROMOTED_RELEASE_ALREADY_EXISTS = "promoted_release_already_exists"
+RELEASE_IDENTITY_SUBREASON_CANDIDATE_RELEASE_ID_ALREADY_EXISTS = "candidate_release_id_already_exists"
+RELEASE_IDENTITY_SUBREASON_CANDIDATE_DIRECTORY_CREATION_RACE = "candidate_directory_creation_race"
 
 # Release-candidate data handoff boundary (Project Spec S0016). This is a
 # pre-assembly readiness check only: it validates explicit, repository-relative
@@ -1042,6 +1052,28 @@ def _rejection(phase: str, reason: str, **extra) -> dict:
     return {"status": "rejected", "reason": reason, "rejection_phase": phase, **extra}
 
 
+def _release_identity_reservation_subreason(release_id: str, repo_root: Path) -> str | None:
+    """Return the bounded subreason if `release_id` is already reserved.
+
+    Checks a promoted release directory (`releases/<release_id>/`) first,
+    then every dataset's existing candidate directory
+    (`releases/candidates/*/<release_id>/`) -- global across datasets, never
+    scoped to the requesting candidate's own dataset_slug. Read-only: never
+    creates or modifies anything on disk. Returns None when the release id
+    is not reserved by either.
+    """
+    if (repo_root / _PROMOTED_RELEASES_PREFIX / release_id).is_dir():
+        return RELEASE_IDENTITY_SUBREASON_PROMOTED_RELEASE_ALREADY_EXISTS
+
+    candidates_root = repo_root / _CANDIDATE_STAGING_PREFIX
+    if candidates_root.is_dir():
+        for dataset_dir in candidates_root.iterdir():
+            if dataset_dir.is_dir() and (dataset_dir / release_id).is_dir():
+                return RELEASE_IDENTITY_SUBREASON_CANDIDATE_RELEASE_ID_ALREADY_EXISTS
+
+    return None
+
+
 def _acceptance(dataset_slug: str, release_id: str, candidate_dir: Path, validation: dict) -> dict:
     return {
         "status": "accepted",
@@ -1462,6 +1494,25 @@ def assemble_release_candidate(
                 capability_profile_version=policy_result.capability_profile_version,
             )
 
+    # Step 1c: Release identity reservation check (Project Spec S0219).
+    # Runs after the identity has been made parseable by Steps 1/1b above,
+    # but before any candidate write. Global across datasets: a release_id
+    # already reserved by a promoted release or by any dataset's existing
+    # candidate must never be reused for a new candidate assembly, whether
+    # or not it matches this candidate's own dataset_slug. A duplicate
+    # request is not an idempotent overwrite -- the caller must allocate a
+    # new release id.
+    reservation_subreason = _release_identity_reservation_subreason(release_id, resolved_repo_root)
+    if reservation_subreason is not None:
+        return _rejection(
+            RELEASE_IDENTITY_REJECTION_PHASE,
+            RELEASE_IDENTITY_REJECTION_REASON,
+            dataset_slug=dataset_slug,
+            release_id=release_id,
+            candidate_dir=None,
+            reservation_subreason=reservation_subreason,
+        )
+
     # Step 2: Construct candidate_dir and assert it is under releases/candidates/.
     candidate_dir = (Path(output_dir) / dataset_slug / release_id).resolve()
     staging_prefix = (resolved_repo_root / _CANDIDATE_STAGING_PREFIX).resolve()
@@ -1486,8 +1537,25 @@ def assemble_release_candidate(
             missing_paths=missing,
         )
 
-    # Step 4: Create candidate_dir and necessary subdirectories.
-    candidate_dir.mkdir(parents=True, exist_ok=True)
+    # Step 4: Create candidate_dir and necessary subdirectories. Parent
+    # staging directories may be created normally, but the final leaf is
+    # created without exist_ok=True (Project Spec S0219 letter J): a
+    # FileExistsError here means another caller created the same leaf after
+    # the preflight reservation check above (a creation race), and must
+    # fail closed -- converted into the same bounded reservation rejection
+    # -- rather than silently reusing or overwriting the winner's candidate.
+    candidate_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        candidate_dir.mkdir()
+    except FileExistsError:
+        return _rejection(
+            RELEASE_IDENTITY_REJECTION_PHASE,
+            RELEASE_IDENTITY_REJECTION_REASON,
+            dataset_slug=dataset_slug,
+            release_id=release_id,
+            candidate_dir=None,
+            reservation_subreason=RELEASE_IDENTITY_SUBREASON_CANDIDATE_DIRECTORY_CREATION_RACE,
+        )
 
     # Step 5: Copy each publisher-visible governed artifact to the candidate directory.
     assembled = []

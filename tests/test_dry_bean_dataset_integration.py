@@ -266,6 +266,40 @@ def test_notebook_orchestrates_release_candidate_assembly():
     assert "assemble_candidate.assemble_release_candidate(" in code
 
 
+# --- Project Spec S0219: collision-safe release-id allocation (Stage 13/14) ---
+
+
+def test_notebook_uses_generic_release_identity_allocator():
+    code = _source("code")
+    assert "from pipeline import generate_inference_bundle, release_identity" in code
+    assert "release_identity.allocate_release_id(run_id, repo_root)" in code
+    assert "allocate_release_id" in _called_names()
+    assert "_derive_provisional_release_id" not in code
+
+
+def test_notebook_allocates_release_id_after_run_identity_and_before_bundle_generation():
+    code = _source("code")
+    run_id_offset = code.index('run_id = Path(training_run_relative_path.rstrip("/")).name')
+    allocation_offset = code.index("allocated_release_id = release_identity.allocate_release_id(")
+    bundle_offset = code.index("generate_inference_bundle.materialize_governed_inference_bundle(")
+    assert run_id_offset < allocation_offset < bundle_offset
+
+
+def test_notebook_passes_the_same_allocated_release_id_to_bundle_and_candidate_input():
+    code = _source("code")
+    assert "release_id=allocated_release_id,\n    )" in code
+    assert "release_id=allocated_release_id,\n        source_run_id=run_id," in code
+    # No second, independent release-id derivation anywhere in the notebook.
+    assert code.count("allocate_release_id(") == 1
+
+
+def test_notebook_provisional_helper_is_not_the_final_candidate_authority():
+    code = _source("code")
+    assert "provisional_release_id" not in code
+    assert "candidate_release_id" not in code
+    assert "generate_inference_bundle._derive_provisional_release_id" not in code
+
+
 def test_notebook_has_no_promotion_or_registry_activation_calls():
     # Project Spec S0217 legitimately reaches publisher.manifest.run through
     # the generic Publisher Run materializer (publisher.validate.materialize_validation_run),

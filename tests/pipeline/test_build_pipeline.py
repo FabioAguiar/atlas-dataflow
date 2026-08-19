@@ -1279,3 +1279,178 @@ def test_assemble_release_candidate_external_provenance_produces_ten_role_candid
     jsonschema = pytest.importorskip("jsonschema")
     rc_schema = json.loads((REPO_ROOT / "publisher" / "release-candidate.schema.json").read_text())
     jsonschema.validate(release_candidate, rc_schema)
+
+
+# --- S0219: release identity reservation / candidate immutability ---
+
+
+def _prepare_candidate_input_dict(tmp_path: Path) -> tuple[dict, Path]:
+    """Build a tmp repo + real governed artifacts and return the parsed
+    release-candidate-input dict alongside the tmp repo root, without
+    writing schema fixtures (callers add those as needed)."""
+    tmp_repo = tmp_path / "repo"
+    candidate_input_path = _write_candidate_input(
+        tmp_path, artifact_paths=_write_governed_artifacts(tmp_repo)
+    )
+    return json.loads(candidate_input_path.read_text()), tmp_repo
+
+
+def _copy_assembly_schemas(tmp_repo: Path) -> None:
+    schema_dst = tmp_repo / "pipeline" / "build-evidence.schema.json"
+    schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "pipeline" / "build-evidence.schema.json", schema_dst)
+
+    public_contract_schema_dst = tmp_repo / "contracts" / "public-contract.schema.json"
+    public_contract_schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "contracts" / "public-contract.schema.json", public_contract_schema_dst)
+
+    visualizations_schema_dst = tmp_repo / "pipeline" / "analytical-visualizations.schema.json"
+    visualizations_schema_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json",
+        visualizations_schema_dst,
+    )
+
+
+def _tree_snapshot(root: Path) -> dict[str, bytes]:
+    if not root.is_dir():
+        return {}
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_first_free_assembly_succeeds(tmp_path):
+    candidate_input, tmp_repo = _prepare_candidate_input_dict(tmp_path)
+    _copy_assembly_schemas(tmp_repo)
+    output_dir = tmp_repo / "releases" / "candidates"
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-first-free",
+    )
+
+    assert result["status"] == "accepted", result
+    assert Path(result["candidate_dir"]).is_dir()
+
+
+def test_same_id_second_assembly_rejects_and_leaves_existing_candidate_unchanged(tmp_path):
+    candidate_input, tmp_repo = _prepare_candidate_input_dict(tmp_path)
+    _copy_assembly_schemas(tmp_repo)
+    output_dir = tmp_repo / "releases" / "candidates"
+
+    first = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-dup-first",
+    )
+    assert first["status"] == "accepted", first
+    candidate_dir = Path(first["candidate_dir"])
+    before = _tree_snapshot(candidate_dir)
+    assert before  # sanity: the first assembly actually wrote files
+
+    second = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-dup-second",
+    )
+
+    assert second["status"] == "rejected"
+    assert second["rejection_phase"] == "release_identity_reservation"
+    assert second["reason"] == "candidate_release_identity_already_reserved"
+    assert second["reservation_subreason"] == "candidate_release_id_already_exists"
+    assert second["candidate_dir"] is None
+
+    after = _tree_snapshot(candidate_dir)
+    assert after == before
+
+
+def test_promoted_id_reuse_rejects_before_any_write(tmp_path):
+    candidate_input, tmp_repo = _prepare_candidate_input_dict(tmp_path)
+    _copy_assembly_schemas(tmp_repo)
+    output_dir = tmp_repo / "releases" / "candidates"
+    (tmp_repo / "releases" / RELEASE_ID).mkdir(parents=True)
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-promoted-reuse",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "release_identity_reservation"
+    assert result["reason"] == "candidate_release_identity_already_reserved"
+    assert result["reservation_subreason"] == "promoted_release_already_exists"
+    assert not (output_dir / DATASET_SLUG).exists()
+
+
+def test_cross_dataset_candidate_id_reuse_rejects_before_any_write(tmp_path):
+    candidate_input, tmp_repo = _prepare_candidate_input_dict(tmp_path)
+    _copy_assembly_schemas(tmp_repo)
+    output_dir = tmp_repo / "releases" / "candidates"
+    other_dataset_candidate = output_dir / "dry-bean" / RELEASE_ID
+    other_dataset_candidate.mkdir(parents=True)
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-cross-dataset-reuse",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "release_identity_reservation"
+    assert result["reason"] == "candidate_release_identity_already_reserved"
+    assert result["reservation_subreason"] == "candidate_release_id_already_exists"
+    assert not (output_dir / DATASET_SLUG).exists()
+    # The pre-existing other-dataset candidate directory is untouched.
+    assert list(other_dataset_candidate.iterdir()) == []
+
+
+def test_pre_created_target_leaf_rejects(tmp_path):
+    candidate_input, tmp_repo = _prepare_candidate_input_dict(tmp_path)
+    _copy_assembly_schemas(tmp_repo)
+    output_dir = tmp_repo / "releases" / "candidates"
+    target_leaf = output_dir / DATASET_SLUG / RELEASE_ID
+    target_leaf.mkdir(parents=True)
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-pre-created-leaf",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "release_identity_reservation"
+    assert result["reservation_subreason"] == "candidate_release_id_already_exists"
+    assert list(target_leaf.iterdir()) == []
+
+
+def test_race_style_target_directory_collision_fails_closed(tmp_path, monkeypatch):
+    """Simulates a TOCTOU race: the preflight reservation check (mocked to
+    report no reservation) passes, but the target leaf directory already
+    exists by the time Step 4 tries to create it -- Project Spec S0219
+    letter J requires this to fail closed rather than reuse/overwrite."""
+    candidate_input, tmp_repo = _prepare_candidate_input_dict(tmp_path)
+    _copy_assembly_schemas(tmp_repo)
+    output_dir = tmp_repo / "releases" / "candidates"
+    target_leaf = output_dir / DATASET_SLUG / RELEASE_ID
+    target_leaf.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        assemble_candidate, "_release_identity_reservation_subreason", lambda release_id, repo_root: None
+    )
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-race",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["rejection_phase"] == "release_identity_reservation"
+    assert result["reason"] == "candidate_release_identity_already_reserved"
+    assert result["reservation_subreason"] == "candidate_directory_creation_race"
+    assert list(target_leaf.iterdir()) == []
+
+
+def test_no_candidate_files_written_for_rejected_collisions(tmp_path):
+    candidate_input, tmp_repo = _prepare_candidate_input_dict(tmp_path)
+    _copy_assembly_schemas(tmp_repo)
+    output_dir = tmp_repo / "releases" / "candidates"
+    (tmp_repo / "releases" / RELEASE_ID).mkdir(parents=True)
+
+    result = assemble_candidate.assemble_release_candidate(
+        candidate_input, output_dir, repo_root=tmp_repo, source_input_label="s0219-no-writes",
+    )
+
+    assert result["status"] == "rejected"
+    assert not output_dir.exists() or list(output_dir.rglob("*")) == []

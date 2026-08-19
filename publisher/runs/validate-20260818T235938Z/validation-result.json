@@ -3,7 +3,7 @@
   "validation_kind": "release_candidate_cross_artifact_consistency",
   "candidate_identity": {
     "dataset_slug": "dry-bean",
-    "release_id": "release-20260818-001",
+    "release_id": "release-20260818-002",
     "release_version": "1.0.0-rc.1"
   },
   "source_candidate": {
@@ -21,7 +21,7 @@
       "manifest_input",
       "candidate_metadata"
     ],
-    "candidate_reference": "release-candidate-v1:dry-bean/release-20260818-001"
+    "candidate_reference": "release-candidate-v1:dry-bean/release-20260818-002"
   },
   "validation_outcome": "accepted",
   "required_artifact_role_results": {

@@ -30,6 +30,37 @@
         "view_metadata_defines_runtime_validation": false,
         "view_metadata_duplicates_contract": false
       }
+    },
+    {
+      "binding": {
+        "dataset_slug": "dry-bean",
+        "release": {
+          "mode": "active"
+        }
+      },
+      "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": true,
+        "view_metadata_defines_runtime_validation": false,
+        "view_metadata_duplicates_contract": false
+      },
+      "dataset_slug": "dry-bean",
+      "display": {
+        "description": "A multiclass prediction experience using the governed Dry Bean input contract.",
+        "summary": "Predict the class of a dry bean sample from its morphological measurements.",
+        "tags": [
+          "dry-bean",
+          "classification",
+          "multiclass"
+        ],
+        "title": "Dry Bean Classification"
+      },
+      "intent": {
+        "audience": "Users exploring Dry Bean multiclass inference.",
+        "prediction_goal": "Predict the bean class from the canonical dataset contract inputs.",
+        "usage_notes": "Use the canonical dataset contracts for required fields, accepted values, and runtime validation."
+      },
+      "schema_version": "1.0.0",
+      "view_id": "dry-bean-classification"
     }
   ]
 }

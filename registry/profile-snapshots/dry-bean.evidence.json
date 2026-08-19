@@ -2,8 +2,8 @@
   "schema_version": "dataset-public-profile-snapshot-evidence.v1",
   "evidence_kind": "profile_publication_evidence",
   "dataset_slug": "dry-bean",
-  "snapshot_identifier": "dry-bean@2026-08-19T10:53:01Z",
-  "published_at": "2026-08-19T10:53:01Z",
+  "snapshot_identifier": "dry-bean@2026-08-19T11:34:19Z",
+  "published_at": "2026-08-19T11:34:19Z",
   "active_release_at_publish_time": "release-20260818-002",
   "draft_source_reference": {
     "path": "registry/profile-drafts/dry-bean.json",
@@ -12,13 +12,13 @@
   "candidate_validation": {
     "validation_outcome": "accepted",
     "errors": [],
-    "validated_at": "2026-08-19T10:53:01Z"
+    "validated_at": "2026-08-19T11:34:19Z"
   },
   "visibility_at_publish_time": {
     "value": "public",
     "source_field": "registry/datasets.json:public_metadata.visibility",
     "read_only_snapshot": true,
-    "captured_at": "2026-08-19T10:53:01Z"
+    "captured_at": "2026-08-19T11:34:19Z"
   },
   "evidence_safety": {
     "reduced_evidence_only": true,

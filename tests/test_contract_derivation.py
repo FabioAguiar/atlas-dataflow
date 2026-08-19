@@ -26,6 +26,7 @@ from pipeline.contract_derivation import (
 )
 from pipeline.discovery_evidence import (
     build_binary_result_semantics_intent,
+    build_continuous_regression_result_semantics_intent,
     build_multiclass_result_semantics_intent,
 )
 
@@ -1053,6 +1054,453 @@ def test_materialization_evidence_names_absence_of_both_intents_deterministicall
     assert materialization["materialized_schema_version"] is None
     assert materialization["problem_type"] is None
     assert materialization["status"] == "omitted"
+
+
+# ---------------------------------------------------------------------------
+# Continuous-regression result semantics materialization (Project Spec S0223).
+# Fixtures are synthetic and dataset-neutral, matching the campaign-response
+# precedent established above -- no Concrete Compressive Strength or other
+# real-dataset name/unit.
+# ---------------------------------------------------------------------------
+
+
+def _approved_continuous_regression_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="continuous_regression",
+        primary_output="predicted_value",
+        output_value_kind="continuous_numeric",
+        review_notes="Reviewed continuous-regression result semantics.",
+    )
+    kwargs.update(overrides)
+    return build_continuous_regression_result_semantics_intent(**kwargs)
+
+
+def _valid_semantic_intent_v3(
+    target_field_name="outcome_measure",
+    task_type="continuous_regression",
+    target_value_kind="continuous_numeric",
+) -> dict:
+    return {
+        "schema_version": "dataset-semantic-intent.v3",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": "campaign-response"},
+        "authoring_generation_id": "gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": "continuous-predictive-regression",
+            "capability_profile_version": "v1",
+        },
+        "field_role_decisions": [
+            {"field_name": target_field_name, "role": "target", "include_in_features": False},
+        ],
+        "target_semantics": {
+            "target_field_name": target_field_name,
+            "task_type": task_type,
+            "target_value_kind": target_value_kind,
+            "is_final_training_configuration": False,
+        },
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-19T00:00:00+00:00",
+    }
+
+
+def _approved_continuous_regression_training_policy_intent() -> dict:
+    return {
+        "review_status": "approved",
+        "numeric_handling": "standardize",
+        "categorical_encoding_policy": "onehot",
+        "allowed_transformations": ["passthrough"],
+        "split_policy": {"strategy": "random", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15},
+        "primary_metric": "r2",
+        "secondary_metrics": ["mae", "rmse"],
+        "modeling_constraints": {
+            "allowed_model_families": ["gradient_boosting"],
+            "no_automl": True,
+        },
+    }
+
+
+_MISSING = object()
+
+
+def _modeling_intent_for_continuous_regression_result_semantics(
+    continuous_regression_result_semantics_intent=None,
+    target_column="outcome_measure",
+    modeling_task_type="continuous_regression",
+    training_policy_intent=_MISSING,
+) -> dict:
+    return {
+        "artifact_type": "dataset_modeling_intent",
+        "contract_version": "dataset_modeling_intent.v1",
+        "dataset_identity": {
+            "dataset_slug": "campaign-response",
+            "dataset_source_ref": "data/raw/campaign-response.csv",
+        },
+        "target_intent": {
+            "target_column": target_column,
+            "task_type": modeling_task_type,
+            "observed_labels": [],
+            "positive_label_candidate": None,
+            "observed_target_distribution": {},
+            "is_final_training_configuration": False,
+        },
+        "identifier_and_ignored_columns": [
+            {"name": "customer_ref", "reason": "identifier_candidate_excluded_from_features"}
+        ],
+        "initial_feature_candidates": ["age", "channel", "opted_in"],
+        "categorical_domain_intent": [],
+        "binary_result_semantics_intent": None,
+        "multiclass_result_semantics_intent": None,
+        "continuous_regression_result_semantics_intent": continuous_regression_result_semantics_intent,
+        "training_policy_intent": (
+            _approved_continuous_regression_training_policy_intent()
+            if training_policy_intent is _MISSING
+            else training_policy_intent
+        ),
+    }
+
+
+def test_execution_contract_materializes_continuous_regression_result_semantics_when_approved():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+
+    result_semantics = contract["result_semantics"]
+    assert result_semantics == {
+        "schema_version": "continuous-regression-result-semantics.v1",
+        "problem_type": "continuous_regression",
+        "primary_output": "predicted_value",
+        "output_value_kind": "continuous_numeric",
+    }
+    for forbidden in (
+        "positive_class", "negative_class", "classes", "class_order",
+        "probability_output", "class_probabilities", "threshold", "decision",
+        "interpretation", "risk", "bands", "count_semantics", "exposure",
+        "offset", "output_targets", "target_fields", "unit", "minimum", "maximum",
+    ):
+        assert forbidden not in result_semantics
+
+
+def test_execution_contract_continuous_regression_no_binary_or_multiclass_fields_appear():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert set(contract["result_semantics"].keys()) == {
+        "schema_version", "problem_type", "primary_output", "output_value_kind",
+    }
+
+
+def test_execution_contract_omits_continuous_regression_result_semantics_when_pending_review():
+    intent = _approved_continuous_regression_result_semantics_intent(review_status="pending_review")
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_continuous_regression_result_semantics_when_semantic_intent_missing():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None, semantic_intent=None
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_continuous_regression_result_semantics_when_semantic_intent_wrong_version():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3()
+    semantic_intent["schema_version"] = "dataset-semantic-intent.v2"
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_continuous_regression_result_semantics_when_wrong_task_type():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3(task_type="multiclass_classification")
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_omits_continuous_regression_result_semantics_when_wrong_target_value_kind():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3(target_value_kind="discrete_count")
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_continuous_regression_blank_target_field_name_fails_closed():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3(target_field_name="")
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_continuous_regression_target_field_name_mismatch_fails_closed():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(
+        intent, target_column="a_different_column"
+    )
+    semantic_intent = _valid_semantic_intent_v3(target_field_name="outcome_measure")
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_continuous_regression_wrong_modeling_target_task_type_fails_closed():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(
+        intent, modeling_task_type="binary_classification"
+    )
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_binary_and_continuous_regression_intents_conflict():
+    binary_intent = _approved_binary_result_semantics_intent()
+    continuous_intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(continuous_intent)
+    modeling_intent["binary_result_semantics_intent"] = binary_intent
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_multiclass_and_continuous_regression_intents_conflict():
+    multiclass_intent = _approved_multiclass_result_semantics_intent()
+    continuous_intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(continuous_intent)
+    modeling_intent["multiclass_result_semantics_intent"] = multiclass_intent
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_binary_multiclass_continuous_regression_intents_all_conflict():
+    binary_intent = _approved_binary_result_semantics_intent()
+    multiclass_intent = _approved_multiclass_result_semantics_intent()
+    continuous_intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(continuous_intent)
+    modeling_intent["binary_result_semantics_intent"] = binary_intent
+    modeling_intent["multiclass_result_semantics_intent"] = multiclass_intent
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert "result_semantics" not in contract
+
+
+def test_execution_contract_existing_binary_intent_still_materializes_exactly_as_before_under_closed_dispatcher():
+    intent = _approved_binary_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=intent)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    result_semantics = contract["result_semantics"]
+    assert result_semantics["schema_version"] == "binary-result-semantics.v1"
+    assert result_semantics["positive_class"] == {"class_id": "Yes", "event_label": "Responded"}
+
+
+def test_execution_contract_existing_multiclass_intent_still_materializes_exactly_as_before_under_closed_dispatcher():
+    intent = _approved_multiclass_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_multiclass_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v2()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    result_semantics = contract["result_semantics"]
+    assert result_semantics["schema_version"] == "multiclass-result-semantics.v1"
+    assert result_semantics["classes"] == VALID_MULTICLASS_CLASSES
+
+
+def test_execution_contract_absence_of_all_three_result_intents_still_omits_result_semantics():
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    modeling_intent["multiclass_result_semantics_intent"] = None
+    modeling_intent["continuous_regression_result_semantics_intent"] = None
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert "result_semantics" not in contract
+
+
+def test_continuous_regression_result_semantics_validates_against_execution_contract_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    jsonschema.validate(contract, schema)
+
+
+def test_materialization_evidence_names_continuous_regression_variant_deterministically():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3()
+    discovery_evidence = _discovery_evidence_for_result_semantics()
+    contract = _build_execution_contract(
+        modeling_intent, discovery_evidence, None, semantic_intent=semantic_intent
+    )
+    evidence = _build_execution_contract_materialization_evidence(
+        modeling_intent,
+        None,
+        contract,
+        execution_contract_relative_path="contracts/campaign-response/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        semantic_intent=semantic_intent,
+        generated_at="2026-08-19T00:00:00+00:00",
+    )
+    materialization = evidence["result_semantics_materialization"]
+    assert materialization["requested_variant"] == "continuous_regression"
+    assert materialization["materialized_schema_version"] == "continuous-regression-result-semantics.v1"
+    assert materialization["problem_type"] == "continuous_regression"
+    assert materialization["status"] == "materialized"
+    assert materialization["reason"] is None
+    assert materialization["target_field_name"] == "outcome_measure"
+    assert materialization["primary_output"] == "predicted_value"
+    assert materialization["output_value_kind"] == "continuous_numeric"
+    assert materialization["semantic_intent_schema_version"] == "dataset-semantic-intent.v3"
+    assert materialization["no_defaults_inferred"] is True
+    assert materialization["blocking_reasons"] == []
+
+
+def test_execution_contract_continuous_regression_intent_without_training_policy_fails_closed_before_classification_defaults():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(
+        intent, training_policy_intent=None
+    )
+    semantic_intent = _valid_semantic_intent_v3()
+    with pytest.raises(TrainingPolicyValidationError):
+        _build_execution_contract(
+            modeling_intent,
+            _discovery_evidence_for_result_semantics(),
+            None,
+            semantic_intent=semantic_intent,
+        )
+
+
+def test_execution_contract_continuous_regression_pending_intent_without_training_policy_still_fails_closed():
+    # Presence alone (even pending_review, not yet approved) is enough to
+    # require an explicit training_policy_intent -- the fail-closed check
+    # never waits to see whether the intent would actually materialize.
+    intent = _approved_continuous_regression_result_semantics_intent(review_status="pending_review")
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(
+        intent, training_policy_intent=None
+    )
+    with pytest.raises(TrainingPolicyValidationError):
+        _build_execution_contract(
+            modeling_intent, _discovery_evidence_for_result_semantics(), None, semantic_intent=None
+        )
+
+
+def test_execution_contract_explicit_approved_regression_policy_accepts_r2_mae_rmse_identifiers():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(intent)
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert contract["split_policy"]["strategy"] == "random"
+    assert contract["primary_metric"] == "r2"
+    assert contract["secondary_metrics"] == ["mae", "rmse"]
+
+
+def test_execution_contract_binary_multiclass_callers_without_training_policy_retain_historical_defaults_alongside_continuous_regression_addition():
+    # Binary/multiclass callers that omit training_policy_intent are
+    # unaffected by the new S0223 fail-closed condition, which only fires
+    # when a continuous_regression_result_semantics_intent is present.
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    modeling_intent["training_policy_intent"] = None
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert contract["numeric_handling"] == "standardize"
+    assert contract["primary_metric"] == "roc_auc"
 
 
 # --- Project Spec S0216: reviewed native training-policy validation and

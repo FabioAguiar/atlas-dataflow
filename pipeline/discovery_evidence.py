@@ -810,6 +810,86 @@ def build_multiclass_result_semantics_intent(
     }
 
 
+# Project Spec S0223: a single reviewed continuous-regression result
+# semantics declaration. "approved" is the only status that may be promoted
+# into execution policy by
+# contract_derivation._materialize_continuous_regression_result_semantics;
+# "pending_review" keeps a declaration visible as an unresolved review item
+# without ever silently materializing into executable policy. Mirrors the
+# binary/multiclass result_semantics_intent review-status vocabulary and
+# conventions above, but never owns or accepts a target field name, classes,
+# a positive/negative class, a probability output, a threshold, a decision
+# strategy, a risk interpretation, a unit, observed min/max/quantiles, count
+# semantics, or a multi-output list -- the governed continuous target
+# identity remains exclusively owned by dataset-semantic-intent.v3 and is
+# sourced only at materialization time.
+CONTINUOUS_REGRESSION_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION = (
+    "continuous_regression_result_semantics_intent.v1"
+)
+CONTINUOUS_REGRESSION_RESULT_SEMANTICS_REVIEW_STATUSES = frozenset(
+    {"approved", "pending_review"}
+)
+_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_PROBLEM_TYPE = "continuous_regression"
+_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_PRIMARY_OUTPUT = "predicted_value"
+_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_OUTPUT_VALUE_KIND = "continuous_numeric"
+
+
+def build_continuous_regression_result_semantics_intent(
+    review_status: str,
+    problem_type: str,
+    primary_output: str,
+    output_value_kind: str,
+    review_notes: str | None = None,
+) -> dict[str, Any]:
+    """Build a `continuous_regression_result_semantics_intent.v1` reviewed declaration (Project Spec S0223).
+
+    Deliberately owns only result-behavior semantics -- no target_field_name,
+    classes, positive_class, probability output, threshold, decision
+    strategy, risk interpretation, unit, observed min/max/quantiles, count
+    semantics, or multi-output parameter is ever accepted here; the governed
+    continuous target identity remains exclusively owned by
+    dataset-semantic-intent.v3 and is sourced only at materialization time
+    (see contract_derivation._materialize_continuous_regression_result_semantics).
+    Only `review_status == "approved"` may later be promoted into executable
+    execution-contract policy; `"pending_review"` keeps the declaration
+    visible as an unresolved review item and this builder still returns it
+    rather than raising, mirroring build_multiclass_result_semantics_intent's
+    convention. Raises ValueError on a structurally malformed declaration
+    (unknown review_status, wrong problem_type/primary_output/output_value_kind).
+    """
+    if review_status not in CONTINUOUS_REGRESSION_RESULT_SEMANTICS_REVIEW_STATUSES:
+        raise ValueError(
+            "review_status must be one of "
+            f"{sorted(CONTINUOUS_REGRESSION_RESULT_SEMANTICS_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    if problem_type != _CONTINUOUS_REGRESSION_RESULT_SEMANTICS_PROBLEM_TYPE:
+        raise ValueError(
+            f"problem_type must be exactly "
+            f"{_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_PROBLEM_TYPE!r}, got {problem_type!r}"
+        )
+    if primary_output != _CONTINUOUS_REGRESSION_RESULT_SEMANTICS_PRIMARY_OUTPUT:
+        raise ValueError(
+            f"primary_output must be exactly "
+            f"{_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_PRIMARY_OUTPUT!r}, got {primary_output!r}"
+        )
+    if output_value_kind != _CONTINUOUS_REGRESSION_RESULT_SEMANTICS_OUTPUT_VALUE_KIND:
+        raise ValueError(
+            f"output_value_kind must be exactly "
+            f"{_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_OUTPUT_VALUE_KIND!r}, "
+            f"got {output_value_kind!r}"
+        )
+
+    return {
+        "schema_version": CONTINUOUS_REGRESSION_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "problem_type": problem_type,
+        "primary_output": primary_output,
+        "output_value_kind": output_value_kind,
+        "review_notes": review_notes,
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -844,6 +924,7 @@ def build_dataset_modeling_intent(
     categorical_domain_intent: Sequence[dict[str, Any]] | None = None,
     binary_result_semantics_intent: dict[str, Any] | None = None,
     multiclass_result_semantics_intent: dict[str, Any] | None = None,
+    continuous_regression_result_semantics_intent: dict[str, Any] | None = None,
     training_policy_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -865,6 +946,15 @@ def build_dataset_modeling_intent(
     policy by `contract_derivation._build_execution_contract` -- this builder
     only carries the declarations forward verbatim, it never approves or
     rejects one itself.
+
+    `continuous_regression_result_semantics_intent` (Project Spec S0223) is
+    an optional reviewed continuous-regression result-semantics declaration,
+    built via `build_continuous_regression_result_semantics_intent` above.
+    Defaults to `None`; when supplied, this builder carries it forward
+    verbatim -- it never owns target field identity or observed target
+    statistics, and does not redesign the older `target_intent`
+    observational fields above. The authoritative continuous-regression
+    target semantics remain the dataset-semantic-intent.v3 artifact.
 
     `training_policy_intent` (Project Spec S0216) is optional reviewed
     native training policy authoring intent -- execution-only fields
@@ -931,6 +1021,11 @@ def build_dataset_modeling_intent(
         "multiclass_result_semantics_intent": (
             dict(multiclass_result_semantics_intent)
             if multiclass_result_semantics_intent is not None
+            else None
+        ),
+        "continuous_regression_result_semantics_intent": (
+            dict(continuous_regression_result_semantics_intent)
+            if continuous_regression_result_semantics_intent is not None
             else None
         ),
         "training_policy_intent": (

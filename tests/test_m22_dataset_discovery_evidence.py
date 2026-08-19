@@ -15,10 +15,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.discovery_evidence import (
+    CONTINUOUS_REGRESSION_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     authoring_helper_evidence_policy,
     build_binary_result_semantics_intent,
     build_categorical_domain_declaration,
+    build_continuous_regression_result_semantics_intent,
     build_dataset_modeling_intent,
     build_multiclass_result_semantics_intent,
     derive_feature_candidates,
@@ -969,3 +971,104 @@ def test_modeling_intent_training_policy_intent_coexists_with_multiclass_result_
     )
     assert intent["training_policy_intent"] == training_policy_intent
     assert intent["multiclass_result_semantics_intent"] == multiclass_intent
+
+
+# --- reviewed continuous-regression result semantics intent (Project Spec S0223) ---
+
+
+def _build_continuous_regression_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="continuous_regression",
+        primary_output="predicted_value",
+        output_value_kind="continuous_numeric",
+        review_notes="Reviewed continuous-regression result semantics.",
+    )
+    kwargs.update(overrides)
+    return build_continuous_regression_result_semantics_intent(**kwargs)
+
+
+def test_continuous_regression_result_semantics_intent_approved_shape():
+    intent = _build_continuous_regression_result_semantics_intent()
+    assert intent["schema_version"] == CONTINUOUS_REGRESSION_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION
+    assert intent["review_status"] == "approved"
+    assert intent["problem_type"] == "continuous_regression"
+    assert intent["primary_output"] == "predicted_value"
+    assert intent["output_value_kind"] == "continuous_numeric"
+    assert set(intent.keys()) == {
+        "schema_version",
+        "review_status",
+        "problem_type",
+        "primary_output",
+        "output_value_kind",
+        "review_notes",
+    }
+
+
+def test_continuous_regression_result_semantics_intent_pending_review_is_representable_but_not_approved():
+    intent = _build_continuous_regression_result_semantics_intent(review_status="pending_review")
+    assert intent["review_status"] == "pending_review"
+    assert intent["review_status"] != "approved"
+
+
+def test_continuous_regression_result_semantics_intent_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        _build_continuous_regression_result_semantics_intent(review_status="candidate_only")
+
+
+def test_continuous_regression_result_semantics_intent_rejects_wrong_problem_type():
+    with pytest.raises(ValueError):
+        _build_continuous_regression_result_semantics_intent(problem_type="binary_classification")
+
+
+def test_continuous_regression_result_semantics_intent_rejects_wrong_primary_output():
+    with pytest.raises(ValueError):
+        _build_continuous_regression_result_semantics_intent(primary_output="positive_class_probability")
+
+
+def test_continuous_regression_result_semantics_intent_rejects_wrong_output_value_kind():
+    with pytest.raises(ValueError):
+        _build_continuous_regression_result_semantics_intent(output_value_kind="categorical")
+
+
+def test_continuous_regression_result_semantics_intent_builder_exposes_no_target_or_bounds_authority():
+    import inspect
+
+    signature = inspect.signature(build_continuous_regression_result_semantics_intent)
+    assert "target_field_name" not in signature.parameters
+    assert "classes" not in signature.parameters
+    assert "positive_class_id" not in signature.parameters
+    assert "probability_output" not in signature.parameters
+    assert "threshold" not in signature.parameters
+    assert "decision_strategy" not in signature.parameters
+    assert "preset" not in signature.parameters
+    assert "unit" not in signature.parameters
+    assert "minimum" not in signature.parameters
+    assert "maximum" not in signature.parameters
+
+
+def test_modeling_intent_continuous_regression_result_semantics_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["continuous_regression_result_semantics_intent"] is None
+
+
+def test_modeling_intent_carries_continuous_regression_result_semantics_intent_verbatim():
+    continuous_regression_intent = _build_continuous_regression_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        continuous_regression_result_semantics_intent=continuous_regression_intent
+    )
+    assert intent["continuous_regression_result_semantics_intent"] == continuous_regression_intent
+
+
+def test_modeling_intent_existing_binary_result_semantics_behavior_unchanged_alongside_continuous_regression_default():
+    binary_intent = _build_binary_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(binary_result_semantics_intent=binary_intent)
+    assert intent["binary_result_semantics_intent"] == binary_intent
+    assert intent["continuous_regression_result_semantics_intent"] is None
+
+
+def test_modeling_intent_existing_multiclass_result_semantics_behavior_unchanged_alongside_continuous_regression_default():
+    multiclass_intent = _build_multiclass_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(multiclass_result_semantics_intent=multiclass_intent)
+    assert intent["multiclass_result_semantics_intent"] == multiclass_intent
+    assert intent["continuous_regression_result_semantics_intent"] is None

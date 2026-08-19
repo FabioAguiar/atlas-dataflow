@@ -79,6 +79,7 @@ from typing import Any
 from pipeline.authoring_contracts import validate_authoring_contracts
 from pipeline.discovery_evidence import (
     build_binary_result_semantics_intent,
+    build_continuous_regression_result_semantics_intent,
     build_multiclass_result_semantics_intent,
 )
 
@@ -603,6 +604,7 @@ _TRAINING_POLICY_METRIC_VOCABULARY = frozenset({
     "roc_auc", "f1", "accuracy", "log_loss", "pr_auc", "average_precision",
     "precision", "recall", "f2", "balanced_accuracy", "brier_score",
     "f1_macro", "f1_weighted", "precision_macro", "recall_macro",
+    "r2", "mae", "rmse",
 })
 _TRAINING_POLICY_MODEL_FAMILY_VOCABULARY = frozenset({
     "logistic_regression", "gradient_boosting", "random_forest",
@@ -640,8 +642,13 @@ class TrainingPolicyValidationError(ValueError):
     """Raised when a supplied `training_policy_intent` is present but not a
     complete, approved, schema-compatible reviewed native training policy.
 
-    Never raised for an absent `training_policy_intent` -- that case uses
-    the unchanged legacy derivation defaults instead.
+    Never raised for an absent `training_policy_intent` on a binary/
+    multiclass execution contract -- that case uses the unchanged legacy
+    derivation defaults instead. Project Spec S0223 adds the one exception:
+    an absent `training_policy_intent` alongside a present
+    `continuous_regression_result_semantics_intent` also raises this error,
+    since continuous regression can never inherit the legacy classification
+    training defaults.
     """
 
     def __init__(self, reasons: list[str]) -> None:
@@ -1160,6 +1167,155 @@ def _materialize_multiclass_result_semantics(
     return result_semantics, evidence
 
 
+# Project Spec S0223: materialize a reviewed, approved
+# continuous_regression_result_semantics_intent, requiring a valid
+# dataset-semantic-intent.v3 governed single-target continuous-regression
+# declaration, into a normalized continuous-regression result_semantics
+# block. Mirrors _materialize_multiclass_result_semantics' independent
+# re-validation and "never blocks the whole contract" pattern.
+_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regression-result-semantics.v1"
+_CONTINUOUS_REGRESSION_SEMANTIC_INTENT_SCHEMA_VERSION = "dataset-semantic-intent.v3"
+_CONTINUOUS_REGRESSION_TASK_TYPE = "continuous_regression"
+_CONTINUOUS_REGRESSION_TARGET_VALUE_KIND = "continuous_numeric"
+
+
+def _materialize_continuous_regression_result_semantics(
+    modeling_intent: dict[str, Any],
+    semantic_intent: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Return (result_semantics_or_None, materialization_evidence) for the
+    continuous-regression variant (Project Spec S0223).
+
+    Requires an approved, independently re-validated
+    `continuous_regression_result_semantics_intent` AND a valid
+    `dataset-semantic-intent.v3` declaring `task_type ==
+    "continuous_regression"` with `target_value_kind ==
+    "continuous_numeric"` and a non-empty `target_field_name` that matches
+    `modeling_intent.target_intent.target_column`. When
+    `modeling_intent.target_intent.task_type` is present, it must also be
+    `continuous_regression`. Materializes only the bounded normalized output
+    shape -- never target_field_name, review status/notes, training policy,
+    metric values, observed target distribution/statistics, units, public
+    labels, model family, or model artifact metadata. Never raises; every
+    rejection is a normal, reportable `(None, evidence)` outcome.
+    """
+
+    def _blocked(reviewed_source_intent_present: bool, reason: str) -> tuple[None, dict[str, Any]]:
+        return None, {
+            "reviewed_source_intent_present": reviewed_source_intent_present,
+            "target_field_name": None,
+            "primary_output": None,
+            "output_value_kind": None,
+            "semantic_intent_schema_version": None,
+            "no_defaults_inferred": True,
+            "readiness": "not_materialized",
+            "blocking_reasons": [reason],
+        }
+
+    intent = modeling_intent.get("continuous_regression_result_semantics_intent")
+    if not isinstance(intent, dict):
+        return _blocked(
+            False,
+            "continuous_regression_result_semantics_intent is absent from the dataset modeling intent",
+        )
+
+    review_status = intent.get("review_status")
+    if review_status != "approved":
+        return _blocked(
+            True,
+            f"continuous_regression_result_semantics_intent.review_status is {review_status!r}, "
+            "not 'approved'",
+        )
+
+    try:
+        rebuilt = build_continuous_regression_result_semantics_intent(
+            review_status=review_status,
+            problem_type=intent.get("problem_type"),
+            primary_output=intent.get("primary_output"),
+            output_value_kind=intent.get("output_value_kind"),
+            review_notes=intent.get("review_notes"),
+        )
+    except ValueError as exc:
+        return _blocked(
+            True,
+            f"continuous_regression_result_semantics_intent failed independent re-validation: {exc}",
+        )
+
+    if not isinstance(semantic_intent, dict):
+        return _blocked(
+            True,
+            "continuous-regression materialization requires a dataset-semantic-intent.v3 semantic_intent",
+        )
+    semantic_schema_version = semantic_intent.get("schema_version")
+    if semantic_schema_version != _CONTINUOUS_REGRESSION_SEMANTIC_INTENT_SCHEMA_VERSION:
+        return _blocked(
+            True,
+            f"semantic_intent.schema_version is {semantic_schema_version!r}, not "
+            f"{_CONTINUOUS_REGRESSION_SEMANTIC_INTENT_SCHEMA_VERSION!r}",
+        )
+
+    target_semantics = semantic_intent.get("target_semantics")
+    if not isinstance(target_semantics, dict):
+        return _blocked(True, "semantic_intent.target_semantics is missing or malformed")
+
+    task_type = target_semantics.get("task_type")
+    if task_type != _CONTINUOUS_REGRESSION_TASK_TYPE:
+        return _blocked(
+            True,
+            f"semantic_intent.target_semantics.task_type is {task_type!r}, not "
+            f"{_CONTINUOUS_REGRESSION_TASK_TYPE!r}",
+        )
+
+    target_value_kind = target_semantics.get("target_value_kind")
+    if target_value_kind != _CONTINUOUS_REGRESSION_TARGET_VALUE_KIND:
+        return _blocked(
+            True,
+            f"semantic_intent.target_semantics.target_value_kind is {target_value_kind!r}, not "
+            f"{_CONTINUOUS_REGRESSION_TARGET_VALUE_KIND!r}",
+        )
+
+    target_field_name = target_semantics.get("target_field_name")
+    if not isinstance(target_field_name, str) or not target_field_name.strip():
+        return _blocked(
+            True, "semantic_intent.target_semantics.target_field_name must be a non-empty string"
+        )
+
+    target_intent = modeling_intent.get("target_intent") or {}
+    modeling_target_column = target_intent.get("target_column")
+    if modeling_target_column != target_field_name:
+        return _blocked(
+            True,
+            f"modeling_intent.target_intent.target_column {modeling_target_column!r} does not "
+            f"match semantic_intent.target_semantics.target_field_name {target_field_name!r}",
+        )
+
+    modeling_task_type = target_intent.get("task_type")
+    if modeling_task_type is not None and modeling_task_type != _CONTINUOUS_REGRESSION_TASK_TYPE:
+        return _blocked(
+            True,
+            f"modeling_intent.target_intent.task_type is {modeling_task_type!r}, not "
+            f"{_CONTINUOUS_REGRESSION_TASK_TYPE!r}",
+        )
+
+    result_semantics = {
+        "schema_version": _CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": rebuilt["problem_type"],
+        "primary_output": rebuilt["primary_output"],
+        "output_value_kind": rebuilt["output_value_kind"],
+    }
+    evidence = {
+        "reviewed_source_intent_present": True,
+        "target_field_name": target_field_name,
+        "primary_output": result_semantics["primary_output"],
+        "output_value_kind": result_semantics["output_value_kind"],
+        "semantic_intent_schema_version": semantic_schema_version,
+        "no_defaults_inferred": True,
+        "readiness": "materialized",
+        "blocking_reasons": [],
+    }
+    return result_semantics, evidence
+
+
 def _result_semantics_status_and_reason(
     intent_present: bool, readiness: str, blocking_reasons: list[str]
 ) -> tuple[str, str | None]:
@@ -1176,15 +1332,18 @@ def _materialize_result_semantics(
     modeling_intent: dict[str, Any],
     semantic_intent: dict[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Closed result-semantics dispatch (Project Spec S0207).
+    """Closed result-semantics dispatch (Project Spec S0207, extended by S0223).
 
-    Exactly one variant materializer may ever run per execution contract:
-    binary intent present + multiclass absent selects the binary
-    materializer; multiclass present + binary absent selects the multiclass
-    materializer; neither present omits result_semantics entirely (the
-    existing, unchanged binary-absent behavior); both present fails closed
-    with an explicit conflict rather than silently preferring either intent.
-    Never infers the variant from dataset slug or model family.
+    Exactly one variant materializer may ever run per execution contract, as
+    a closed three-way selection over
+    `binary_result_semantics_intent`/`multiclass_result_semantics_intent`/
+    `continuous_regression_result_semantics_intent`: exactly one present
+    selects that variant's materializer; none present omits result_semantics
+    entirely (the existing, unchanged behavior); more than one present fails
+    closed with an explicit conflict rather than silently preferring any
+    intent. Never infers the variant from dataset slug, feature names,
+    target dtype/cardinality, model family, estimator class, or capability
+    support status alone.
 
     The returned evidence always preserves every existing
     `_materialize_binary_result_semantics` evidence key verbatim (so
@@ -1197,19 +1356,56 @@ def _materialize_result_semantics(
     multiclass_intent_present = isinstance(
         modeling_intent.get("multiclass_result_semantics_intent"), dict
     )
+    continuous_regression_intent_present = isinstance(
+        modeling_intent.get("continuous_regression_result_semantics_intent"), dict
+    )
+    present_count = sum(
+        (binary_intent_present, multiclass_intent_present, continuous_regression_intent_present)
+    )
 
-    if binary_intent_present and multiclass_intent_present:
+    if present_count > 1:
+        present_names = [
+            name
+            for name, present in (
+                ("binary_result_semantics_intent", binary_intent_present),
+                ("multiclass_result_semantics_intent", multiclass_intent_present),
+                (
+                    "continuous_regression_result_semantics_intent",
+                    continuous_regression_intent_present,
+                ),
+            )
+            if present
+        ]
         return None, {
             "requested_variant": "conflict",
             "materialized_schema_version": None,
             "problem_type": None,
             "status": "rejected",
             "reason": (
-                "both binary_result_semantics_intent and multiclass_result_semantics_intent "
-                "are present; only one result-semantics variant may materialize per "
-                "execution contract"
+                "more than one result-semantics intent is present "
+                f"({', '.join(present_names)}); only one result-semantics variant may "
+                "materialize per execution contract"
             ),
         }
+
+    if continuous_regression_intent_present:
+        result_semantics, continuous_regression_evidence = (
+            _materialize_continuous_regression_result_semantics(modeling_intent, semantic_intent)
+        )
+        status, reason = _result_semantics_status_and_reason(
+            True,
+            continuous_regression_evidence["readiness"],
+            continuous_regression_evidence["blocking_reasons"],
+        )
+        evidence = dict(continuous_regression_evidence)
+        evidence["requested_variant"] = "continuous_regression"
+        evidence["materialized_schema_version"] = (
+            result_semantics["schema_version"] if result_semantics else None
+        )
+        evidence["problem_type"] = result_semantics["problem_type"] if result_semantics else None
+        evidence["status"] = status
+        evidence["reason"] = reason
+        return result_semantics, evidence
 
     if multiclass_intent_present:
         result_semantics, multiclass_evidence = _materialize_multiclass_result_semantics(
@@ -1349,6 +1545,28 @@ def _build_execution_contract(
     result_semantics, _result_semantics_evidence = _materialize_result_semantics(
         modeling_intent, semantic_intent
     )
+
+    # Project Spec S0223: a requested continuous-regression result intent
+    # can never inherit the legacy binary/multiclass classification training
+    # defaults below -- it must fail closed before the historical fallback
+    # policy is ever applied, requiring an explicit approved
+    # training_policy_intent instead. This check only looks at whether a
+    # continuous_regression_result_semantics_intent object is present on the
+    # modeling intent (not whether it is approved or materializes), and
+    # never affects binary/multiclass callers, which retain the historical
+    # default-policy path unchanged.
+    if (
+        isinstance(modeling_intent.get("continuous_regression_result_semantics_intent"), dict)
+        and modeling_intent.get("training_policy_intent") is None
+    ):
+        raise TrainingPolicyValidationError(
+            [
+                "continuous_regression_result_semantics_intent is present but "
+                "training_policy_intent is absent: continuous regression requires an "
+                "explicit approved training policy and cannot inherit legacy "
+                "classification training defaults"
+            ]
+        )
 
     # Project Spec S0216: a reviewed, approved training_policy_intent
     # replaces the repository-standard execution-only policy defaults below

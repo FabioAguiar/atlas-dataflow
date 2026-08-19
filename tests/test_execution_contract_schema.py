@@ -137,13 +137,13 @@ def test_invalid_missing_value_policy_rejected():
 def test_invalid_primary_metric_rejected():
     schema = _load_json(SCHEMA_PATH)
     contract = _valid_contract()
-    contract["primary_metric"] = "rmse"
+    contract["primary_metric"] = "not_a_real_metric"
 
     validator = jsonschema.Draft7Validator(schema)
     errors = list(validator.iter_errors(contract))
 
     assert errors, "Expected validation error for invalid primary_metric"
-    assert any("rmse" in error.message for error in errors)
+    assert any("not_a_real_metric" in error.message for error in errors)
 
 
 def test_additional_top_level_property_rejected():
@@ -390,6 +390,161 @@ def test_binary_contract_containing_multiclass_only_fields_is_rejected():
     assert list(validator.iter_errors(contract))
 
 
+def _valid_continuous_regression_result_semantics() -> dict:
+    return {
+        "schema_version": "continuous-regression-result-semantics.v1",
+        "problem_type": "continuous_regression",
+        "primary_output": "predicted_value",
+        "output_value_kind": "continuous_numeric",
+    }
+
+
+def test_valid_continuous_regression_result_semantics_validate():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["result_semantics"] = _valid_continuous_regression_result_semantics()
+    jsonschema.validate(contract, schema)
+
+
+def test_continuous_regression_extra_properties_are_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["unit"] = "MPa"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_positive_class_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["positive_class"] = {"class_id": "Yes", "event_label": "Churn"}
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_classes_are_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["classes"] = _valid_multiclass_result_semantics()["classes"]
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_probability_output_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["probability_output"] = "class_probabilities"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_threshold_decision_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["decision"] = {"threshold": 0.5}
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_interpretation_risk_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["interpretation"] = _valid_binary_result_semantics()["interpretation"]
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_wrong_primary_output_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["primary_output"] = "predicted_class"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_wrong_output_value_kind_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["output_value_kind"] = "categorical"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_wrong_problem_type_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["problem_type"] = "multiclass_classification"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_continuous_regression_wrong_schema_version_is_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    result_semantics = _valid_continuous_regression_result_semantics()
+    result_semantics["schema_version"] = "continuous-regression-result-semantics.v2"
+    contract["result_semantics"] = result_semantics
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_r2_is_accepted_as_a_metric_identifier():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["primary_metric"] = "r2"
+    jsonschema.validate(contract, schema)
+
+
+def test_mae_is_accepted_as_a_metric_identifier():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["secondary_metrics"] = ["mae"]
+    jsonschema.validate(contract, schema)
+
+
+def test_rmse_is_accepted_as_a_metric_identifier():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["secondary_metrics"] = ["rmse"]
+    jsonschema.validate(contract, schema)
+
+
+def test_legacy_metric_identifiers_remain_accepted():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    contract["primary_metric"] = "roc_auc"
+    contract["secondary_metrics"] = ["f1", "pr_auc", "f1_macro", "precision_macro"]
+    jsonschema.validate(contract, schema)
+
+
 def _synthetic_multiclass_modeling_intent() -> dict:
     return {
         "artifact_type": "dataset_modeling_intent",
@@ -484,6 +639,121 @@ def test_normalized_multiclass_contract_from_approved_fixtures_validates():
         semantic_intent=_synthetic_semantic_intent_v2(),
     )
     assert "result_semantics" in contract
+    jsonschema.validate(contract, schema)
+
+
+def _synthetic_continuous_regression_training_policy_intent() -> dict:
+    return {
+        "review_status": "approved",
+        "numeric_handling": "standardize",
+        "categorical_encoding_policy": "onehot",
+        "allowed_transformations": ["passthrough"],
+        "split_policy": {"strategy": "random", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15},
+        "primary_metric": "r2",
+        "secondary_metrics": ["mae", "rmse"],
+        "modeling_constraints": {
+            "allowed_model_families": ["gradient_boosting"],
+            "no_automl": True,
+        },
+    }
+
+
+def _synthetic_continuous_regression_modeling_intent(*, with_training_policy: bool = True) -> dict:
+    return {
+        "artifact_type": "dataset_modeling_intent",
+        "contract_version": "dataset_modeling_intent.v1",
+        "dataset_identity": {
+            "dataset_slug": "synthetic-strength",
+            "dataset_source_ref": "data/raw/synthetic-strength.csv",
+        },
+        "target_intent": {
+            "target_column": "strength_value",
+            "task_type": "continuous_regression",
+            "observed_labels": [],
+            "positive_label_candidate": None,
+            "observed_target_distribution": {},
+            "is_final_training_configuration": False,
+        },
+        "identifier_and_ignored_columns": [
+            {"name": "record_ref", "reason": "identifier_candidate_excluded_from_features"}
+        ],
+        "initial_feature_candidates": ["cement", "water"],
+        "categorical_domain_intent": [],
+        "binary_result_semantics_intent": None,
+        "multiclass_result_semantics_intent": None,
+        "continuous_regression_result_semantics_intent": {
+            "schema_version": "continuous_regression_result_semantics_intent.v1",
+            "review_status": "approved",
+            "problem_type": "continuous_regression",
+            "primary_output": "predicted_value",
+            "output_value_kind": "continuous_numeric",
+            "review_notes": "Reviewed for S0223 schema-level fixture coverage.",
+        },
+        "training_policy_intent": (
+            _synthetic_continuous_regression_training_policy_intent()
+            if with_training_policy
+            else None
+        ),
+    }
+
+
+def _synthetic_continuous_regression_discovery_evidence() -> dict:
+    return {
+        "schema_version": "dataset-discovery-evidence.v1",
+        "field_observations": [
+            {
+                "name": "cement", "inferred_type": "float", "null_count": 0, "null_rate": 0.0,
+                "cardinality": 120, "sample_min": 100.0, "sample_max": 540.0,
+            },
+            {
+                "name": "water", "inferred_type": "float", "null_count": 0, "null_rate": 0.0,
+                "cardinality": 90, "sample_min": 120.0, "sample_max": 250.0,
+            },
+        ],
+        "generation_settings": {"seed": 0, "generator_version": "discovery-evidence.v1"},
+    }
+
+
+def _synthetic_semantic_intent_v3() -> dict:
+    return {
+        "schema_version": "dataset-semantic-intent.v3",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": "synthetic-strength"},
+        "authoring_generation_id": "gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": "continuous-predictive-regression",
+            "capability_profile_version": "v1",
+        },
+        "field_role_decisions": [
+            {"field_name": "strength_value", "role": "target", "include_in_features": False},
+        ],
+        "target_semantics": {
+            "target_field_name": "strength_value",
+            "task_type": "continuous_regression",
+            "target_value_kind": "continuous_numeric",
+            "is_final_training_configuration": False,
+        },
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-19T00:00:00+00:00",
+    }
+
+
+def test_normalized_continuous_regression_contract_from_approved_fixtures_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _build_execution_contract(
+        _synthetic_continuous_regression_modeling_intent(),
+        _synthetic_continuous_regression_discovery_evidence(),
+        None,
+        semantic_intent=_synthetic_semantic_intent_v3(),
+    )
+    assert "result_semantics" in contract
+    assert contract["result_semantics"] == _valid_continuous_regression_result_semantics()
     jsonschema.validate(contract, schema)
 
 

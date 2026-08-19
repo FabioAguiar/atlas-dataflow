@@ -1122,6 +1122,18 @@ def _approved_continuous_regression_training_policy_intent() -> dict:
         "modeling_constraints": {
             "allowed_model_families": ["gradient_boosting"],
             "no_automl": True,
+            "selection_mode": "fixed_configuration",
+            "fixed_model_configuration": {
+                "model_family": "gradient_boosting",
+                "hyperparameters": {
+                    "n_estimators": 200,
+                    "learning_rate": 0.05,
+                    "max_depth": 3,
+                    "min_samples_leaf": 20,
+                    "subsample": 0.9,
+                    "loss": "squared_error",
+                },
+            },
         },
     }
 

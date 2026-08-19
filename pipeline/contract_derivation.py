@@ -626,6 +626,22 @@ _HGB_REQUIRED_HYPERPARAMETERS = frozenset({
 _HGB_OPTIONAL_HYPERPARAMETERS = frozenset({"early_stopping"})
 _HGB_ALLOWED_HYPERPARAMETERS = _HGB_REQUIRED_HYPERPARAMETERS | _HGB_OPTIONAL_HYPERPARAMETERS
 
+# Project Spec S0224: the two bounded fixed-parameter families this
+# validator (and pipeline/training.py's native regression estimator
+# construction) currently recognizes for continuous regression. A future
+# family requires a new, separately authorized whitelist -- never an ad hoc
+# extension here.
+_GBR_REQUIRED_HYPERPARAMETERS = frozenset({
+    "n_estimators", "learning_rate", "max_depth", "min_samples_leaf", "subsample", "loss",
+})
+_GBR_ALLOWED_HYPERPARAMETERS = _GBR_REQUIRED_HYPERPARAMETERS
+_RFR_REQUIRED_HYPERPARAMETERS = frozenset({
+    "n_estimators", "max_depth", "min_samples_leaf", "max_features", "bootstrap",
+})
+_RFR_ALLOWED_HYPERPARAMETERS = _RFR_REQUIRED_HYPERPARAMETERS
+_CONTINUOUS_REGRESSION_METRIC_VOCABULARY = frozenset({"r2", "mae", "rmse"})
+_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset({"gradient_boosting", "random_forest"})
+
 TRAINING_POLICY_REQUIRED_FIELDS = (
     "review_status",
     "numeric_handling",
@@ -695,7 +711,77 @@ def _validate_hgb_hyperparameters(hyperparameters: Any) -> list[str]:
     return reasons
 
 
-def _validate_modeling_constraints_intent(modeling_constraints: Any) -> list[str]:
+def _validate_gradient_boosting_regression_hyperparameters(hyperparameters: Any) -> list[str]:
+    reasons: list[str] = []
+    if not isinstance(hyperparameters, dict):
+        return ["fixed_model_configuration.hyperparameters must be an object"]
+    missing = _GBR_REQUIRED_HYPERPARAMETERS - set(hyperparameters)
+    if missing:
+        reasons.append(
+            f"fixed_model_configuration.hyperparameters is missing required fields: {sorted(missing)}"
+        )
+    unsupported = set(hyperparameters) - _GBR_ALLOWED_HYPERPARAMETERS
+    if unsupported:
+        reasons.append(f"unsupported gradient_boosting regression hyperparameter(s): {sorted(unsupported)}")
+    if "n_estimators" in hyperparameters:
+        value = hyperparameters["n_estimators"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.n_estimators must be an integer >= 1")
+    if "learning_rate" in hyperparameters:
+        value = hyperparameters["learning_rate"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            reasons.append("hyperparameters.learning_rate must be a number > 0")
+    if "max_depth" in hyperparameters:
+        value = hyperparameters["max_depth"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.max_depth must be an integer >= 1")
+    if "min_samples_leaf" in hyperparameters:
+        value = hyperparameters["min_samples_leaf"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.min_samples_leaf must be an integer >= 1")
+    if "subsample" in hyperparameters:
+        value = hyperparameters["subsample"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0 < value <= 1):
+            reasons.append("hyperparameters.subsample must be a number > 0 and <= 1")
+    if "loss" in hyperparameters and hyperparameters["loss"] != "squared_error":
+        reasons.append("hyperparameters.loss must be 'squared_error'")
+    return reasons
+
+
+def _validate_random_forest_regression_hyperparameters(hyperparameters: Any) -> list[str]:
+    reasons: list[str] = []
+    if not isinstance(hyperparameters, dict):
+        return ["fixed_model_configuration.hyperparameters must be an object"]
+    missing = _RFR_REQUIRED_HYPERPARAMETERS - set(hyperparameters)
+    if missing:
+        reasons.append(
+            f"fixed_model_configuration.hyperparameters is missing required fields: {sorted(missing)}"
+        )
+    unsupported = set(hyperparameters) - _RFR_ALLOWED_HYPERPARAMETERS
+    if unsupported:
+        reasons.append(f"unsupported random_forest regression hyperparameter(s): {sorted(unsupported)}")
+    if "n_estimators" in hyperparameters:
+        value = hyperparameters["n_estimators"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.n_estimators must be an integer >= 1")
+    if "max_depth" in hyperparameters:
+        value = hyperparameters["max_depth"]
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+            reasons.append("hyperparameters.max_depth must be an integer >= 1 or null")
+    if "min_samples_leaf" in hyperparameters:
+        value = hyperparameters["min_samples_leaf"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.min_samples_leaf must be an integer >= 1")
+    if "max_features" in hyperparameters and hyperparameters["max_features"] not in ("sqrt", "log2", None):
+        reasons.append("hyperparameters.max_features must be 'sqrt', 'log2', or null")
+    if "bootstrap" in hyperparameters and not isinstance(hyperparameters["bootstrap"], bool):
+        reasons.append("hyperparameters.bootstrap must be a boolean")
+    return reasons
+
+
+def _validate_modeling_constraints_intent(
+    modeling_constraints: Any, *, problem_type_hint: str | None = None
+) -> list[str]:
     reasons: list[str] = []
     if not isinstance(modeling_constraints, dict):
         return ["modeling_constraints must be an object"]
@@ -715,6 +801,16 @@ def _validate_modeling_constraints_intent(modeling_constraints: Any) -> list[str
     if selection_mode is not None and selection_mode not in _TRAINING_POLICY_SELECTION_MODE_VOCABULARY:
         reasons.append(f"modeling_constraints.selection_mode is unrecognized: {selection_mode!r}")
 
+    # Project Spec S0224: continuous regression can never use the historical
+    # evaluate_allowed_families multi-candidate selection strategy -- it
+    # always requires an explicit fixed, reviewed configuration.
+    if problem_type_hint == "continuous_regression" and selection_mode != "fixed_configuration":
+        reasons.append(
+            "continuous regression requires modeling_constraints.selection_mode = "
+            "fixed_configuration; evaluate_allowed_families is not supported for continuous "
+            "regression"
+        )
+
     if selection_mode == "fixed_configuration":
         fixed_model_configuration = modeling_constraints.get("fixed_model_configuration")
         if not isinstance(fixed_model_configuration, dict):
@@ -726,7 +822,25 @@ def _validate_modeling_constraints_intent(modeling_constraints: Any) -> list[str
                 "fixed configuration with multiple allowed families, or fixed family not present in "
                 "allowed families"
             )
-        if fixed_family == "hist_gradient_boosting":
+        if problem_type_hint == "continuous_regression":
+            if fixed_family == "gradient_boosting":
+                reasons.extend(
+                    _validate_gradient_boosting_regression_hyperparameters(
+                        fixed_model_configuration.get("hyperparameters")
+                    )
+                )
+            elif fixed_family == "random_forest":
+                reasons.extend(
+                    _validate_random_forest_regression_hyperparameters(
+                        fixed_model_configuration.get("hyperparameters")
+                    )
+                )
+            else:
+                reasons.append(
+                    "continuous regression fixed family must be gradient_boosting or "
+                    f"random_forest, got {fixed_family!r}"
+                )
+        elif fixed_family == "hist_gradient_boosting":
             reasons.extend(
                 _validate_hgb_hyperparameters(fixed_model_configuration.get("hyperparameters"))
             )
@@ -741,30 +855,49 @@ def _validate_modeling_constraints_intent(modeling_constraints: Any) -> list[str
     return reasons
 
 
-def _validate_split_policy_intent(split_policy: Any) -> list[str]:
+def _validate_split_policy_intent(split_policy: Any, *, problem_type_hint: str | None = None) -> list[str]:
     reasons: list[str] = []
     if not isinstance(split_policy, dict):
         return ["split_policy must be an object"]
     strategy = split_policy.get("strategy")
     if strategy not in _TRAINING_POLICY_SPLIT_STRATEGY_VOCABULARY:
         reasons.append(f"split_policy.strategy is invalid: {strategy!r}")
+    elif problem_type_hint == "continuous_regression" and strategy != "random":
+        reasons.append(
+            f"continuous regression requires split_policy.strategy = random, got {strategy!r}"
+        )
     train_ratio = split_policy.get("train_ratio")
     val_ratio = split_policy.get("val_ratio", 0)
     test_ratio = split_policy.get("test_ratio")
     for name, value in (("train_ratio", train_ratio), ("val_ratio", val_ratio), ("test_ratio", test_ratio)):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not (0 <= value <= 1):
             reasons.append(f"split_policy.{name} must be a number within [0, 1]")
+    if (
+        problem_type_hint == "continuous_regression"
+        and not isinstance(val_ratio, bool)
+        and isinstance(val_ratio, (int, float))
+        and val_ratio <= 0
+    ):
+        reasons.append("continuous regression requires split_policy.val_ratio > 0")
     if not reasons and not math.isclose(float(train_ratio) + float(val_ratio) + float(test_ratio), 1.0):
         reasons.append("split_policy train_ratio, val_ratio, and test_ratio must sum to 1.0")
     return reasons
 
 
-def _validate_training_policy_intent(training_policy_intent: dict[str, Any]) -> list[str]:
+def _validate_training_policy_intent(
+    training_policy_intent: dict[str, Any], *, problem_type_hint: str | None = None
+) -> list[str]:
     """Return a list of blocking reasons for a supplied `training_policy_intent`.
 
     Empty list means the policy is a complete, approved, schema-compatible
     reviewed native training policy. Never mutates its input; never invents
     a value the intent does not itself declare.
+
+    `problem_type_hint` is `"continuous_regression"` only when the caller has
+    independently confirmed a `continuous_regression_result_semantics_intent`
+    is present on the modeling intent (Project Spec S0224); it is `None` for
+    every binary/multiclass caller, which retains the historical validation
+    behavior below completely unchanged.
     """
     reasons: list[str] = []
     missing_fields = [
@@ -798,11 +931,21 @@ def _validate_training_policy_intent(training_policy_intent: dict[str, Any]) -> 
                 reasons.append(f"allowed_transformations contains unknown value(s): {unknown}")
 
     if "split_policy" in training_policy_intent:
-        reasons.extend(_validate_split_policy_intent(training_policy_intent["split_policy"]))
+        reasons.extend(
+            _validate_split_policy_intent(
+                training_policy_intent["split_policy"], problem_type_hint=problem_type_hint
+            )
+        )
+
+    metric_vocabulary = (
+        _CONTINUOUS_REGRESSION_METRIC_VOCABULARY
+        if problem_type_hint == "continuous_regression"
+        else _TRAINING_POLICY_METRIC_VOCABULARY
+    )
 
     if "primary_metric" in training_policy_intent:
         primary_metric = training_policy_intent["primary_metric"]
-        if primary_metric not in _TRAINING_POLICY_METRIC_VOCABULARY:
+        if primary_metric not in metric_vocabulary:
             reasons.append(f"unknown metric: {primary_metric!r}")
 
     if "secondary_metrics" in training_policy_intent:
@@ -810,12 +953,16 @@ def _validate_training_policy_intent(training_policy_intent: dict[str, Any]) -> 
         if not isinstance(secondary_metrics, list):
             reasons.append("secondary_metrics must be an array")
         else:
-            unknown_metrics = [m for m in secondary_metrics if m not in _TRAINING_POLICY_METRIC_VOCABULARY]
+            unknown_metrics = [m for m in secondary_metrics if m not in metric_vocabulary]
             if unknown_metrics:
                 reasons.append(f"unknown metric: {unknown_metrics}")
 
     if "modeling_constraints" in training_policy_intent:
-        reasons.extend(_validate_modeling_constraints_intent(training_policy_intent["modeling_constraints"]))
+        reasons.extend(
+            _validate_modeling_constraints_intent(
+                training_policy_intent["modeling_constraints"], problem_type_hint=problem_type_hint
+            )
+        )
 
     return reasons
 
@@ -834,7 +981,16 @@ def _materialize_training_policy_fields(modeling_intent: dict[str, Any]) -> dict
     if not isinstance(training_policy_intent, dict):
         raise TrainingPolicyValidationError(["training_policy_intent must be an object"])
 
-    reasons = _validate_training_policy_intent(training_policy_intent)
+    # Project Spec S0224: presence alone of continuous_regression_result_semantics_intent
+    # (regardless of its own approval/materialization outcome) is enough to
+    # apply the continuous-regression-specific strictness above -- never
+    # inferred from training_policy_intent's own contents.
+    problem_type_hint = (
+        "continuous_regression"
+        if isinstance(modeling_intent.get("continuous_regression_result_semantics_intent"), dict)
+        else None
+    )
+    reasons = _validate_training_policy_intent(training_policy_intent, problem_type_hint=problem_type_hint)
     if reasons:
         raise TrainingPolicyValidationError(reasons)
 

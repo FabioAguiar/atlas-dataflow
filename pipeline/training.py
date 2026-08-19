@@ -90,7 +90,8 @@ PROHIBITED_TRAINING_FEATURE_COLUMNS = frozenset({"customerID"})
 # Partner/Dependents as "Yes"/"No" (confirmed via discovery-evidence.json).
 _BOOLEAN_ENCODED_VALUES = frozenset({"0", "1", "true", "false", "yes", "no", "t", "f", "y", "n"})
 
-_LOWER_IS_BETTER_METRICS = frozenset({"log_loss"})
+# Project Spec S0224 adds mae/rmse (continuous-regression, lower_is_better).
+_LOWER_IS_BETTER_METRICS = frozenset({"log_loss", "mae", "rmse"})
 
 
 class TrainingInputError(ValueError):
@@ -2137,13 +2138,58 @@ def train_from_paths(
         "selection_mode", "evaluate_allowed_families"
     )
     if selection_mode == "fixed_configuration":
-        return _train_native_multiclass_fixed_configuration(
-            contract=contract,
-            full_contract=full_contract,
-            contract_path=contract_path,
-            prepared_dataset_path=prepared_dataset_path,
-            dataset_slug=dataset_slug,
-            run_id=run_id,
+        # Project Spec S0224 (Desired Change C): fixed_configuration dispatch
+        # is resolved strictly from the governed, materialized
+        # result_semantics.schema_version/problem_type -- never from
+        # _infer_task_type(...) or dataset dtype/cardinality. Any other or
+        # ambiguous result_semantics under fixed_configuration fails closed
+        # instead of silently falling through to one of the two known
+        # branches.
+        dispatch_result_semantics = full_contract.get("result_semantics")
+        dispatch_schema_version = (
+            dispatch_result_semantics.get("schema_version")
+            if isinstance(dispatch_result_semantics, dict)
+            else None
+        )
+        dispatch_problem_type = (
+            dispatch_result_semantics.get("problem_type")
+            if isinstance(dispatch_result_semantics, dict)
+            else None
+        )
+        if (
+            dispatch_schema_version == NATIVE_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION
+            and dispatch_problem_type == "multiclass_classification"
+        ):
+            return _train_native_multiclass_fixed_configuration(
+                contract=contract,
+                full_contract=full_contract,
+                contract_path=contract_path,
+                prepared_dataset_path=prepared_dataset_path,
+                dataset_slug=dataset_slug,
+                run_id=run_id,
+            )
+        if (
+            dispatch_schema_version == NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION
+            and dispatch_problem_type == "continuous_regression"
+        ):
+            return _train_native_continuous_regression_fixed_configuration(
+                contract=contract,
+                full_contract=full_contract,
+                contract_path=contract_path,
+                prepared_dataset_path=prepared_dataset_path,
+                dataset_slug=dataset_slug,
+                run_id=run_id,
+            )
+        raise TrainingInputError(
+            "unsupported_fixed_configuration_result_semantics",
+            (
+                "fixed_configuration training requires a governed "
+                f"{NATIVE_MULTICLASS_RESULT_SEMANTICS_SCHEMA_VERSION!r} (multiclass_classification) "
+                f"or {NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION!r} "
+                "(continuous_regression) result_semantics; no other or absent result_semantics is "
+                "supported for fixed_configuration dispatch."
+            ),
+            field="result_semantics",
         )
 
     # Project Spec S0216 (Desired Change M): a multiclass result_semantics
@@ -2164,6 +2210,24 @@ def train_from_paths(
             "requires a separately governed future multiclass-selection policy; this governed "
             "training entrypoint does not generalize native multiclass model selection.",
             field="modeling_constraints.allowed_model_families",
+        )
+
+    # Project Spec S0224 (Desired Change C): continuous regression can never
+    # reach the historical evaluate_allowed_families multi-candidate
+    # selection path below -- it always requires selection_mode =
+    # fixed_configuration (handled above). This fails closed even when a
+    # caller bypasses pipeline.contract_derivation's own training-policy
+    # validation and invokes this entrypoint with a hand-built contract.
+    if (
+        isinstance(_result_semantics_for_legacy_guard, dict)
+        and _result_semantics_for_legacy_guard.get("problem_type") == "continuous_regression"
+    ):
+        raise TrainingInputError(
+            "unsupported_continuous_regression_model_selection",
+            "native continuous-regression training requires modeling_constraints.selection_mode = "
+            "fixed_configuration; the historical evaluate_allowed_families multi-candidate "
+            "selection path is not supported for continuous regression.",
+            field="modeling_constraints.selection_mode",
         )
 
     rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
@@ -3653,6 +3717,712 @@ def _train_native_multiclass_fixed_configuration(
             "model_card_sha256": model_card_sha256,
             "model_selection_evidence_sha256": None,
             "analytical_visualizations_sha256": analytical_visualizations_sha256,
+        },
+        metrics=final_test_metric_values,
+        model_selection_evidence_produced=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Native fixed-configuration continuous-regression training (Project Spec
+# S0224). Mirrors _train_native_multiclass_fixed_configuration's fixed-
+# finalization protocol (initial fit on train only, descriptive validation,
+# fresh final fit on train+validation, sealed single test evaluation) with
+# Atlas-native bounded regression estimators (gradient_boosting,
+# random_forest) and r2/mae/rmse regression evidence in place of
+# classification evidence. Never emits an analytical-visualizations artifact
+# (Desired Change N, deferred to a future Project Spec) and never emits
+# model-selection evidence (Desired Change L).
+# ---------------------------------------------------------------------------
+
+NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regression-result-semantics.v1"
+NATIVE_CONTINUOUS_REGRESSION_TRAINING_PARAMETER_RECORD_VERSION = "training-parameter-record.v3"
+NATIVE_CONTINUOUS_REGRESSION_TRAINING_METRICS_VERSION = "training-metrics.v3"
+NATIVE_CONTINUOUS_REGRESSION_METRIC_NAMES = ("r2", "mae", "rmse")
+
+_GBR_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
+    "n_estimators", "learning_rate", "max_depth", "min_samples_leaf", "subsample", "loss",
+})
+_RFR_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
+    "n_estimators", "max_depth", "min_samples_leaf", "max_features", "bootstrap",
+})
+
+
+def _validate_fixed_continuous_regression_configuration(
+    modeling_constraints: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
+    """Independently re-validate a fixed_configuration modeling_constraints
+    block for continuous regression before any estimator is constructed.
+    Never trusted from authoring-time contract-derivation validation alone
+    (defense in depth, matching this repository's existing dual-validation
+    convention -- see _validate_fixed_model_configuration for the multiclass
+    counterpart)."""
+    allowed_model_families = modeling_constraints.get("allowed_model_families")
+    fixed_model_configuration = modeling_constraints.get("fixed_model_configuration")
+    if not isinstance(fixed_model_configuration, dict):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "modeling_constraints.fixed_model_configuration is required when selection_mode is "
+            "fixed_configuration.",
+            field="modeling_constraints.fixed_model_configuration",
+        )
+    model_family = fixed_model_configuration.get("model_family")
+    if (
+        not isinstance(allowed_model_families, list)
+        or len(allowed_model_families) != 1
+        or allowed_model_families[0] != model_family
+    ):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "fixed_configuration requires exactly one allowed_model_families entry, matching "
+            "fixed_model_configuration.model_family.",
+            field="modeling_constraints.allowed_model_families",
+        )
+    if model_family not in ("gradient_boosting", "random_forest"):
+        raise TrainingInputError(
+            "unsupported_model_family",
+            f"continuous regression fixed_configuration model family is not natively supported: "
+            f"{model_family!r}",
+            field="modeling_constraints.fixed_model_configuration.model_family",
+        )
+    hyperparameters = fixed_model_configuration.get("hyperparameters")
+    if not isinstance(hyperparameters, dict):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "modeling_constraints.fixed_model_configuration.hyperparameters must be an object.",
+            field="modeling_constraints.fixed_model_configuration.hyperparameters",
+        )
+    required_fields = (
+        _GBR_REQUIRED_HYPERPARAMETER_FIELDS
+        if model_family == "gradient_boosting"
+        else _RFR_REQUIRED_HYPERPARAMETER_FIELDS
+    )
+    missing = required_fields - set(hyperparameters)
+    if missing:
+        raise TrainingInputError(
+            "invalid_contract_field",
+            f"fixed_model_configuration.hyperparameters is missing required fields: {sorted(missing)}.",
+            field="modeling_constraints.fixed_model_configuration.hyperparameters",
+        )
+    unsupported = set(hyperparameters) - required_fields
+    if unsupported:
+        raise TrainingInputError(
+            "unsupported_hyperparameter",
+            f"unsupported {model_family} regression hyperparameter(s): {sorted(unsupported)}.",
+            field="modeling_constraints.fixed_model_configuration.hyperparameters",
+        )
+    return model_family, hyperparameters
+
+
+def _build_gradient_boosting_regressor(hyperparameters: dict[str, Any], random_seed: int | None):
+    try:
+        from sklearn.ensemble import GradientBoostingRegressor
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed training. Install scikit-learn in the training environment.",
+            field="modeling_constraints.fixed_model_configuration",
+        ) from exc
+    return GradientBoostingRegressor(
+        n_estimators=int(hyperparameters["n_estimators"]),
+        learning_rate=float(hyperparameters["learning_rate"]),
+        max_depth=int(hyperparameters["max_depth"]),
+        min_samples_leaf=int(hyperparameters["min_samples_leaf"]),
+        subsample=float(hyperparameters["subsample"]),
+        loss=str(hyperparameters["loss"]),
+        random_state=random_seed,
+    )
+
+
+def _build_random_forest_regressor(hyperparameters: dict[str, Any], random_seed: int | None):
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed training. Install scikit-learn in the training environment.",
+            field="modeling_constraints.fixed_model_configuration",
+        ) from exc
+    max_depth = hyperparameters["max_depth"]
+    return RandomForestRegressor(
+        n_estimators=int(hyperparameters["n_estimators"]),
+        max_depth=int(max_depth) if max_depth is not None else None,
+        min_samples_leaf=int(hyperparameters["min_samples_leaf"]),
+        max_features=hyperparameters["max_features"],
+        bootstrap=bool(hyperparameters["bootstrap"]),
+        random_state=random_seed,
+    )
+
+
+def _build_native_continuous_regression_pipeline(
+    model_family: str,
+    hyperparameters: dict[str, Any],
+    random_seed: int | None,
+    features: Any,
+    numeric_handling: str,
+):
+    try:
+        from sklearn.pipeline import Pipeline
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed training. Install scikit-learn in the training environment.",
+            field="modeling_constraints.fixed_model_configuration",
+        ) from exc
+    estimator = (
+        _build_gradient_boosting_regressor(hyperparameters, random_seed)
+        if model_family == "gradient_boosting"
+        else _build_random_forest_regressor(hyperparameters, random_seed)
+    )
+    preprocessor = _build_preprocessor(features, numeric_handling=numeric_handling)
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def _require_continuous_regression_result_semantics(full_contract: dict[str, Any]) -> None:
+    """Independently re-validate the governed result_semantics block before
+    any target validation, split, or fit -- defense in depth, never trusted
+    from the dispatch check in train_from_paths alone."""
+    result_semantics = full_contract.get("result_semantics")
+    if not isinstance(result_semantics, dict):
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "native continuous-regression fixed-configuration training requires a materialized "
+            "result_semantics block.",
+            field="result_semantics",
+        )
+    if result_semantics.get("schema_version") != NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.schema_version must be "
+            f"{NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION!r} for native "
+            "continuous-regression training.",
+            field="result_semantics.schema_version",
+        )
+    if result_semantics.get("problem_type") != "continuous_regression":
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.problem_type must be 'continuous_regression' for "
+            "native continuous-regression training.",
+            field="result_semantics.problem_type",
+        )
+    if result_semantics.get("output_value_kind") != "continuous_numeric":
+        raise TrainingInputError(
+            "invalid_result_semantics",
+            "execution contract result_semantics.output_value_kind must be 'continuous_numeric' for "
+            "native continuous-regression training.",
+            field="result_semantics.output_value_kind",
+        )
+
+
+def _validate_continuous_regression_target_values(rows: list[dict[str, Any]], target_column: str) -> None:
+    """Reject missing, non-numeric, NaN, or infinite target values before any
+    split or fit. Never infers continuous_regression from these values --
+    this only validates a target already governed as continuous_regression
+    by result_semantics (Desired Change E)."""
+    for row in rows:
+        value = row.get(target_column)
+        if not _is_numeric_dataset_value(value):
+            raise TrainingInputError(
+                "invalid_continuous_target",
+                (
+                    f"continuous regression target column {target_column!r} contains a missing, "
+                    f"non-numeric, or non-finite value: {value!r}."
+                ),
+                field="target_column",
+            )
+
+
+def _continuous_regression_random_three_way_split_indices(
+    row_count: int,
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    random_seed: int | None,
+) -> tuple[list[int], list[int], list[int]]:
+    """Deterministic, unstratified three-way random split with no row
+    overlap and complete row coverage. Never buckets/bins the continuous
+    target -- partition membership depends only on row position, shuffled
+    under random_seed."""
+    import random
+
+    if row_count < 3:
+        raise ValueError("continuous regression three-way random split requires at least three rows")
+
+    rng = random.Random(random_seed)
+    indices = list(range(row_count))
+    rng.shuffle(indices)
+    train_count = max(1, min(row_count - 2, round(row_count * train_ratio)))
+    remaining = row_count - train_count
+    val_count = max(1, min(remaining - 1, round(row_count * val_ratio)))
+    test_count = row_count - train_count - val_count
+    if test_count < 1:
+        raise ValueError("continuous regression three-way random split produced an empty test partition")
+
+    train_indices = indices[:train_count]
+    val_indices = indices[train_count:train_count + val_count]
+    test_indices = indices[train_count + val_count:]
+    if not train_indices or not val_indices or not test_indices:
+        raise ValueError("continuous regression three-way random split produced an empty partition")
+    return sorted(train_indices), sorted(val_indices), sorted(test_indices)
+
+
+def _native_continuous_regression_requested_metric_names(contract: dict[str, Any]) -> list[str]:
+    names = _metric_names(contract)
+    unsupported = [name for name in names if name not in NATIVE_CONTINUOUS_REGRESSION_METRIC_NAMES]
+    if unsupported:
+        raise TrainingInputError(
+            "unsupported_metric",
+            f"unsupported native continuous-regression metric(s): {unsupported}",
+            field="primary_metric",
+        )
+    return names
+
+
+def _native_continuous_regression_metric_values(
+    *, y_true: Any, y_pred: Any, metric_names: list[str],
+) -> dict[str, float]:
+    try:
+        from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn metrics are required for governed training metrics.",
+            field="primary_metric",
+        ) from exc
+
+    predictions = [float(value) for value in y_pred]
+    if not all(math.isfinite(value) for value in predictions):
+        raise TrainingInputError(
+            "invalid_metric_value",
+            "continuous regression prediction vector contains a non-finite value.",
+            field="primary_metric",
+        )
+
+    values: dict[str, float] = {}
+    for metric_name in metric_names:
+        if metric_name == "r2":
+            value = r2_score(y_true, y_pred)
+        elif metric_name == "mae":
+            value = mean_absolute_error(y_true, y_pred)
+        elif metric_name == "rmse":
+            value = root_mean_squared_error(y_true, y_pred)
+        else:
+            raise TrainingInputError(
+                "unsupported_metric",
+                f"unsupported native continuous-regression metric: {metric_name}",
+                field=metric_name,
+            )
+        values[metric_name] = _finite_metric_value(metric_name, value)
+    return values
+
+
+def _build_native_continuous_regression_model_card_input_artifact(
+    *,
+    contract: dict[str, Any],
+    output_directory: Path,
+    model_card_input_path: Path,
+    parameter_record_path: Path,
+    metrics_path: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    """Mirrors _build_native_multiclass_model_card_input_artifact's shape,
+    with a continuous-regression task_type and no class_distribution --
+    Desired Change M requires the regression model card never invent a
+    class distribution."""
+    parameter_record = _load_json_file(parameter_record_path, "training_parameter_record_path")
+    _require_valid_controlled_entrypoint_provenance(parameter_record)
+    metrics_artifact = _load_json_file(metrics_path, "metrics_path")
+    training_parameters = parameter_record["training_parameters"]
+    final_test = metrics_artifact["final_test_evaluation"]
+    primary_metric_name = str(training_parameters["primary_metric"])
+    primary_metric_entry = next(
+        item for item in final_test["metrics"] if item["name"] == primary_metric_name
+    )
+    secondary_metrics = [item for item in final_test["metrics"] if item["name"] != primary_metric_name]
+    feature_columns = [str(column) for column in training_parameters["feature_columns"]]
+    target_column = str(training_parameters["target_column"])
+
+    return {
+        "schema_version": "model-card-input.v2",
+        "artifact_kind": "model_card_input",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "model": {
+            "model_family": str(training_parameters["model_family"]),
+            "task_type": "continuous_regression",
+            "hyperparameters": _json_safe(training_parameters["hyperparameters"]),
+        },
+        "training": {
+            "training_timestamp": training_timestamp,
+            "seed": training_parameters.get("random_seed"),
+            "split_policy": _json_safe(training_parameters["split_policy"]),
+            "training_data_row_count": int(training_parameters["split_sizes"]["training_rows"]),
+            "evaluation_split_size": int(final_test["row_count"]),
+        },
+        "evaluation": {
+            "primary_metric_name": primary_metric_name,
+            "primary_metric_value": primary_metric_entry["value"],
+            "secondary_metrics": _json_safe(secondary_metrics),
+        },
+        "dataset": {
+            "dataset_id": str(contract["dataset_id"]),
+            "target_column": target_column,
+            "target_description": _explicit_absence(
+                "execution contract does not declare target_description"
+            ),
+            "feature_count": len(feature_columns),
+            "feature_columns": feature_columns,
+            "feature_definitions": _json_safe(contract.get("feature_definitions") or {}),
+        },
+        "intended_use_context": _explicit_absence(
+            "execution contract does not declare intended_use_context"
+        ),
+        "path_references": {
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "execution_contract_path": parameter_record["consumed_inputs"]["execution_contract_path"],
+            "dataset_path": parameter_record["consumed_inputs"]["dataset_path"],
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": parameter_record["hashes"]["prepared_dataset_sha256"],
+            "training_parameter_record_sha256": _sha256_file(parameter_record_path),
+            "metrics_sha256": parameter_record["hashes"]["metrics_sha256"],
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "full_training_parameter_record_embedded": False,
+            "full_metrics_artifact_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
+def _train_native_continuous_regression_fixed_configuration(
+    *,
+    contract: dict[str, Any],
+    full_contract: dict[str, Any],
+    contract_path: Path,
+    prepared_dataset_path: Path,
+    dataset_slug: str | None,
+    run_id: str | None,
+) -> TrainingResult:
+    _require_continuous_regression_result_semantics(full_contract)
+    modeling_constraints = contract["modeling_constraints"]
+    model_family, hyperparameters = _validate_fixed_continuous_regression_configuration(modeling_constraints)
+
+    rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
+    _validate_dataset(rows, prepared_dataset_id, contract)
+
+    target_column = str(contract["target_column"])
+    feature_columns = [str(column) for column in contract["feature_columns"]]
+    _validate_continuous_regression_target_values(rows, target_column)
+
+    split_policy = contract["split_policy"]
+    if split_policy.get("strategy") != "random":
+        raise TrainingInputError(
+            "invalid_split_policy",
+            "native continuous-regression fixed-configuration training requires "
+            "split_policy.strategy = random.",
+            field="split_policy.strategy",
+        )
+    train_ratio = float(split_policy.get("train_ratio"))
+    val_ratio = float(split_policy.get("val_ratio", 0))
+    test_ratio = float(split_policy.get("test_ratio"))
+    if val_ratio <= 0:
+        raise TrainingInputError(
+            "invalid_split_policy",
+            "native continuous-regression fixed-configuration training requires a real, non-empty "
+            "validation partition: split_policy.val_ratio must be greater than 0.",
+            field="split_policy.val_ratio",
+        )
+    random_seed = contract.get("random_seed")
+
+    try:
+        train_indices, val_indices, test_indices = _continuous_regression_random_three_way_split_indices(
+            len(rows), train_ratio, val_ratio, test_ratio, random_seed
+        )
+    except ValueError as exc:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            f"native continuous-regression three-way random split failed: {exc}",
+            field="dataset_path",
+        ) from exc
+
+    features, target = _rows_to_training_frame(rows, feature_columns, target_column)
+    target = target.astype(float)
+    final_fit_indices = sorted(train_indices + val_indices)
+    numeric_handling = str(contract.get("numeric_handling", "standardize"))
+    requested_metric_names = _native_continuous_regression_requested_metric_names(contract)
+
+    # Step 1: initial fixed-configuration fit on train only. Validation is
+    # descriptive only -- it never alters the frozen configuration.
+    initial_pipeline = _build_native_continuous_regression_pipeline(
+        model_family, hyperparameters, random_seed, features, numeric_handling
+    )
+    initial_pipeline.fit(features.iloc[train_indices], target.iloc[train_indices])
+    validation_predictions = initial_pipeline.predict(features.iloc[val_indices])
+    validation_metric_values = _native_continuous_regression_metric_values(
+        y_true=target.iloc[val_indices],
+        y_pred=validation_predictions,
+        metric_names=requested_metric_names,
+    )
+
+    # Step 2: a fresh configured pipeline is fit on train + validation
+    # ("final fit"). No hyperparameter/family/feature change from the
+    # frozen configuration -- the validation result above never alters
+    # this fit.
+    final_pipeline = _build_native_continuous_regression_pipeline(
+        model_family, hyperparameters, random_seed, features, numeric_handling
+    )
+    final_pipeline.fit(features.iloc[final_fit_indices], target.iloc[final_fit_indices])
+
+    # Step 3: test is evaluated exactly once, sealed, never used for
+    # fitting or model selection.
+    final_test_predictions = final_pipeline.predict(features.iloc[test_indices])
+    final_test_metric_values = _native_continuous_regression_metric_values(
+        y_true=target.iloc[test_indices],
+        y_pred=final_test_predictions,
+        metric_names=requested_metric_names,
+    )
+
+    selected_dataset_slug = dataset_slug or _dataset_slug_from_dataset_id(str(contract["dataset_id"]))
+    selected_run_id = run_id or _new_run_id()
+    output_directory = _training_output_directory(selected_dataset_slug, selected_run_id)
+    model_artifact_path = output_directory / MODEL_ARTIFACT_FILENAME
+    parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
+    metrics_path = output_directory / METRICS_ARTIFACT_FILENAME
+    model_card_input_path = output_directory / MODEL_CARD_INPUT_FILENAME
+    serializer_version = _serializer_version()
+    training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    model_artifact_sha256 = _serialize_model(final_pipeline, model_artifact_path)
+    controlled_entrypoint_provenance = _controlled_entrypoint_provenance_marker(
+        contract_path=contract_path,
+        dataset_path=prepared_dataset_path,
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
+
+    regression_evidence = {
+        "problem_type": "continuous_regression",
+        "result_semantics_schema_version": NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "output_value_kind": "continuous_numeric",
+    }
+
+    metrics_artifact = {
+        "schema_version": NATIVE_CONTINUOUS_REGRESSION_TRAINING_METRICS_VERSION,
+        "artifact_kind": "training_metrics",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "regression_evidence": regression_evidence,
+        "validation_evaluation": {
+            "partition_role": "validation",
+            "row_count": len(val_indices),
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_hyperparameter_selection": False,
+            "sealed_before_finalization": False,
+            "evaluation_count": 1,
+            "metrics": [
+                {"name": name, "value": value} for name, value in validation_metric_values.items()
+            ],
+        },
+        "final_test_evaluation": {
+            "partition_role": "test",
+            "row_count": len(test_indices),
+            "used_for_fitting": False,
+            "used_for_model_selection": False,
+            "used_for_decision_rule_selection": False,
+            "used_for_adjustment": False,
+            "sealed_before_finalization": True,
+            "completed": True,
+            "evaluation_count": 1,
+            "metrics": [
+                {"name": name, "value": value} for name, value in final_test_metric_values.items()
+            ],
+        },
+        "path_references": {
+            "metrics_path": _repo_relative_path(metrics_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+    metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
+
+    training_parameter_record = {
+        "schema_version": NATIVE_CONTINUOUS_REGRESSION_TRAINING_PARAMETER_RECORD_VERSION,
+        "record_kind": "training_parameter_record",
+        "problem_type": "continuous_regression",
+        "training_timestamp": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "consumed_inputs": {
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+            "execution_contract_dataset_id": str(contract["dataset_id"]),
+            "prepared_dataset_dataset_id": str(prepared_dataset_id or contract["dataset_id"]),
+        },
+        "produced_outputs": {
+            "serialized_model_path": _repo_relative_path(model_artifact_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "model_selection_evidence_path": None,
+            "model_card_input_path": _repo_relative_path(model_card_input_path),
+        },
+        "serializer": {
+            "name": SERIALIZER_NAME,
+            "installed_version": serializer_version,
+            "serialization_format_version": f"{SERIALIZER_NAME}-{serializer_version}",
+        },
+        "controlled_entrypoint_provenance": controlled_entrypoint_provenance,
+        "permitted_execution_contract_fields": sorted(PERMITTED_EXECUTION_CONTRACT_FIELDS),
+        "training_parameters": {
+            "model_family": model_family,
+            "hyperparameters": _json_safe(hyperparameters),
+            "target_column": target_column,
+            "feature_columns": feature_columns,
+            "split_policy": dict(split_policy),
+            "split_sizes": {
+                "training_rows": len(train_indices),
+                "validation_rows": len(val_indices),
+                "test_rows": len(test_indices),
+                "final_fit_rows": len(final_fit_indices),
+            },
+            "random_seed": random_seed,
+            "primary_metric": str(contract["primary_metric"]),
+            "secondary_metrics": list(contract.get("secondary_metrics") or []),
+            "modeling_constraints": _json_safe(modeling_constraints),
+            "selection_mode": "fixed_configuration",
+            "model_selection_performed": False,
+            "initial_fit": {"fit_partition": "train"},
+            "validation_evaluation": {
+                "partition": "validation",
+                "used_for_model_selection": False,
+                "used_for_hyperparameter_selection": False,
+            },
+            "final_fit": {"fit_partitions": ["train", "validation"]},
+            "final_test": {
+                "partition": "test",
+                "used_for_fitting": False,
+                "used_for_model_selection": False,
+                "evaluation_count": 1,
+            },
+        },
+        "regression_evidence": regression_evidence,
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+            "prepared_dataset_sha256": _sha256_file(prepared_dataset_path),
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+        },
+        "record_boundary_confirmations": {
+            "is_metrics_artifact": False,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "unauthorized_contract_fields_consumed": False,
+            "controlled_entrypoint_provenance_marker_present": True,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "raw_artifact_contents_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+    parameter_record_sha256 = _write_parameter_record(parameter_record_path, training_parameter_record)
+
+    model_card_input_artifact = _build_native_continuous_regression_model_card_input_artifact(
+        contract=contract,
+        output_directory=output_directory,
+        model_card_input_path=model_card_input_path,
+        parameter_record_path=parameter_record_path,
+        metrics_path=metrics_path,
+        training_timestamp=training_timestamp,
+    )
+    model_card_input_sha256 = _write_reduced_json_artifact(model_card_input_path, model_card_input_artifact)
+    model_card_path = output_directory / MODEL_CARD_FILENAME
+    model_card_artifact = _model_card_artifact_from_input(
+        model_card_input_artifact,
+        model_card_input_path_ref=_repo_relative_path(model_card_input_path),
+        model_card_path_ref=_repo_relative_path(model_card_path),
+        model_card_input_sha256=model_card_input_sha256,
+        created_at=training_timestamp,
+    )
+    model_card_sha256 = _write_reduced_json_artifact(model_card_path, model_card_artifact)
+
+    return TrainingResult(
+        status="trained",
+        model=final_pipeline,
+        model_family=model_family,
+        task_type="continuous_regression",
+        train_indices=train_indices,
+        evaluation_indices=test_indices,
+        dataset_id=str(contract["dataset_id"]),
+        target_column=target_column,
+        feature_columns=feature_columns,
+        primary_metric=str(contract["primary_metric"]),
+        output_directory=f"{_repo_relative_path(output_directory)}/",
+        serialized_model_path=_repo_relative_path(model_artifact_path),
+        training_parameter_record_path=_repo_relative_path(parameter_record_path),
+        metrics_path=_repo_relative_path(metrics_path),
+        model_selection_evidence_path=None,
+        model_card_input_path=_repo_relative_path(model_card_input_path),
+        model_card_path=_repo_relative_path(model_card_path),
+        analytical_visualizations_path=None,
+        serializer_name=SERIALIZER_NAME,
+        serializer_version=serializer_version,
+        serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
+        training_timestamp=training_timestamp,
+        hashes={
+            "execution_contract_sha256": training_parameter_record["hashes"]["execution_contract_sha256"],
+            "prepared_dataset_sha256": training_parameter_record["hashes"]["prepared_dataset_sha256"],
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+            "training_parameter_record_sha256": parameter_record_sha256,
+            "model_card_input_sha256": model_card_input_sha256,
+            "model_card_sha256": model_card_sha256,
+            "model_selection_evidence_sha256": None,
+            "analytical_visualizations_sha256": None,
         },
         metrics=final_test_metric_values,
         model_selection_evidence_produced=False,

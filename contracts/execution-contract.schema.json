@@ -452,17 +452,47 @@
       "type": "object",
       "required": ["model_family", "hyperparameters"],
       "additionalProperties": false,
-      "description": "Project Spec S0216: a single bounded fixed model configuration for modeling_constraints.selection_mode = fixed_configuration. hyperparameters is discriminated strictly by model_family -- only the named model_family's own allowed hyperparameter shape may match, and it must be complete (no partial supply): unknown hyperparameter names or callable/module/class-string values are always rejected.",
+      "description": "Project Spec S0216: a single bounded fixed model configuration for modeling_constraints.selection_mode = fixed_configuration. hyperparameters is discriminated strictly by model_family -- only the named model_family's own allowed hyperparameter shape may match, and it must be complete (no partial supply): unknown hyperparameter names or callable/module/class-string values are always rejected. Project Spec S0224 additionally authorizes gradient_boosting and random_forest as bounded fixed continuous-regression families -- each with its own closed hyperparameter shape, never the hist_gradient_boosting shape.",
       "properties": {
         "model_family": {
           "type": "string",
-          "enum": ["hist_gradient_boosting"],
-          "description": "Project Spec S0216 introduces the first bounded fixed-parameter family. random_state is never part of hyperparameters -- it always remains governed by the top-level execution-contract random_seed."
+          "enum": ["hist_gradient_boosting", "gradient_boosting", "random_forest"],
+          "description": "Project Spec S0216 introduces the first bounded fixed-parameter family (hist_gradient_boosting, multiclass classification only). Project Spec S0224 adds gradient_boosting and random_forest, bounded fixed continuous-regression families only. random_state is never part of hyperparameters -- it always remains governed by the top-level execution-contract random_seed."
         },
         "hyperparameters": {
-          "$ref": "#/definitions/hist_gradient_boosting_hyperparameters"
+          "type": "object",
+          "description": "Discriminated strictly by model_family via the allOf below -- hist_gradient_boosting_hyperparameters, gradient_boosting_regression_hyperparameters, or random_forest_regression_hyperparameters."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "model_family": { "const": "hist_gradient_boosting" } },
+            "required": ["model_family"]
+          },
+          "then": {
+            "properties": { "hyperparameters": { "$ref": "#/definitions/hist_gradient_boosting_hyperparameters" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "model_family": { "const": "gradient_boosting" } },
+            "required": ["model_family"]
+          },
+          "then": {
+            "properties": { "hyperparameters": { "$ref": "#/definitions/gradient_boosting_regression_hyperparameters" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "model_family": { "const": "random_forest" } },
+            "required": ["model_family"]
+          },
+          "then": {
+            "properties": { "hyperparameters": { "$ref": "#/definitions/random_forest_regression_hyperparameters" } }
+          }
+        }
+      ]
     },
     "hist_gradient_boosting_hyperparameters": {
       "type": "object",
@@ -497,6 +527,66 @@
         "early_stopping": {
           "type": ["string", "boolean"],
           "enum": ["auto", true, false]
+        }
+      }
+    },
+    "gradient_boosting_regression_hyperparameters": {
+      "type": "object",
+      "required": ["n_estimators", "learning_rate", "max_depth", "min_samples_leaf", "subsample", "loss"],
+      "additionalProperties": false,
+      "description": "Project Spec S0224: the complete, explicit set of whitelisted gradient_boosting hyperparameters for a fixed_configuration native continuous-regression run (sklearn.ensemble.GradientBoostingRegressor). No other estimator parameter name is ever accepted -- in particular random_state, n_jobs, and any callable/module path/class string are always rejected -- and every field must be a bounded scalar constructor input.",
+      "properties": {
+        "n_estimators": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "learning_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_samples_leaf": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "subsample": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "loss": {
+          "type": "string",
+          "const": "squared_error"
+        }
+      }
+    },
+    "random_forest_regression_hyperparameters": {
+      "type": "object",
+      "required": ["n_estimators", "max_depth", "min_samples_leaf", "max_features", "bootstrap"],
+      "additionalProperties": false,
+      "description": "Project Spec S0224: the complete, explicit set of whitelisted random_forest hyperparameters for a fixed_configuration native continuous-regression run (sklearn.ensemble.RandomForestRegressor). No other estimator parameter name is ever accepted -- in particular random_state, n_jobs, and any callable/module path/class string are always rejected -- and every field must be a bounded scalar constructor input.",
+      "properties": {
+        "n_estimators": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_depth": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "min_samples_leaf": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_features": {
+          "type": ["string", "null"],
+          "enum": ["sqrt", "log2", null]
+        },
+        "bootstrap": {
+          "type": "boolean"
         }
       }
     },

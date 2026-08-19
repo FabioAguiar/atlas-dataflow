@@ -35,6 +35,7 @@ from pathlib import Path
 _MANIFEST_SCHEMA_PATH = Path(__file__).parent / "dataset-integration-authoring-manifest.schema.json"
 _SEMANTIC_INTENT_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.schema.json"
 _SEMANTIC_INTENT_V2_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.v2.schema.json"
+_SEMANTIC_INTENT_V3_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.v3.schema.json"
 _CAPABILITY_PROFILE_SCHEMA_PATH = Path(__file__).parent / "capability-profile.schema.json"
 
 # Closed local registry dispatching semantic-intent schema selection by the
@@ -44,6 +45,7 @@ _CAPABILITY_PROFILE_SCHEMA_PATH = Path(__file__).parent / "capability-profile.sc
 _SEMANTIC_INTENT_SCHEMA_REGISTRY: dict[str, Path] = {
     "dataset-semantic-intent.v1": _SEMANTIC_INTENT_SCHEMA_PATH,
     "dataset-semantic-intent.v2": _SEMANTIC_INTENT_V2_SCHEMA_PATH,
+    "dataset-semantic-intent.v3": _SEMANTIC_INTENT_V3_SCHEMA_PATH,
 }
 
 # Architecture-level task/runtime compatibility, enforced only when a
@@ -51,6 +53,7 @@ _SEMANTIC_INTENT_SCHEMA_REGISTRY: dict[str, Path] = {
 _TASK_TYPE_TO_RUNTIME_MODE: dict[str, str] = {
     "binary_classification": "single_model_binary_classification",
     "multiclass_classification": "single_model_multiclass_classification",
+    "continuous_regression": "single_model_continuous_regression",
 }
 
 

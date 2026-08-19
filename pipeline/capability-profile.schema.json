@@ -113,7 +113,7 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["single_model_binary_classification", "single_model_multiclass_classification", "none"],
+          "enum": ["single_model_binary_classification", "single_model_multiclass_classification", "single_model_continuous_regression", "none"],
           "description": "The current, evidenced runtime prediction mode for this capability, or 'none' when prediction_runtime.applicable is false. New modes require a new capability profile version, never a dataset-specific branch."
         }
       }

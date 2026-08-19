@@ -854,3 +854,296 @@ class TestNoDatasetOrTelcoOrDryBeanConditionInMulticlassPath:
         source = inspect.getsource(authoring_contracts._resolve_semantic_intent_schema)
         for forbidden in ("telco", "dry bean", "dry_bean", "drybean", "dataset_slug"):
             assert forbidden not in source.lower()
+
+
+SEMANTIC_INTENT_V3_SCHEMA_PATH = REPO_ROOT / "pipeline" / "dataset-semantic-intent.v3.schema.json"
+
+CONTINUOUS_REGRESSION_ROLES = {
+    "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
+    "semantic_intent": SEMANTIC_INTENT_BYTES,
+    "preparation_recipe": PREPARATION_RECIPE_BYTES,
+    "model_artifact": MODEL_ARTIFACT_BYTES,
+}
+
+
+def _continuous_regression_profile() -> dict:
+    """Project Spec S0222: an additive, non-operational continuous-regression
+    capability profile, in-memory mirror of pipeline/capabilities/continuous-
+    predictive-regression.v1.json, used the same way
+    _multiclass_classification_profile is used above -- as a synthetic,
+    dataset-neutral fixture, not the real committed file."""
+    return {
+        "schema_version": "capability-profile.v1",
+        "artifact_type": "capability_profile",
+        "capability_profile_id": "continuous-predictive-regression",
+        "capability_profile_version": "v1",
+        "support_status": "requires_future_contract_evolution",
+        "semantic_requirements": {
+            "target_semantics_applicability": "required",
+        },
+        "artifact_roles": [
+            {"role_name": "discovery_evidence", "applicability": "required"},
+            {"role_name": "semantic_intent", "applicability": "required"},
+            {"role_name": "preparation_recipe", "applicability": "required"},
+            {"role_name": "model_artifact", "applicability": "required", "authoring_boundary_applicability": "optional"},
+            {"role_name": "visual_evidence", "applicability": "optional"},
+            {"role_name": "no_model_analysis_summary", "applicability": "forbidden"},
+        ],
+        "prediction_runtime": {
+            "applicable": True,
+            "mode": "single_model_continuous_regression",
+        },
+        "publication": {
+            "public_prediction_capability_applicability": "optional",
+        },
+        "capability_boundary_confirmations": {
+            "dataset_specific_selector_used": False,
+            "dataset_specific_feature_names_present": False,
+            "concrete_model_hashes_present": False,
+            "model_bytes_embedded": False,
+            "release_instance_metadata_embedded": False,
+            "absolute_external_path_present": False,
+            "training_result_values_embedded": False,
+        },
+        "generated_at": "2026-08-19T00:00:00+00:00",
+    }
+
+
+def _continuous_regression_semantic_intent_for(
+    profile: dict,
+    *,
+    target_field_name: str = "measured_outcome",
+    extra_target_fields: dict | None = None,
+) -> dict:
+    document = {
+        "schema_version": "dataset-semantic-intent.v3",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "authoring_generation_id": "authoring-gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": profile["capability_profile_id"],
+            "capability_profile_version": profile["capability_profile_version"],
+        },
+        "field_role_decisions": [
+            {"field_name": "record_id", "role": "identifier", "include_in_features": False},
+            {"field_name": "numeric_feature", "role": "feature", "include_in_features": True},
+        ],
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-19T00:00:00+00:00",
+    }
+    target_semantics = {
+        "target_field_name": target_field_name,
+        "task_type": "continuous_regression",
+        "target_value_kind": "continuous_numeric",
+        "is_final_training_configuration": False,
+    }
+    if extra_target_fields:
+        target_semantics.update(extra_target_fields)
+    document["target_semantics"] = target_semantics
+    return document
+
+
+class TestSemanticIntentV3SchemaDispatch:
+    """Project Spec S0222: authoring_contracts dispatches dataset-semantic-
+    intent.v3 through the same closed local registry used for v1/v2, by the
+    artifact's own declared schema_version only."""
+
+    def test_v3_schema_is_valid_json_schema(self):
+        schema = _load_schema(SEMANTIC_INTENT_V3_SCHEMA_PATH)
+        jsonschema.Draft202012Validator.check_schema(schema)
+
+    def test_v3_schema_dispatch_works(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+        assert semantic_intent["schema_version"] == "dataset-semantic-intent.v3"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is True, result.failures
+
+
+class TestValidGenericContinuousRegressionAuthoringContract:
+    def test_valid_continuous_regression_manifest_profile_and_semantic_intent_pass(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(
+            manifest, profile, semantic_intent=semantic_intent, expected_dataset_slug=DATASET_SLUG
+        )
+
+        assert result.manifest_schema_valid is True
+        assert result.semantic_intent_schema_valid is True
+        assert result.capability_profile_schema_valid is True
+        assert result.valid is True, result.failures
+        assert result.failures == ()
+        assert result.capability_profile_id == "continuous-predictive-regression"
+        assert result.capability_profile_version == "v1"
+
+    def test_task_type_is_exactly_continuous_regression(self):
+        profile = _continuous_regression_profile()
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["task_type"] == "continuous_regression"
+
+    def test_target_value_kind_is_exactly_continuous_numeric(self):
+        profile = _continuous_regression_profile()
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["target_value_kind"] == "continuous_numeric"
+
+    def test_target_field_name_identifies_exactly_one_target_field(self):
+        profile = _continuous_regression_profile()
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+        assert isinstance(semantic_intent["target_semantics"]["target_field_name"], str)
+        assert semantic_intent["target_semantics"]["target_field_name"] == "measured_outcome"
+
+
+class TestContinuousRegressionV3RejectsClassificationOwnedFields:
+    def test_positive_class_is_rejected_by_v3(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(
+            profile, extra_target_fields={"positive_class": {"class_id": "yes"}}
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+
+    def test_classes_is_rejected_by_v3(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(
+            profile,
+            extra_target_fields={
+                "classes": [
+                    {"class_id": "class-a", "display_label": "Class A"},
+                    {"class_id": "class-b", "display_label": "Class B"},
+                ]
+            },
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+
+    def test_threshold_probability_and_risk_band_fields_are_rejected_by_v3(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        for forbidden_field, forbidden_value in (
+            ("threshold", 0.5),
+            ("probability_output", True),
+            ("risk_bands", ["low", "high"]),
+            ("negative_class", {"class_id": "no"}),
+            ("class_order", ["a", "b"]),
+        ):
+            semantic_intent = _continuous_regression_semantic_intent_for(
+                profile, extra_target_fields={forbidden_field: forbidden_value}
+            )
+
+            result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+            assert result.semantic_intent_schema_valid is False, forbidden_field
+            assert result.valid is False, forbidden_field
+
+    def test_count_and_multi_output_placeholders_are_rejected_by_v3(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        for forbidden_field, forbidden_value in (
+            ("count_semantics", {"kind": "poisson"}),
+            ("exposure", "days"),
+            ("offset", "log_exposure"),
+            ("output_targets", ["a", "b"]),
+            ("target_fields", ["a", "b"]),
+        ):
+            semantic_intent = _continuous_regression_semantic_intent_for(
+                profile, extra_target_fields={forbidden_field: forbidden_value}
+            )
+
+            result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+            assert result.semantic_intent_schema_valid is False, forbidden_field
+            assert result.valid is False, forbidden_field
+
+
+class TestContinuousRegressionTaskRuntimeModeConsistency:
+    """Project Spec S0222: continuous_regression must agree only with
+    single_model_continuous_regression; every classification/regression
+    cross-combination must be rejected."""
+
+    def test_continuous_regression_task_with_continuous_regression_runtime_mode_agrees(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert not any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+        assert result.valid is True, result.failures
+
+    def test_continuous_regression_task_with_binary_runtime_mode_is_rejected(self):
+        profile = _binary_classification_profile()
+        manifest = _manifest_for(profile, roles=BINARY_CLASSIFICATION_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_continuous_regression_task_with_multiclass_runtime_mode_is_rejected(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_binary_task_with_continuous_regression_runtime_mode_is_rejected(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _semantic_intent_for(profile, include_target=True)
+        assert semantic_intent["target_semantics"]["task_type"] == "binary_classification"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_multiclass_task_with_continuous_regression_runtime_mode_is_rejected(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["task_type"] == "multiclass_classification"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+
+class TestNoDatasetOrConcreteConditionInContinuousRegressionPath:
+    def test_validate_authoring_contracts_contains_no_concrete_dataset_conditional(self):
+        source = inspect.getsource(authoring_contracts.validate_authoring_contracts)
+        for forbidden in ("concrete compressive", "cement", "blast furnace slag", "fly ash", "superplasticizer"):
+            assert forbidden not in source.lower()
+
+    def test_resolve_semantic_intent_schema_contains_no_concrete_dataset_conditional(self):
+        source = inspect.getsource(authoring_contracts._resolve_semantic_intent_schema)
+        for forbidden in ("concrete compressive", "cement", "blast furnace slag", "fly ash", "superplasticizer"):
+            assert forbidden not in source.lower()

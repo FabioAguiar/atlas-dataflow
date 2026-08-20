@@ -1,0 +1,83 @@
+{
+  "artifact_kind": "training_metrics",
+  "created_at": "2026-08-20T17:50:59.206420Z",
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "final_test_evaluation": {
+    "completed": true,
+    "evaluation_count": 1,
+    "metrics": [
+      {
+        "name": "mae",
+        "value": 2.045284911051866
+      },
+      {
+        "name": "rmse",
+        "value": 2.9740119429538
+      },
+      {
+        "name": "r2",
+        "value": 0.969364116075396
+      }
+    ],
+    "partition_role": "test",
+    "row_count": 155,
+    "sealed_before_finalization": true,
+    "used_for_adjustment": false,
+    "used_for_decision_rule_selection": false,
+    "used_for_fitting": false,
+    "used_for_model_selection": false
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "d092bd4d78368b2f90355d0fd32930ff96c89573bb75e32f6b2d0573b4e37dcd"
+  },
+  "path_references": {
+    "dataset_path": "pipeline/prepared/concrete-compressive-strength/prepared-data.csv",
+    "execution_contract_path": "contracts/concrete-compressive-strength/execution-contract.json",
+    "metrics_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T175059Z/metrics.json",
+    "training_parameter_record_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T175059Z/training-parameter-record.json"
+  },
+  "regression_evidence": {
+    "output_value_kind": "continuous_numeric",
+    "problem_type": "continuous_regression",
+    "result_semantics_schema_version": "continuous-regression-result-semantics.v1"
+  },
+  "schema_version": "training-metrics.v3",
+  "training_run_identity": {
+    "dataset_slug": "concrete-compressive-strength",
+    "output_directory": "pipeline/training-runs/concrete-compressive-strength/train-20260820T175059Z/",
+    "run_id": "train-20260820T175059Z"
+  },
+  "validation_evaluation": {
+    "evaluation_count": 1,
+    "metrics": [
+      {
+        "name": "mae",
+        "value": 2.9937122941716185
+      },
+      {
+        "name": "rmse",
+        "value": 5.385900825573236
+      },
+      {
+        "name": "r2",
+        "value": 0.8976658849586309
+      }
+    ],
+    "partition_role": "validation",
+    "row_count": 154,
+    "sealed_before_finalization": false,
+    "used_for_fitting": false,
+    "used_for_hyperparameter_selection": false,
+    "used_for_model_selection": false
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "artifact_kind": "model_card",
+  "created_at": "2026-08-20T17:47:44.374402Z",
+  "data_notes": "Reduced, deterministic training-run model card. No raw dataset rows, model bytes, raw logs, raw runtime data, secrets, or notebook state are included.",
+  "evaluation": {
+    "primary_metric_name": "mae",
+    "primary_metric_value": 2.045284911051866,
+    "secondary_metrics": [
+      {
+        "name": "rmse",
+        "value": 2.9740119429538
+      },
+      {
+        "name": "r2",
+        "value": 0.969364116075396
+      }
+    ]
+  },
+  "evidence_policy": {
+    "raw_api_payloads_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "model_card_input_sha256": "7706d59a422cb0f7bacfb8e43c475ceddc6222c9aaa8f8a6352f7e94db663380"
+  },
+  "input_features": [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Water",
+    "Superplasticizer",
+    "Coarse Aggregate",
+    "Fine Aggregate",
+    "Age"
+  ],
+  "intended_use": "Governed training-run output for internal review. Not yet reviewed or approved for public release, profile publication, or production decisioning.",
+  "limitations": [
+    "Generated directly from a governed training run; not reviewed for public release, profile publication, or production decisioning.",
+    "Reflects patterns in the prepared training dataset only; independent validation is required before any downstream use."
+  ],
+  "model_card_boundary_confirmations": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "profile_publication_performed": false,
+    "raw_dataset_embedded": false,
+    "release_publication_performed": false
+  },
+  "model_summary": "hist_gradient_boosting model trained for dataset concrete-compressive-strength to predict Concrete compressive strength.",
+  "path_references": {
+    "model_card_input_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T174744Z/model-card-input.json",
+    "model_card_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T174744Z/model-card.json"
+  },
+  "prediction_target": "Concrete compressive strength",
+  "problem_type": "continuous_regression",
+  "schema_version": "model-card.v1",
+  "training_run_identity": {
+    "dataset_slug": "concrete-compressive-strength",
+    "output_directory": "pipeline/training-runs/concrete-compressive-strength/train-20260820T174744Z/",
+    "run_id": "train-20260820T174744Z"
+  }
+}

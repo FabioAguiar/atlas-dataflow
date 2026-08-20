@@ -527,3 +527,87 @@ def test_notebook_summary_exposes_publisher_run_and_terminal_result_identity():
     assert '"publisher_run_dir": publisher_run_dir_relative_path' in code
     assert '"terminal_status": validated_run_terminal_result["status"] if validated_run_terminal_result else None' in code
     assert '"promotion_eligibility": (' in code
+
+
+# --- Project Spec S0235: fresh-kernel-safe bootstrap and repository/import-root
+# coherent run materialization, superseding S0233's stale-state
+# `if str(repo_root) not in sys.path` bootstrap fragment.
+
+
+def test_notebook_never_references_repo_root_before_assignment():
+    tree = _code_cells_ast()
+    first_assign = _first_lineno(
+        tree,
+        lambda n: isinstance(n, ast.Name) and n.id == "repo_root" and isinstance(n.ctx, ast.Store),
+    )
+    first_load = _first_lineno(
+        tree,
+        lambda n: isinstance(n, ast.Name) and n.id == "repo_root" and isinstance(n.ctx, ast.Load),
+    )
+    assert first_assign is not None
+    assert first_load is not None
+    assert first_assign < first_load
+
+
+def test_notebook_has_no_stale_sys_path_bootstrap():
+    code = _source("code")
+    assert "sys.path" not in code
+    assert "import sys" not in code
+
+
+def test_notebook_declares_repository_import_root_coherence_check():
+    code = _source("code")
+    assert "def assert_repository_import_root_coherence(module, expected_repo_root):" in code
+    assert "def resolve_imported_module_repo_root(module):" in code
+    assert "return resolve_repository_root(module.__file__)" in code
+    assert "raise RuntimeError(" in code
+    assert "assert_repository_import_root_coherence(discovery_evidence_module, repo_root)" in code
+    repo_root_assignment_offset = code.index("repo_root = resolve_repository_root()")
+    coherence_def_offset = code.index("def assert_repository_import_root_coherence(")
+    first_call_offset = code.index("assert_repository_import_root_coherence(discovery_evidence_module, repo_root)")
+    assert repo_root_assignment_offset < coherence_def_offset < first_call_offset
+
+
+def test_notebook_rechecks_pipeline_training_import_root_before_native_training():
+    code = _source("code")
+    recheck_offset = code.index("assert_repository_import_root_coherence(pipeline_training, repo_root)")
+    training_call_offset = code.index("materialize_training_run_from_prepared_metadata(")
+    assert recheck_offset < training_call_offset
+
+
+def test_notebook_verifies_prepared_candidate_before_native_training():
+    code = _source("code")
+    training_call_offset = code.index(
+        "training_run_materialization_result = pipeline_training.materialize_training_run_from_prepared_metadata("
+    )
+    for marker in (
+        "prepared_data_path.is_file()",
+        "prepared_data_metadata_path.is_file()",
+        '"prepared_candidate_not_produced"',
+        '"prepared_candidate_reference_mismatch"',
+        '"prepared_candidate_reference_path_mismatch"',
+        '"prepared_candidate_outside_repository_root"',
+    ):
+        assert marker in code
+        assert code.index(marker) < training_call_offset
+
+
+def test_notebook_prepared_candidate_reference_matches_governed_relative_path():
+    code = _source("code")
+    assert 'prepared_data_relative_path = f"pipeline/prepared/{dataset_slug}/prepared-data.csv"' in code
+    assert '"prepared_candidate": {"produced": True, "reference": prepared_data_relative_path}' in code
+    assert "prepared_candidate_reference != prepared_data_relative_path" in code
+    assert "(repo_root / prepared_candidate_reference).resolve() != prepared_data_path.resolve()" in code
+
+
+def test_notebook_native_training_cell_calls_governed_prepared_metadata_only():
+    training_cell_source = _cell_source_starting_with("from pipeline import training as pipeline_training")
+    assert (
+        "training_run_materialization_result = pipeline_training.materialize_training_run_from_prepared_metadata(\n"
+        "        repo_root / execution_contract_relative_path,\n"
+        "        repo_root / prepared_data_metadata_relative_path,\n"
+        "        dataset_slug=dataset_slug,\n"
+        "    )"
+    ) in training_cell_source
+    for forbidden in ("dataset-study", "DATASET-ANALISYS", "/home/", "/workspace/"):
+        assert forbidden not in training_cell_source

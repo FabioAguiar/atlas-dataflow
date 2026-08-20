@@ -2299,3 +2299,110 @@ def test_native_multiclass_result_semantics_still_conforms_to_result_semantics_u
         "decision": {"strategy": "argmax"},
     }
     jsonschema.validate(contract, schema)
+
+
+# --- Project Spec S0231: continuous-regression hist_gradient_boosting bounded
+# fixed configuration, discriminated from the S0216 classification shape by
+# result_semantics.problem_type --------------------------------------------
+
+
+def _fixed_hgb_regression_hyperparameters(**overrides) -> dict:
+    base = {
+        "l2_regularization": 0.0,
+        "learning_rate": 0.05,
+        "max_iter": 250,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 40,
+    }
+    base.update(overrides)
+    return base
+
+
+def _fixed_hgb_regression_contract() -> dict:
+    contract = _valid_contract()
+    contract["primary_metric"] = "r2"
+    contract["secondary_metrics"] = ["mae", "rmse"]
+    contract["split_policy"] = {"strategy": "random", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15}
+    contract["modeling_constraints"] = {
+        "allowed_model_families": ["hist_gradient_boosting"],
+        "no_automl": True,
+        "selection_mode": "fixed_configuration",
+        "fixed_model_configuration": {
+            "model_family": "hist_gradient_boosting",
+            "hyperparameters": _fixed_hgb_regression_hyperparameters(),
+        },
+    }
+    contract["result_semantics"] = _valid_continuous_regression_result_semantics()
+    return contract
+
+
+def test_fixed_configuration_hgb_continuous_regression_contract_is_schema_valid():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_fixed_hgb_regression_contract(), schema)
+
+
+def test_hgb_continuous_regression_rejects_class_weight():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_regression_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["class_weight"] = None
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_continuous_regression_rejects_random_state():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_regression_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["random_state"] = 7
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_continuous_regression_missing_required_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_regression_contract()
+    del contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["learning_rate"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_continuous_regression_unknown_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_regression_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["n_estimators"] = 100
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_continuous_regression_accepts_optional_early_stopping():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_regression_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["early_stopping"] = "auto"
+    jsonschema.validate(contract, schema)
+
+
+def test_existing_multiclass_hgb_shape_remains_valid_alongside_regression_addition():
+    """S0231 must not weaken the existing S0216 multiclass HGB shape: absent
+    result_semantics (or a non-continuous_regression result_semantics) still
+    requires class_weight, exactly as before."""
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_fixed_configuration_contract(), schema)
+
+    contract = _fixed_configuration_contract()
+    del contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["class_weight"]
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_regression_hyperparameters_never_expose_callable_or_module_strings():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_regression_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["learning_rate"] = (
+        "sklearn.ensemble.HistGradientBoostingRegressor"
+    )
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))

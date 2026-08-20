@@ -3077,9 +3077,21 @@ def _native_multiclass_per_class_metrics(
     ]
 
 
-def _native_multiclass_permutation_importance(
-    *, pipeline: Any, features: Any, target: Any, feature_columns: list[str], random_seed: int | None,
+def _permutation_feature_importance(
+    *,
+    pipeline: Any,
+    features: Any,
+    target: Any,
+    feature_columns: list[str],
+    scoring: str,
+    n_repeats: int,
+    random_seed: int | None,
 ) -> tuple[list[dict[str, Any]], int, int]:
+    """Shared deterministic permutation-importance aggregation, reused by the
+    native multiclass HGB (Project Spec S0216) and native continuous-regression
+    HGB (Project Spec S0231) Feature Importance paths. Caller supplies the
+    governed scoring/n_repeats for its own problem type; this never selects
+    them itself."""
     try:
         from sklearn.inspection import permutation_importance
     except ImportError as exc:
@@ -3094,8 +3106,8 @@ def _native_multiclass_permutation_importance(
         pipeline,
         features,
         target,
-        scoring=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_SCORING,
-        n_repeats=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_N_REPEATS,
+        scoring=scoring,
+        n_repeats=n_repeats,
         random_state=random_seed,
         n_jobs=1,
     )
@@ -3125,6 +3137,20 @@ def _native_multiclass_permutation_importance(
     omitted_count = total_source_feature_count - len(top)
     data = [{"name": name, "value": value} for name, value in top]
     return data, total_source_feature_count, omitted_count
+
+
+def _native_multiclass_permutation_importance(
+    *, pipeline: Any, features: Any, target: Any, feature_columns: list[str], random_seed: int | None,
+) -> tuple[list[dict[str, Any]], int, int]:
+    return _permutation_feature_importance(
+        pipeline=pipeline,
+        features=features,
+        target=target,
+        feature_columns=feature_columns,
+        scoring=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_SCORING,
+        n_repeats=NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_N_REPEATS,
+        random_seed=random_seed,
+    )
 
 
 def _native_multiclass_confusion_matrix(
@@ -3754,6 +3780,18 @@ _GBR_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
 _RFR_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
     "n_estimators", "max_depth", "min_samples_leaf", "max_features", "bootstrap",
 })
+# Project Spec S0231: hist_gradient_boosting is a third bounded fixed
+# continuous-regression family, using its own regression hyperparameter shape
+# (no class_weight) -- distinct from _HGB_REQUIRED_HYPERPARAMETER_FIELDS
+# above, which remains the S0216 classification-only shape.
+_HGB_REGRESSION_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
+    "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf",
+})
+_HGB_REGRESSION_ALLOWED_HYPERPARAMETER_FIELDS = (
+    _HGB_REGRESSION_REQUIRED_HYPERPARAMETER_FIELDS | frozenset({"early_stopping"})
+)
+NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS = 5
+NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING = "neg_mean_absolute_error"
 
 
 def _validate_fixed_continuous_regression_configuration(
@@ -3786,7 +3824,7 @@ def _validate_fixed_continuous_regression_configuration(
             "fixed_model_configuration.model_family.",
             field="modeling_constraints.allowed_model_families",
         )
-    if model_family not in ("gradient_boosting", "random_forest"):
+    if model_family not in ("gradient_boosting", "random_forest", "hist_gradient_boosting"):
         raise TrainingInputError(
             "unsupported_model_family",
             f"continuous regression fixed_configuration model family is not natively supported: "
@@ -3800,11 +3838,15 @@ def _validate_fixed_continuous_regression_configuration(
             "modeling_constraints.fixed_model_configuration.hyperparameters must be an object.",
             field="modeling_constraints.fixed_model_configuration.hyperparameters",
         )
-    required_fields = (
-        _GBR_REQUIRED_HYPERPARAMETER_FIELDS
-        if model_family == "gradient_boosting"
-        else _RFR_REQUIRED_HYPERPARAMETER_FIELDS
-    )
+    if model_family == "gradient_boosting":
+        required_fields = _GBR_REQUIRED_HYPERPARAMETER_FIELDS
+        allowed_fields = _GBR_REQUIRED_HYPERPARAMETER_FIELDS
+    elif model_family == "random_forest":
+        required_fields = _RFR_REQUIRED_HYPERPARAMETER_FIELDS
+        allowed_fields = _RFR_REQUIRED_HYPERPARAMETER_FIELDS
+    else:
+        required_fields = _HGB_REGRESSION_REQUIRED_HYPERPARAMETER_FIELDS
+        allowed_fields = _HGB_REGRESSION_ALLOWED_HYPERPARAMETER_FIELDS
     missing = required_fields - set(hyperparameters)
     if missing:
         raise TrainingInputError(
@@ -3812,7 +3854,7 @@ def _validate_fixed_continuous_regression_configuration(
             f"fixed_model_configuration.hyperparameters is missing required fields: {sorted(missing)}.",
             field="modeling_constraints.fixed_model_configuration.hyperparameters",
         )
-    unsupported = set(hyperparameters) - required_fields
+    unsupported = set(hyperparameters) - allowed_fields
     if unsupported:
         raise TrainingInputError(
             "unsupported_hyperparameter",
@@ -3862,6 +3904,26 @@ def _build_random_forest_regressor(hyperparameters: dict[str, Any], random_seed:
     )
 
 
+def _build_hgb_regressor(hyperparameters: dict[str, Any], random_seed: int | None):
+    try:
+        from sklearn.ensemble import HistGradientBoostingRegressor
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed training. Install scikit-learn in the training environment.",
+            field="modeling_constraints.fixed_model_configuration",
+        ) from exc
+    return HistGradientBoostingRegressor(
+        l2_regularization=float(hyperparameters["l2_regularization"]),
+        learning_rate=float(hyperparameters["learning_rate"]),
+        max_iter=int(hyperparameters["max_iter"]),
+        max_leaf_nodes=int(hyperparameters["max_leaf_nodes"]),
+        min_samples_leaf=int(hyperparameters["min_samples_leaf"]),
+        early_stopping=hyperparameters.get("early_stopping", "auto"),
+        random_state=random_seed,
+    )
+
+
 def _build_native_continuous_regression_pipeline(
     model_family: str,
     hyperparameters: dict[str, Any],
@@ -3877,11 +3939,12 @@ def _build_native_continuous_regression_pipeline(
             "scikit-learn is required for governed training. Install scikit-learn in the training environment.",
             field="modeling_constraints.fixed_model_configuration",
         ) from exc
-    estimator = (
-        _build_gradient_boosting_regressor(hyperparameters, random_seed)
-        if model_family == "gradient_boosting"
-        else _build_random_forest_regressor(hyperparameters, random_seed)
-    )
+    if model_family == "gradient_boosting":
+        estimator = _build_gradient_boosting_regressor(hyperparameters, random_seed)
+    elif model_family == "random_forest":
+        estimator = _build_random_forest_regressor(hyperparameters, random_seed)
+    else:
+        estimator = _build_hgb_regressor(hyperparameters, random_seed)
     preprocessor = _build_preprocessor(features, numeric_handling=numeric_handling)
     return Pipeline([("preprocess", preprocessor), ("model", estimator)])
 
@@ -4143,8 +4206,29 @@ def _native_continuous_regression_target_histogram_chart(
 
 
 def _native_continuous_regression_feature_importance(
-    *, model_family: str, final_pipeline: Any, feature_columns: list[str],
+    *,
+    model_family: str,
+    final_pipeline: Any,
+    feature_columns: list[str],
+    final_fit_features: Any = None,
+    final_fit_target: Any = None,
+    random_seed: int | None = None,
 ) -> tuple[list[dict[str, Any]], int, int]:
+    """gradient_boosting/random_forest use the direct estimator.feature_importances_
+    path unchanged (Desired Change I). hist_gradient_boosting (Project Spec
+    S0231) instead uses deterministic permutation importance computed only on
+    the already-governed final-fit (train+validation) population -- the
+    final-test partition is never passed in here."""
+    if model_family == "hist_gradient_boosting":
+        return _permutation_feature_importance(
+            pipeline=final_pipeline,
+            features=final_fit_features,
+            target=final_fit_target,
+            feature_columns=feature_columns,
+            scoring=NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING,
+            n_repeats=NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
+            random_seed=random_seed,
+        )
     preprocess = final_pipeline.named_steps["preprocess"]
     estimator = final_pipeline.named_steps["model"]
     source_names = _feature_importance_output_source_map(preprocess)
@@ -4256,12 +4340,20 @@ def _build_native_continuous_regression_analytical_visualizations_artifact(
     final_test_predicted: Any,
     output_directory: Path,
     training_timestamp: str,
+    final_fit_features: Any = None,
+    final_fit_target: Any = None,
+    random_seed: int | None = None,
 ) -> dict[str, Any]:
     target_chart_data, target_distribution_method = _native_continuous_regression_target_histogram_chart(
         rows, target_column, max_bins=NATIVE_CONTINUOUS_REGRESSION_MAX_HISTOGRAM_BINS,
     )
     feature_data, total_source_feature_count, omitted_count = _native_continuous_regression_feature_importance(
-        model_family=model_family, final_pipeline=final_pipeline, feature_columns=feature_columns,
+        model_family=model_family,
+        final_pipeline=final_pipeline,
+        feature_columns=feature_columns,
+        final_fit_features=final_fit_features,
+        final_fit_target=final_fit_target,
+        random_seed=random_seed,
     )
     actual_vs_predicted = _native_continuous_regression_actual_vs_predicted(
         y_true=final_test_actual,
@@ -4307,13 +4399,28 @@ def _build_native_continuous_regression_analytical_visualizations_artifact(
             },
         ],
         "target_distribution_method": target_distribution_method,
-        "feature_importance_method": {
-            "model_family": model_family,
-            "source": "estimator.feature_importances_",
-            "total_source_feature_count": total_source_feature_count,
-            "omitted_source_feature_count": omitted_count,
-            "public_row_limit": FEATURE_IMPORTANCE_TOP_N,
-        },
+        "feature_importance_method": (
+            {
+                "model_family": model_family,
+                "source": "sklearn.inspection.permutation_importance",
+                "method": "permutation_importance",
+                "population_kind": "final_fit_train_plus_validation",
+                "scoring": NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING,
+                "n_repeats": NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
+                "random_seed": random_seed,
+                "total_source_feature_count": total_source_feature_count,
+                "omitted_source_feature_count": omitted_count,
+                "public_row_limit": FEATURE_IMPORTANCE_TOP_N,
+            }
+            if model_family == "hist_gradient_boosting"
+            else {
+                "model_family": model_family,
+                "source": "estimator.feature_importances_",
+                "total_source_feature_count": total_source_feature_count,
+                "omitted_source_feature_count": omitted_count,
+                "public_row_limit": FEATURE_IMPORTANCE_TOP_N,
+            }
+        ),
         "actual_vs_predicted": actual_vs_predicted,
         "residual_distribution": residual_distribution,
         "evidence_policy": {
@@ -4607,6 +4714,9 @@ def _train_native_continuous_regression_fixed_configuration(
         final_test_predicted=final_test_predictions,
         output_directory=output_directory,
         training_timestamp=training_timestamp,
+        final_fit_features=features.iloc[final_fit_indices],
+        final_fit_target=target.iloc[final_fit_indices],
+        random_seed=random_seed,
     )
     analytical_visualizations_sha256 = _write_reduced_json_artifact(
         analytical_visualizations_path, analytical_visualizations_artifact,

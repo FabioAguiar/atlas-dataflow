@@ -27,6 +27,8 @@ from pipeline.training import (
     MODEL_CARD_INPUT_FILENAME,
     METRICS_ARTIFACT_FILENAME,
     NATIVE_CONTINUOUS_REGRESSION_ANALYTICAL_VISUALIZATIONS_VERSION,
+    NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS,
+    NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING,
     NATIVE_CONTINUOUS_REGRESSION_METRIC_NAMES,
     NATIVE_CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION,
     NATIVE_CONTINUOUS_REGRESSION_TRAINING_METRICS_VERSION,
@@ -34,6 +36,7 @@ from pipeline.training import (
     TRAINING_PARAMETER_RECORD_FILENAME,
     TrainingInputError,
     _continuous_regression_random_three_way_split_indices,
+    _native_continuous_regression_feature_importance,
     _native_continuous_regression_metric_values,
     _validate_fixed_continuous_regression_configuration,
     train_from_paths,
@@ -81,11 +84,31 @@ def _rfr_hyperparameters(**overrides) -> dict:
     return base
 
 
+def _hgb_regression_hyperparameters(**overrides) -> dict:
+    base = {
+        "l2_regularization": 0.0,
+        "learning_rate": 0.1,
+        "max_iter": 60,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 5,
+    }
+    base.update(overrides)
+    return base
+
+
+def _default_hyperparameters_for_family(model_family: str) -> dict:
+    if model_family == "gradient_boosting":
+        return _gbr_hyperparameters()
+    if model_family == "random_forest":
+        return _rfr_hyperparameters()
+    return _hgb_regression_hyperparameters()
+
+
 def _fixed_continuous_regression_contract(
     *, model_family: str = "gradient_boosting", hyperparameters: dict | None = None,
 ) -> dict:
     if hyperparameters is None:
-        hyperparameters = _gbr_hyperparameters() if model_family == "gradient_boosting" else _rfr_hyperparameters()
+        hyperparameters = _default_hyperparameters_for_family(model_family)
     return {
         "contract_version": "execution_contract.v1",
         "dataset_id": "synthetic-regression-fixture",
@@ -211,6 +234,189 @@ def test_random_forest_fixed_configuration_trains_and_produces_expected_artifact
     assert result.model_family == "random_forest"
     assert result.task_type == "continuous_regression"
     assert (output_directory / MODEL_ARTIFACT_FILENAME).exists()
+
+
+def test_hist_gradient_boosting_fixed_configuration_trains_and_produces_expected_artifacts(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    """Project Spec S0231: hist_gradient_boosting is a third bounded fixed
+    continuous-regression family, using sklearn.ensemble.HistGradientBoostingRegressor
+    (never HistGradientBoostingClassifier)."""
+    result, output_directory = _run(fixed_training_environment, tmp_path, model_family="hist_gradient_boosting")
+
+    assert result.status == "trained"
+    assert result.model_family == "hist_gradient_boosting"
+    assert result.task_type == "continuous_regression"
+    for artifact_name in (
+        MODEL_ARTIFACT_FILENAME,
+        TRAINING_PARAMETER_RECORD_FILENAME,
+        METRICS_ARTIFACT_FILENAME,
+        MODEL_CARD_INPUT_FILENAME,
+        MODEL_CARD_FILENAME,
+        ANALYTICAL_VISUALIZATIONS_FILENAME,
+    ):
+        artifact_path = output_directory / artifact_name
+        assert artifact_path.exists(), artifact_name
+        assert artifact_path.stat().st_size > 0, artifact_name
+
+    estimator = result.model.named_steps["model"]
+    assert type(estimator).__name__ == "HistGradientBoostingRegressor"
+    assert estimator.random_state == 13  # governed by execution-contract random_seed, not a hyperparameter
+    assert not hasattr(estimator, "class_weight")
+
+    assert set(result.metrics) == {"r2", "mae", "rmse"}
+    for value in result.metrics.values():
+        assert value == value  # not NaN
+        assert value not in (float("inf"), float("-inf"))
+
+    metrics_artifact = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+    assert metrics_artifact["final_test_evaluation"]["evaluation_count"] == 1
+    assert metrics_artifact["final_test_evaluation"]["sealed_before_finalization"] is True
+    assert metrics_artifact["final_test_evaluation"]["used_for_fitting"] is False
+
+    parameter_record = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+    assert parameter_record["training_parameters"]["model_family"] == "hist_gradient_boosting"
+    assert parameter_record["training_parameters"]["hyperparameters"] == _hgb_regression_hyperparameters()
+    assert parameter_record["training_parameters"]["random_seed"] == 13
+    assert parameter_record["training_parameters"]["selection_mode"] == "fixed_configuration"
+    assert parameter_record["training_parameters"]["model_selection_performed"] is False
+
+
+@pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
+def test_hist_gradient_boosting_training_parameter_record_validates_against_real_schema(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    result, output_directory = _run(fixed_training_environment, tmp_path, model_family="hist_gradient_boosting")
+    parameter_record = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+    schema = json.loads(TRAINING_PARAMETER_RECORD_SCHEMA_PATH.read_text())
+    jsonschema.validate(parameter_record, schema)
+
+
+def test_hist_gradient_boosting_feature_importance_uses_permutation_importance(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    result, output_directory = _run(fixed_training_environment, tmp_path, model_family="hist_gradient_boosting")
+    artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+
+    method = artifact["feature_importance_method"]
+    assert method["model_family"] == "hist_gradient_boosting"
+    assert method["source"] == "sklearn.inspection.permutation_importance"
+    assert method["method"] == "permutation_importance"
+    assert method["population_kind"] == "final_fit_train_plus_validation"
+    assert method["scoring"] == NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_SCORING
+    assert method["scoring"] == "neg_mean_absolute_error"
+    assert method["n_repeats"] == NATIVE_CONTINUOUS_REGRESSION_HGB_PERMUTATION_IMPORTANCE_N_REPEATS
+    assert method["n_repeats"] == 5
+    assert method["random_seed"] == 13
+
+    feature_importance_chart = next(c for c in artifact["charts"] if c["id"] == "feature_importance")
+    values = [point["value"] for point in feature_importance_chart["data"]]
+    assert len(values) <= 10
+    assert all(value >= 0 for value in values)
+    assert abs(sum(values) - 1.0) < 1e-9
+
+
+@pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
+def test_hist_gradient_boosting_analytical_visualizations_validates_against_real_schema(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    result, output_directory = _run(fixed_training_environment, tmp_path, model_family="hist_gradient_boosting")
+    artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+    schema = json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text())
+    jsonschema.validate(artifact, schema)
+
+
+def test_hist_gradient_boosting_permutation_importance_population_is_train_plus_validation_only(
+    fixed_training_environment: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    """Desired Change H/Acceptance criteria 25/26: permutation importance
+    must receive only the final-fit (train+validation) population -- never
+    the sealed final-test partition -- and must be called with the governed
+    deterministic scoring/n_repeats/random_state/n_jobs."""
+    captured: dict = {}
+    from sklearn.inspection import permutation_importance as real_permutation_importance
+
+    def _capturing_permutation_importance(estimator, X, y, **kwargs):
+        captured["row_count"] = len(X)
+        captured["kwargs"] = kwargs
+        return real_permutation_importance(estimator, X, y, **kwargs)
+
+    monkeypatch.setattr(
+        "sklearn.inspection.permutation_importance", _capturing_permutation_importance
+    )
+
+    result, output_directory = _run(fixed_training_environment, tmp_path, model_family="hist_gradient_boosting")
+    parameter_record = json.loads((output_directory / TRAINING_PARAMETER_RECORD_FILENAME).read_text())
+    split_sizes = parameter_record["training_parameters"]["split_sizes"]
+
+    assert captured["row_count"] == split_sizes["final_fit_rows"]
+    assert captured["row_count"] != split_sizes["test_rows"]
+    assert captured["row_count"] < 150  # never the full 150-row prepared dataset either
+
+    kwargs = captured["kwargs"]
+    assert kwargs["scoring"] == "neg_mean_absolute_error"
+    assert kwargs["n_repeats"] == 5
+    assert kwargs["random_state"] == 13
+    assert kwargs["n_jobs"] == 1
+
+
+def test_hist_gradient_boosting_permutation_importance_negative_means_clamp_to_zero(monkeypatch) -> None:
+    class _FakeResult:
+        importances_mean = [-0.4, 0.6]
+
+    monkeypatch.setattr(
+        "sklearn.inspection.permutation_importance", lambda *a, **k: _FakeResult()
+    )
+    data, total, omitted = _native_continuous_regression_feature_importance(
+        model_family="hist_gradient_boosting",
+        final_pipeline=object(),
+        feature_columns=["input_a", "input_b"],
+        final_fit_features=object(),
+        final_fit_target=object(),
+        random_seed=13,
+    )
+    assert total == 2
+    assert omitted == 0
+    by_name = {entry["name"]: entry["value"] for entry in data}
+    assert by_name["input_a"] == 0.0  # negative mean clamped to zero, not made absolute
+    assert by_name["input_b"] == 1.0
+
+
+def test_hist_gradient_boosting_permutation_importance_zero_total_fails_closed(monkeypatch) -> None:
+    class _FakeResult:
+        importances_mean = [-0.1, -0.2]
+
+    monkeypatch.setattr(
+        "sklearn.inspection.permutation_importance", lambda *a, **k: _FakeResult()
+    )
+    with pytest.raises(TrainingInputError) as excinfo:
+        _native_continuous_regression_feature_importance(
+            model_family="hist_gradient_boosting",
+            final_pipeline=object(),
+            feature_columns=["input_a", "input_b"],
+            final_fit_features=object(),
+            final_fit_target=object(),
+            random_seed=13,
+        )
+    assert excinfo.value.code == "zero_total_feature_importance"
+
+
+def test_gradient_boosting_and_random_forest_feature_importance_still_direct_not_permutation(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    """Desired Change I: direct-importance families must never be converted
+    to permutation importance by the S0231 HGB addition."""
+    for model_family in ("gradient_boosting", "random_forest"):
+        _, output_directory = _run(fixed_training_environment, tmp_path, model_family=model_family)
+        artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+        method = artifact["feature_importance_method"]
+        assert method["model_family"] == model_family
+        assert method["source"] == "estimator.feature_importances_"
+        assert "method" not in method
+        assert "population_kind" not in method
+        assert "scoring" not in method
+        assert "n_repeats" not in method
+        assert "random_seed" not in method
 
 
 def test_analytical_visualizations_v3_artifact_is_produced(
@@ -513,7 +719,26 @@ def test_validate_fixed_continuous_regression_configuration_accepts_random_fores
     assert model_family == "random_forest"
 
 
-def test_validate_fixed_continuous_regression_configuration_rejects_unsupported_family() -> None:
+def test_validate_fixed_continuous_regression_configuration_accepts_hist_gradient_boosting() -> None:
+    model_family, hyperparameters = _validate_fixed_continuous_regression_configuration(
+        {
+            "allowed_model_families": ["hist_gradient_boosting"],
+            "selection_mode": "fixed_configuration",
+            "fixed_model_configuration": {
+                "model_family": "hist_gradient_boosting",
+                "hyperparameters": _hgb_regression_hyperparameters(),
+            },
+        }
+    )
+    assert model_family == "hist_gradient_boosting"
+    assert hyperparameters["max_iter"] == 60
+    assert "class_weight" not in hyperparameters
+    assert "random_state" not in hyperparameters
+
+
+def test_validate_fixed_continuous_regression_configuration_rejects_class_weight_for_hgb() -> None:
+    hyperparameters = _hgb_regression_hyperparameters()
+    hyperparameters["class_weight"] = None
     with pytest.raises(TrainingInputError) as excinfo:
         _validate_fixed_continuous_regression_configuration(
             {
@@ -521,6 +746,54 @@ def test_validate_fixed_continuous_regression_configuration_rejects_unsupported_
                 "selection_mode": "fixed_configuration",
                 "fixed_model_configuration": {
                     "model_family": "hist_gradient_boosting",
+                    "hyperparameters": hyperparameters,
+                },
+            }
+        )
+    assert excinfo.value.code == "unsupported_hyperparameter"
+
+
+def test_validate_fixed_continuous_regression_configuration_rejects_random_state_for_hgb() -> None:
+    hyperparameters = _hgb_regression_hyperparameters()
+    hyperparameters["random_state"] = 7
+    with pytest.raises(TrainingInputError) as excinfo:
+        _validate_fixed_continuous_regression_configuration(
+            {
+                "allowed_model_families": ["hist_gradient_boosting"],
+                "selection_mode": "fixed_configuration",
+                "fixed_model_configuration": {
+                    "model_family": "hist_gradient_boosting",
+                    "hyperparameters": hyperparameters,
+                },
+            }
+        )
+    assert excinfo.value.code == "unsupported_hyperparameter"
+
+
+def test_validate_fixed_continuous_regression_configuration_rejects_missing_required_hgb_field() -> None:
+    hyperparameters = _hgb_regression_hyperparameters()
+    del hyperparameters["learning_rate"]
+    with pytest.raises(TrainingInputError):
+        _validate_fixed_continuous_regression_configuration(
+            {
+                "allowed_model_families": ["hist_gradient_boosting"],
+                "selection_mode": "fixed_configuration",
+                "fixed_model_configuration": {
+                    "model_family": "hist_gradient_boosting",
+                    "hyperparameters": hyperparameters,
+                },
+            }
+        )
+
+
+def test_validate_fixed_continuous_regression_configuration_rejects_unsupported_family() -> None:
+    with pytest.raises(TrainingInputError) as excinfo:
+        _validate_fixed_continuous_regression_configuration(
+            {
+                "allowed_model_families": ["logistic_regression"],
+                "selection_mode": "fixed_configuration",
+                "fixed_model_configuration": {
+                    "model_family": "logistic_regression",
                     "hyperparameters": {},
                 },
             }
@@ -653,6 +926,22 @@ def test_unknown_regression_hyperparameter_fails_closed_end_to_end(
     hyperparameters = _gbr_hyperparameters()
     hyperparameters["random_state"] = 5
     contract = _fixed_continuous_regression_contract(hyperparameters=hyperparameters)
+    contract_path = _write_json(tmp_path / "execution-contract.json", contract)
+    dataset_path = _write_json(tmp_path / "prepared-dataset.json", _synthetic_regression_dataset())
+
+    with pytest.raises(TrainingInputError) as excinfo:
+        train_from_paths(contract_path, dataset_path, dataset_slug="synthetic-regression-fixture")
+    assert excinfo.value.code == "unsupported_hyperparameter"
+
+
+def test_hist_gradient_boosting_class_weight_fails_closed_end_to_end(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    hyperparameters = _hgb_regression_hyperparameters()
+    hyperparameters["class_weight"] = None
+    contract = _fixed_continuous_regression_contract(
+        model_family="hist_gradient_boosting", hyperparameters=hyperparameters,
+    )
     contract_path = _write_json(tmp_path / "execution-contract.json", contract)
     dataset_path = _write_json(tmp_path / "prepared-dataset.json", _synthetic_regression_dataset())
 

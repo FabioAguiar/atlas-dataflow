@@ -16,6 +16,7 @@ from pipeline.contract_derivation import (
     _derive_public_options,
     _fresh_label,
     _materialize_training_policy_fields,
+    _validate_hgb_regression_hyperparameters,
     _validate_training_policy_intent,
     categorical_known_values,
     categorical_scalar_type,
@@ -1502,6 +1503,176 @@ def test_execution_contract_explicit_approved_regression_policy_accepts_r2_mae_r
     assert contract["split_policy"]["strategy"] == "random"
     assert contract["primary_metric"] == "r2"
     assert contract["secondary_metrics"] == ["mae", "rmse"]
+
+
+# --- Project Spec S0231: continuous-regression hist_gradient_boosting fixed
+# policy, discriminated from the S0216 classification HGB shape by
+# problem_type_hint = "continuous_regression" ------------------------------
+
+
+def _hgb_regression_hyperparameters(**overrides) -> dict:
+    base = {
+        "l2_regularization": 0.0,
+        "learning_rate": 0.05,
+        "max_iter": 250,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 40,
+    }
+    base.update(overrides)
+    return base
+
+
+def _approved_hgb_regression_training_policy_intent(**overrides) -> dict:
+    policy = {
+        "review_status": "approved",
+        "numeric_handling": "standardize",
+        "categorical_encoding_policy": "onehot",
+        "allowed_transformations": ["passthrough"],
+        "split_policy": {"strategy": "random", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15},
+        "primary_metric": "r2",
+        "secondary_metrics": ["mae", "rmse"],
+        "modeling_constraints": {
+            "allowed_model_families": ["hist_gradient_boosting"],
+            "no_automl": True,
+            "selection_mode": "fixed_configuration",
+            "fixed_model_configuration": {
+                "model_family": "hist_gradient_boosting",
+                "hyperparameters": _hgb_regression_hyperparameters(),
+            },
+        },
+    }
+    policy.update(overrides)
+    return policy
+
+
+def test_validate_hgb_regression_hyperparameters_accepts_bounded_configuration():
+    assert _validate_hgb_regression_hyperparameters(_hgb_regression_hyperparameters()) == []
+
+
+def test_validate_hgb_regression_hyperparameters_accepts_concrete_representative_bounded_configuration():
+    # Representative bounded values for a real continuous-regression run --
+    # never a Concrete-dataset-slug or dataset-specific special case, only a
+    # second, distinct valid combination proving the shape is genuinely
+    # validated rather than matched against one hardcoded fixture.
+    reasons = _validate_hgb_regression_hyperparameters(
+        {
+            "l2_regularization": 0.5,
+            "learning_rate": 0.08,
+            "max_iter": 400,
+            "max_leaf_nodes": 31,
+            "min_samples_leaf": 20,
+            "early_stopping": True,
+        }
+    )
+    assert reasons == []
+
+
+def test_validate_hgb_regression_hyperparameters_rejects_class_weight():
+    hyperparameters = _hgb_regression_hyperparameters()
+    hyperparameters["class_weight"] = None
+    reasons = _validate_hgb_regression_hyperparameters(hyperparameters)
+    assert any("unsupported HGB regression hyperparameter" in reason for reason in reasons)
+
+
+def test_validate_hgb_regression_hyperparameters_rejects_random_state():
+    hyperparameters = _hgb_regression_hyperparameters()
+    hyperparameters["random_state"] = 7
+    reasons = _validate_hgb_regression_hyperparameters(hyperparameters)
+    assert any("unsupported HGB regression hyperparameter" in reason for reason in reasons)
+
+
+def test_validate_hgb_regression_hyperparameters_rejects_unknown_field():
+    hyperparameters = _hgb_regression_hyperparameters()
+    hyperparameters["n_estimators"] = 100
+    reasons = _validate_hgb_regression_hyperparameters(hyperparameters)
+    assert any("unsupported HGB regression hyperparameter" in reason for reason in reasons)
+
+
+def test_validate_hgb_regression_hyperparameters_rejects_missing_required_field():
+    hyperparameters = _hgb_regression_hyperparameters()
+    del hyperparameters["learning_rate"]
+    reasons = _validate_hgb_regression_hyperparameters(hyperparameters)
+    assert any("missing required fields" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_approved_continuous_regression_accepts_hist_gradient_boosting():
+    reasons = _validate_training_policy_intent(
+        _approved_hgb_regression_training_policy_intent(), problem_type_hint="continuous_regression",
+    )
+    assert reasons == []
+
+
+def test_validate_training_policy_intent_continuous_regression_hgb_rejects_class_weight():
+    policy = _approved_hgb_regression_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["class_weight"] = None
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="continuous_regression")
+    assert any("unsupported HGB regression hyperparameter" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_continuous_regression_hgb_rejects_random_state():
+    policy = _approved_hgb_regression_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["random_state"] = 7
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="continuous_regression")
+    assert any("unsupported HGB regression hyperparameter" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_continuous_regression_hgb_rejects_unknown_field():
+    policy = _approved_hgb_regression_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["n_estimators"] = 100
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="continuous_regression")
+    assert any("unsupported HGB regression hyperparameter" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_continuous_regression_evaluate_allowed_families_remains_rejected():
+    policy = _approved_hgb_regression_training_policy_intent()
+    del policy["modeling_constraints"]["selection_mode"]
+    del policy["modeling_constraints"]["fixed_model_configuration"]
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="continuous_regression")
+    assert any(
+        "requires modeling_constraints.selection_mode = fixed_configuration" in reason for reason in reasons
+    )
+
+
+def test_execution_contract_continuous_regression_accepts_hist_gradient_boosting_fixed_policy():
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(
+        intent, training_policy_intent=_approved_hgb_regression_training_policy_intent(),
+    )
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    assert contract["modeling_constraints"]["allowed_model_families"] == ["hist_gradient_boosting"]
+    assert contract["modeling_constraints"]["fixed_model_configuration"]["model_family"] == "hist_gradient_boosting"
+    assert contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"] == (
+        _hgb_regression_hyperparameters()
+    )
+    assert "class_weight" not in contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]
+
+
+def test_execution_contract_continuous_regression_hgb_policy_validates_against_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    intent = _approved_continuous_regression_result_semantics_intent()
+    modeling_intent = _modeling_intent_for_continuous_regression_result_semantics(
+        intent, training_policy_intent=_approved_hgb_regression_training_policy_intent(),
+    )
+    semantic_intent = _valid_semantic_intent_v3()
+    contract = _build_execution_contract(
+        modeling_intent,
+        _discovery_evidence_for_result_semantics(),
+        None,
+        semantic_intent=semantic_intent,
+    )
+    jsonschema.validate(contract, schema)
 
 
 def test_execution_contract_binary_multiclass_callers_without_training_policy_retain_historical_defaults_alongside_continuous_regression_addition():

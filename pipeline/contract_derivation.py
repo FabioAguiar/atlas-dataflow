@@ -639,8 +639,21 @@ _RFR_REQUIRED_HYPERPARAMETERS = frozenset({
     "n_estimators", "max_depth", "min_samples_leaf", "max_features", "bootstrap",
 })
 _RFR_ALLOWED_HYPERPARAMETERS = _RFR_REQUIRED_HYPERPARAMETERS
+# Project Spec S0231: hist_gradient_boosting is a third bounded fixed-parameter
+# family for continuous regression, using its own regression-specific
+# hyperparameter shape (no class_weight) -- never the S0216 classification
+# _HGB_REQUIRED_HYPERPARAMETERS/_HGB_ALLOWED_HYPERPARAMETERS shape above.
+_HGB_REGRESSION_REQUIRED_HYPERPARAMETERS = frozenset({
+    "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf",
+})
+_HGB_REGRESSION_OPTIONAL_HYPERPARAMETERS = frozenset({"early_stopping"})
+_HGB_REGRESSION_ALLOWED_HYPERPARAMETERS = (
+    _HGB_REGRESSION_REQUIRED_HYPERPARAMETERS | _HGB_REGRESSION_OPTIONAL_HYPERPARAMETERS
+)
 _CONTINUOUS_REGRESSION_METRIC_VOCABULARY = frozenset({"r2", "mae", "rmse"})
-_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset({"gradient_boosting", "random_forest"})
+_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY = frozenset({
+    "gradient_boosting", "random_forest", "hist_gradient_boosting",
+})
 
 TRAINING_POLICY_REQUIRED_FIELDS = (
     "review_status",
@@ -779,6 +792,47 @@ def _validate_random_forest_regression_hyperparameters(hyperparameters: Any) -> 
     return reasons
 
 
+def _validate_hgb_regression_hyperparameters(hyperparameters: Any) -> list[str]:
+    """Project Spec S0231: regression-specific HGB hyperparameter validator,
+    distinct from `_validate_hgb_hyperparameters` (classification). Never
+    accepts class_weight, random_state, or any other unsupported field --
+    those fall through the unsupported-field check below."""
+    reasons: list[str] = []
+    if not isinstance(hyperparameters, dict):
+        return ["fixed_model_configuration.hyperparameters must be an object"]
+    missing = _HGB_REGRESSION_REQUIRED_HYPERPARAMETERS - set(hyperparameters)
+    if missing:
+        reasons.append(
+            f"fixed_model_configuration.hyperparameters is missing required fields: {sorted(missing)}"
+        )
+    unsupported = set(hyperparameters) - _HGB_REGRESSION_ALLOWED_HYPERPARAMETERS
+    if unsupported:
+        reasons.append(f"unsupported HGB regression hyperparameter(s): {sorted(unsupported)}")
+    if "l2_regularization" in hyperparameters:
+        value = hyperparameters["l2_regularization"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            reasons.append("hyperparameters.l2_regularization must be a number >= 0")
+    if "learning_rate" in hyperparameters:
+        value = hyperparameters["learning_rate"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            reasons.append("hyperparameters.learning_rate must be a number > 0")
+    if "max_iter" in hyperparameters:
+        value = hyperparameters["max_iter"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.max_iter must be an integer >= 1")
+    if "max_leaf_nodes" in hyperparameters:
+        value = hyperparameters["max_leaf_nodes"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+            reasons.append("hyperparameters.max_leaf_nodes must be an integer >= 2")
+    if "min_samples_leaf" in hyperparameters:
+        value = hyperparameters["min_samples_leaf"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            reasons.append("hyperparameters.min_samples_leaf must be an integer >= 1")
+    if "early_stopping" in hyperparameters and hyperparameters["early_stopping"] not in ("auto", True, False):
+        reasons.append("hyperparameters.early_stopping must be 'auto' or a boolean")
+    return reasons
+
+
 def _validate_modeling_constraints_intent(
     modeling_constraints: Any, *, problem_type_hint: str | None = None
 ) -> list[str]:
@@ -835,10 +889,16 @@ def _validate_modeling_constraints_intent(
                         fixed_model_configuration.get("hyperparameters")
                     )
                 )
+            elif fixed_family == "hist_gradient_boosting":
+                reasons.extend(
+                    _validate_hgb_regression_hyperparameters(
+                        fixed_model_configuration.get("hyperparameters")
+                    )
+                )
             else:
                 reasons.append(
-                    "continuous regression fixed family must be gradient_boosting or "
-                    f"random_forest, got {fixed_family!r}"
+                    "continuous regression fixed family must be one of "
+                    f"{sorted(_CONTINUOUS_REGRESSION_FIXED_FAMILY_VOCABULARY)}, got {fixed_family!r}"
                 )
         elif fixed_family == "hist_gradient_boosting":
             reasons.extend(

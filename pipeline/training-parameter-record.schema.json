@@ -976,7 +976,7 @@
             "final_fit", "final_test"
           ],
           "properties": {
-            "model_family": { "type": "string", "enum": ["gradient_boosting", "random_forest"] },
+            "model_family": { "type": "string", "enum": ["gradient_boosting", "random_forest", "hist_gradient_boosting"] },
             "hyperparameters": { "type": "object" },
             "target_column": { "type": "string", "minLength": 1 },
             "feature_columns": {
@@ -1134,7 +1134,7 @@
           "type": "array",
           "minItems": 1,
           "maxItems": 1,
-          "items": { "type": "string", "enum": ["gradient_boosting", "random_forest"] }
+          "items": { "type": "string", "enum": ["gradient_boosting", "random_forest", "hist_gradient_boosting"] }
         },
         "no_automl": { "type": "boolean" },
         "max_training_time_seconds": { "type": ["integer", "null"], "minimum": 1 },
@@ -1144,7 +1144,7 @@
           "additionalProperties": false,
           "required": ["model_family", "hyperparameters"],
           "properties": {
-            "model_family": { "type": "string", "enum": ["gradient_boosting", "random_forest"] },
+            "model_family": { "type": "string", "enum": ["gradient_boosting", "random_forest", "hist_gradient_boosting"] },
             "hyperparameters": { "type": "object" }
           }
         }

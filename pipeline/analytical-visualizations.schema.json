@@ -264,21 +264,47 @@
             "max_value": { "type": "number" }
           }
         },
-        "feature_importance_method": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["model_family", "source", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
-          "properties": {
-            "model_family": { "enum": ["gradient_boosting", "random_forest"] },
-            "source": { "type": "string", "minLength": 1 },
-            "total_source_feature_count": { "type": "integer", "minimum": 1 },
-            "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
-            "public_row_limit": { "const": 10 }
-          }
-        },
+        "feature_importance_method": { "$ref": "#/$defs/regression_feature_importance_method_v3" },
         "actual_vs_predicted": { "$ref": "#/$defs/regression_actual_vs_predicted" },
         "residual_distribution": { "$ref": "#/$defs/regression_residual_distribution" },
         "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
+      }
+    },
+    "regression_feature_importance_method_v3": {
+      "description": "Project Spec S0231: closed discriminated union so the v3 continuous-regression feature_importance_method truthfully distinguishes the existing direct estimator.feature_importances_ families (gradient_boosting, random_forest) from the hist_gradient_boosting permutation-importance provenance -- a direct-importance family is never required to pretend it used permutation importance, and vice versa.",
+      "oneOf": [
+        { "$ref": "#/$defs/regression_direct_feature_importance_method_v3" },
+        { "$ref": "#/$defs/regression_permutation_feature_importance_method_v3" }
+      ]
+    },
+    "regression_direct_feature_importance_method_v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_family", "source", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
+      "properties": {
+        "model_family": { "enum": ["gradient_boosting", "random_forest"] },
+        "source": { "type": "string", "minLength": 1 },
+        "total_source_feature_count": { "type": "integer", "minimum": 1 },
+        "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
+        "public_row_limit": { "const": 10 }
+      }
+    },
+    "regression_permutation_feature_importance_method_v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_family", "source", "method", "population_kind", "scoring", "n_repeats", "random_seed", "total_source_feature_count", "omitted_source_feature_count", "public_row_limit"],
+      "description": "Project Spec S0231: HGB continuous-regression Feature Importance is deterministic permutation importance computed only on the final-fit (train+validation) population, never the final-test partition, and never used for model selection or hyperparameter tuning.",
+      "properties": {
+        "model_family": { "const": "hist_gradient_boosting" },
+        "source": { "const": "sklearn.inspection.permutation_importance" },
+        "method": { "const": "permutation_importance" },
+        "population_kind": { "const": "final_fit_train_plus_validation" },
+        "scoring": { "const": "neg_mean_absolute_error" },
+        "n_repeats": { "const": 5 },
+        "random_seed": { "type": ["integer", "null"] },
+        "total_source_feature_count": { "type": "integer", "minimum": 1 },
+        "omitted_source_feature_count": { "type": "integer", "minimum": 0 },
+        "public_row_limit": { "const": 10 }
       }
     },
     "regression_actual_vs_predicted": {

@@ -10,8 +10,10 @@ trees):
     binning primitives in isolation and a real trained artifact against
     `pipeline/analytical-visualizations.schema.json`);
   * deterministic, bounded, count-complete target-distribution histogram;
-  * bounded, truthful feature importance (never permutation, never test
-    labels);
+  * bounded, truthful feature importance (direct estimator.feature_importances_
+    for gradient_boosting/random_forest, never test labels; deterministic
+    permutation importance on the train+validation population only for the
+    Project Spec S0231 hist_gradient_boosting continuous-regression addition);
   * bounded, count-complete Actual vs Predicted aggregate invariants;
   * bounded, count-complete Residual Distribution aggregate invariants;
   * that visualization generation reuses the single already-computed
@@ -226,7 +228,20 @@ def _gbr_hyperparameters() -> dict:
     }
 
 
-def _fixed_continuous_regression_contract() -> dict:
+def _hgb_regression_hyperparameters() -> dict:
+    return {
+        "l2_regularization": 0.0,
+        "learning_rate": 0.1,
+        "max_iter": 50,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 5,
+    }
+
+
+def _fixed_continuous_regression_contract(*, model_family: str = "gradient_boosting") -> dict:
+    hyperparameters = (
+        _hgb_regression_hyperparameters() if model_family == "hist_gradient_boosting" else _gbr_hyperparameters()
+    )
     return {
         "contract_version": "execution_contract.v1",
         "dataset_id": DATASET_SLUG,
@@ -248,12 +263,12 @@ def _fixed_continuous_regression_contract() -> dict:
         "primary_metric": "r2",
         "secondary_metrics": ["mae", "rmse"],
         "modeling_constraints": {
-            "allowed_model_families": ["gradient_boosting"],
+            "allowed_model_families": [model_family],
             "no_automl": True,
             "selection_mode": "fixed_configuration",
             "fixed_model_configuration": {
-                "model_family": "gradient_boosting",
-                "hyperparameters": _gbr_hyperparameters(),
+                "model_family": model_family,
+                "hyperparameters": hyperparameters,
             },
         },
         "result_semantics": {
@@ -295,8 +310,10 @@ def fixed_training_environment(monkeypatch, tmp_path: Path) -> Path:
     return repo_root
 
 
-def _run(fixed_training_environment: Path, tmp_path: Path):
-    contract_path = _write_json(tmp_path / "execution-contract.json", _fixed_continuous_regression_contract())
+def _run(fixed_training_environment: Path, tmp_path: Path, *, model_family: str = "gradient_boosting"):
+    contract_path = _write_json(
+        tmp_path / "execution-contract.json", _fixed_continuous_regression_contract(model_family=model_family)
+    )
     dataset_path = _write_json(tmp_path / "prepared-dataset.json", _synthetic_regression_dataset())
     result = train_from_paths(
         contract_path, dataset_path, dataset_slug=DATASET_SLUG, run_id="train-20260819T010000Z",
@@ -328,6 +345,43 @@ def test_trained_v3_feature_importance_is_bounded_truthful_and_not_from_test_lab
     method = artifact["feature_importance_method"]
     assert method["model_family"] == "gradient_boosting"
     assert method["source"] == "estimator.feature_importances_"
+    assert method["public_row_limit"] == 10
+    assert method["total_source_feature_count"] == 2
+
+    feature_importance_chart = next(c for c in artifact["charts"] if c["id"] == "feature_importance")
+    assert len(feature_importance_chart["data"]) <= 10
+    for point in feature_importance_chart["data"]:
+        assert math.isfinite(point["value"])
+        assert point["value"] >= 0
+
+
+@pytest.mark.skipif(not _SKLEARN_AVAILABLE, reason="scikit-learn not installed")
+def test_hist_gradient_boosting_trained_v3_artifact_validates_against_real_schema(
+    fixed_training_environment: Path, tmp_path: Path,
+):
+    """Project Spec S0231 acceptance criterion 19: HGB regression analytical
+    visual evidence validates as analytical-visualizations.v3."""
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    _, output_directory = _run(fixed_training_environment, tmp_path, model_family="hist_gradient_boosting")
+    artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+    assert artifact["schema_version"] == NATIVE_CONTINUOUS_REGRESSION_ANALYTICAL_VISUALIZATIONS_VERSION
+    schema = json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text())
+    jsonschema.validate(artifact, schema)
+
+
+@pytest.mark.skipif(not _SKLEARN_AVAILABLE, reason="scikit-learn not installed")
+def test_hist_gradient_boosting_feature_importance_is_bounded_and_permutation_based(
+    fixed_training_environment: Path, tmp_path: Path,
+):
+    _, output_directory = _run(fixed_training_environment, tmp_path, model_family="hist_gradient_boosting")
+    artifact = json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+
+    method = artifact["feature_importance_method"]
+    assert method["model_family"] == "hist_gradient_boosting"
+    assert method["source"] == "sklearn.inspection.permutation_importance"
+    assert method["method"] == "permutation_importance"
+    assert method["population_kind"] == "final_fit_train_plus_validation"
     assert method["public_row_limit"] == 10
     assert method["total_source_feature_count"] == 2
 
@@ -499,6 +553,30 @@ def _regression_predictive_bundle() -> dict:
 def test_publisher_accepts_valid_v3_visualizations_for_regression():
     reasons = validate._internal_native_continuous_regression_visualizations_compatibility(
         _valid_v3_visualizations(), _regression_predictive_bundle(), _regression_metrics(),
+    )
+    assert reasons == []
+
+
+def test_publisher_accepts_valid_v3_visualizations_with_hgb_permutation_importance_provenance():
+    """Project Spec S0231: the publisher must accept the HGB permutation
+    discriminated feature_importance_method shape exactly as readily as the
+    existing direct-importance shape -- it never inspects that field."""
+    visualizations = _valid_v3_visualizations(
+        feature_importance_method={
+            "model_family": "hist_gradient_boosting",
+            "source": "sklearn.inspection.permutation_importance",
+            "method": "permutation_importance",
+            "population_kind": "final_fit_train_plus_validation",
+            "scoring": "neg_mean_absolute_error",
+            "n_repeats": 5,
+            "random_seed": 99,
+            "total_source_feature_count": 1,
+            "omitted_source_feature_count": 0,
+            "public_row_limit": 10,
+        }
+    )
+    reasons = validate._internal_native_continuous_regression_visualizations_compatibility(
+        visualizations, _regression_predictive_bundle(), _regression_metrics(),
     )
     assert reasons == []
 

@@ -62,6 +62,37 @@ MODEL_ARTIFACT_BYTES = b"pytest-fixture-model-bytes-not-a-real-model"
 MODEL_ARTIFACT_SHA256 = hashlib.sha256(MODEL_ARTIFACT_BYTES).hexdigest()
 MODEL_ARTIFACT_PATH = "models/model.pkl"
 
+# Project Spec S0234: the single native Concrete Predict View declaration,
+# matching the shape the real notebook now authors in
+# notebooks/datasets/concrete-compressive-strength/dataset_integration.ipynb
+# Stage 9 -- presentation/intent metadata only, no feature/domain/runtime
+# validation semantics.
+CONCRETE_PREDICT_VIEW = {
+    "schema_version": "1.0.0",
+    "view_id": "concrete-compressive-strength-regression",
+    "dataset_slug": DATASET_SLUG,
+    "display": {
+        "title": "Concrete Compressive Strength",
+        "summary": "Predict concrete compressive strength from mixture composition and curing age.",
+        "description": "A continuous-regression prediction experience using the governed Concrete Compressive Strength input contract.",
+        "tags": ["concrete", "regression", "continuous"],
+    },
+    "intent": {
+        "prediction_goal": "Predict concrete compressive strength from the canonical dataset contract inputs.",
+        "audience": "Users exploring Concrete Compressive Strength continuous-regression inference.",
+        "usage_notes": "Use the canonical dataset contracts for required fields, numeric input semantics, and runtime validation.",
+    },
+    "binding": {
+        "dataset_slug": DATASET_SLUG,
+        "release": {"mode": "active"},
+    },
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "view_metadata_defines_runtime_validation": False,
+        "view_metadata_duplicates_contract": False,
+    },
+}
+
 
 def _copy_publisher_contracts(tmp_repo: Path) -> None:
     for relative in (
@@ -294,6 +325,12 @@ def _artifact_payload(role: str) -> dict:
         payload["model_id"] = "concrete-compressive-strength-model-001"
     if role == "public_context":
         payload["public_projection"] = {"safe_for_public": True}
+        # Project Spec S0234: the candidate/public-context fixture must now
+        # preserve the real notebook's declared Concrete Predict View,
+        # mirroring the dataset_context.predict_views shape written by Stage
+        # 9 (candidate role "public_context" resolves to
+        # dataset_context_relative_path in the real notebook).
+        payload["predict_views"] = [CONCRETE_PREDICT_VIEW]
     return payload
 
 
@@ -378,6 +415,14 @@ def test_concrete_publisher_run_materialization_is_visible_in_admin_listing(tmp_
 
     candidate_dir = _write_native_continuous_regression_candidate(tmp_repo)
     inference_bundle_relative_path = _write_inference_bundle(tmp_repo)
+
+    # Project Spec S0234 AC8: the candidate/public-context fixture preserves
+    # the Concrete Predict View declaration going into Publisher Run
+    # materialization.
+    public_context_payload = json.loads(
+        (candidate_dir / _role_path("public_context")).read_text(encoding="utf-8")
+    )
+    assert public_context_payload["predict_views"] == [CONCRETE_PREDICT_VIEW]
 
     # Generic Publisher Run materializer only, dispatched by explicit
     # candidate identity -- never materialize_telco_validation_run, never a

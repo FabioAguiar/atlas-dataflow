@@ -1,0 +1,126 @@
+{
+  "contract_version": "execution_contract.v1",
+  "dataset_id": "concrete-compressive-strength",
+  "target_column": "Concrete compressive strength",
+  "feature_columns": [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Water",
+    "Superplasticizer",
+    "Coarse Aggregate",
+    "Fine Aggregate",
+    "Age"
+  ],
+  "ignored_columns": [],
+  "required_columns": [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Water",
+    "Superplasticizer",
+    "Coarse Aggregate",
+    "Fine Aggregate",
+    "Age"
+  ],
+  "optional_columns": [],
+  "feature_definitions": {
+    "Cement": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 102.0,
+        "max": 540.0
+      }
+    },
+    "Blast Furnace Slag": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.0,
+        "max": 359.4
+      }
+    },
+    "Fly Ash": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.0,
+        "max": 200.1
+      }
+    },
+    "Water": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 121.8,
+        "max": 247.0
+      }
+    },
+    "Superplasticizer": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 0.0,
+        "max": 32.2
+      }
+    },
+    "Coarse Aggregate": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 801.0,
+        "max": 1145.0
+      }
+    },
+    "Fine Aggregate": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 594.0,
+        "max": 992.6
+      }
+    },
+    "Age": {
+      "type": "numeric",
+      "domain_constraints": {
+        "min": 1,
+        "max": 365
+      }
+    }
+  },
+  "missing_value_policy": {},
+  "categorical_encoding_policy": "onehot",
+  "numeric_handling": "passthrough",
+  "allowed_transformations": [
+    "passthrough"
+  ],
+  "split_policy": {
+    "strategy": "random",
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15
+  },
+  "random_seed": 42,
+  "primary_metric": "mae",
+  "secondary_metrics": [
+    "rmse",
+    "r2"
+  ],
+  "modeling_constraints": {
+    "allowed_model_families": [
+      "hist_gradient_boosting"
+    ],
+    "no_automl": true,
+    "selection_mode": "fixed_configuration",
+    "fixed_model_configuration": {
+      "model_family": "hist_gradient_boosting",
+      "hyperparameters": {
+        "l2_regularization": 1.0,
+        "learning_rate": 0.1,
+        "max_iter": 300,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": 10
+      }
+    }
+  },
+  "result_semantics": {
+    "schema_version": "continuous-regression-result-semantics.v1",
+    "problem_type": "continuous_regression",
+    "primary_output": "predicted_value",
+    "output_value_kind": "continuous_numeric"
+  }
+}

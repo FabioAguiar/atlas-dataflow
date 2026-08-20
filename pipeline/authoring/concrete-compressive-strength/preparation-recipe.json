@@ -1,0 +1,18 @@
+{
+  "dataset_slug": "concrete-compressive-strength",
+  "deterministic": true,
+  "ordered_input_columns": [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Water",
+    "Superplasticizer",
+    "Coarse Aggregate",
+    "Fine Aggregate",
+    "Age",
+    "Concrete compressive strength"
+  ],
+  "schema_version": "candidate-preparation-recipe.v1",
+  "source_data_ref": "data/raw/concrete-compressive-strength/dataset.csv",
+  "transformations": []
+}

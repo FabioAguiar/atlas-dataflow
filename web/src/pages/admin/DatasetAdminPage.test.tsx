@@ -8632,6 +8632,247 @@ describe("Dry Bean native Predict View authoring bootstrap (Project Spec S0218)"
   });
 });
 
+// -----------------------------------------------------------------------------
+// Project Spec S0234: proves the existing, unmodified production page
+// (Project Specs S0099/S0100/S0104/S0220 generic behavior) correctly
+// auto-binds the sole eligible Concrete Predict View
+// (concrete-compressive-strength-regression) and bootstraps a real,
+// contract-driven ready_base Inference Form builder for the first native
+// continuous-regression dataset, with no stored customization -- mirroring
+// the Dry Bean S0218 bootstrap block above, adapted to Concrete's eight
+// governed continuous-regression public-contract fields and
+// continuous_regression/predicted_value/continuous_numeric result
+// semantics. No Concrete-specific production frontend branch is added or
+// exercised: this describe block introduces no change to
+// DatasetAdminPage.tsx.
+// -----------------------------------------------------------------------------
+describe("Concrete native Predict View authoring and Inference Form bootstrap (Project Spec S0234)", () => {
+  const concreteSlug = "concrete-compressive-strength";
+  const concreteViewId = "concrete-compressive-strength-regression";
+  // The real eight governed Concrete public-contract feature names
+  // (Project Specs S0233/S0234), not a synthetic subset.
+  const concreteFields = [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Water",
+    "Superplasticizer",
+    "Coarse Aggregate",
+    "Fine Aggregate",
+    "Age",
+  ];
+
+  const concreteResultContract = {
+    status: "available",
+    semantics: {
+      schema_version: "continuous-regression-result-semantics.v1",
+      problem_type: "continuous_regression",
+      result_schema_version: "continuous-regression-result.v1",
+      primary_output: "predicted_value",
+      output_value_kind: "continuous_numeric",
+      model_descriptor: { model_family: "hist_gradient_boosting", display_name: "HistGradientBoosting" },
+    },
+  };
+
+  beforeEach(() => {
+    Element.prototype.setPointerCapture = vi.fn();
+    document.elementFromPoint = vi.fn(() => null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function installConcreteFetchMock() {
+    function authoringContextEnvelope(): Record<string, unknown> {
+      return {
+        dataset_slug: concreteSlug,
+        active_release: "release-20260820-001",
+        dataset: {
+          status: "ready",
+          data: {
+            dataset_slug: concreteSlug,
+            title: "Concrete Compressive Strength",
+            display_title: null,
+            summary: "Predict concrete compressive strength from mixture composition and curing age.",
+            domain: "engineering",
+            tags: ["concrete", "regression", "continuous"],
+            active_release: "release-20260820-001",
+            publication_status: "ready",
+          },
+        },
+        context: {
+          status: "ready",
+          data: {
+            title: "Concrete Compressive Strength",
+            summary: "Predict concrete compressive strength from mixture composition and curing age.",
+            domain: "engineering",
+            tags: ["concrete", "regression", "continuous"],
+            problem_type: "continuous_regression",
+            prediction_target_description: "Concrete compressive strength",
+          },
+        },
+        contract: {
+          status: "ready",
+          data: {
+            contract: {
+              schema_version: "1.0.0",
+              features: concreteFields.map((name, index) => ({
+                name,
+                label: name,
+                input_type: "number",
+                optional: false,
+                display_order: index + 1,
+              })),
+            },
+            result_contract: concreteResultContract,
+          },
+        },
+        inference_guidance: { status: "ready", data: [] },
+        metrics: { status: "ready", data: { evaluation: { metrics: { mae: 2.58, rmse: 4.21, r2: 0.9387 } } } },
+        visualizations: { status: "ready", data: {} },
+        views: {
+          status: "ready",
+          data: [
+            {
+              view_id: concreteViewId,
+              dataset_slug: concreteSlug,
+              display: { title: "Concrete Compressive Strength" },
+              binding: { dataset_slug: concreteSlug, release: { mode: "active" } },
+            },
+          ],
+        },
+      };
+    }
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: concreteSlug,
+              title: "Concrete Compressive Strength",
+              display_title: null,
+              summary: "Predict concrete compressive strength from mixture composition and curing age.",
+              domain: "engineering",
+              tags: ["concrete", "regression", "continuous"],
+              active_release: "release-20260820-001",
+              publication_status: "ready",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: concreteSlug,
+              title: "Concrete Compressive Strength",
+              summary: "Predict concrete compressive strength from mixture composition and curing age.",
+              domain: "engineering",
+              visibility: "public",
+              tags: ["concrete", "regression", "continuous"],
+              problem_type: "continuous_regression",
+            },
+          ],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${concreteSlug}/authoring-context`)) {
+        return jsonResponse(authoringContextEnvelope());
+      }
+      if (url.endsWith(`/admin/datasets/${concreteSlug}/publication-state`)) {
+        return jsonResponse({
+          dataset_slug: concreteSlug,
+          active_release: "release-20260820-001",
+          visibility: {
+            configured_visible: true,
+            source: "explicit_record",
+            record_status: "valid",
+            updated_at: "2026-08-20T00:00:00Z",
+            effective_visible: true,
+          },
+          review: { status: "ready", approval_allowed: false, approval_blockers: [] },
+          snapshot: { status: "no_snapshot", exists: false },
+          public_access: { reachable: true, blockers: [], observations: [] },
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${concreteSlug}/profile-draft`)) {
+        // Project Spec S0234 Section E: no customization is pre-seeded, and
+        // this scenario likewise starts with no saved Dataset Detail draft
+        // and no valid bound_predict_view_id -- proving the bootstrap never
+        // depends on either existing already.
+        return jsonResponse({ draft_exists: false, profile: null });
+      }
+      if (url.endsWith(`/admin/datasets/${concreteSlug}/views/${concreteViewId}/customization`)) {
+        // Project Spec S0234 Section E: the stored customization is absent
+        // -- ready_base derives the builder from the public contract alone.
+        return jsonResponse({
+          customization_exists: false,
+          compatibility_status: "absent",
+          customization: null,
+          errors: [],
+        });
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock };
+  }
+
+  it("auto-binds the sole eligible Concrete view and bootstraps ready_base with all eight governed fields required and no stored customization", async () => {
+    const { fetchMock } = installConcreteFetchMock();
+    renderAdminPage();
+
+    await loadDraftAndCustomization();
+
+    // Project Spec S0100: a single eligible view is silently auto-bound --
+    // the manual "Bound predict view" select never renders, and no
+    // "No predict view bound" empty state appears.
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(screen.queryByText("No predict view bound")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${concreteSlug}/views/${concreteViewId}/customization`),
+      ),
+    ).toBe(true);
+
+    // ready_base: all eight contract fields render, ungrouped, with no
+    // saved groups assumed.
+    const noSubgroupZone = screen.getByLabelText("No subgroup fields");
+    for (const fieldName of concreteFields) {
+      expect(within(noSubgroupZone).getByText(fieldName)).toBeInTheDocument();
+    }
+    expect(
+      screen.getByText("No subgroups defined. Visible fields without a subgroup render in No subgroup below."),
+    ).toBeInTheDocument();
+
+    // Every field is required (optional: false in the real Concrete public
+    // contract), so the Field bank starts empty -- nothing is silently
+    // hidden from the initial authoring state.
+    expect(
+      within(screen.getByLabelText("Field bank fields")).getByText(
+        "Drag fields here to remove them from the public form.",
+      ),
+    ).toBeInTheDocument();
+
+    // No binary/multiclass-only result controls are required to reach
+    // bootstrap: the Result Card panel shows only the continuous-regression
+    // technical summary, never class/probability controls.
+    fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+    expect(screen.getByText("continuous_regression")).toBeInTheDocument();
+    expect(screen.getByText("predicted_value")).toBeInTheDocument();
+    expect(screen.getByText("continuous_numeric")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Positive-class probability label")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Predicted class label")).not.toBeInTheDocument();
+  });
+});
+
 describe("Dataset-switch-safe Predict View rebinding and inference form bootstrap (Project Spec S0220)", () => {
   const dryBeanSlug = "dry-bean";
   const dryBeanViewId = "dry-bean-classification";

@@ -10,8 +10,9 @@ dataset-study-concrete-compressives-strength scientific reference project at
 runtime, never loads an external model, never fits a model directly, calls
 the governed native training entrypoint, encodes the fixed HGB
 continuous-regression training policy, introduces no dataset-slug branch
-into generic production modules, creates no Predict View, and stops before
-real registry/release activation.
+into generic production modules, declares exactly one presentation-only
+Predict View (Project Spec S0234) without materializing it into the
+registry, and stops before real registry/release activation.
 """
 
 import ast
@@ -334,13 +335,94 @@ def test_notebook_uses_generic_release_identity_allocator():
     assert code.count("allocate_release_id(") == 1
 
 
-def test_notebook_creates_no_predict_view():
+# --- Project Spec S0234: canonical dataset-context shape and native
+# concrete-compressive-strength-regression Predict View declaration
+# (Stage 9), superseding S0233's temporary empty-array declaration.
+
+
+def test_notebook_writes_canonical_dataset_context_shape():
     code = _source("code")
-    for forbidden in ("view_id", "contract_precedence", "_predict_view = {", "declared_predict_view"):
-        assert forbidden not in code
-    assert '"predict_views": []' in code
-    assert 'dataset_context.get("predict_views") != []' in code
-    assert '"predict_view_created": False' in code
+    assert '"schema_version": "1.0.0",\n    "dataset_slug": dataset_slug,\n    "title": "Concrete Compressive Strength",' in code
+    assert '"domain": "engineering",' in code
+    assert '"predict_views": [concrete_predict_view],' in code
+
+
+def test_notebook_declares_exactly_one_stable_native_predict_view():
+    code = _source("code")
+    assert '"view_id": "concrete-compressive-strength-regression",' in code
+    assert '"dataset_slug": dataset_slug,\n    "display": {' in code
+
+
+def test_notebook_predict_view_binding_is_active_release_relative():
+    code = _source("code")
+    assert (
+        '"binding": {\n        "dataset_slug": dataset_slug,\n        "release": {\n            "mode": "active",\n        },\n    },'
+    ) in code
+    predict_view_start = code.index("concrete_predict_view = {")
+    predict_view_end = code.index("dataset_context = {", predict_view_start)
+    predict_view_source = code[predict_view_start:predict_view_end]
+    assert "release_id" not in predict_view_source
+
+
+def test_notebook_predict_view_declares_canonical_contract_precedence():
+    code = _source("code")
+    assert (
+        '"contract_precedence": {\n'
+        '        "canonical_contracts_are_source_of_truth": True,\n'
+        '        "view_metadata_defines_runtime_validation": False,\n'
+        '        "view_metadata_duplicates_contract": False,\n'
+        "    },"
+    ) in code
+
+
+def test_notebook_predict_view_carries_no_feature_validation_rules():
+    # "features" legitimately appears elsewhere (runtime_contract/
+    # public_contract construction above), so this check is scoped to the
+    # Predict View declaration dict itself, not the whole notebook source.
+    code = _source("code")
+    predict_view_start = code.index("concrete_predict_view = {")
+    predict_view_end = code.index("dataset_context = {", predict_view_start)
+    predict_view_source = code[predict_view_start:predict_view_end]
+    for forbidden in (
+        "features",
+        "validation_rules",
+        "input_semantics",
+        "domain_constraints",
+        "business_logic",
+        "runtime_contract",
+        "public_contract",
+    ):
+        assert forbidden not in predict_view_source
+
+
+def test_notebook_validates_generated_context_against_canonical_schema_before_candidate_assembly():
+    code = _source("code")
+    assert "dataset_context_schema_path = repo_root / \"contracts\" / \"dataset-context.schema.json\"" in code
+    assert "jsonschema.Draft7Validator(dataset_context_schema).iter_errors(dataset_context)" in code
+    assert 'record_block("dataset_context_schema_invalid", message, "dataset_context")' in code
+    # This validation must happen before release-candidate assembly (Stage
+    # 14), not after.
+    validation_offset = code.index("dataset_context_schema_path = repo_root")
+    candidate_assembly_offset = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
+    assert validation_offset < candidate_assembly_offset
+
+
+def test_notebook_blocks_on_malformed_predict_view_declaration():
+    code = _source("code")
+    assert '"dataset_context_predict_views_count_invalid"' in code
+    assert '"dataset_context_predict_view_id_invalid"' in code
+    assert '"dataset_context_predict_view_dataset_slug_invalid"' in code
+    assert '"dataset_context_predict_view_binding_dataset_slug_invalid"' in code
+    assert '"dataset_context_predict_view_binding_release_mode_invalid"' in code
+    assert '"dataset_context_predict_view_contract_precedence_invalid"' in code
+
+
+def test_notebook_declares_predict_view_declared_without_registry_materialization():
+    code = _source("code")
+    assert '"predict_view_declared": True' in code
+    assert '"predict_view_registry_materialized": False' in code
+    assert '"predict_view_created": False' not in code
+    assert 'dataset_context.get("predict_views") != []' not in code
 
 
 def test_notebook_has_no_promotion_or_registry_activation_calls():
@@ -358,7 +440,8 @@ def test_notebook_stop_confirmation_declares_no_activation_performed():
     assert '"promotion_performed": False' in code
     assert '"registry_activation_performed": False' in code
     assert '"public_visibility_or_profile_activation_performed": False' in code
-    assert '"predict_view_created": False' in code
+    assert '"predict_view_declared": True' in code
+    assert '"predict_view_registry_materialized": False' in code
 
 
 def test_notebook_introduces_no_dataset_slug_branch_into_generic_pipeline_modules():

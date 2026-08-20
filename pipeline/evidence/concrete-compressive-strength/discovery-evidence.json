@@ -1,0 +1,114 @@
+{
+  "schema_version": "dataset-discovery-evidence.v1",
+  "producer": "pipeline/discovery_evidence.py",
+  "dataset_metadata": {
+    "name": "concrete-compressive-strength",
+    "row_count": 1030,
+    "column_count": 9,
+    "source_path": "data/raw/concrete-compressive-strength/dataset.csv"
+  },
+  "field_observations": [
+    {
+      "name": "Cement",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 278,
+      "sample_min": 102.0,
+      "sample_max": 540.0
+    },
+    {
+      "name": "Blast Furnace Slag",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 185,
+      "sample_min": 0.0,
+      "sample_max": 359.4
+    },
+    {
+      "name": "Fly Ash",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 156,
+      "sample_min": 0.0,
+      "sample_max": 200.1
+    },
+    {
+      "name": "Water",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 195,
+      "sample_min": 121.8,
+      "sample_max": 247.0
+    },
+    {
+      "name": "Superplasticizer",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 111,
+      "sample_min": 0.0,
+      "sample_max": 32.2
+    },
+    {
+      "name": "Coarse Aggregate",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 284,
+      "sample_min": 801.0,
+      "sample_max": 1145.0
+    },
+    {
+      "name": "Fine Aggregate",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 302,
+      "sample_min": 594.0,
+      "sample_max": 992.6
+    },
+    {
+      "name": "Age",
+      "inferred_type": "integer",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 14,
+      "sample_min": 1,
+      "sample_max": 365
+    },
+    {
+      "name": "Concrete compressive strength",
+      "inferred_type": "float",
+      "null_count": 0,
+      "null_rate": 0.0,
+      "cardinality": 845,
+      "sample_min": 2.33,
+      "sample_max": 82.6
+    }
+  ],
+  "duplicated_rows_count": 25,
+  "candidate_categorical_fields": [],
+  "candidate_target_columns": [],
+  "generation_settings": {
+    "seed": 42,
+    "generator_version": "discovery-evidence.v1"
+  },
+  "generated_at": "2026-08-20T16:52:05+00:00",
+  "discovery_boundary_confirmations": {
+    "contract_promotion_occurred": false,
+    "model_training_occurred": false,
+    "release_publication_occurred": false
+  },
+  "evidence_policy": {
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "secrets_prohibited": true,
+    "private_source_paths_prohibited": true,
+    "reduced_and_sanitized": true
+  }
+}

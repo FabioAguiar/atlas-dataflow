@@ -35,6 +35,25 @@ def _source(cell_type: str | None = None) -> str:
     )
 
 
+def _code_cells_ast() -> ast.Module:
+    return ast.parse(_source("code"))
+
+
+def _first_lineno(tree: ast.AST, predicate) -> int | None:
+    linenos = [node.lineno for node in ast.walk(tree) if predicate(node)]
+    return min(linenos) if linenos else None
+
+
+def _cell_source_starting_with(prefix: str) -> str:
+    for cell in _notebook()["cells"]:
+        if cell["cell_type"] != "code":
+            continue
+        source = "".join(cell["source"])
+        if source.startswith(prefix):
+            return source
+    raise AssertionError(f"no code cell starts with {prefix!r}")
+
+
 def _called_names() -> set[str]:
     names: set[str] = set()
     for cell in _notebook()["cells"]:

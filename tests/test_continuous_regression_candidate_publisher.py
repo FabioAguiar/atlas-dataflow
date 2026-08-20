@@ -538,12 +538,93 @@ def _valid_visualizations_payload(**overrides) -> dict:
     return payload
 
 
+def _valid_v3_regression_visualizations_payload(**overrides) -> dict:
+    """Synthetic, Atlas-owned analytical-visualizations.v3 evidence for a
+    native continuous-regression candidate, mirroring the reference fixture
+    shape validated by the dedicated S0228 analytical-visualizations test
+    module (schema_version, regression_evidence identity, and bounded
+    actual_vs_predicted/residual_distribution diagnostics sourced from the
+    sealed test partition, both summing to row_count=4)."""
+    payload = {
+        "schema_version": "analytical-visualizations.v3",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-08-19T00:00:00Z",
+        "training_run_identity": {
+            "dataset_slug": DATASET_SLUG,
+            "run_id": "train-20260819T000000Z",
+            "output_directory": f"pipeline/training-runs/{DATASET_SLUG}/train-20260819T000000Z/",
+        },
+        "regression_evidence": {
+            "problem_type": "continuous_regression",
+            "result_semantics_schema_version": "continuous-regression-result-semantics.v1",
+            "output_value_kind": "continuous_numeric",
+        },
+        "charts": [
+            {
+                "id": "target_distribution", "title": "Target Distribution", "type": "bar",
+                "x_label": "outcome", "y_label": "Rows",
+                "data": [{"name": "0 to 10", "value": 3}, {"name": "10 to 20", "value": 1}],
+            },
+            {
+                "id": "feature_importance", "title": "Feature Importance", "type": "bar",
+                "x_label": "Feature", "y_label": "Importance",
+                "data": [{"name": "example_feature", "value": 1.0}],
+            },
+        ],
+        "target_distribution_method": {
+            "distribution_kind": "continuous_histogram",
+            "population_kind": "prepared_dataset",
+            "binning_method": "deterministic_equal_width",
+            "row_count": 4,
+            "target_column": "example_target",
+            "bin_count": 2,
+            "min_value": 1.0,
+            "max_value": 15.0,
+        },
+        "feature_importance_method": {
+            "model_family": "gradient_boosting",
+            "source": "estimator.feature_importances_",
+            "total_source_feature_count": 1, "omitted_source_feature_count": 0, "public_row_limit": 10,
+        },
+        "actual_vs_predicted": {
+            "partition_role": "test",
+            "evaluation_count": 1,
+            "aggregation_method": "deterministic_equal_width_actual_bins",
+            "reference_line": "identity",
+            "points": [{"actual_mean": 5.0, "predicted_mean": 5.2, "count": 4}],
+        },
+        "residual_distribution": {
+            "partition_role": "test",
+            "evaluation_count": 1,
+            "residual_definition": "actual_minus_predicted",
+            "binning_method": "deterministic_equal_width",
+            "bins": [{"label": "-1 to 1", "lower_bound": -1.0, "upper_bound": 1.0, "count": 4}],
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True, "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True, "secrets_prohibited": True,
+            "raw_dataset_embedded": False, "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False, "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False, "reduced_and_sanitized": True,
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _artifact_payload(role: str, **overrides) -> dict:
     if role == "public_contract":
         payload = dict(_VALID_PUBLIC_CONTRACT)
         payload.update(overrides)
         return payload
     if role == "visualizations":
+        # Explicit, deterministic dispatch on the caller's own declared
+        # schema_version -- never inferred from dataset slug. Binary/
+        # multiclass candidates keep the legitimate v1 default (or an
+        # explicit v2 override); native continuous-regression candidates
+        # pass an explicit analytical-visualizations.v3 payload.
+        if overrides.get("schema_version") == "analytical-visualizations.v3":
+            return _valid_v3_regression_visualizations_payload(**overrides)
         return _valid_visualizations_payload(**overrides)
     payload = {
         "role": role,
@@ -670,6 +751,7 @@ def _regression_metrics_overrides(
     regression_evidence_overrides: dict | None = None,
     final_test_metrics: list | None = None,
     final_test_completed: bool = True,
+    final_test_row_count: int = 4,
     validation_metrics: list | None = None,
 ) -> dict:
     regression_evidence = {
@@ -688,6 +770,12 @@ def _regression_metrics_overrides(
         "final_test_evaluation": {
             "partition_role": "test",
             "completed": final_test_completed,
+            # Matches _valid_v3_regression_visualizations_payload()'s
+            # actual_vs_predicted/residual_distribution aggregate population
+            # (points/bins summing to 4) so the publisher's diagnostic
+            # population cross-check agrees when a completed final-test
+            # evaluation is present.
+            "row_count": final_test_row_count,
             "metrics": final_test_metrics if final_test_completed else [],
         },
         "validation_evaluation": {
@@ -703,6 +791,7 @@ def test_native_continuous_regression_bundle_accepts_bounded_semantics(tmp_path)
         artifact_overrides={
             "predictive_bundle": _regression_predictive_bundle_overrides(),
             "metrics": _regression_metrics_overrides(),
+            "visualizations": _valid_v3_regression_visualizations_payload(),
         },
     )
 
@@ -854,6 +943,7 @@ def test_native_continuous_regression_metrics_v3_accepted(tmp_path):
         artifact_overrides={
             "predictive_bundle": _regression_predictive_bundle_overrides(),
             "metrics": _regression_metrics_overrides(),
+            "visualizations": _valid_v3_regression_visualizations_payload(),
         },
     )
 
@@ -957,6 +1047,7 @@ def test_native_continuous_regression_metrics_prefers_completed_final_test(tmp_p
                 final_test_metrics=[{"name": "r2", "value": 0.9}],
                 validation_metrics=[{"name": "mape", "value": 99.0}],
             ),
+            "visualizations": _valid_v3_regression_visualizations_payload(),
         },
     )
 
@@ -977,6 +1068,7 @@ def test_native_continuous_regression_metrics_falls_back_to_validation_when_inco
                 final_test_completed=False,
                 validation_metrics=[{"name": "rmse", "value": 3.3}],
             ),
+            "visualizations": _valid_v3_regression_visualizations_payload(),
         },
     )
 

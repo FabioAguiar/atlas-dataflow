@@ -937,6 +937,119 @@ def test_no_external_fitted_model_regression_branch_exists():
     assert not hasattr(validate, "_external_continuous_regression_predictive_bundle_compatibility")
 
 
+# ===========================================================================
+# Section F/J (Project Spec S0232): native HGB continuous-regression bundle
+# acceptance and bundle <-> visualizations model-family agreement.
+# ===========================================================================
+
+
+def _hgb_model_descriptor() -> dict:
+    return {"model_family": "hist_gradient_boosting", "display_name": "HistGradientBoosting"}
+
+
+def _hgb_permutation_feature_importance_method(**overrides) -> dict:
+    method = {
+        "model_family": "hist_gradient_boosting",
+        "source": "sklearn.inspection.permutation_importance",
+        "method": "permutation_importance",
+        "population_kind": "final_fit_train_plus_validation",
+        "scoring": "neg_mean_absolute_error",
+        "n_repeats": 5,
+        "random_seed": 42,
+        "total_source_feature_count": 1,
+        "omitted_source_feature_count": 0,
+        "public_row_limit": 10,
+    }
+    method.update(overrides)
+    return method
+
+
+def test_native_hist_gradient_boosting_candidate_accepted(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _regression_predictive_bundle_overrides(
+                result_semantics_overrides={"model_descriptor": _hgb_model_descriptor()}
+            ),
+            "metrics": _regression_metrics_overrides(),
+            "visualizations": _valid_v3_regression_visualizations_payload(
+                feature_importance_method=_hgb_permutation_feature_importance_method()
+            ),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True, result["rejection_reasons"]
+    assert "native_regression_model_family_mismatch" not in _rejection_safe_details(result)
+
+
+def test_native_regression_model_family_mismatch_hgb_bundle_gradient_boosting_visualizations_rejected(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _regression_predictive_bundle_overrides(
+                result_semantics_overrides={"model_descriptor": _hgb_model_descriptor()}
+            ),
+            "metrics": _regression_metrics_overrides(),
+            # Default v3 visualizations declare feature_importance_method.model_family
+            # = gradient_boosting.
+            "visualizations": _valid_v3_regression_visualizations_payload(),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "native_regression_model_family_mismatch" in _rejection_safe_details(result)
+
+
+@pytest.mark.parametrize("bundle_model_family", ["gradient_boosting", "random_forest"])
+def test_native_regression_model_family_mismatch_direct_bundle_hgb_visualizations_rejected(
+    tmp_path, bundle_model_family
+):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _regression_predictive_bundle_overrides(
+                result_semantics_overrides={
+                    "model_descriptor": {
+                        "model_family": bundle_model_family,
+                        "display_name": bundle_model_family.replace("_", " ").title(),
+                    }
+                }
+            ),
+            "metrics": _regression_metrics_overrides(),
+            "visualizations": _valid_v3_regression_visualizations_payload(
+                feature_importance_method=_hgb_permutation_feature_importance_method()
+            ),
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "native_regression_model_family_mismatch" in _rejection_safe_details(result)
+
+
+def test_native_hist_gradient_boosting_candidate_rejects_v1_visualizations(tmp_path):
+    candidate_dir = _write_candidate(
+        tmp_path,
+        artifact_overrides={
+            "predictive_bundle": _regression_predictive_bundle_overrides(
+                result_semantics_overrides={"model_descriptor": _hgb_model_descriptor()}
+            ),
+            "metrics": _regression_metrics_overrides(),
+            # No "visualizations" override -> defaults to the legacy v1 payload.
+        },
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    assert "native_regression_visualizations_version_mismatch" in _rejection_safe_details(result)
+
+
 def test_native_continuous_regression_metrics_v3_accepted(tmp_path):
     candidate_dir = _write_candidate(
         tmp_path,

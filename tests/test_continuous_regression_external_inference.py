@@ -33,6 +33,7 @@ _ENVELOPE_SCHEMA_PATH = (
 )
 
 _CONTINUOUS_MODEL_DESCRIPTOR = {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"}
+_HGB_MODEL_DESCRIPTOR = {"model_family": "hist_gradient_boosting", "display_name": "HistGradientBoosting"}
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,14 @@ def test_isolated_plan_selects_continuous_regression_explicitly():
     assert plan.feature_order == ("feature_a", "feature_b")
     assert plan.required_features == frozenset({"feature_a"})
     assert plan.output_classes == ()
+
+
+def test_isolated_plan_selects_hist_gradient_boosting_continuous_regression():
+    plan = rl._build_prediction_plan(
+        _continuous_bundle(model_family="hist_gradient_boosting"), _runtime_contract()
+    )
+    assert plan.result_variant == "continuous_regression"
+    assert plan.model_descriptor["model_family"] == "hist_gradient_boosting"
 
 
 def test_isolated_plan_validates_bounded_model_descriptor():
@@ -213,6 +222,42 @@ def test_isolated_invalid_or_non_finite_prediction_outputs_fail_closed(predict_r
     assert caught.value.diagnostic_code == rl.DIAGNOSTIC_PREDICTION_EXECUTION_FAILED
 
 
+def _hgb_continuous_plan() -> rl.PredictionPlan:
+    return rl.PredictionPlan(
+        result_variant="continuous_regression",
+        feature_order=("zeta", "alpha_feature"),
+        required_features=frozenset({"zeta"}),
+        output_classes=(),
+        model_descriptor=dict(_HGB_MODEL_DESCRIPTOR),
+    )
+
+
+def test_isolated_predict_only_hist_gradient_boosting_regressor_succeeds():
+    model = _SyntheticContinuousRegressionModel([88.0])
+    result = rl.execute_prediction(model, {"zeta": 4}, _hgb_continuous_plan())
+
+    assert result == {
+        "schema_version": "continuous-regression-result.v1",
+        "problem_type": "continuous_regression",
+        "predicted_value": 88.0,
+        "model_descriptor": _HGB_MODEL_DESCRIPTOR,
+    }
+    assert not hasattr(model, "predict_proba")
+    assert not hasattr(model, "classes_")
+
+
+@pytest.mark.parametrize(
+    "predict_return",
+    [[float("nan")], [float("inf")], [float("-inf")]],
+    ids=["nan", "positive_inf", "negative_inf"],
+)
+def test_isolated_hist_gradient_boosting_non_finite_predictions_fail_closed(predict_return):
+    model = _SyntheticContinuousRegressionModel(predict_return)
+    with pytest.raises(rl.LoadSafeGateError) as caught:
+        rl.execute_prediction(model, {"zeta": 4}, _hgb_continuous_plan())
+    assert caught.value.diagnostic_code == rl.DIAGNOSTIC_PREDICTION_EXECUTION_FAILED
+
+
 def test_isolated_no_predict_interface_fails_closed():
     class _NoPredictModel:
         pass
@@ -239,6 +284,12 @@ def _bounded_continuous_result(**overrides: Any) -> dict[str, Any]:
 
 def test_isolated_bounded_result_validation_accepts_strict_continuous_result():
     rl.validate_bounded_prediction_result(_bounded_continuous_result())
+
+
+def test_isolated_bounded_result_validation_accepts_hist_gradient_boosting_result():
+    rl.validate_bounded_prediction_result(
+        _bounded_continuous_result(model_descriptor=dict(_HGB_MODEL_DESCRIPTOR))
+    )
 
 
 def test_isolated_bounded_result_validation_rejects_extra_field():

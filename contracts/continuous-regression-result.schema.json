@@ -33,9 +33,10 @@
           "type": "string",
           "enum": [
             "gradient_boosting",
-            "random_forest"
+            "random_forest",
+            "hist_gradient_boosting"
           ],
-          "description": "Bounded to the Project Spec S0224/S0225 Atlas-native fixed-configuration continuous-regression model families -- continuous regression has no external fitted-model source."
+          "description": "Bounded to the Project Spec S0224/S0225/S0232 Atlas-native fixed-configuration continuous-regression model families -- continuous regression has no external fitted-model source."
         },
         "display_name": {
           "type": "string",

@@ -233,7 +233,7 @@ _CONTINUOUS_REGRESSION_RESULT_SCHEMA: dict[str, Any] = {
         "model_descriptor": {
             "type": "object", "additionalProperties": False, "required": ["model_family", "display_name"],
             "properties": {
-                "model_family": {"type": "string", "enum": ["gradient_boosting", "random_forest"]},
+                "model_family": {"type": "string", "enum": ["gradient_boosting", "random_forest", "hist_gradient_boosting"]},
                 "display_name": {"type": "string", "minLength": 1},
             },
         },
@@ -891,7 +891,7 @@ def _validate_continuous_regression_plan(bundle: Mapping[str, Any], common: dict
     if (provenance is not None and provenance != "atlas_internal_training") or "external_model_evidence" in bundle:
         raise _bundle_error("Governed continuous regression provenance must be Atlas-internal training.")
     model_descriptor = _validate_model_descriptor(semantics.get("model_descriptor"))
-    if model_descriptor["model_family"] not in ("gradient_boosting", "random_forest"):
+    if model_descriptor["model_family"] not in ("gradient_boosting", "random_forest", "hist_gradient_boosting"):
         raise _bundle_error("Governed continuous regression model family is invalid.")
     return PredictionPlan(
         result_variant="continuous_regression", output_classes=(),

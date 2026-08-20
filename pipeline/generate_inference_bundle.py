@@ -48,12 +48,13 @@ MODEL_FAMILY_DISPLAY_NAMES: dict[str, str] = {
     "logistic_regression": "Logistic Regression",
     "gradient_boosting": "Gradient Boosting",
     "random_forest": "Random Forest",
-    # Project Spec S0191: the only external public-result model family
-    # (training-parameter-record.external-fitted-model.v1 restricts
-    # model_family to exactly this one enum value). An internal training
-    # record can never reach this entry -- SUPPORTED_MODEL_FAMILIES below
-    # (checked by _resolve_runtime_execution before result_semantics is
-    # ever resolved) does not include it.
+    # Project Spec S0191: originally the only external public-result model
+    # family (training-parameter-record.external-fitted-model.v1 restricts
+    # model_family to exactly this one enum value). Project Spec S0232
+    # additionally reaches this entry from internal Atlas-native
+    # continuous-regression bundle generation (CONTINUOUS_REGRESSION_MODEL_FAMILIES
+    # above); binary/multiclass internal training records still cannot reach
+    # it via SUPPORTED_MODEL_FAMILIES.
     "hist_gradient_boosting": "HistGradientBoosting",
     # Project Spec S0208/S0209: the fourth bounded external multiclass (v2)
     # estimator family -- an internal training record can never reach this
@@ -69,11 +70,16 @@ _EXTERNAL_GOVERNED_ESTIMATOR_IDENTITIES: dict[str, dict[str, str]] = {
 }
 BINARY_RESULT_SEMANTICS_SCHEMA_VERSION = "binary-result-semantics.v1"
 BINARY_CLASSIFICATION_RESULT_SCHEMA_VERSION = "binary-classification-result.v1"
-# Project Spec S0225: Atlas-native fixed-configuration continuous-regression
-# bundle generation. Bounded to exactly the S0224 v3 regression families --
-# never widened just because another classification/external family already
-# exists elsewhere in this module (e.g. hist_gradient_boosting above).
-CONTINUOUS_REGRESSION_MODEL_FAMILIES = frozenset({"gradient_boosting", "random_forest"})
+# Project Spec S0225/S0232: Atlas-native fixed-configuration continuous-regression
+# bundle generation. Bounded to exactly the S0224 v3 regression families plus
+# the S0231 native hist_gradient_boosting regression family -- never widened
+# just because another classification/external family already exists
+# elsewhere in this module.
+CONTINUOUS_REGRESSION_MODEL_FAMILIES = frozenset({
+    "gradient_boosting",
+    "random_forest",
+    "hist_gradient_boosting",
+})
 CONTINUOUS_REGRESSION_RESULT_SEMANTICS_SCHEMA_VERSION = "continuous-regression-result-semantics.v1"
 CONTINUOUS_REGRESSION_RESULT_SCHEMA_VERSION = "continuous-regression-result.v1"
 TRAINING_PARAMETER_RECORD_V3_SCHEMA_VERSION = "training-parameter-record.v3"

@@ -1730,6 +1730,31 @@ def _internal_native_continuous_regression_visualizations_compatibility(
                 "native_regression_visualizations_population_mismatch",
             )]
 
+    # Project Spec S0232: cross-check the predictive bundle's declared native
+    # continuous-regression model family against the visualizations
+    # artifact's feature_importance_method model family, when both are
+    # present and strings. Never recomputes Feature Importance or inspects
+    # estimator bytes -- this only compares the two already-governed
+    # declarations for agreement.
+    bundle_model_family = _first_nested(
+        predictive_bundle_data, (("result_semantics", "model_descriptor", "model_family"),)
+    )
+    visualizations_model_family = _first_nested(
+        visualizations_data, (("feature_importance_method", "model_family"),)
+    )
+    if (
+        bundle_model_family
+        and visualizations_model_family
+        and bundle_model_family != visualizations_model_family
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native continuous-regression predictive bundle model family does not match the "
+            "visualizations artifact's feature_importance_method model family.",
+            "visualizations",
+            "native_regression_model_family_mismatch",
+        )]
+
     return []
 
 

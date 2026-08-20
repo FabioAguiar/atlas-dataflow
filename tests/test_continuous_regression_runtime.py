@@ -96,6 +96,14 @@ def test_canonical_schema_rejects_unbounded_model_family() -> None:
     assert list(validator.iter_errors(result)) != []
 
 
+def test_canonical_schema_accepts_hist_gradient_boosting_model_family() -> None:
+    validator = _result_schema_validator()
+    result = _strict_result(
+        model_descriptor={"model_family": "hist_gradient_boosting", "display_name": "HistGradientBoosting"}
+    )
+    assert list(validator.iter_errors(result)) == []
+
+
 @pytest.mark.parametrize("missing_field", ["schema_version", "problem_type", "predicted_value", "model_descriptor"])
 def test_canonical_schema_rejects_missing_required_field(missing_field: str) -> None:
     validator = _result_schema_validator()
@@ -236,6 +244,32 @@ def test_in_process_random_forest_model_family_succeeds(tmp_path: Path) -> None:
     assert result["model_descriptor"] == {"model_family": "random_forest", "display_name": "Gradient Boosting"}
 
 
+def test_in_process_hist_gradient_boosting_model_family_succeeds(tmp_path: Path) -> None:
+    model = _FakeRegressionModel(predict_return=[15.0])
+    declaration = _continuous_regression_declaration(model_family="hist_gradient_boosting")
+    result = _execute(tmp_path, declaration, model)["result"]
+    assert result["model_descriptor"] == {
+        "model_family": "hist_gradient_boosting",
+        "display_name": "Gradient Boosting",
+    }
+    assert not hasattr(model, "predict_proba")
+    assert not hasattr(model, "classes_")
+
+
+@pytest.mark.parametrize(
+    "predict_return",
+    [[float("nan")], [float("inf")], [float("-inf")]],
+    ids=["nan", "positive_inf", "negative_inf"],
+)
+def test_in_process_hist_gradient_boosting_non_finite_predictions_fail_closed(
+    tmp_path: Path, predict_return: Any
+) -> None:
+    model = _FakeRegressionModel(predict_return=predict_return)
+    declaration = _continuous_regression_declaration(model_family="hist_gradient_boosting")
+    with pytest.raises(BundleExecutionError):
+        _execute(tmp_path, declaration, model)
+
+
 # ---------------------------------------------------------------------------
 # In-process execution: fail-closed prediction shapes
 # ---------------------------------------------------------------------------
@@ -357,6 +391,12 @@ def test_project_result_contract_projects_continuous_semantics_without_model_loa
             "model_descriptor": {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"},
         },
     }
+
+
+def test_project_result_contract_projects_hist_gradient_boosting_model_descriptor() -> None:
+    declaration = _continuous_regression_declaration(model_family="hist_gradient_boosting")
+    contract = project_result_contract(declaration)
+    assert contract["semantics"]["model_descriptor"]["model_family"] == "hist_gradient_boosting"
 
 
 def test_project_result_contract_never_invents_class_or_probability_fields() -> None:

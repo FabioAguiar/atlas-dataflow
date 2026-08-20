@@ -117,8 +117,8 @@ _GOVERNED_MULTICLASS_MODEL_FAMILIES = (
     "hist_gradient_boosting",
 )
 
-# Project Spec S0224/S0225/S0226: the closed set of governed continuous-
-# regression result model families -- the two Atlas-native fixed-
+# Project Spec S0224/S0225/S0226/S0232: the closed set of governed continuous-
+# regression result model families -- the three Atlas-native fixed-
 # configuration continuous-regression estimator families. Continuous
 # regression has no external fitted-model source, so this is disjoint from
 # neither _GOVERNED_RESULT_MODEL_FAMILIES nor _GOVERNED_MULTICLASS_MODEL_FAMILIES
@@ -126,6 +126,7 @@ _GOVERNED_MULTICLASS_MODEL_FAMILIES = (
 _GOVERNED_CONTINUOUS_REGRESSION_MODEL_FAMILIES = (
     "gradient_boosting",
     "random_forest",
+    "hist_gradient_boosting",
 )
 
 # Project Spec S0210: deterministic, repository-local resolution for the

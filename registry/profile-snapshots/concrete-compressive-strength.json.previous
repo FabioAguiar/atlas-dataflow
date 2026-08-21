@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "concrete-compressive-strength",
-  "published_at": "2026-08-21T18:19:27Z",
+  "published_at": "2026-08-21T18:21:32Z",
   "active_release_at_publish_time": "release-20260820-001",
   "profile": {
     "display": {
@@ -9,7 +9,7 @@
       "subtitle": "Predict concrete compressive strength from mixture composition and curing age using continuous regression.",
       "problem_summary_title": "Concrete composition and compressive strength",
       "problem_summary_body": "This dataset examines how eight numerical measurements describing concrete mixture composition and curing age relate to concrete compressive strength. Atlas uses these governed inputs in a continuous-regression model that predicts compressive strength as a numeric value on the original MPa scale.",
-      "source_name": "UCI Machine Learning Repository",
+      "source_name": "UC Irvine Repository",
       "source_url": "https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength",
       "release_date_label": "2026-08-19",
       "date_format": "dd/mm/yyyy",

@@ -266,6 +266,15 @@ const PERFORMANCE_FOCUS_OPTIONS: Array<{ value: PerformanceFocusId; label: strin
   Object.keys(PERFORMANCE_SCORE_CATALOG) as PerformanceFocusId[]
 ).map((value) => ({ value, label: getPerformanceFocusLabel(value) ?? value }));
 
+// Project Spec S0237: the governed default Performance focus per problem
+// type, used to repair an incompatible draft focus (see the rebind effect
+// below) and to seed a new/unconfigured draft for a non-binary release.
+const PROBLEM_TYPE_DEFAULT_FOCUS: Readonly<Record<ProblemType, PerformanceFocusId>> = {
+  binary_classification: "positive_class_detection",
+  multiclass_classification: "balanced_classification",
+  continuous_regression: "regression_performance",
+};
+
 function catalogPerformanceScores(focus_id: PerformanceFocusId): PerformanceScoreDraft[] {
   return PERFORMANCE_SCORE_CATALOG[focus_id].map(([score_id, display_label], order) => ({
     score_id, display_label, value: "0", value_source: "manual" as const, order, visible: false,
@@ -276,13 +285,14 @@ function defaultPerformanceFocus(
   focus_id: PerformanceFocusId = "positive_class_detection",
   problemType?: ProblemType,
 ): PerformanceFocusDraft {
-  // Project Spec S0215: for a multiclass release, the first three
-  // multiclass-applicable catalog scores (not the raw first three catalog
-  // rows, which may include binary-only ids) become the default visible
-  // set -- binary callers (problemType omitted) are unaffected.
-  if (problemType === "multiclass_classification") {
+  // Project Spec S0215/S0237: for a governed multiclass or continuous-
+  // regression release, the first three problem-type-applicable catalog
+  // scores (not the raw first three catalog rows, which may include ids
+  // inapplicable to this problem type) become the default visible set --
+  // binary callers (problemType omitted) are unaffected.
+  if (problemType === "multiclass_classification" || problemType === "continuous_regression") {
     const applicableIds = catalogPerformanceScores(focus_id)
-      .filter((score) => isPerformanceScoreApplicable(score.score_id, "multiclass_classification"))
+      .filter((score) => isPerformanceScoreApplicable(score.score_id, problemType))
       .map((score) => score.score_id);
     const defaultVisible = new Set(applicableIds.slice(0, 3));
     const scores = catalogPerformanceScores(focus_id).map((score) => ({
@@ -2421,40 +2431,29 @@ function MetadataCardTab({
   const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
   const [imageUploadError, setImageUploadError] = useState("");
 
-  // Project Spec S0215: when the release-governed problem type is
-  // multiclass_classification and the currently selected Performance focus
-  // is one of the binary-only foci (overall_discrimination,
-  // positive_class_detection, operational_decision), it can never be shown
-  // or selected for a multiclass release -- switch to the governed
-  // multiclass default (balanced_classification) instead of silently
-  // presenting an incompatible focus. When problem type is binary or
-  // unavailable, this never fires, preserving current binary-compatible
-  // draft behavior exactly.
+  // Project Spec S0215/S0237: when a governed problem type is available and
+  // the currently selected Performance focus is not applicable to it (e.g.
+  // a binary-only focus under multiclass, or any classification focus under
+  // continuous_regression), switch to the governed default for that problem
+  // type instead of silently presenting an incompatible focus. When problem
+  // type is unavailable, this never fires, preserving current draft
+  // behavior exactly.
   useEffect(() => {
-    if (problemType !== "multiclass_classification") {
+    if (!problemType) {
       return;
     }
-    if (!getApplicablePerformanceFocusIds("multiclass_classification").includes(form.performance_focus.focus_id)) {
-      setField("performance_focus", defaultPerformanceFocus("balanced_classification", "multiclass_classification"));
+    if (!getApplicablePerformanceFocusIds(problemType).includes(form.performance_focus.focus_id)) {
+      setField("performance_focus", defaultPerformanceFocus(PROBLEM_TYPE_DEFAULT_FOCUS[problemType], problemType));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [problemType, form.performance_focus.focus_id]);
 
-  // Project Spec S0215: the selector offers only the supported multiclass
-  // focus set for a multiclass release; binary or unavailable problem type
-  // preserves the existing full-catalog behavior exactly. Project Spec
-  // S0229 does not add a curated Admin-authoring Performance focus for
-  // continuous_regression (regression_performance is added only to the
-  // profile schemas and the backend PERFORMANCE_SCORE_CATALOG, per its own
-  // Desired change Section H) -- a continuous_regression release falls
-  // through to this same unfiltered classification catalog, unchanged from
-  // its pre-S0229 behavior.
-  const performanceFocusOptions =
-    problemType === "multiclass_classification"
-      ? PERFORMANCE_FOCUS_OPTIONS.filter((option) =>
-          getApplicablePerformanceFocusIds("multiclass_classification").includes(option.value),
-        )
-      : PERFORMANCE_FOCUS_OPTIONS;
+  // Project Spec S0215/S0237: the selector offers only the Performance
+  // focus set applicable to the release-governed problem type; unavailable
+  // problem type preserves the existing full-catalog behavior exactly.
+  const performanceFocusOptions = problemType
+    ? PERFORMANCE_FOCUS_OPTIONS.filter((option) => getApplicablePerformanceFocusIds(problemType).includes(option.value))
+    : PERFORMANCE_FOCUS_OPTIONS;
 
   function uploadHomeCardImage(file: File | undefined) {
     if (!file) return;
@@ -2635,14 +2634,14 @@ function PerformanceFocusBuilder({
   onChange: (focus: PerformanceFocusDraft) => void;
   problemType?: ProblemType;
 }) {
-  // Project Spec S0215: for a multiclass release, only multiclass-applicable
-  // scores are shown/selectable here. focus.scores itself is never mutated
-  // -- a binary-only score's persisted value/visibility is preserved (not
-  // destroyed) should the release problem type later revert to binary.
-  const renderedScores =
-    problemType === "multiclass_classification"
-      ? focus.scores.filter((score) => isPerformanceScoreApplicable(score.score_id, "multiclass_classification"))
-      : focus.scores;
+  // Project Spec S0215/S0237: for a governed non-binary release, only
+  // problem-type-applicable scores are shown/selectable here. focus.scores
+  // itself is never mutated -- an inapplicable score's persisted
+  // value/visibility is preserved (not destroyed) should the release
+  // problem type later change again.
+  const renderedScores = problemType
+    ? focus.scores.filter((score) => isPerformanceScoreApplicable(score.score_id, problemType))
+    : focus.scores;
   const visibleScores = renderedScores.filter((score) => score.visible);
   const highlighted = visibleScores.find((score) => score.score_id === focus.highlighted_score_id);
 

@@ -248,6 +248,80 @@
         "customization_defines_runtime_validation": false,
         "customization_duplicates_contract": false
       }
+    },
+    {
+      "schema_version": "1.0.0",
+      "view_id": "concrete-compressive-strength-regression",
+      "dataset_slug": "concrete-compressive-strength",
+      "field_hints": [
+        {
+          "field_name": "Cement",
+          "display_order_hint": 1,
+          "group": "group-1"
+        },
+        {
+          "field_name": "Blast Furnace Slag",
+          "display_order_hint": 2,
+          "group": "group-1"
+        },
+        {
+          "field_name": "Fly Ash",
+          "display_order_hint": 3,
+          "group": "group-1"
+        },
+        {
+          "field_name": "Water",
+          "display_order_hint": 4,
+          "group": "group-2"
+        },
+        {
+          "field_name": "Superplasticizer",
+          "display_order_hint": 5,
+          "group": "group-2"
+        },
+        {
+          "field_name": "Coarse Aggregate",
+          "display_order_hint": 6,
+          "group": "group-3"
+        },
+        {
+          "field_name": "Fine Aggregate",
+          "display_order_hint": 7,
+          "group": "group-3"
+        },
+        {
+          "field_name": "Age",
+          "display_order_hint": 8,
+          "group": "group-4"
+        }
+      ],
+      "groups": [
+        {
+          "group_id": "group-1",
+          "label": "Binder Materials",
+          "description": "Amounts of cement and supplementary cementitious materials used in the concrete mixture."
+        },
+        {
+          "group_id": "group-2",
+          "label": "Water & Admixture",
+          "description": "Water content and chemical admixture quantities used to control the concrete mixture."
+        },
+        {
+          "group_id": "group-3",
+          "label": "Aggregates",
+          "description": "Quantities of coarse and fine aggregate forming the granular portion of the concrete mixture."
+        },
+        {
+          "group_id": "group-4",
+          "label": "Curing",
+          "description": "Curing time of the concrete sample before compressive-strength measurement."
+        }
+      ],
+      "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": true,
+        "customization_defines_runtime_validation": false,
+        "customization_duplicates_contract": false
+      }
     }
   ]
 }

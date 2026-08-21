@@ -37,6 +37,7 @@ const HIGHER_IS_BETTER_IDS = [
   "f1_weighted",
   "precision_macro",
   "recall_macro",
+  "r2",
 ];
 
 const LOWER_IS_BETTER_IDS = [
@@ -49,6 +50,8 @@ const LOWER_IS_BETTER_IDS = [
   "cost_per_correct_detection",
   "false_positives_at_k",
   "false_negatives_at_k",
+  "mae",
+  "rmse",
 ];
 
 describe("performanceMetricMetadata classification (Project Spec S0200)", () => {
@@ -136,7 +139,7 @@ describe("getPerformanceFocusLabel (Project Spec S0204)", () => {
     for (const focusId of catalogFocusIds) {
       expect(getPerformanceFocusLabel(focusId)).toBeDefined();
     }
-    expect(catalogFocusIds).toHaveLength(5);
+    expect(catalogFocusIds).toHaveLength(6);
   });
 });
 
@@ -160,7 +163,10 @@ describe("problem-type applicability (Project Spec S0215)", () => {
   });
 
   it("every binary-classification score id remains applicable, unchanged", () => {
-    for (const entries of Object.values(PERFORMANCE_FOCUS_CATALOG)) {
+    for (const [focusId, entries] of Object.entries(PERFORMANCE_FOCUS_CATALOG)) {
+      if (focusId === "regression_performance") {
+        continue;
+      }
       for (const [scoreId] of entries) {
         expect(isPerformanceScoreApplicable(scoreId, "binary_classification")).toBe(true);
       }
@@ -206,10 +212,15 @@ describe("problem-type applicability (Project Spec S0215)", () => {
     ]);
   });
 
-  it("getApplicablePerformanceFocusIds returns every focus id for binary", () => {
-    expect(getApplicablePerformanceFocusIds("binary_classification")).toEqual(
-      Object.keys(PERFORMANCE_FOCUS_CATALOG),
-    );
+  it("getApplicablePerformanceFocusIds returns every classification focus id for binary, excluding regression_performance", () => {
+    expect(getApplicablePerformanceFocusIds("binary_classification")).toEqual([
+      "overall_discrimination",
+      "positive_class_detection",
+      "balanced_classification",
+      "probability_quality",
+      "operational_decision",
+    ]);
+    expect(getApplicablePerformanceFocusIds("binary_classification")).not.toContain("regression_performance");
   });
 
   it("getApplicableScoresForFocus filters balanced_classification to the multiclass-compatible subset", () => {
@@ -224,5 +235,83 @@ describe("problem-type applicability (Project Spec S0215)", () => {
     expect(getApplicableScoresForFocus("balanced_classification", "binary_classification")).toEqual(
       PERFORMANCE_FOCUS_CATALOG.balanced_classification,
     );
+  });
+});
+
+describe("continuous-regression performance focus (Project Spec S0237)", () => {
+  it("adds regression_performance to the catalog with mae, rmse, r2 in that order", () => {
+    expect(PERFORMANCE_FOCUS_CATALOG.regression_performance).toEqual([
+      ["mae", "MAE"],
+      ["rmse", "RMSE"],
+      ["r2", "R²"],
+    ]);
+  });
+
+  it("six total focus ids now exist", () => {
+    expect(Object.keys(PERFORMANCE_FOCUS_CATALOG)).toHaveLength(6);
+  });
+
+  it("gives regression_performance a deterministic label", () => {
+    expect(getPerformanceFocusLabel("regression_performance")).toBe("Regression performance");
+  });
+
+  it("makes MAE and RMSE catalog-authorable and lower_is_better, not metadata-only aliases", () => {
+    expect(PERFORMANCE_FOCUS_CATALOG.regression_performance.some(([scoreId]) => scoreId === "mae")).toBe(true);
+    expect(PERFORMANCE_FOCUS_CATALOG.regression_performance.some(([scoreId]) => scoreId === "rmse")).toBe(true);
+    expect(getPerformanceMetricMetadata("mae")).toEqual({
+      score_id: "mae",
+      display_label: "MAE",
+      optimization: { kind: "lower_is_better" },
+    });
+    expect(getPerformanceMetricMetadata("rmse")).toEqual({
+      score_id: "rmse",
+      display_label: "RMSE",
+      optimization: { kind: "lower_is_better" },
+    });
+  });
+
+  it("makes R² catalog-authorable and higher_is_better, not a metadata-only alias", () => {
+    expect(PERFORMANCE_FOCUS_CATALOG.regression_performance.some(([scoreId]) => scoreId === "r2")).toBe(true);
+    expect(getPerformanceMetricMetadata("r2")).toEqual({
+      score_id: "r2",
+      display_label: "R²",
+      optimization: { kind: "higher_is_better" },
+    });
+  });
+
+  it("marks regression_performance applicable only to continuous_regression", () => {
+    expect(isPerformanceFocusApplicable("regression_performance", "continuous_regression")).toBe(true);
+    expect(isPerformanceFocusApplicable("regression_performance", "binary_classification")).toBe(false);
+    expect(isPerformanceFocusApplicable("regression_performance", "multiclass_classification")).toBe(false);
+  });
+
+  it("getApplicablePerformanceFocusIds returns exactly [regression_performance] for continuous_regression", () => {
+    expect(getApplicablePerformanceFocusIds("continuous_regression")).toEqual(["regression_performance"]);
+  });
+
+  it("getApplicableScoresForFocus returns mae, rmse, r2 in catalog order for continuous_regression", () => {
+    const scores = getApplicableScoresForFocus("regression_performance", "continuous_regression");
+    expect(scores.map(([scoreId]) => scoreId)).toEqual(["mae", "rmse", "r2"]);
+  });
+
+  it("never marks regression scores classification-applicable", () => {
+    for (const scoreId of ["mae", "rmse", "r2"]) {
+      expect(isPerformanceScoreApplicable(scoreId, "binary_classification")).toBe(false);
+      expect(isPerformanceScoreApplicable(scoreId, "multiclass_classification")).toBe(false);
+      expect(isPerformanceScoreApplicable(scoreId, "continuous_regression")).toBe(true);
+    }
+  });
+
+  it("does not include classification-only foci as applicable to continuous_regression", () => {
+    const applicable = getApplicablePerformanceFocusIds("continuous_regression");
+    for (const focusId of [
+      "overall_discrimination",
+      "positive_class_detection",
+      "balanced_classification",
+      "probability_quality",
+      "operational_decision",
+    ]) {
+      expect(applicable).not.toContain(focusId);
+    }
   });
 });

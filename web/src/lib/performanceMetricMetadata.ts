@@ -74,14 +74,16 @@ export const PERFORMANCE_FOCUS_CATALOG = {
     ["false_positives_at_k", "False Positives at K"],
     ["false_negatives_at_k", "False Negatives at K"],
   ],
-  // Project Spec S0229: regression_performance is not added here -- per its
-  // own Desired change Section H, the continuous-regression Performance
-  // focus is added only to the profile schemas and the backend
-  // registry/dataset_public_profile_validate.py PERFORMANCE_SCORE_CATALOG,
-  // not to this frontend Admin-authoring catalog. A continuous_regression
-  // release's Performance Summary renders through the canonical fallback
-  // path (metricsNormalization.ts + isPerformanceScoreApplicable below),
-  // never through a curated Admin-selected regression_performance focus.
+  // Project Spec S0237: regression_performance is a first-class Admin
+  // Performance focus, scoped to continuous_regression (see
+  // FOCUS_PROBLEM_TYPES below). Order is intentional -- MAE is the
+  // scientific/Atlas-native primary metric, RMSE a secondary error metric,
+  // R² a secondary goodness-of-fit metric.
+  regression_performance: [
+    ["mae", "MAE"],
+    ["rmse", "RMSE"],
+    ["r2", "R²"],
+  ],
 } as const;
 
 export type PerformanceFocusId = keyof typeof PERFORMANCE_FOCUS_CATALOG;
@@ -96,6 +98,7 @@ const PERFORMANCE_FOCUS_LABELS: Readonly<Record<PerformanceFocusId, string>> = {
   balanced_classification: "Balanced classification",
   probability_quality: "Probability quality",
   operational_decision: "Operational decision",
+  regression_performance: "Regression performance",
 };
 
 /**
@@ -138,6 +141,8 @@ const HIGHER_IS_BETTER_IDS: readonly string[] = [
   "f1_weighted",
   "precision_macro",
   "recall_macro",
+  // Project Spec S0237: R² is a higher-is-better regression score.
+  "r2",
 ];
 
 const LOWER_IS_BETTER_IDS: readonly string[] = [
@@ -150,6 +155,9 @@ const LOWER_IS_BETTER_IDS: readonly string[] = [
   "cost_per_correct_detection",
   "false_positives_at_k",
   "false_negatives_at_k",
+  // Project Spec S0237: MAE and RMSE are lower-is-better regression scores.
+  "mae",
+  "rmse",
 ];
 
 // Target-based metrics never derive direction from the current value and
@@ -196,15 +204,6 @@ const METRIC_METADATA: ReadonlyMap<string, PerformanceMetricMetadata> = (() => {
     display_label: "Average Precision",
     optimization: { kind: "higher_is_better" },
   });
-  // Project Spec S0229: r2/mae/rmse are metadata-only entries, following the
-  // same pattern as average_precision above -- never added to
-  // PERFORMANCE_FOCUS_CATALOG (not a selectable Admin-authoring score), but
-  // still resolvable so the public PerformanceSummary's canonical-fallback
-  // and any published performance_focus rendering path can look up their
-  // direction/label deterministically.
-  map.set("r2", { score_id: "r2", display_label: "R²", optimization: { kind: "higher_is_better" } });
-  map.set("mae", { score_id: "mae", display_label: "MAE", optimization: { kind: "lower_is_better" } });
-  map.set("rmse", { score_id: "rmse", display_label: "RMSE", optimization: { kind: "lower_is_better" } });
   return map;
 })();
 
@@ -217,14 +216,16 @@ export function getPerformanceMetricMetadata(scoreId: string): PerformanceMetric
   return METRIC_METADATA.get(scoreId);
 }
 
-// Project Spec S0215: problem-type applicability metadata for the first
-// governed multiclass score surface. overall_discrimination,
-// positive_class_detection, and operational_decision remain binary-only --
-// they encode positive-class/ranking/cost semantics that have no governed
-// multiclass meaning yet. balanced_classification and probability_quality
-// apply to both problem types, but individual scores within them are
-// further filtered by MULTICLASS_COMPATIBLE_SCORE_IDS below, since not
-// every score in those two foci is multiclass-compatible.
+// Project Spec S0215/S0237: problem-type applicability metadata.
+// overall_discrimination, positive_class_detection, and operational_decision
+// remain binary-only -- they encode positive-class/ranking/cost semantics
+// that have no governed multiclass or regression meaning. balanced_classification
+// and probability_quality apply to both classification problem types, but
+// individual scores within them are further filtered by
+// MULTICLASS_COMPATIBLE_SCORE_IDS below, since not every score in those two
+// foci is multiclass-compatible. regression_performance is applicable only
+// to continuous_regression and is never selectable for either classification
+// problem type.
 
 export type ProblemType = "binary_classification" | "multiclass_classification" | "continuous_regression";
 
@@ -234,6 +235,7 @@ const FOCUS_PROBLEM_TYPES: Readonly<Record<PerformanceFocusId, readonly ProblemT
   balanced_classification: ["binary_classification", "multiclass_classification"],
   probability_quality: ["binary_classification", "multiclass_classification"],
   operational_decision: ["binary_classification"],
+  regression_performance: ["continuous_regression"],
 };
 
 // Project Spec S0215: the bounded set of score ids compatible with a

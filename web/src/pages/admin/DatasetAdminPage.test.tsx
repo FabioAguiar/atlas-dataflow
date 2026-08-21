@@ -3408,6 +3408,156 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0237: continuous-regression Performance focus authoring
+  // must never default to or offer a classification focus, must auto-rebind
+  // an incompatible persisted/draft focus to regression_performance, and
+  // must filter the selectable score catalog to MAE/RMSE/R² only.
+  describe("continuous-regression Performance focus authoring (Project Spec S0237)", () => {
+    const continuousRegressionResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "continuous-regression-result-semantics.v1",
+        problem_type: "continuous_regression",
+        result_schema_version: "continuous-regression-result.v1",
+        primary_output: "predicted_value",
+        output_value_kind: "continuous_numeric",
+        model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+      },
+    };
+
+    it("auto-rebinds an incompatible positive_class_detection draft to regression_performance for a continuous-regression release", async () => {
+      installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("regression_performance"));
+    });
+
+    it("offers only Regression performance in the selector for a continuous-regression release", async () => {
+      installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      const select = await screen.findByLabelText("Performance focus");
+      await waitFor(() => expect(select).toHaveValue("regression_performance"));
+      const optionLabels = within(select)
+        .getAllByRole("option")
+        .map((option) => option.textContent);
+      expect(optionLabels).toEqual(["Regression performance"]);
+    });
+
+    it("renders only MAE, RMSE, and R² authoring rows, never classification scores such as Recall/Precision/F1-score", async () => {
+      installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("regression_performance"));
+      expect(screen.getByLabelText("Show MAE")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show RMSE")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show R²")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Recall")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Precision")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show F1-score")).not.toBeInTheDocument();
+    });
+
+    it("highlights MAE by default and lets the operator enter ordinary manual values for MAE/RMSE/R², including the observed Concrete values", async () => {
+      installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("regression_performance"));
+      expect(screen.getByLabelText("Highlighted score")).toHaveValue("mae");
+      expect(screen.getByLabelText("Show MAE")).toBeChecked();
+      expect(screen.getByLabelText("Show RMSE")).toBeChecked();
+      expect(screen.getByLabelText("Show R²")).toBeChecked();
+
+      fireEvent.change(screen.getByLabelText("MAE value"), { target: { value: "2.0453" } });
+      fireEvent.change(screen.getByLabelText("RMSE value"), { target: { value: "2.9740" } });
+      fireEvent.change(screen.getByLabelText("R² value"), { target: { value: "0.9694" } });
+
+      expect(screen.getByLabelText("MAE value")).toHaveValue("2.0453");
+      expect(screen.getByLabelText("RMSE value")).toHaveValue("2.9740");
+      expect(screen.getByLabelText("R² value")).toHaveValue("0.9694");
+    });
+
+    it("renders the Regression performance badge in the Home card preview", async () => {
+      installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("regression_performance"));
+      const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
+      expect(within(previewCard).getByText("Regression performance")).toBeInTheDocument();
+    });
+
+    it("carries regression_performance and mae/rmse/r2 in the Publish changes payload, without automatically publishing merely because the rebind happened", async () => {
+      const fetchMock = installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("regression_performance"));
+      // The rebind itself never issues a publish request on its own.
+      expect(
+        fetchMock.mock.calls.some(
+          (call) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        ),
+      ).toBe(false);
+
+      fireEvent.change(screen.getByLabelText("MAE value"), { target: { value: "2.0453" } });
+      fireEvent.change(screen.getByLabelText("RMSE value"), { target: { value: "2.9740" } });
+      fireEvent.change(screen.getByLabelText("R² value"), { target: { value: "0.9694" } });
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled());
+
+      const callsBeforePublish = fetchMock.mock.calls.length;
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls
+            .slice(callsBeforePublish)
+            .some(
+              (call) =>
+                String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+                (call[1] as RequestInit | undefined)?.method === "PUT",
+            ),
+        ).toBe(true),
+      );
+
+      const publishCall = fetchMock.mock.calls
+        .slice(callsBeforePublish)
+        .find(
+          (call: unknown[]) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        );
+      expect(publishCall).toBeDefined();
+      const body = JSON.parse(String((publishCall?.[1] as RequestInit).body)) as {
+        performance_focus?: {
+          focus_id?: string;
+          highlighted_score_id?: string;
+          visible_scores?: Array<{ score_id: string; value: string }>;
+        };
+      };
+      expect(body.performance_focus?.focus_id).toBe("regression_performance");
+      expect(body.performance_focus?.highlighted_score_id).toBe("mae");
+      const visibleScoreIds = body.performance_focus?.visible_scores?.map((score) => score.score_id);
+      expect(visibleScoreIds).toEqual(["mae", "rmse", "r2"]);
+      const visibleScoreValues = Object.fromEntries(
+        (body.performance_focus?.visible_scores ?? []).map((score) => [score.score_id, score.value]),
+      );
+      expect(visibleScoreValues).toEqual({ mae: "2.0453", rmse: "2.9740", r2: "0.9694" });
+    });
+  });
+
   // Project Spec S0228: Dataset Detail Live Preview gates RegressionDiagnostics
   // from the same private, dataset-bound result-contract authority as
   // Performance Summary, and reuses the exact same shared renderer/already-

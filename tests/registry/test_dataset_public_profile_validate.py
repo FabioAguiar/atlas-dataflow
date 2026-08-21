@@ -452,6 +452,115 @@ def test_regression_focus_rejects_classification_score():
     assert "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS" in _codes(result)
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0240: expected_problem_type applicability guard
+# ---------------------------------------------------------------------------
+
+def test_continuous_regression_problem_type_accepts_regression_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.21", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "continuous_regression",
+    )
+    assert result == {"valid": True, "errors": []}
+
+
+def test_continuous_regression_problem_type_rejects_positive_class_detection_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus()),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "continuous_regression",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_binary_classification_problem_type_rejects_regression_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.21", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "binary_classification",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_multiclass_classification_problem_type_rejects_regression_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.21", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "multiclass_classification",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_binary_classification_problem_type_accepts_positive_class_detection_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus()),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "binary_classification",
+    )
+    assert result == {"valid": True, "errors": []}
+
+
+def test_multiclass_classification_problem_type_accepts_balanced_classification_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="balanced_classification",
+            highlighted_score_id="accuracy",
+            visible_scores=[{"score_id": "accuracy", "display_label": "Accuracy", "value": "0.9", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "multiclass_classification",
+    )
+    assert result == {"valid": True, "errors": []}
+
+
+def test_expected_problem_type_omitted_preserves_existing_behavior():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.21", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result == {"valid": True, "errors": []}
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" not in _codes(result)
+
+
+def test_unknown_focus_still_reports_unknown_not_mismatch_when_problem_type_supplied():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(focus_id="not_a_real_focus")),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "continuous_regression",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_UNKNOWN" in _codes(result)
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" not in _codes(result)
+
+
 if __name__ == "__main__":
     tests = [
         test_profile_with_no_references_passes,

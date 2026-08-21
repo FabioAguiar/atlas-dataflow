@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "concrete-compressive-strength",
-  "published_at": "2026-08-21T11:39:46Z",
+  "published_at": "2026-08-21T17:59:04Z",
   "active_release_at_publish_time": "release-20260820-001",
   "profile": {
     "display": {
       "title": "Concrete Compressive Strength",
       "subtitle": "Predict concrete compressive strength from mixture composition and curing age using continuous regression.",
       "problem_summary_title": "Concrete composition and compressive strength",
-      "problem_summary_body": "This dataset examines how eight numerical measurements describing concrete mixture composition and curing age relate to concrete compressive strength. Atlas uses these governed inputs in a continuous-regression model that predicts compressive strength as a numeric value on the original MPa scale.",
+      "problem_summary_body": "This dataset examines how eight numerical measurements describing concrete mixture composition and curing age relate to concrete compressive strength.",
       "source_name": "UCI Machine Learning Repository",
       "source_url": "https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength",
       "release_date_label": "2026-08-19",
@@ -21,28 +21,28 @@
       "primary_metric_key": null
     },
     "performance_focus": {
-      "focus_id": "positive_class_detection",
-      "highlighted_score_id": "recall",
+      "focus_id": "regression_performance",
+      "highlighted_score_id": "mae",
       "visible_scores": [
         {
-          "score_id": "recall",
-          "display_label": "Recall",
-          "value": "0",
-          "value_source": "manual",
+          "score_id": "mae",
+          "display_label": "MAE",
+          "value": "2.0453",
+          "value_source": "canonical",
           "order": 0
         },
         {
-          "score_id": "precision",
-          "display_label": "Precision",
-          "value": "0",
-          "value_source": "manual",
+          "score_id": "rmse",
+          "display_label": "RMSE",
+          "value": "2.9740",
+          "value_source": "canonical",
           "order": 1
         },
         {
-          "score_id": "f1_score",
-          "display_label": "F1-score",
-          "value": "0",
-          "value_source": "manual",
+          "score_id": "r2",
+          "display_label": "R²",
+          "value": "0.9694",
+          "value_source": "canonical",
           "order": 2
         }
       ]

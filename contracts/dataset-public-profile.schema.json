@@ -78,7 +78,7 @@
       "required": ["score_id", "display_label", "value", "value_source", "order"],
       "properties": {
         "score_id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"},
-        "display_label": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9 @'().+/-]*$"},
+        "display_label": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9 @'().+/²³¹À-ÿͰ-Ͽ⁰⁴-⁹₀-₉-]*$"},
         "value": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[+-]?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:%|[eE][+-]?[0-9]+)?$"},
         "value_source": {"type": "string", "enum": ["canonical", "manual"]},
         "order": {"type": "integer", "minimum": 0, "maximum": 99}

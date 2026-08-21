@@ -88,6 +88,17 @@ def _metrics_path(fake_repo: Path) -> Path:
     return fake_repo / "releases" / "release-20260101-001" / "metrics" / "metrics.json"
 
 
+def _write_release_bundle(fake_repo: Path, release_id: str, problem_type: str) -> None:
+    """Project Spec S0240: the bounded release artifact publish_snapshot's
+    guard reads to resolve the trusted problem type -- only
+    result_semantics.problem_type is meaningful to the code under test."""
+    predictions_dir = fake_repo / "releases" / release_id / "predictions"
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    predictions_dir.joinpath("bundle.json").write_text(
+        json.dumps({"result_semantics": {"problem_type": problem_type}}), encoding="utf-8"
+    )
+
+
 def _write_datasets_registry(fake_repo: Path, registry: dict) -> None:
     (fake_repo / "registry" / "datasets.json").write_text(
         json.dumps(registry), encoding="utf-8"
@@ -139,6 +150,7 @@ def fake_repo(tmp_path):
     metrics_dir.joinpath("metrics.json").write_text(
         json.dumps(_MOCK_RELEASE_METRICS), encoding="utf-8"
     )
+    _write_release_bundle(tmp_path, "release-20260101-001", "binary_classification")
 
     return tmp_path
 
@@ -311,6 +323,7 @@ def test_publish_blocks_dropping_unmigrated_legacy_submit_copy(fake_repo):
 )
 def test_publish_accepts_and_preserves_supported_release_id_formats(fake_repo, release_id):
     _set_active_release(fake_repo, release_id)
+    _write_release_bundle(fake_repo, release_id, "binary_classification")
 
     result = publish_snapshot_from_payload(
         "telco-customer-churn", _profile(), repo_root=fake_repo
@@ -822,4 +835,156 @@ def test_no_unrelated_request_only_field_is_promoted_into_snapshot_profile(fake_
     )
 
     assert result["published"] is True
+
+
+# Project Spec S0240: problem-type-coherent Performance focus publication
+# guard. release_problem_type is resolved only from
+# releases/<active_release>/predictions/bundle.json's own
+# result_semantics.problem_type -- never inferred from dataset_slug or
+# result_card presentation copy/schema_version.
+
+
+def _regression_focus() -> dict:
+    return {
+        "focus_id": "regression_performance",
+        "highlighted_score_id": "mae",
+        "visible_scores": [
+            {"score_id": "mae", "display_label": "MAE", "value": "1.0", "value_source": "manual", "order": 0},
+        ],
+    }
+
+
+def _positive_class_focus() -> dict:
+    return {
+        "focus_id": "positive_class_detection",
+        "highlighted_score_id": "recall",
+        "visible_scores": [
+            {"score_id": "recall", "display_label": "Recall", "value": "0.5", "value_source": "manual", "order": 0},
+        ],
+    }
+
+
+def test_publish_accepts_regression_performance_focus_under_continuous_regression_active_release(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
+    performance_focus = _regression_focus()
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=performance_focus), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["performance_focus"] == performance_focus
+
+
+def test_publish_rejects_positive_class_detection_focus_under_continuous_regression_active_release(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=_positive_class_focus()), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_publish_rejects_regression_performance_focus_under_binary_active_release(fake_repo):
+    # fake_repo's default bundle already declares binary_classification.
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=_regression_focus()), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_publish_rejects_regression_performance_focus_under_multiclass_active_release(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "multiclass_classification")
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=_regression_focus()), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_publish_focus_mismatch_leaves_previous_snapshot_and_evidence_unchanged(fake_repo):
+    valid = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(display={"title": "Previous"}), repo_root=fake_repo
+    )
+    assert valid["published"] is True
+    snapshot_path = fake_repo / "registry" / "profile-snapshots" / "telco-customer-churn.json"
+    evidence_path = _evidence_path(fake_repo, "telco-customer-churn")
+    original_snapshot = snapshot_path.read_text(encoding="utf-8")
+    original_evidence = evidence_path.read_text(encoding="utf-8")
+
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
+    rejected = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=_positive_class_focus()), repo_root=fake_repo
+    )
+
+    assert rejected["published"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(rejected)
+    assert snapshot_path.read_text(encoding="utf-8") == original_snapshot
+    assert evidence_path.read_text(encoding="utf-8") == original_evidence
+
+
+def test_publish_rejects_when_active_release_problem_type_missing(fake_repo):
+    (fake_repo / "releases" / "release-20260101-001" / "predictions" / "bundle.json").unlink()
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(display={"title": "No bundle"}), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    assert "ACTIVE_RELEASE_PROBLEM_TYPE_UNAVAILABLE" in _codes(result)
+
+
+def test_publish_rejects_when_active_release_problem_type_malformed(fake_repo):
+    (fake_repo / "releases" / "release-20260101-001" / "predictions" / "bundle.json").write_text(
+        json.dumps({"result_semantics": {"problem_type": 123}}), encoding="utf-8"
+    )
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(display={"title": "Malformed"}), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    assert "ACTIVE_RELEASE_PROBLEM_TYPE_UNAVAILABLE" in _codes(result)
+
+
+def test_publish_rejects_when_active_release_problem_type_unsupported(fake_repo):
+    (fake_repo / "releases" / "release-20260101-001" / "predictions" / "bundle.json").write_text(
+        json.dumps({"result_semantics": {"problem_type": "ranking"}}), encoding="utf-8"
+    )
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(display={"title": "Unsupported"}), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    assert "ACTIVE_RELEASE_PROBLEM_TYPE_UNAVAILABLE" in _codes(result)
+
+
+def test_publish_focus_guard_ignores_result_card_schema_hint_and_dataset_slug(fake_repo):
+    # dataset_slug "telco-customer-churn" is historically a binary release,
+    # and result_card carries an unrelated multiclass schema_version -- the
+    # guard must still key off the active release's own governed problem
+    # type (continuous_regression here), never off the slug or the result
+    # card's own presentation schema_version.
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
+    profile = _profile(
+        result_card={
+            "schema_version": "multiclass-result-presentation.v1",
+            "predicted_class_label": "Predicted class",
+            "class_probability_distribution_label": "Class probability distribution",
+            "model_section_label": "Model",
+        },
+        performance_focus=_regression_focus(),
+    )
+
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["performance_focus"]["focus_id"] == "regression_performance"
     assert "_example_note" not in result["snapshot"]["profile"]

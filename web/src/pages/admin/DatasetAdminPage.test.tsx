@@ -3677,6 +3677,343 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0240: the Performance focus rebind is owned by
+  // DatasetAdminPage itself, independent of which Admin tab is mounted --
+  // it must already have converged before Metadata & Card is ever opened,
+  // must survive a dataset switch, and must never overwrite an already-
+  // applicable operator selection.
+  describe("page-level Performance focus rebind, tab-independent (Project Spec S0240)", () => {
+    const continuousRegressionResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "continuous-regression-result-semantics.v1",
+        problem_type: "continuous_regression",
+        result_schema_version: "continuous-regression-result.v1",
+        primary_output: "predicted_value",
+        output_value_kind: "continuous_numeric",
+        model_descriptor: { model_family: "gradient_boosting", display_name: "Gradient Boosting Regressor" },
+      },
+    };
+
+    const multiclassResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "multiclass-result-semantics.v1",
+        problem_type: "multiclass_classification",
+        result_schema_version: "multiclass-classification-result.v1",
+        primary_output: "predicted_class",
+        probability_output: "class_probabilities",
+        classes: [
+          { class_id: "class-a", display_label: "Class A" },
+          { class_id: "class-b", display_label: "Class B" },
+          { class_id: "class-c", display_label: "Class C" },
+        ],
+        decision: { strategy: "argmax" },
+        model_descriptor: { model_family: "model", display_name: "Model" },
+      },
+    };
+
+    it("shows Regression performance in Live Preview's Home Card without ever visiting Metadata & Card", async () => {
+      installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
+
+      const homeCardPanel = await screen.findByRole("article", { name: "Home Card preview" });
+      await waitFor(() => expect(within(homeCardPanel).getByText("Regression performance")).toBeInTheDocument());
+      expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
+    });
+
+    it("carries regression_performance in the publish payload when Result Card is opened directly, without ever visiting Metadata & Card", async () => {
+      const fetchMock = installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled());
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            (call) =>
+              String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+              (call[1] as RequestInit | undefined)?.method === "PUT",
+          ),
+        ).toBe(true),
+      );
+      const publishCall = fetchMock.mock.calls.find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+      const body = JSON.parse(String((publishCall?.[1] as RequestInit).body)) as {
+        performance_focus?: { focus_id?: string };
+      };
+      expect(body.performance_focus?.focus_id).toBe("regression_performance");
+      expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
+    });
+
+    it("has already converged to regression_performance by the time Publishing is opened directly, without ever visiting Metadata & Card", async () => {
+      const fetchMock = installFetchMock({ resultContractOverride: continuousRegressionResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled());
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            (call) =>
+              String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+              (call[1] as RequestInit | undefined)?.method === "PUT",
+          ),
+        ).toBe(true),
+      );
+      const publishCall = fetchMock.mock.calls.find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+      const body = JSON.parse(String((publishCall?.[1] as RequestInit).body)) as {
+        performance_focus?: { focus_id?: string };
+      };
+      expect(body.performance_focus?.focus_id).toBe("regression_performance");
+      expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
+    });
+
+    it("does not overwrite an already-applicable binary focus while switching among tabs without visiting Metadata & Card", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+      fireEvent.change(screen.getByLabelText("Performance focus"), { target: { value: "operational_decision" } });
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      expect(screen.getByLabelText("Performance focus")).toHaveValue("operational_decision");
+    });
+
+    it("still produces the governed multiclass default for a binary-only focus, without ever visiting Metadata & Card", async () => {
+      installFetchMock({ resultContractOverride: multiclassResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
+
+      const homeCardPanel = await screen.findByRole("article", { name: "Home Card preview" });
+      await waitFor(() => expect(within(homeCardPanel).getByText("Balanced classification")).toBeInTheDocument());
+      expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
+    });
+
+    function authoringContextForRebindTest(
+      slug: string,
+      title: string,
+      resolvedViewId: string,
+      resultContract: unknown,
+    ) {
+      return jsonResponse({
+        dataset_slug: slug,
+        active_release: "release-20260619-001",
+        dataset: { status: "ready", data: { dataset_slug: slug, title, summary: "s", domain: "d", tags: [] } },
+        context: { status: "ready", data: {} },
+        contract: {
+          status: "ready",
+          data: { contract: { schema_version: "1.0.0", features: [] }, result_contract: resultContract },
+        },
+        metrics: { status: "ready", data: {} },
+        visualizations: { status: "ready", data: {} },
+        views: { status: "ready", data: [{ view_id: resolvedViewId, display: { title } }] },
+      });
+    }
+
+    const binaryResultContractFor = (positiveClassId: string, positiveLabel: string, negativeClassId: string) => ({
+      status: "available",
+      semantics: {
+        schema_version: "binary-result-semantics.v1",
+        problem_type: "binary_classification",
+        result_schema_version: "binary-classification-result.v1",
+        primary_output: "positive_class_probability",
+        positive_class: { class_id: positiveClassId, event_label: positiveLabel },
+        negative_class: { class_id: negativeClassId },
+        decision: { threshold: 0.5 },
+        interpretation: {
+          preset: "risk",
+          bands: [
+            { band_id: "low", lower_bound: 0, upper_bound: 0.3 },
+            { band_id: "medium", lower_bound: 0.3, upper_bound: 0.7 },
+            { band_id: "high", lower_bound: 0.7, upper_bound: 1 },
+          ],
+        },
+        model_descriptor: { model_family: "model", display_name: "Model" },
+      },
+    });
+
+    it("cannot retain an incompatible persisted focus after switching from a binary dataset to a continuous-regression dataset", async () => {
+      const otherSlug = "energy-consumption-forecast";
+      const otherViewId = "load-forecast-overview";
+      const staleFocus = {
+        focus_id: "positive_class_detection",
+        highlighted_score_id: "recall",
+        visible_scores: [{ score_id: "recall", display_label: "Recall", value: "0.5", value_source: "manual", order: 0 }],
+      };
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: datasetSlug, title: "Telco Customer Churn", display_title: null, summary: "s",
+                domain: "telecom", tags: [], active_release: "release-20260619-001", publication_status: "ready",
+                last_updated: "2026-06-19T12:00:00Z",
+              },
+              {
+                dataset_slug: otherSlug, title: "Energy Consumption Forecast", display_title: null, summary: "s",
+                domain: "energy", tags: [], active_release: "release-20260701-001", publication_status: "ready",
+                last_updated: "2026-07-01T12:00:00Z",
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+          return authoringContextForRebindTest(
+            datasetSlug, "Telco Customer Churn", viewId,
+            binaryResultContractFor("churn", "Customer churn", "retained"),
+          );
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+          return authoringContextForRebindTest(otherSlug, "Energy Consumption Forecast", otherViewId, continuousRegressionResultContract);
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
+          return jsonResponse({ draft_exists: false, profile: null });
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)) {
+          // A stale persisted focus from before this dataset's active
+          // release became continuous_regression -- the page-level rebind
+          // must correct it even though the operator never opens Metadata &
+          // Card, regardless of whether this response settles before or
+          // after the authoring-context response above.
+          return jsonResponse({
+            draft_exists: true,
+            profile: { schema_version: "1.0.0", dataset_slug: otherSlug, performance_focus: staleFocus },
+          });
+        }
+        if (
+          url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) ||
+          url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)
+        ) {
+          return jsonResponse({}, 404);
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+
+      fireEvent.click(await screen.findByRole("tab", { name: "Metadata & Card" }));
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("regression_performance"));
+    });
+
+    it("cannot retain regression_performance after switching from a continuous-regression dataset to a binary-classification dataset", async () => {
+      const otherSlug = "energy-consumption-forecast";
+      const otherViewId = "load-forecast-overview";
+      const staleFocus = {
+        focus_id: "regression_performance",
+        highlighted_score_id: "mae",
+        visible_scores: [{ score_id: "mae", display_label: "MAE", value: "1.0", value_source: "manual", order: 0 }],
+      };
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              {
+                dataset_slug: datasetSlug, title: "Telco Customer Churn", display_title: null, summary: "s",
+                domain: "telecom", tags: [], active_release: "release-20260619-001", publication_status: "ready",
+                last_updated: "2026-06-19T12:00:00Z",
+              },
+              {
+                dataset_slug: otherSlug, title: "Energy Consumption Forecast", display_title: null, summary: "s",
+                domain: "energy", tags: [], active_release: "release-20260701-001", publication_status: "ready",
+                last_updated: "2026-07-01T12:00:00Z",
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [{ dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] }],
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+          return authoringContextForRebindTest(datasetSlug, "Telco Customer Churn", viewId, continuousRegressionResultContract);
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+          return authoringContextForRebindTest(
+            otherSlug, "Energy Consumption Forecast", otherViewId,
+            binaryResultContractFor("high_demand", "High demand", "normal_demand"),
+          );
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`)) {
+          return jsonResponse({ draft_exists: false, profile: null });
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)) {
+          // A stale persisted continuous-regression focus -- this dataset's
+          // own active release is binary_classification, so it must not
+          // survive even though the operator never opens Metadata & Card.
+          return jsonResponse({
+            draft_exists: true,
+            profile: { schema_version: "1.0.0", dataset_slug: otherSlug, performance_focus: staleFocus },
+          });
+        }
+        if (
+          url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) ||
+          url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)
+        ) {
+          return jsonResponse({}, 404);
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderAdminPage();
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      await waitFor(() => expect(selector).toHaveTextContent("Telco Customer Churn"));
+
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Energy Consumption Forecast" }));
+
+      fireEvent.click(await screen.findByRole("tab", { name: "Metadata & Card" }));
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("positive_class_detection"));
+    });
+  });
+
   // Project Spec S0228: Dataset Detail Live Preview gates RegressionDiagnostics
   // from the same private, dataset-bound result-contract authority as
   // Performance Summary, and reuses the exact same shared renderer/already-
@@ -8779,6 +9116,20 @@ describe("Dry Bean native Predict View authoring bootstrap (Project Spec S0218)"
           errors: [],
         });
       }
+      if (url.endsWith(`/admin/datasets/${dryBeanSlug}/publish`) && init?.method === "PUT") {
+        // Project Spec S0240: this dataset's own blank draft rebinds its
+        // Performance focus to the governed multiclass default on load, so
+        // the shared Publish changes orchestrator now also submits the
+        // profile half alongside the customization save -- this route must
+        // resolve like the real backend's publish_snapshot_from_payload.
+        const submittedProfile =
+          typeof init.body === "string" ? JSON.parse(init.body) : {};
+        return jsonResponse({
+          published: true,
+          snapshot: { published_at: "2026-08-18T00:00:00Z", profile: submittedProfile },
+          errors: [],
+        });
+      }
 
       return jsonResponse({}, 404);
     });
@@ -9523,8 +9874,14 @@ describe("Dataset-switch-safe Predict View rebinding and inference form bootstra
       screen.getByText("No subgroups defined. Visible fields without a subgroup render in No subgroup below."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add subgroup" })).toBeInTheDocument();
+    // Project Spec S0240: Dry Bean has no saved profile yet, so its blank
+    // draft's Performance focus is rebound from the raw positive_class_
+    // detection default to the governed multiclass default (balanced_
+    // classification) as soon as the multiclass result contract settles --
+    // this correctly registers as an unpublished workspace change, not a
+    // predict-view-rebind side effect.
     const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
-    expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeDisabled();
+    expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled();
   }
 
   it("rebinds to dry-bean-classification after switching from a fully ready, bound Telco selection, never requesting churn-risk-overview for Dry Bean", async () => {

@@ -82,6 +82,20 @@ PERFORMANCE_SCORE_CATALOG = {
     },
 }
 
+# Project Spec S0240: the closed backend focus/problem-type applicability
+# mapping, kept consistent with the governed frontend focus applicability
+# (web/src/lib/performanceMetricMetadata.ts). Used only to reject an entire
+# incompatible focus when a trusted expected_problem_type is supplied to
+# validate_profile_references -- it never changes score-level vocabulary.
+PERFORMANCE_FOCUS_PROBLEM_TYPES = {
+    "overall_discrimination": {"binary_classification"},
+    "positive_class_detection": {"binary_classification"},
+    "balanced_classification": {"binary_classification", "multiclass_classification"},
+    "probability_quality": {"binary_classification", "multiclass_classification"},
+    "operational_decision": {"binary_classification"},
+    "regression_performance": {"continuous_regression"},
+}
+
 BINARY_RESULT_PRESENTATION_SCHEMA_VERSION = "binary-result-presentation.v1"
 MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION = "multiclass-result-presentation.v1"
 CONTINUOUS_REGRESSION_RESULT_PRESENTATION_SCHEMA_VERSION = "continuous-regression-result-presentation.v1"
@@ -232,6 +246,7 @@ def validate_profile_references(
     profile: dict,
     predict_views_registry: dict,
     release_metrics: dict,
+    expected_problem_type: str | None = None,
 ) -> dict:
     """
     Validate a dataset public profile draft's reference fields.
@@ -248,6 +263,18 @@ def validate_profile_references(
     name. The caller is responsible for resolving and loading the relevant
     release's metrics.json before invoking this function; this validator does
     not select a release itself.
+
+    expected_problem_type (Project Spec S0240) is a bounded, optional trusted
+    input -- one of "binary_classification", "multiclass_classification", or
+    "continuous_regression" -- supplied by a caller that has already resolved
+    it from a trusted source (e.g. an active release's governed result
+    semantics). When omitted (the existing private draft validation call
+    site), performance_focus applicability is not checked against a problem
+    type, preserving prior behavior exactly. When supplied and recognized, a
+    known performance_focus.focus_id that is not applicable to that problem
+    type is rejected with PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH; this never
+    replaces the existing PERFORMANCE_FOCUS_UNKNOWN behavior for an
+    unrecognized focus_id, and never changes score-level vocabulary checks.
     """
     errors: list[dict] = []
 
@@ -325,6 +352,14 @@ def validate_profile_references(
                 "performance_focus.focus_id is not supported.",
             ))
             catalog = {}
+        elif expected_problem_type is not None:
+            applicable_problem_types = PERFORMANCE_FOCUS_PROBLEM_TYPES.get(focus_id)
+            if applicable_problem_types is not None and expected_problem_type not in applicable_problem_types:
+                errors.append(_err(
+                    "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH",
+                    "performance_focus.focus_id",
+                    "performance_focus.focus_id is not supported for the governed problem type.",
+                ))
 
         visible_scores = performance_focus.get("visible_scores")
         seen_ids: set[str] = set()

@@ -76,6 +76,13 @@ DATASET_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 SNAPSHOT_SCHEMA_VERSION = "1.0.0"
 
+# Project Spec S0240: the closed set of problem types the current Atlas
+# capability supports resolving at snapshot publication time. Anything else
+# (absent, malformed, or an unsupported value) fails publication closed.
+_SUPPORTED_RELEASE_PROBLEM_TYPES = frozenset({
+    "binary_classification", "multiclass_classification", "continuous_regression",
+})
+
 _PROFILE_FIELDS = (
     "display", "home_card", "performance_focus", "theme",
     "inference_presentation", "result_card", "documentation",
@@ -217,6 +224,32 @@ def _load_release_metrics(dataset_slug: str, active_release: str, repo_root: Pat
     return metrics if isinstance(metrics, dict) else {}
 
 
+def _resolve_release_problem_type(active_release: str, repo_root: Path) -> str | None:
+    """
+    Read-only resolution (Project Spec S0240) of the active release's
+    governed result semantics problem type, from
+    releases/<active_release>/predictions/bundle.json's
+    result_semantics.problem_type. Returns None when the bundle is missing,
+    unreadable, or the value is absent/malformed/not one of the currently
+    supported problem types -- the caller must fail closed in that case
+    rather than falling back to profile/result-card/focus inference.
+    """
+    bundle_path = repo_root / "releases" / active_release / "predictions" / "bundle.json"
+    try:
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(bundle, dict):
+        return None
+    result_semantics = bundle.get("result_semantics")
+    if not isinstance(result_semantics, dict):
+        return None
+    problem_type = result_semantics.get("problem_type")
+    if not isinstance(problem_type, str) or problem_type not in _SUPPORTED_RELEASE_PROBLEM_TYPES:
+        return None
+    return problem_type
+
+
 def _build_snapshot_candidate(
     draft: dict,
     dataset_slug: str,
@@ -280,12 +313,27 @@ def _validate_snapshot_candidate(candidate: dict, repo_root: Path) -> list:
         else {}
     )
 
+    # Project Spec S0240: the trusted problem type for the publication guard
+    # is resolved only from the active release's own governed result
+    # semantics -- never inferred from the profile, result card, or focus.
+    release_problem_type = (
+        _resolve_release_problem_type(active_release, repo_root_resolved)
+        if isinstance(active_release, str)
+        else None
+    )
+    if isinstance(active_release, str) and release_problem_type is None:
+        errors.append(_err(
+            "ACTIVE_RELEASE_PROBLEM_TYPE_UNAVAILABLE",
+            None,
+            "The active release's governed problem type could not be resolved.",
+        ))
+
     profile = candidate.get("profile")
     reference_check_target = {"dataset_slug": dataset_slug}
     if isinstance(profile, dict):
         reference_check_target.update(profile)
     reference_result = validate_profile_references(
-        reference_check_target, predict_views_registry, release_metrics
+        reference_check_target, predict_views_registry, release_metrics, release_problem_type
     )
     errors.extend(reference_result["errors"])
 

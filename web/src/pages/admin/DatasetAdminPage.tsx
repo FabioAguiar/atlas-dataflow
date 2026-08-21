@@ -2436,22 +2436,9 @@ function MetadataCardTab({
   const [imageUploadState, setImageUploadState] = useState<"idle" | "uploading">("idle");
   const [imageUploadError, setImageUploadError] = useState("");
 
-  // Project Spec S0215/S0237: when a governed problem type is available and
-  // the currently selected Performance focus is not applicable to it (e.g.
-  // a binary-only focus under multiclass, or any classification focus under
-  // continuous_regression), switch to the governed default for that problem
-  // type instead of silently presenting an incompatible focus. When problem
-  // type is unavailable, this never fires, preserving current draft
-  // behavior exactly.
-  useEffect(() => {
-    if (!problemType) {
-      return;
-    }
-    if (!getApplicablePerformanceFocusIds(problemType).includes(form.performance_focus.focus_id)) {
-      setField("performance_focus", defaultPerformanceFocus(PROBLEM_TYPE_DEFAULT_FOCUS[problemType], problemType));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [problemType, form.performance_focus.focus_id]);
+  // Project Spec S0240: the Performance focus rebind is now owned by
+  // DatasetAdminPage itself (independent of which Admin tab is mounted), not
+  // by this tab. See DatasetAdminPage's own governed-problem-type effect.
 
   // Project Spec S0215/S0237: the selector offers only the Performance
   // focus set applicable to the release-governed problem type; unavailable
@@ -5410,6 +5397,43 @@ export default function DatasetAdminPage() {
       ? current
       : { ...current, result_presentation_schema_version: schemaVersion });
   }, [readOnlyData.resultContract]);
+
+  // Project Spec S0240: the governed Performance focus rebind is owned here
+  // (not by any individual Admin tab), so it converges regardless of which
+  // tab is mounted -- Live Preview, Result Card, Publishing, or Metadata &
+  // Card. Reacts to the same already-guarded readOnlyData.resultContract
+  // this component hydrates above; no second request path is created.
+  // Depends on draftForm.performance_focus.focus_id (not just
+  // readOnlyData.resultContract) so it converges deterministically whichever
+  // of the two guarded requests -- profile hydration or authoring-
+  // context/result-contract -- settles last: if the profile's own persisted
+  // focus arrives after the problem type is already known, that focus_id
+  // change alone re-triggers this check. When problem type is
+  // unavailable/indeterminate, this never fires, preserving the current
+  // draft focus exactly. When the current draft focus is already applicable
+  // to the current problem type, this is a no-op, so an operator's own valid
+  // selection is never overwritten.
+  useEffect(() => {
+    const currentProblemType = availableResultProblemType(readOnlyData.resultContract);
+    if (!currentProblemType) {
+      return;
+    }
+    if (getApplicablePerformanceFocusIds(currentProblemType).includes(draftForm.performance_focus.focus_id)) {
+      return;
+    }
+    setDraftForm((current) =>
+      getApplicablePerformanceFocusIds(currentProblemType).includes(current.performance_focus.focus_id)
+        ? current
+        : {
+            ...current,
+            performance_focus: defaultPerformanceFocus(
+              PROBLEM_TYPE_DEFAULT_FOCUS[currentProblemType],
+              currentProblemType,
+            ),
+          },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnlyData.resultContract, draftForm.performance_focus.focus_id]);
 
   // Project Spec S0098: deterministic Dataset Admin authoring rebinding.
   // Runs only after hydration has resolved bound_predict_view_id from the

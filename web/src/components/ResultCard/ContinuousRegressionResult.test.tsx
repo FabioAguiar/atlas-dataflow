@@ -47,4 +47,13 @@ describe("ContinuousRegressionResult", () => {
     rerender(<ContinuousRegressionResult result={result} presentation={sixPlaces} />);
     expect(screen.getByText("42.734500")).toBeInTheDocument();
   });
+
+  it("always renders the fixed 'Model' heading, never a legacy/custom presentation model_section_label (Project Spec S0239)", () => {
+    const customPresentation = { ...GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION, model_section_label: "Custom model heading" };
+    render(<ContinuousRegressionResult result={result} presentation={customPresentation} />);
+
+    expect(screen.getByText("Model")).toBeInTheDocument();
+    expect(screen.queryByText("Custom model heading")).not.toBeInTheDocument();
+    expect(screen.getByText("Gradient Boosting Regressor")).toBeInTheDocument();
+  });
 });

@@ -2835,6 +2835,10 @@ describe("DatasetAdminPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cyber Neon" }));
 
     fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+    // Project Spec S0239: the loaded profile carries a legacy custom
+    // result_card.model_section_label ("Scoring model" -- see the shared
+    // publicProfile fixture) -- it must not recreate an editable input.
+    expect(screen.queryByLabelText("Model section label")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Badge preset"), { target: { value: "risk" } });
     fireEvent.change(screen.getByLabelText("High label"), { target: { value: "Severe risk" } });
 
@@ -2871,7 +2875,7 @@ describe("DatasetAdminPage", () => {
       home_card?: { icon?: string; primary_metric_key?: string | null };
       performance_focus?: { focus_id?: string; highlighted_score_id?: string; visible_scores?: Array<{ score_id: string; value: string }> };
       theme?: { preset?: string };
-      result_card?: { schema_version?: string; interpretation?: { preset?: string; labels?: { high?: string } } };
+      result_card?: { schema_version?: string; model_section_label?: string; interpretation?: { preset?: string; labels?: { high?: string } } };
     };
 
     expect(body.home_card?.icon).toBe("chart-line");
@@ -2886,6 +2890,9 @@ describe("DatasetAdminPage", () => {
     expect(body.result_card?.schema_version).toBe("binary-result-presentation.v1");
     expect(SCHEMA_SUPPORTED_BADGE_PRESETS).toContain(body.result_card?.interpretation?.preset);
     expect(body.result_card?.interpretation?.labels?.high).toBe("Severe risk");
+    // Project Spec S0239: the loaded legacy "Scoring model" copy never
+    // survives into the published payload -- the heading is always fixed.
+    expect(body.result_card?.model_section_label).toBe("Model");
   });
 
   it("renders the exact enabled card-only theme catalog while preserving Result Card locks", async () => {
@@ -3477,6 +3484,47 @@ describe("DatasetAdminPage", () => {
       ]);
       expect(screen.getByLabelText("Show F1-score")).toBeInTheDocument();
     });
+
+    it("has no Model section label input in multiclass Result Card Configuration and always publishes the fixed Model heading (Project Spec S0239)", async () => {
+      const fetchMock = installFetchMock({ resultContractOverride: multiclassResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+      expect(screen.getByLabelText("Predicted class label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Class probability distribution label")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Model section label")).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Predicted class label"), { target: { value: "Predicted species" } });
+
+      const callsBeforeSave = fetchMock.mock.calls.length;
+      fireEvent.click(
+        within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+          name: "Publish changes",
+        }),
+      );
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+            name: "Publish changes",
+          }),
+        ).toBeDisabled(),
+      );
+
+      const saveCall = fetchMock.mock.calls
+        .slice(callsBeforeSave)
+        .find(
+          (call: unknown[]) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        );
+      expect(saveCall).toBeDefined();
+      const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+        result_card?: Record<string, unknown>;
+      };
+      expect(body.result_card?.predicted_class_label).toBe("Predicted species");
+      expect(body.result_card?.model_section_label).toBe("Model");
+    });
   });
 
   // Project Spec S0237: continuous-regression Performance focus authoring
@@ -3810,11 +3858,13 @@ describe("DatasetAdminPage", () => {
       expect(screen.getByLabelText("Predicted value label")).toBeInTheDocument();
       expect(screen.getByLabelText("Decimal places")).toBeInTheDocument();
       expect(screen.getByLabelText("Optional unit label")).toBeInTheDocument();
-      expect(screen.getByLabelText("Model section label")).toBeInTheDocument();
 
       // No binary/multiclass editable fields leak into the regression form.
       expect(screen.queryByLabelText("Positive-class probability label")).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Predicted class label")).not.toBeInTheDocument();
+      // Project Spec S0239: the Model section heading is fixed and no longer
+      // an editable Result Card Configuration input.
+      expect(screen.queryByLabelText("Model section label")).not.toBeInTheDocument();
       // Value band (badge preset) remains unavailable -- no governed band
       // contract exists for continuous_regression, so the preset selector
       // never renders at all (never shown as a clickable-but-locked option).
@@ -3831,7 +3881,6 @@ describe("DatasetAdminPage", () => {
       fireEvent.change(screen.getByLabelText("Predicted value label"), { target: { value: "Predicted compressive strength" } });
       fireEvent.change(screen.getByLabelText("Decimal places"), { target: { value: "1" } });
       fireEvent.change(screen.getByLabelText("Optional unit label"), { target: { value: "MPa" } });
-      fireEvent.change(screen.getByLabelText("Model section label"), { target: { value: "Model" } });
 
       const callsBeforeSave = fetchMock.mock.calls.length;
       fireEvent.click(

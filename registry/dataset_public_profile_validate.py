@@ -140,6 +140,11 @@ def normalize_binary_result_presentation(result_card: object) -> dict:
 
     # risk is the only supported renderer preset. Invalid values cannot pass
     # schema validation and must never be projected as a new authority.
+    #
+    # Project Spec S0239: model_section_label is fixed to "Model" -- neither
+    # the canonical key nor the legacy model_label compatibility key may
+    # control the normalized output value. Both remain readable-only inputs
+    # so historical payloads stay schema-compatible.
     return {
         "schema_version": BINARY_RESULT_PRESENTATION_SCHEMA_VERSION,
         "positive_class_probability_label": copy(
@@ -148,7 +153,7 @@ def normalize_binary_result_presentation(result_card: object) -> dict:
         "predicted_outcome_label": copy("predicted_outcome_label"),
         "positive_outcome_copy": copy("positive_outcome_copy"),
         "negative_outcome_copy": copy("negative_outcome_copy"),
-        "model_section_label": copy("model_section_label", "model_label"),
+        "model_section_label": _RESULT_CARD_FALLBACKS["model_section_label"],
         "interpretation": {
             "preset": "risk",
             "labels": {key: label(key) for key in ("high", "medium", "low")},
@@ -164,9 +169,12 @@ def normalize_multiclass_result_presentation(result_card: object) -> dict:
         value = source.get(key)
         return value.strip() if isinstance(value, str) and value.strip() else _MULTICLASS_RESULT_CARD_FALLBACKS[key]
 
+    # Project Spec S0239: model_section_label is fixed to "Model" regardless
+    # of incoming presentation copy.
     return {
         "schema_version": MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION,
-        **{key: copy(key) for key in _MULTICLASS_RESULT_CARD_FALLBACKS},
+        **{key: copy(key) for key in _MULTICLASS_RESULT_CARD_FALLBACKS if key != "model_section_label"},
+        "model_section_label": _MULTICLASS_RESULT_CARD_FALLBACKS["model_section_label"],
     }
 
 
@@ -187,9 +195,12 @@ def normalize_continuous_regression_result_presentation(result_card: object) -> 
     if not isinstance(decimal_places, int) or isinstance(decimal_places, bool) or not (0 <= decimal_places <= 6):
         decimal_places = _CONTINUOUS_REGRESSION_DECIMAL_PLACES_FALLBACK
 
+    # Project Spec S0239: model_section_label is fixed to "Model" regardless
+    # of incoming presentation copy.
     normalized = {
         "schema_version": CONTINUOUS_REGRESSION_RESULT_PRESENTATION_SCHEMA_VERSION,
-        **{key: copy(key) for key in _CONTINUOUS_REGRESSION_RESULT_CARD_FALLBACKS},
+        **{key: copy(key) for key in _CONTINUOUS_REGRESSION_RESULT_CARD_FALLBACKS if key != "model_section_label"},
+        "model_section_label": _CONTINUOUS_REGRESSION_RESULT_CARD_FALLBACKS["model_section_label"],
         "decimal_places": decimal_places,
     }
     value_unit_label = source.get("value_unit_label")

@@ -102,7 +102,7 @@ export default function BinaryClassificationResult({ result, presentation }: Pro
       </p>
 
       <div className="binary-classification-result__model">
-        <p className="binary-classification-result__label">{presentation.model_section_label}</p>
+        <p className="binary-classification-result__label">Model</p>
         <p className="binary-classification-result__model-value">{result.model_descriptor.display_name}</p>
       </div>
     </div>

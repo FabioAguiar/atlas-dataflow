@@ -26,7 +26,7 @@ export default function ContinuousRegressionResult({ result, presentation }: Pro
         </p>
       </div>
       <div className="continuous-regression-result__model">
-        <p className="continuous-regression-result__label">{presentation.model_section_label}</p>
+        <p className="continuous-regression-result__label">Model</p>
         <p className="continuous-regression-result__model-value">{result.model_descriptor.display_name}</p>
       </div>
     </div>

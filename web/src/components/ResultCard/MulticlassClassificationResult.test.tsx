@@ -32,4 +32,13 @@ describe("MulticlassClassificationResult", () => {
     expect(result.class_probabilities.map((entry) => entry.class_id)).toEqual(original);
     expect(container).not.toHaveTextContent(/confidence|threshold|risk/i);
   });
+
+  it("always renders the fixed 'Model' heading, never a legacy/custom presentation model_section_label (Project Spec S0239)", () => {
+    const customPresentation = { ...GENERIC_MULTICLASS_RESULT_PRESENTATION, model_section_label: "Scoring model" };
+    render(<MulticlassClassificationResult result={result} presentation={customPresentation} />);
+
+    expect(screen.getByText("Model")).toBeInTheDocument();
+    expect(screen.queryByText("Scoring model")).not.toBeInTheDocument();
+    expect(screen.getByText("Fixture model")).toBeInTheDocument();
+  });
 });

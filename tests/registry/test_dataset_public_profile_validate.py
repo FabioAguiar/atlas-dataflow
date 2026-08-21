@@ -277,7 +277,9 @@ def test_legacy_result_card_normalizes_to_canonical_without_submit_or_technical_
     }
     normalized = normalize_binary_result_presentation(legacy)
     assert normalized["positive_class_probability_label"] == "Event probability"
-    assert normalized["model_section_label"] == "Estimator"
+    # Project Spec S0239: legacy model_label is readable-only compatibility
+    # copy -- it never controls the normalized model_section_label output.
+    assert normalized["model_section_label"] == "Model"
     assert normalized["predicted_outcome_label"] == "Predicted outcome"
     assert normalized["interpretation"]["labels"] == {
         "high": "Red", "medium": "Amber", "low": "Green"
@@ -297,6 +299,34 @@ def test_mixed_result_card_normalization_uses_canonical_precedence():
     assert normalized["interpretation"]["labels"] == {
         "high": "Canonical high", "medium": "Legacy medium", "low": "Low"
     }
+
+
+# ---------------------------------------------------------------------------
+# Fixed Model section label (Project Spec S0239)
+# ---------------------------------------------------------------------------
+
+def test_binary_result_card_model_section_label_is_fixed_regardless_of_copy():
+    assert normalize_binary_result_presentation(
+        {"model_section_label": "Scoring model"}
+    )["model_section_label"] == "Model"
+    assert normalize_binary_result_presentation(
+        {"model_label": "Estimator"}
+    )["model_section_label"] == "Model"
+    assert normalize_binary_result_presentation({})["model_section_label"] == "Model"
+    normalized = normalize_binary_result_presentation({"model_section_label": "Scoring model"})
+    assert normalize_binary_result_presentation(normalized) == normalized
+
+
+def test_multiclass_result_card_model_section_label_is_fixed_regardless_of_copy():
+    normalized = normalize_multiclass_result_presentation({"model_section_label": "Scoring model"})
+    assert normalized["model_section_label"] == "Model"
+    assert normalize_multiclass_result_presentation(normalized) == normalized
+
+
+def test_continuous_regression_result_card_model_section_label_is_fixed_regardless_of_copy():
+    normalized = normalize_continuous_regression_result_presentation({"model_section_label": "Scoring model"})
+    assert normalized["model_section_label"] == "Model"
+    assert normalize_continuous_regression_result_presentation(normalized) == normalized
 
 
 def test_multiclass_result_card_normalization_is_copy_only_and_idempotent():

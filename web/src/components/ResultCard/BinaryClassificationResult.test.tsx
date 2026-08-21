@@ -138,6 +138,18 @@ describe("BinaryClassificationResult semantic rendering", () => {
     expect(screen.getByText("Gradient Boosting")).toBeInTheDocument();
   });
 
+  it("always renders the fixed 'Model' heading, never a legacy/custom presentation model_section_label (Project Spec S0239)", () => {
+    const customPresentation: BinaryResultPresentation = {
+      ...presentation,
+      model_section_label: "Estimator",
+    };
+    render(<BinaryClassificationResult result={buildResult()} presentation={customPresentation} />);
+
+    expect(screen.getByText("Model")).toBeInTheDocument();
+    expect(screen.queryByText("Estimator")).not.toBeInTheDocument();
+    expect(screen.getByText("Gradient Boosting")).toBeInTheDocument();
+  });
+
   it("never renders legacy confidence copy", () => {
     render(<BinaryClassificationResult result={buildResult()} presentation={presentation} />);
 

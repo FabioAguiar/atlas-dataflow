@@ -191,7 +191,9 @@ def test_publish_canonicalizes_legacy_result_card_and_omits_legacy_keys(fake_rep
     card = result["snapshot"]["profile"]["result_card"]
     assert card["schema_version"] == "binary-result-presentation.v1"
     assert card["positive_class_probability_label"] == "Event probability"
-    assert card["model_section_label"] == "Model details"
+    # Project Spec S0239: legacy model_label never controls the persisted
+    # model_section_label -- it is fixed to "Model".
+    assert card["model_section_label"] == "Model"
     assert not ({"probability_label", "model_label", "badge_preset", "badge_labels", "submit_button_label"} & card.keys())
 
 
@@ -218,6 +220,49 @@ def test_publish_preserves_continuous_regression_result_presentation(fake_repo):
     result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
     assert result["published"] is True
     assert result["snapshot"]["profile"]["result_card"] == profile["result_card"]
+
+
+def test_publish_binary_result_card_canonicalizes_custom_model_section_label(fake_repo):
+    profile = _profile(result_card={
+        "schema_version": "binary-result-presentation.v1",
+        "positive_class_probability_label": "Positive class probability",
+        "predicted_outcome_label": "Predicted outcome",
+        "positive_outcome_copy": "Positive outcome",
+        "negative_outcome_copy": "Negative outcome",
+        "model_section_label": "Scoring model",
+        "interpretation": {
+            "preset": "risk",
+            "labels": {"high": "High", "medium": "Medium", "low": "Low"},
+        },
+    })
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"]["model_section_label"] == "Model"
+
+
+def test_publish_multiclass_result_card_canonicalizes_custom_model_section_label(fake_repo):
+    profile = _profile(result_card={
+        "schema_version": "multiclass-result-presentation.v1",
+        "predicted_class_label": "Predicted class",
+        "class_probability_distribution_label": "Class probability distribution",
+        "model_section_label": "Scoring model",
+    })
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"]["model_section_label"] == "Model"
+
+
+def test_publish_continuous_regression_result_card_canonicalizes_custom_model_section_label(fake_repo):
+    profile = _profile(result_card={
+        "schema_version": "continuous-regression-result-presentation.v1",
+        "predicted_value_label": "Predicted compressive strength",
+        "model_section_label": "Scoring model",
+        "decimal_places": 2,
+        "value_unit_label": "MPa",
+    })
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"]["model_section_label"] == "Model"
 
 
 def test_publish_bounds_continuous_regression_decimal_places(fake_repo):

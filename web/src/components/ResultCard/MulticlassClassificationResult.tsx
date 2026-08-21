@@ -41,7 +41,7 @@ export default function MulticlassClassificationResult({ result, presentation }:
         </ul>
       </div>
       <div className="multiclass-classification-result__model">
-        <p className="multiclass-classification-result__label">{presentation.model_section_label}</p>
+        <p className="multiclass-classification-result__label">Model</p>
         <p className="multiclass-classification-result__model-value">{result.model_descriptor.display_name}</p>
       </div>
     </div>

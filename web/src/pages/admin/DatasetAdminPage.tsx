@@ -357,7 +357,6 @@ type DraftForm = {
   // Form tab's customization-loading effect can seed a migration candidate
   // from the currently loaded profile's legacy value.
   legacy_submit_button_label: string;
-  model_section_label: string;
   interpretation_preset: "risk";
   interpretation_high: string;
   interpretation_medium: string;
@@ -1627,7 +1626,6 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     decimal_places: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.decimal_places,
     value_unit_label: "",
     legacy_submit_button_label: "",
-    model_section_label: GENERIC_RESULT_PRESENTATION.model_section_label,
     interpretation_preset: "risk",
     interpretation_high: GENERIC_RESULT_PRESENTATION.interpretation.labels.high,
     interpretation_medium: GENERIC_RESULT_PRESENTATION.interpretation.labels.medium,
@@ -1676,7 +1674,6 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     decimal_places: profile.result_card?.decimal_places ?? form.decimal_places,
     value_unit_label: profile.result_card?.value_unit_label ?? "",
     legacy_submit_button_label: profile.result_card?.submit_button_label ?? "",
-    model_section_label: profile.result_card?.model_section_label ?? form.model_section_label,
     interpretation_preset: "risk",
     interpretation_high: profile.result_card?.interpretation?.labels?.high ?? form.interpretation_high,
     interpretation_medium: profile.result_card?.interpretation?.labels?.medium ?? form.interpretation_medium,
@@ -1760,11 +1757,11 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
     schema_version: "multiclass-result-presentation.v1",
     predicted_class_label: textValue(form.predicted_class_label),
     class_probability_distribution_label: textValue(form.class_probability_distribution_label),
-    model_section_label: textValue(form.model_section_label),
+    model_section_label: GENERIC_MULTICLASS_RESULT_PRESENTATION.model_section_label,
   } : form.result_presentation_schema_version === "continuous-regression-result-presentation.v1" ? {
     schema_version: "continuous-regression-result-presentation.v1",
     predicted_value_label: textValue(form.predicted_value_label),
-    model_section_label: textValue(form.model_section_label),
+    model_section_label: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.model_section_label,
     decimal_places: form.decimal_places,
     value_unit_label: textValue(form.value_unit_label),
   } : {
@@ -1773,7 +1770,7 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
     predicted_outcome_label: textValue(form.predicted_outcome_label),
     positive_outcome_copy: textValue(form.positive_outcome_copy),
     negative_outcome_copy: textValue(form.negative_outcome_copy),
-    model_section_label: textValue(form.model_section_label),
+    model_section_label: GENERIC_RESULT_PRESENTATION.model_section_label,
     interpretation: {
       preset: "risk",
       labels: {
@@ -1845,7 +1842,11 @@ type WorkspacePublishFields = Pick<
   | "predicted_outcome_label"
   | "positive_outcome_copy"
   | "negative_outcome_copy"
-  | "model_section_label"
+  | "predicted_class_label"
+  | "class_probability_distribution_label"
+  | "predicted_value_label"
+  | "decimal_places"
+  | "value_unit_label"
   | "interpretation_preset"
   | "interpretation_high"
   | "interpretation_medium"
@@ -1877,7 +1878,11 @@ function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
     predicted_outcome_label: form.predicted_outcome_label,
     positive_outcome_copy: form.positive_outcome_copy,
     negative_outcome_copy: form.negative_outcome_copy,
-    model_section_label: form.model_section_label,
+    predicted_class_label: form.predicted_class_label,
+    class_probability_distribution_label: form.class_probability_distribution_label,
+    predicted_value_label: form.predicted_value_label,
+    decimal_places: form.decimal_places,
+    value_unit_label: form.value_unit_label,
     interpretation_preset: form.interpretation_preset,
     interpretation_high: form.interpretation_high,
     interpretation_medium: form.interpretation_medium,
@@ -2112,7 +2117,7 @@ function presentationFromForm(form: DraftForm): ResultPresentation {
       schema_version: "multiclass-result-presentation.v1",
       predicted_class_label: form.predicted_class_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.predicted_class_label,
       class_probability_distribution_label: form.class_probability_distribution_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.class_probability_distribution_label,
-      model_section_label: form.model_section_label.trim() || GENERIC_MULTICLASS_RESULT_PRESENTATION.model_section_label,
+      model_section_label: GENERIC_MULTICLASS_RESULT_PRESENTATION.model_section_label,
     };
   }
   if (form.result_presentation_schema_version === "continuous-regression-result-presentation.v1") {
@@ -2123,7 +2128,7 @@ function presentationFromForm(form: DraftForm): ResultPresentation {
     return {
       schema_version: "continuous-regression-result-presentation.v1",
       predicted_value_label: form.predicted_value_label.trim() || GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.predicted_value_label,
-      model_section_label: form.model_section_label.trim() || GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.model_section_label,
+      model_section_label: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.model_section_label,
       decimal_places: decimalPlaces,
       ...(unitLabel ? { value_unit_label: unitLabel } : {}),
     };
@@ -2134,7 +2139,7 @@ function presentationFromForm(form: DraftForm): ResultPresentation {
     predicted_outcome_label: form.predicted_outcome_label.trim() || GENERIC_RESULT_PRESENTATION.predicted_outcome_label,
     positive_outcome_copy: form.positive_outcome_copy.trim() || GENERIC_RESULT_PRESENTATION.positive_outcome_copy,
     negative_outcome_copy: form.negative_outcome_copy.trim() || GENERIC_RESULT_PRESENTATION.negative_outcome_copy,
-    model_section_label: form.model_section_label.trim() || GENERIC_RESULT_PRESENTATION.model_section_label,
+    model_section_label: GENERIC_RESULT_PRESENTATION.model_section_label,
     interpretation: {
       preset: "risk",
       labels: {
@@ -3598,7 +3603,6 @@ function ResultCardTab({
           {multiclassSemantics ? <div className="dataset-admin-form-grid">
             <TextField label="Predicted class label" onChange={(value) => setField("predicted_class_label", value)} value={form.predicted_class_label} />
             <TextField label="Class probability distribution label" onChange={(value) => setField("class_probability_distribution_label", value)} value={form.class_probability_distribution_label} />
-            <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
           </div> : regressionSemantics ? <div className="dataset-admin-form-grid">
             <TextField label="Predicted value label" onChange={(value) => setField("predicted_value_label", value)} value={form.predicted_value_label} />
             <label className="dataset-admin-native-select">
@@ -3614,13 +3618,11 @@ function ResultCardTab({
               </select>
             </label>
             <TextField label="Optional unit label" onChange={(value) => setField("value_unit_label", value)} value={form.value_unit_label} />
-            <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
           </div> : <div className="dataset-admin-form-grid">
             <TextField label="Positive-class probability label" onChange={(value) => setField("positive_class_probability_label", value)} value={form.positive_class_probability_label} />
             <TextField label="Predicted outcome label" onChange={(value) => setField("predicted_outcome_label", value)} value={form.predicted_outcome_label} />
             <TextField label="Positive outcome copy" onChange={(value) => setField("positive_outcome_copy", value)} value={form.positive_outcome_copy} />
             <TextField label="Negative outcome copy" onChange={(value) => setField("negative_outcome_copy", value)} value={form.negative_outcome_copy} />
-            <TextField label="Model section label" onChange={(value) => setField("model_section_label", value)} value={form.model_section_label} />
           </div>}
           {binarySemantics ? <>
           <label className="dataset-admin-native-select">

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "dataset_slug": "dry-bean",
-  "published_at": "2026-08-19T11:31:25Z",
+  "published_at": "2026-08-19T11:34:19Z",
   "active_release_at_publish_time": "release-20260818-002",
   "profile": {
     "display": {
@@ -17,6 +17,7 @@
     },
     "home_card": {
       "background_image_ref": "/media/home-cards/836dfac660304b41a3ce706c4381988a.jpg",
+      "short_description": "Classify dry bean varieties from 16 morphological measurements using a governed multiclass model that predicts one of seven bean classes and returns class probabilities.",
       "primary_metric_key": null
     },
     "performance_focus": {

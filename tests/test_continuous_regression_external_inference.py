@@ -54,6 +54,7 @@ def _continuous_bundle(
     include_probability_output: bool = False,
     model_provenance_origin: str | None = None,
     include_external_model_evidence: bool = False,
+    feature_order: list[str] | None = None,
 ) -> dict[str, Any]:
     output_schema: dict[str, Any] = {"prediction_type": prediction_type}
     if include_class_labels:
@@ -64,7 +65,7 @@ def _continuous_bundle(
     bundle: dict[str, Any] = {
         "input_schema": {"runtime_contract_reference": "contract_references.runtime_contract"},
         "contract_references": {"runtime_contract": {"contract_version": "runtime-contract.v1"}},
-        "feature_order": ["feature_a", "feature_b"],
+        "feature_order": list(feature_order) if feature_order is not None else ["feature_a", "feature_b"],
         "result_semantics": {
             "schema_version": schema_version,
             "problem_type": problem_type,
@@ -82,10 +83,12 @@ def _continuous_bundle(
     return bundle
 
 
-def _runtime_contract() -> dict[str, Any]:
+def _runtime_contract(features: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "schema_version": "runtime-contract.v1",
-        "features": [
+        "features": features
+        if features is not None
+        else [
             {"name": "feature_a", "required": True},
             {"name": "feature_b", "required": False},
         ],
@@ -160,6 +163,31 @@ def test_isolated_plan_unknown_result_semantics_fail_closed():
         rl._build_prediction_plan(
             _continuous_bundle(schema_version="unknown-semantics.v1"), _runtime_contract()
         )
+
+
+_SOURCE_COLUMN_FEATURE_ORDER = [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Coarse Aggregate",
+]
+
+
+def test_isolated_plan_preserves_source_column_feature_identity_and_order():
+    """Project Spec S0236: the isolated Atlas-owned loader/planning boundary
+    must preserve governed source-column feature identities that contain
+    spaces exactly, without requiring Python-like identifiers."""
+
+    plan = rl._build_prediction_plan(
+        _continuous_bundle(feature_order=_SOURCE_COLUMN_FEATURE_ORDER),
+        _runtime_contract(
+            features=[{"name": name, "required": True} for name in _SOURCE_COLUMN_FEATURE_ORDER]
+        ),
+    )
+    assert plan.result_variant == "continuous_regression"
+    assert plan.feature_order == tuple(_SOURCE_COLUMN_FEATURE_ORDER)
+    for feature_name in plan.feature_order:
+        assert "_" not in feature_name
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +284,41 @@ def test_isolated_hist_gradient_boosting_non_finite_predictions_fail_closed(pred
     with pytest.raises(rl.LoadSafeGateError) as caught:
         rl.execute_prediction(model, {"zeta": 4}, _hgb_continuous_plan())
     assert caught.value.diagnostic_code == rl.DIAGNOSTIC_PREDICTION_EXECUTION_FAILED
+
+
+def _source_column_plan() -> rl.PredictionPlan:
+    return rl.PredictionPlan(
+        result_variant="continuous_regression",
+        feature_order=tuple(_SOURCE_COLUMN_FEATURE_ORDER),
+        required_features=frozenset({"Cement"}),
+        output_classes=(),
+        model_descriptor=dict(_CONTINUOUS_MODEL_DESCRIPTOR),
+    )
+
+
+def test_isolated_execute_prediction_preserves_source_column_feature_identity():
+    """Project Spec S0236: exact feature identity/order is preserved through
+    isolated execution -- payload keys with spaces, no underscore/slug
+    aliasing, exact column order in the constructed model input."""
+
+    model = _SyntheticContinuousRegressionModel([777.0])
+    payload = {
+        "Cement": 540.0,
+        "Blast Furnace Slag": 0.0,
+        "Fly Ash": 0.0,
+        "Coarse Aggregate": 1055.0,
+    }
+    result = rl.execute_prediction(model, payload, _source_column_plan())
+
+    assert list(model.frame.columns) == _SOURCE_COLUMN_FEATURE_ORDER
+    for feature_name, expected_value in payload.items():
+        assert model.frame.iloc[0][feature_name] == expected_value
+    assert result == {
+        "schema_version": "continuous-regression-result.v1",
+        "problem_type": "continuous_regression",
+        "predicted_value": 777.0,
+        "model_descriptor": _CONTINUOUS_MODEL_DESCRIPTOR,
+    }
 
 
 def test_isolated_no_predict_interface_fails_closed():

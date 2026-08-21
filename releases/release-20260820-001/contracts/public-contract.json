@@ -1,0 +1,61 @@
+{
+  "features": [
+    {
+      "display_order": 1,
+      "input_type": "number",
+      "label": "Cement",
+      "name": "Cement",
+      "optional": false
+    },
+    {
+      "display_order": 2,
+      "input_type": "number",
+      "label": "Blast Furnace Slag",
+      "name": "Blast Furnace Slag",
+      "optional": false
+    },
+    {
+      "display_order": 3,
+      "input_type": "number",
+      "label": "Fly Ash",
+      "name": "Fly Ash",
+      "optional": false
+    },
+    {
+      "display_order": 4,
+      "input_type": "number",
+      "label": "Water",
+      "name": "Water",
+      "optional": false
+    },
+    {
+      "display_order": 5,
+      "input_type": "number",
+      "label": "Superplasticizer",
+      "name": "Superplasticizer",
+      "optional": false
+    },
+    {
+      "display_order": 6,
+      "input_type": "number",
+      "label": "Coarse Aggregate",
+      "name": "Coarse Aggregate",
+      "optional": false
+    },
+    {
+      "display_order": 7,
+      "input_type": "number",
+      "label": "Fine Aggregate",
+      "name": "Fine Aggregate",
+      "optional": false
+    },
+    {
+      "display_order": 8,
+      "input_type": "number",
+      "label": "Age",
+      "name": "Age",
+      "optional": false
+    }
+  ],
+  "schema_version": "1.0.0"
+}

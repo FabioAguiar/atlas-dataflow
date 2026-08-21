@@ -1,0 +1,156 @@
+{
+  "artifact_kind": "model_card_input",
+  "created_at": "2026-08-21T09:26:33.495570Z",
+  "dataset": {
+    "dataset_id": "concrete-compressive-strength",
+    "feature_columns": [
+      "Cement",
+      "Blast Furnace Slag",
+      "Fly Ash",
+      "Water",
+      "Superplasticizer",
+      "Coarse Aggregate",
+      "Fine Aggregate",
+      "Age"
+    ],
+    "feature_count": 8,
+    "feature_definitions": {
+      "Age": {
+        "domain_constraints": {
+          "max": 365,
+          "min": 1
+        },
+        "type": "numeric"
+      },
+      "Blast Furnace Slag": {
+        "domain_constraints": {
+          "max": 359.4,
+          "min": 0.0
+        },
+        "type": "numeric"
+      },
+      "Cement": {
+        "domain_constraints": {
+          "max": 540.0,
+          "min": 102.0
+        },
+        "type": "numeric"
+      },
+      "Coarse Aggregate": {
+        "domain_constraints": {
+          "max": 1145.0,
+          "min": 801.0
+        },
+        "type": "numeric"
+      },
+      "Fine Aggregate": {
+        "domain_constraints": {
+          "max": 992.6,
+          "min": 594.0
+        },
+        "type": "numeric"
+      },
+      "Fly Ash": {
+        "domain_constraints": {
+          "max": 200.1,
+          "min": 0.0
+        },
+        "type": "numeric"
+      },
+      "Superplasticizer": {
+        "domain_constraints": {
+          "max": 32.2,
+          "min": 0.0
+        },
+        "type": "numeric"
+      },
+      "Water": {
+        "domain_constraints": {
+          "max": 247.0,
+          "min": 121.8
+        },
+        "type": "numeric"
+      }
+    },
+    "target_column": "Concrete compressive strength",
+    "target_description": {
+      "absence_reason": "execution contract does not declare target_description",
+      "declared": false,
+      "value": null
+    }
+  },
+  "evaluation": {
+    "primary_metric_name": "mae",
+    "primary_metric_value": 2.045284911051866,
+    "secondary_metrics": [
+      {
+        "name": "rmse",
+        "value": 2.9740119429538
+      },
+      {
+        "name": "r2",
+        "value": 0.969364116075396
+      }
+    ]
+  },
+  "evidence_policy": {
+    "full_metrics_artifact_embedded": false,
+    "full_training_parameter_record_embedded": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "d092bd4d78368b2f90355d0fd32930ff96c89573bb75e32f6b2d0573b4e37dcd",
+    "metrics_sha256": "8f50a385cfd96b918c873a8c5f1ffcf6cfb07ae56b41ae04428a5b13efa35e19",
+    "prepared_dataset_sha256": "2f6e632031e655e2344153e4d84bbebcfc7d53f91cad3ab8130076a8e1d4e1be",
+    "training_parameter_record_sha256": "a677bc5fc72cf7fed0fc9421f1a26ba1d30aedd63b08fcd3791febdd663162b5"
+  },
+  "intended_use_context": {
+    "absence_reason": "execution contract does not declare intended_use_context",
+    "declared": false,
+    "value": null
+  },
+  "model": {
+    "hyperparameters": {
+      "l2_regularization": 1.0,
+      "learning_rate": 0.1,
+      "max_iter": 300,
+      "max_leaf_nodes": 15,
+      "min_samples_leaf": 10
+    },
+    "model_family": "hist_gradient_boosting",
+    "task_type": "continuous_regression"
+  },
+  "path_references": {
+    "dataset_path": "pipeline/prepared/concrete-compressive-strength/prepared-data.csv",
+    "execution_contract_path": "contracts/concrete-compressive-strength/execution-contract.json",
+    "metrics_path": "pipeline/training-runs/concrete-compressive-strength/train-20260821T092633Z/metrics.json",
+    "model_card_input_path": "pipeline/training-runs/concrete-compressive-strength/train-20260821T092633Z/model-card-input.json",
+    "training_parameter_record_path": "pipeline/training-runs/concrete-compressive-strength/train-20260821T092633Z/training-parameter-record.json"
+  },
+  "schema_version": "model-card-input.v2",
+  "training": {
+    "evaluation_split_size": 155,
+    "seed": 42,
+    "split_policy": {
+      "strategy": "random",
+      "test_ratio": 0.15,
+      "train_ratio": 0.7,
+      "val_ratio": 0.15
+    },
+    "training_data_row_count": 721,
+    "training_timestamp": "2026-08-21T09:26:33.495570Z"
+  },
+  "training_run_identity": {
+    "dataset_slug": "concrete-compressive-strength",
+    "output_directory": "pipeline/training-runs/concrete-compressive-strength/train-20260821T092633Z/",
+    "run_id": "train-20260821T092633Z"
+  }
+}

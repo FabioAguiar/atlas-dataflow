@@ -1,0 +1,164 @@
+{
+  "consumed_inputs": {
+    "dataset_path": "pipeline/prepared/concrete-compressive-strength/prepared-data.csv",
+    "execution_contract_dataset_id": "concrete-compressive-strength",
+    "execution_contract_path": "contracts/concrete-compressive-strength/execution-contract.json",
+    "prepared_dataset_dataset_id": "concrete-compressive-strength"
+  },
+  "controlled_entrypoint_provenance": {
+    "entrypoint": "pipeline.training.train_from_paths",
+    "execution_contract_sha256": "d092bd4d78368b2f90355d0fd32930ff96c89573bb75e32f6b2d0573b4e37dcd",
+    "generated_at": "2026-08-20T18:20:03.630240Z",
+    "marker_id": "d605eb3f17ec1faddbe9f49c17c5c3cc1178da1d96cba520a2903e68dd722c7b",
+    "marker_kind": "controlled_training_entrypoint",
+    "marker_version": "controlled-entrypoint-provenance.v1",
+    "output_directory": "pipeline/training-runs/concrete-compressive-strength/train-20260820T182003Z/",
+    "prepared_dataset_sha256": "2f6e632031e655e2344153e4d84bbebcfc7d53f91cad3ab8130076a8e1d4e1be",
+    "run_id": "train-20260820T182003Z"
+  },
+  "evidence_policy": {
+    "private_source_paths_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "raw_artifact_contents_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "hashes": {
+    "algorithm": "sha256",
+    "execution_contract_sha256": "d092bd4d78368b2f90355d0fd32930ff96c89573bb75e32f6b2d0573b4e37dcd",
+    "metrics_sha256": "07e24d19ef45f5eb3e15b9fbd7fba7d119bfea2bdc0580ae4556078a32fa5f14",
+    "model_artifact_sha256": "91808cc4d150763ae3415aa202d2e25be1141c62039d5bcefd85991f12a0bae5",
+    "prepared_dataset_sha256": "2f6e632031e655e2344153e4d84bbebcfc7d53f91cad3ab8130076a8e1d4e1be"
+  },
+  "permitted_execution_contract_fields": [
+    "allowed_transformations",
+    "categorical_encoding_policy",
+    "contract_version",
+    "dataset_id",
+    "feature_columns",
+    "feature_definitions",
+    "missing_value_policy",
+    "modeling_constraints",
+    "numeric_handling",
+    "primary_metric",
+    "random_seed",
+    "result_semantics",
+    "secondary_metrics",
+    "split_policy",
+    "target_column"
+  ],
+  "problem_type": "continuous_regression",
+  "produced_outputs": {
+    "metrics_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T182003Z/metrics.json",
+    "model_card_input_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T182003Z/model-card-input.json",
+    "model_selection_evidence_path": null,
+    "serialized_model_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T182003Z/model.pkl",
+    "training_parameter_record_path": "pipeline/training-runs/concrete-compressive-strength/train-20260820T182003Z/training-parameter-record.json"
+  },
+  "record_boundary_confirmations": {
+    "controlled_entrypoint_provenance_marker_present": true,
+    "is_metrics_artifact": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_dataset_embedded": false,
+    "unauthorized_contract_fields_consumed": false
+  },
+  "record_kind": "training_parameter_record",
+  "regression_evidence": {
+    "output_value_kind": "continuous_numeric",
+    "problem_type": "continuous_regression",
+    "result_semantics_schema_version": "continuous-regression-result-semantics.v1"
+  },
+  "schema_version": "training-parameter-record.v3",
+  "serializer": {
+    "installed_version": "1.5.3",
+    "name": "joblib",
+    "serialization_format_version": "joblib-1.5.3"
+  },
+  "training_parameters": {
+    "feature_columns": [
+      "Cement",
+      "Blast Furnace Slag",
+      "Fly Ash",
+      "Water",
+      "Superplasticizer",
+      "Coarse Aggregate",
+      "Fine Aggregate",
+      "Age"
+    ],
+    "final_fit": {
+      "fit_partitions": [
+        "train",
+        "validation"
+      ]
+    },
+    "final_test": {
+      "evaluation_count": 1,
+      "partition": "test",
+      "used_for_fitting": false,
+      "used_for_model_selection": false
+    },
+    "hyperparameters": {
+      "l2_regularization": 1.0,
+      "learning_rate": 0.1,
+      "max_iter": 300,
+      "max_leaf_nodes": 15,
+      "min_samples_leaf": 10
+    },
+    "initial_fit": {
+      "fit_partition": "train"
+    },
+    "model_family": "hist_gradient_boosting",
+    "model_selection_performed": false,
+    "modeling_constraints": {
+      "allowed_model_families": [
+        "hist_gradient_boosting"
+      ],
+      "fixed_model_configuration": {
+        "hyperparameters": {
+          "l2_regularization": 1.0,
+          "learning_rate": 0.1,
+          "max_iter": 300,
+          "max_leaf_nodes": 15,
+          "min_samples_leaf": 10
+        },
+        "model_family": "hist_gradient_boosting"
+      },
+      "no_automl": true,
+      "selection_mode": "fixed_configuration"
+    },
+    "primary_metric": "mae",
+    "random_seed": 42,
+    "secondary_metrics": [
+      "rmse",
+      "r2"
+    ],
+    "selection_mode": "fixed_configuration",
+    "split_policy": {
+      "strategy": "random",
+      "test_ratio": 0.15,
+      "train_ratio": 0.7,
+      "val_ratio": 0.15
+    },
+    "split_sizes": {
+      "final_fit_rows": 875,
+      "test_rows": 155,
+      "training_rows": 721,
+      "validation_rows": 154
+    },
+    "target_column": "Concrete compressive strength",
+    "validation_evaluation": {
+      "partition": "validation",
+      "used_for_hyperparameter_selection": false,
+      "used_for_model_selection": false
+    }
+  },
+  "training_run_identity": {
+    "dataset_slug": "concrete-compressive-strength",
+    "output_directory": "pipeline/training-runs/concrete-compressive-strength/train-20260820T182003Z/",
+    "run_id": "train-20260820T182003Z"
+  },
+  "training_timestamp": "2026-08-20T18:20:03.630240Z"
+}

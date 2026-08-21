@@ -44,6 +44,19 @@
       },
       "review_status": "ready",
       "dataset_detail_updated_at": "2026-08-17T10:41:12Z"
+    },
+    {
+      "dataset_slug": "concrete-compressive-strength",
+      "active_release": "release-20260820-001",
+      "public_metadata": {
+        "title": "Concrete Compressive Strength",
+        "summary": "Predict concrete compressive strength from the governed mixture composition and curing-age input features.",
+        "domain": "engineering",
+        "visibility": "public",
+        "tags": []
+      },
+      "review_status": "needs_review",
+      "dataset_detail_updated_at": "2026-08-19T18:22:21Z"
     }
   ]
 }

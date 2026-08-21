@@ -163,6 +163,7 @@ def _continuous_execution_contract(
     *,
     contract_version: str = "execution_contract.v1",
     result_semantics_overrides: dict[str, Any] | None = None,
+    feature_columns: list[Any] | None = None,
 ) -> dict[str, Any]:
     result_semantics = {
         "schema_version": "continuous-regression-result-semantics.v1",
@@ -175,7 +176,7 @@ def _continuous_execution_contract(
     return {
         "contract_version": contract_version,
         "dataset_id": "synthetic-regression",
-        "feature_columns": list(_REGRESSION_FEATURE_COLUMNS),
+        "feature_columns": list(feature_columns) if feature_columns is not None else list(_REGRESSION_FEATURE_COLUMNS),
         "missing_value_policy": {},
         "categorical_encoding_policy": "onehot",
         "numeric_handling": "standardize",
@@ -198,6 +199,7 @@ def _continuous_training_record(
     metrics_sha256: str,
     dataset_slug: str = "synthetic-regression",
     run_id: str = "train-20260819T000000Z",
+    feature_columns: list[Any] | None = None,
 ) -> dict[str, Any]:
     if regression_evidence is None:
         regression_evidence = {
@@ -216,7 +218,7 @@ def _continuous_training_record(
         "serializer": {"name": "joblib", "installed_version": "1.4.0"},
         "training_parameters": {
             "model_family": model_family,
-            "feature_columns": list(_REGRESSION_FEATURE_COLUMNS),
+            "feature_columns": list(feature_columns) if feature_columns is not None else list(_REGRESSION_FEATURE_COLUMNS),
             "selection_mode": selection_mode,
             "model_selection_performed": model_selection_performed,
         },
@@ -254,12 +256,14 @@ def _continuous_argv(
     execution_contract_result_semantics_overrides: dict[str, Any] | None = None,
     training_record_overrides: dict[str, Any] | None = None,
     metrics_overrides: dict[str, Any] | None = None,
+    feature_columns: list[Any] | None = None,
 ) -> list[str]:
     execution_contract_path = tmp_path / "execution-contract.json"
     _write_json(
         execution_contract_path,
         _continuous_execution_contract(
-            result_semantics_overrides=execution_contract_result_semantics_overrides
+            result_semantics_overrides=execution_contract_result_semantics_overrides,
+            feature_columns=feature_columns,
         ),
     )
     runtime_contract_path = tmp_path / "runtime-contract.json"
@@ -286,6 +290,8 @@ def _continuous_argv(
         "model_artifact_sha256": model_artifact_sha256,
         "metrics_sha256": metrics_sha256,
     }
+    if feature_columns is not None:
+        training_record_kwargs["feature_columns"] = feature_columns
     training_record_kwargs.update(training_record_overrides or {})
     training_record_path = tmp_path / "training-parameter-record.json"
     _write_json(training_record_path, _continuous_training_record(**training_record_kwargs))
@@ -487,3 +493,48 @@ def test_no_partial_bundle_written_after_blocking_error(tmp_path: Path) -> None:
     bundle_ok = _build_bundle(args_ok)
     _write_bundle(bundle_ok, output_path_ok)
     assert output_path_ok.exists()
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0236: source-column-compatible feature identity.
+# ---------------------------------------------------------------------------
+
+_SOURCE_COLUMN_FEATURE_ORDER = [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Coarse Aggregate",
+]
+
+
+def test_source_column_feature_names_with_spaces_generate_valid_bundle(tmp_path: Path) -> None:
+    bundle = _build_from_argv(tmp_path, feature_columns=_SOURCE_COLUMN_FEATURE_ORDER)
+
+    assert bundle["feature_order"] == _SOURCE_COLUMN_FEATURE_ORDER
+    for feature in bundle["feature_order"]:
+        assert "_" not in feature
+        assert feature == feature.strip()
+
+    validator = _bundle_schema_validator()
+    assert list(validator.iter_errors(bundle)) == []
+
+
+def test_empty_feature_name_blocks(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, feature_columns=["Cement", ""])
+    assert exc_info.value.code == "invalid_feature_order"
+    assert exc_info.value.field == "training_parameters.feature_columns"
+
+
+def test_non_string_feature_name_blocks(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, feature_columns=["Cement", 123])
+    assert exc_info.value.code == "invalid_feature_order"
+    assert exc_info.value.field == "training_parameters.feature_columns"
+
+
+def test_duplicate_feature_name_blocks(tmp_path: Path) -> None:
+    with pytest.raises(BundleGenerationError) as exc_info:
+        _build_from_argv(tmp_path, feature_columns=["Cement", "Cement"])
+    assert exc_info.value.code == "invalid_feature_order"
+    assert exc_info.value.field == "feature_order"

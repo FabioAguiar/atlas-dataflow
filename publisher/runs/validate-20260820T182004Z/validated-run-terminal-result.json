@@ -1,0 +1,54 @@
+{
+  "artifact_kind": "validated_run_terminal_result",
+  "boundary_confirmations": {
+    "educational_threshold_reinterpreted_as_operational": false,
+    "publisher_promotion_invoked": false,
+    "registry_state_written": false
+  },
+  "durable_references": {
+    "inference_bundle": {
+      "path": "pipeline/inference-bundles/concrete-compressive-strength/inference-bundle.json",
+      "sha256": "1daf2e9dbe5b6ad32d23a65fb1d3c103cd1195e9f7d87a04c99c2e62b8eb64b4"
+    },
+    "manifest": {
+      "path": "publisher/runs/validate-20260820T182004Z/manifest.json",
+      "sha256": "3fe4724667b9f5ff7693e94b1c9d20ceaf41f71d0929c1492d46e6e906edee38"
+    },
+    "materialization_result": null,
+    "operational_readiness_source": null,
+    "publisher_validation_result": {
+      "path": "publisher/runs/validate-20260820T182004Z/validation-result.json",
+      "sha256": "034189680c67cde7a3a78d4d0fe0d9b32f06270fb08dc51105939c118ef87e0e"
+    },
+    "release_candidate": {
+      "path": "releases/candidates/concrete-compressive-strength/release-20260820-001/release-candidate.json",
+      "sha256": "7e19ee8fd05a6af2b6c0eaa8fef17999d6b562c2bd4be6e024bea87e346ef8f0"
+    }
+  },
+  "manifest_outcome": {
+    "manifest_generated": true,
+    "manifest_path": "publisher/runs/validate-20260820T182004Z/manifest.json"
+  },
+  "model_source_mode": "atlas_internal_training",
+  "operational_readiness": {
+    "operational_prediction_available": false,
+    "operational_threshold": {
+      "status": "not_applicable",
+      "value": null
+    },
+    "operational_validity": "not_applicable"
+  },
+  "promotion_eligibility": true,
+  "reasons": [],
+  "run_identity": {
+    "created_at": "2026-08-20T18:20:04+00:00",
+    "dataset_slug": "concrete-compressive-strength",
+    "run_id": "train-20260820T182003Z"
+  },
+  "schema_version": "validated-run-terminal-result.v1",
+  "status": "completed",
+  "structural_validation": {
+    "checked": true,
+    "validation_outcome": "accepted"
+  }
+}

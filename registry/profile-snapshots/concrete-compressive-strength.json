@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_slug": "concrete-compressive-strength",
+  "published_at": "2026-08-20T18:22:30Z",
+  "active_release_at_publish_time": "release-20260820-001",
+  "profile": {
+    "display": {
+      "title": "Concrete Compressive Strength",
+      "release_date_label": "2026-08-19",
+      "canonical_name_fallback": true
+    },
+    "home_card": {
+      "background_image_ref": "/media/home-cards/2af87a3ec87948d5a8054b0939d0a6a4.jpg",
+      "primary_metric_key": null
+    },
+    "performance_focus": {
+      "focus_id": "positive_class_detection",
+      "highlighted_score_id": "recall",
+      "visible_scores": [
+        {
+          "score_id": "recall",
+          "display_label": "Recall",
+          "value": "0",
+          "value_source": "manual",
+          "order": 0
+        },
+        {
+          "score_id": "precision",
+          "display_label": "Precision",
+          "value": "0",
+          "value_source": "manual",
+          "order": 1
+        },
+        {
+          "score_id": "f1_score",
+          "display_label": "F1-score",
+          "value": "0",
+          "value_source": "manual",
+          "order": 2
+        }
+      ]
+    },
+    "theme": {
+      "preset": "graphite"
+    },
+    "inference_presentation": {
+      "bound_predict_view_id": "concrete-compressive-strength-regression"
+    },
+    "result_card": {
+      "schema_version": "continuous-regression-result-presentation.v1",
+      "predicted_value_label": "Predicted value",
+      "model_section_label": "Model",
+      "decimal_places": 2
+    }
+  },
+  "source_draft_schema_version": "1.0.0"
+}

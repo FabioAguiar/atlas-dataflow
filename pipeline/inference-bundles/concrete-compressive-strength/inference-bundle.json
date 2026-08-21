@@ -1,0 +1,132 @@
+{
+  "boundary_confirmations": {
+    "absolute_paths_embedded": false,
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "parent_traversal_embedded": false,
+    "raw_dataset_embedded": false,
+    "release_relative_paths_only": true,
+    "runtime_payload_validation_duplicated": false,
+    "training_internals_required_at_runtime": false
+  },
+  "bundle_identity": {
+    "artifact_kind": "inference_bundle",
+    "bundle_id": "concrete-compressive-strength-inference-bundle-20260821T092634Z",
+    "created_at": "2026-08-21T09:26:34+00:00"
+  },
+  "compatibility_constraints": {
+    "requires_contract_versions": {
+      "execution_contract": "execution_contract.v1",
+      "public_contract": "1.0.0",
+      "runtime_contract": "1.0.0"
+    },
+    "requires_feature_order_match": true,
+    "requires_hash_match": true,
+    "requires_release_relative_paths": true,
+    "requires_supported_loader": true,
+    "requires_supported_serialization": true
+  },
+  "contract_references": {
+    "execution_contract": {
+      "contract_version": "execution_contract.v1",
+      "path": "contracts/concrete-compressive-strength/execution-contract.json",
+      "sha256": "d092bd4d78368b2f90355d0fd32930ff96c89573bb75e32f6b2d0573b4e37dcd"
+    },
+    "public_contract": {
+      "contract_version": "1.0.0",
+      "path": "contracts/concrete-compressive-strength/public-contract.json",
+      "sha256": "73ebd2fd437d9c9335e5b320812ff255541cbab89849100c235f0131808f3a7c"
+    },
+    "runtime_contract": {
+      "contract_version": "1.0.0",
+      "path": "contracts/concrete-compressive-strength/runtime-contract.json",
+      "sha256": "e7472a6563de4e2fdf6c60175e3a47ff4e8e472d504fc6098d9c73516da27850"
+    }
+  },
+  "contract_version": "inference_bundle.v1",
+  "dataset_context": {
+    "dataset_context_reference": {
+      "path": "contracts/concrete-compressive-strength/dataset-context.json",
+      "sha256": "3d8b998a5b22a6b9413f6490809f164b013e89c0e2ebe69d6cce1e8269a9176b"
+    },
+    "dataset_slug": "concrete-compressive-strength"
+  },
+  "feature_order": [
+    "Cement",
+    "Blast Furnace Slag",
+    "Fly Ash",
+    "Water",
+    "Superplasticizer",
+    "Coarse Aggregate",
+    "Fine Aggregate",
+    "Age"
+  ],
+  "input_schema": {
+    "payload_shape": "runtime_contract_features_object",
+    "runtime_contract_reference": "contract_references.runtime_contract"
+  },
+  "model_artifact": {
+    "path": "models/model.pkl",
+    "sha256": "91808cc4d150763ae3415aa202d2e25be1141c62039d5bcefd85991f12a0bae5",
+    "source_training_parameter_record_path": "pipeline/training-runs/concrete-compressive-strength/train-20260821T092633Z/training-parameter-record.json"
+  },
+  "model_provenance_origin": "atlas_internal_training",
+  "output_schema": {
+    "prediction_key": "prediction",
+    "prediction_type": "number"
+  },
+  "prepared_dataset": {
+    "prepared_dataset_reference": {
+      "path": "pipeline/prepared/concrete-compressive-strength/prepared-data.csv",
+      "sha256": "2f6e632031e655e2344153e4d84bbebcfc7d53f91cad3ab8130076a8e1d4e1be"
+    },
+    "prepared_dataset_sha256": "2f6e632031e655e2344153e4d84bbebcfc7d53f91cad3ab8130076a8e1d4e1be"
+  },
+  "preprocessing": {
+    "categorical_encoding_policy": "onehot",
+    "missing_value_policy": {},
+    "numeric_handling": "passthrough",
+    "source": "execution_contract_and_training_parameter_record",
+    "transformations": [
+      "passthrough"
+    ]
+  },
+  "release_context": {
+    "release_id": "release-20260821-001",
+    "release_package_reference": "predictions/bundle.json"
+  },
+  "result_semantics": {
+    "model_descriptor": {
+      "display_name": "HistGradientBoosting",
+      "model_family": "hist_gradient_boosting"
+    },
+    "output_value_kind": "continuous_numeric",
+    "primary_output": "predicted_value",
+    "problem_type": "continuous_regression",
+    "result_schema_version": "continuous-regression-result.v1",
+    "schema_version": "continuous-regression-result-semantics.v1"
+  },
+  "runtime_execution": {
+    "loader_strategy": "joblib_sklearn_predict",
+    "model_family": "hist_gradient_boosting",
+    "prediction_interface": "predict",
+    "serialization_format": "joblib"
+  },
+  "training_evidence": {
+    "model_selection_evidence": null,
+    "training_metrics": {
+      "contract_version": "training-metrics.v3",
+      "path": "pipeline/training-runs/concrete-compressive-strength/train-20260821T092633Z/metrics.json",
+      "sha256": "8f50a385cfd96b918c873a8c5f1ffcf6cfb07ae56b41ae04428a5b13efa35e19"
+    },
+    "training_parameter_record": {
+      "contract_version": "training-parameter-record.v3",
+      "path": "pipeline/training-runs/concrete-compressive-strength/train-20260821T092633Z/training-parameter-record.json",
+      "sha256": "a677bc5fc72cf7fed0fc9421f1a26ba1d30aedd63b08fcd3791febdd663162b5"
+    },
+    "training_run_identity": {
+      "dataset_slug": "concrete-compressive-strength",
+      "run_id": "train-20260821T092633Z"
+    }
+  }
+}

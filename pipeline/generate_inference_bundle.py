@@ -93,7 +93,6 @@ SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 DATASET_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RELEASE_ID_RE = re.compile(r"^release-[0-9]{8}-[0-9]{3}$")
 RUN_ID_RE = re.compile(r"^train-[0-9]{8}T[0-9]{6}Z$")
-FEATURE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RELEASE_RELATIVE_RE = re.compile(
     r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))(?!.*//)[A-Za-z0-9][A-Za-z0-9._/-]*$"
 )
@@ -357,10 +356,10 @@ def _resolve_feature_order(
             "training_parameters.feature_columns must be a non-empty array.",
             field="training_parameters.feature_columns",
         )
-    if any(not isinstance(feature, str) or not FEATURE_RE.fullmatch(feature) for feature in feature_columns):
+    if any(not isinstance(feature, str) or not feature for feature in feature_columns):
         raise BundleGenerationError(
             "invalid_feature_order",
-            "all feature names must be valid runtime feature identifiers.",
+            "all feature names must be non-empty strings.",
             field="training_parameters.feature_columns",
         )
     contract_features = execution_contract.get("feature_columns")
@@ -1860,12 +1859,12 @@ def _build_external_bundle(
     if (
         not isinstance(feature_order, list)
         or not feature_order
-        or any(not isinstance(feature, str) or not FEATURE_RE.fullmatch(feature) for feature in feature_order)
+        or any(not isinstance(feature, str) or not feature for feature in feature_order)
     ):
         raise BundleGenerationError(
             "invalid_feature_order",
-            "training_parameter_record.feature_order must be a non-empty array of valid "
-            "runtime feature identifiers.",
+            "training_parameter_record.feature_order must be a non-empty array of "
+            "non-empty strings.",
             field="feature_order",
         )
     if len(set(feature_order)) != len(feature_order):

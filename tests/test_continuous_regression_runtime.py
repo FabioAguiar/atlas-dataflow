@@ -152,6 +152,7 @@ def _continuous_regression_declaration(
     include_class_labels: bool = False,
     include_probability_output: bool = False,
     extra_semantics_fields: dict[str, Any] | None = None,
+    feature_order: list[str] | None = None,
 ) -> dict[str, Any]:
     result_semantics: dict[str, Any] = {
         "schema_version": schema_version,
@@ -171,7 +172,7 @@ def _continuous_regression_declaration(
         output_schema["probability_output"] = True
 
     declaration: dict[str, Any] = {
-        "feature_order": ["feature_a", "feature_b"],
+        "feature_order": list(feature_order) if feature_order is not None else ["feature_a", "feature_b"],
         "runtime_execution": {
             "loader_strategy": "fake_continuous_regression_model",
             "serialization_format": "fake",
@@ -188,7 +189,12 @@ def _continuous_regression_declaration(
     return declaration
 
 
-def _execute(tmp_path: Path, declaration: dict[str, Any], model: Any) -> dict[str, Any]:
+def _execute(
+    tmp_path: Path,
+    declaration: dict[str, Any],
+    model: Any,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     release_root = tmp_path / "release-s0226"
     _write_json(release_root / "predictions" / "bundle.json", declaration)
     _write_json(release_root / "models" / "model.json", {"placeholder": True})
@@ -201,7 +207,7 @@ def _execute(tmp_path: Path, declaration: dict[str, Any], model: Any) -> dict[st
 
     return execute_prediction(
         {"path": str(release_root)},
-        {"feature_a": 1.0, "feature_b": 2.0},
+        payload if payload is not None else {"feature_a": 1.0, "feature_b": 2.0},
         manifest={"artifacts": [{"role": "predictive_bundle", "reference": "predictions/bundle.json"}]},
         bundle_loader=_load_declaration,
         loader_strategies={"fake_continuous_regression_model": _load_fake_model},
@@ -254,6 +260,53 @@ def test_in_process_hist_gradient_boosting_model_family_succeeds(tmp_path: Path)
     }
     assert not hasattr(model, "predict_proba")
     assert not hasattr(model, "classes_")
+
+
+def test_in_process_source_column_feature_names_with_spaces_preserve_exact_identity(
+    tmp_path: Path,
+) -> None:
+    """Project Spec S0236: payload keys and bundle feature_order entries may
+    contain spaces (governed source-column identities, e.g. Concrete's
+    ``Blast Furnace Slag``). Proves the constructed model input uses the
+    exact governed column names, in exact feature_order, and that
+    predictions remain valid continuous_regression."""
+
+    source_column_feature_order = [
+        "Cement",
+        "Blast Furnace Slag",
+        "Fly Ash",
+        "Coarse Aggregate",
+    ]
+
+    class _CapturingRegressionModel:
+        def __init__(self, predict_return: Any) -> None:
+            self._predict_return = predict_return
+            self.captured_row: Any = None
+
+        def predict(self, row: Any) -> Any:
+            self.captured_row = row
+            return self._predict_return
+
+    model = _CapturingRegressionModel(predict_return=[321.0])
+    declaration = _continuous_regression_declaration(feature_order=source_column_feature_order)
+    payload = {
+        "Cement": 540.0,
+        "Blast Furnace Slag": 0.0,
+        "Fly Ash": 0.0,
+        "Coarse Aggregate": 1055.0,
+    }
+
+    result = _execute(tmp_path, declaration, model, payload=payload)["result"]
+
+    assert list(model.captured_row.columns) == source_column_feature_order
+    for feature_name, expected_value in payload.items():
+        assert model.captured_row.iloc[0][feature_name] == expected_value
+    assert result == {
+        "schema_version": "continuous-regression-result.v1",
+        "problem_type": "continuous_regression",
+        "predicted_value": 321.0,
+        "model_descriptor": {"model_family": "gradient_boosting", "display_name": "Gradient Boosting"},
+    }
 
 
 @pytest.mark.parametrize(

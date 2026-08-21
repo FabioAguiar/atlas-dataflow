@@ -61,6 +61,37 @@
       },
       "schema_version": "1.0.0",
       "view_id": "dry-bean-classification"
+    },
+    {
+      "binding": {
+        "dataset_slug": "concrete-compressive-strength",
+        "release": {
+          "mode": "active"
+        }
+      },
+      "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": true,
+        "view_metadata_defines_runtime_validation": false,
+        "view_metadata_duplicates_contract": false
+      },
+      "dataset_slug": "concrete-compressive-strength",
+      "display": {
+        "description": "A continuous-regression prediction experience using the governed Concrete Compressive Strength input contract.",
+        "summary": "Predict concrete compressive strength from mixture composition and curing age.",
+        "tags": [
+          "concrete",
+          "regression",
+          "continuous"
+        ],
+        "title": "Concrete Compressive Strength"
+      },
+      "intent": {
+        "audience": "Users exploring Concrete Compressive Strength continuous-regression inference.",
+        "prediction_goal": "Predict concrete compressive strength from the canonical dataset contract inputs.",
+        "usage_notes": "Use the canonical dataset contracts for required fields, numeric input semantics, and runtime validation."
+      },
+      "schema_version": "1.0.0",
+      "view_id": "concrete-compressive-strength-regression"
     }
   ]
 }

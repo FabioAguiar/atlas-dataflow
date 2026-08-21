@@ -323,7 +323,7 @@
       "items": {
         "$ref": "#/$defs/feature_name"
       },
-      "description": "Ordered feature identifiers passed to the model after runtime payload validation and preprocessing."
+      "description": "Ordered governed feature/source-column identities passed to the model after runtime payload validation and preprocessing."
     },
     "preprocessing": {
       "type": "object",
@@ -661,8 +661,7 @@
     },
     "feature_name": {
       "type": "string",
-      "minLength": 1,
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      "minLength": 1
     },
     "sha256_hex": {
       "type": "string",

@@ -1,0 +1,115 @@
+{
+  "schema_version": "release-manifest.v1",
+  "manifest_kind": "release_manifest",
+  "dataset_identity": {
+    "dataset_slug": "concrete-compressive-strength",
+    "dataset_title": "Concrete Compressive Strength"
+  },
+  "release_identity": {
+    "release_id": "release-20260820-001",
+    "release_version": "1.0.0-rc.1",
+    "created_at": "2026-08-20T18:20:04Z"
+  },
+  "artifacts": [
+    {
+      "role": "contracts",
+      "reference": "contracts/runtime-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "e7472a6563de4e2fdf6c60175e3a47ff4e8e472d504fc6098d9c73516da27850"
+    },
+    {
+      "role": "public_contract",
+      "reference": "contracts/public-contract.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "73ebd2fd437d9c9335e5b320812ff255541cbab89849100c235f0131808f3a7c"
+    },
+    {
+      "role": "predictive_bundle",
+      "reference": "predictions/bundle.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "1daf2e9dbe5b6ad32d23a65fb1d3c103cd1195e9f7d87a04c99c2e62b8eb64b4"
+    },
+    {
+      "role": "model_artifact",
+      "reference": "models/model.pkl",
+      "hash_algorithm": "sha256",
+      "hash_value": "91808cc4d150763ae3415aa202d2e25be1141c62039d5bcefd85991f12a0bae5"
+    },
+    {
+      "role": "metrics",
+      "reference": "metrics/metrics.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "07e24d19ef45f5eb3e15b9fbd7fba7d119bfea2bdc0580ae4556078a32fa5f14"
+    },
+    {
+      "role": "model_card",
+      "reference": "model-card.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "c98861ee82c80ca247f733ddb24e575fc4cc39562528f7e8253dfde4470c4cea"
+    },
+    {
+      "role": "public_context",
+      "reference": "public-context.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "3d8b998a5b22a6b9413f6490809f164b013e89c0e2ebe69d6cce1e8269a9176b"
+    },
+    {
+      "role": "visualizations",
+      "reference": "visualizations/visualizations.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "5c57c020d395dc0416d80281a9101e4d05277f270a57fb31710eb48f0fc53d53"
+    },
+    {
+      "role": "manifest_input",
+      "reference": "manifest-input.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "b67830fe4e494ee3a7a7ad5c55eb32c66d08bd03b758d8056cec29fcac881b98"
+    },
+    {
+      "role": "candidate_metadata",
+      "reference": "release-candidate.json",
+      "hash_algorithm": "sha256",
+      "hash_value": "7e19ee8fd05a6af2b6c0eaa8fef17999d6b562c2bd4be6e024bea87e346ef8f0"
+    }
+  ],
+  "required_hash_coverage": {
+    "hash_algorithm": "sha256",
+    "required_artifact_roles": [
+      "contracts",
+      "public_contract",
+      "predictive_bundle",
+      "model_artifact",
+      "metrics",
+      "model_card",
+      "public_context",
+      "visualizations",
+      "manifest_input",
+      "candidate_metadata"
+    ],
+    "missing_required_hashes_reject_manifest": true
+  },
+  "validation_policy": {
+    "missing_schema_version_rejects": true,
+    "missing_required_hash_rejects": true,
+    "dataset_identity_mismatch_rejects": true,
+    "release_identity_mismatch_rejects": true,
+    "unsafe_reference_rejects": true
+  },
+  "safety_boundaries": {
+    "raw_artifact_contents_embedded": false,
+    "raw_logs_persisted": false,
+    "raw_runtime_persisted": false,
+    "raw_api_payloads_persisted": false,
+    "secrets_persisted": false,
+    "sensitive_local_paths_persisted": false,
+    "unstable_temporary_paths_persisted": false,
+    "hash_calculation_implemented": false,
+    "signing_or_key_management_implemented": false,
+    "storage_migration_implemented": false,
+    "runtime_loading_implemented": false,
+    "public_endpoint_exposed": false,
+    "release_promoted": false,
+    "registry_updated": false,
+    "github_publication_performed": false
+  }
+}

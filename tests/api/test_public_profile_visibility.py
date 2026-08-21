@@ -1471,6 +1471,153 @@ def test_get_dataset_includes_problem_type_when_available(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0238: release-bound model_display_name projection and
+# continuous_regression accepted directly from active-release result
+# semantics (api/main.py's _resolve_model_display_name and the extended
+# _resolve_problem_type), proven at both the resolver level and the GET
+# /datasets listing level.
+# ---------------------------------------------------------------------------
+
+
+def _fake_available_result_contract(
+    problem_type="continuous_regression",
+    model_family="hist_gradient_boosting",
+    display_name="HistGradientBoosting",
+):
+    return {
+        "status": "available",
+        "semantics": {
+            "problem_type": problem_type,
+            "model_descriptor": {"model_family": model_family, "display_name": display_name},
+        },
+    }
+
+
+def test_resolve_problem_type_accepts_continuous_regression_directly_from_result_semantics(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(
+        api_main, "_project_result_contract_safely", lambda _release: _fake_available_result_contract()
+    )
+
+    def fail_if_called(_active_release):
+        raise AssertionError("continuous_regression must resolve directly from result semantics")
+
+    monkeypatch.setattr(api_main, "load_public_context", fail_if_called)
+
+    assert api_main._resolve_problem_type(_TARGET_SLUG) == "continuous_regression"
+
+
+def test_resolve_model_display_name_returns_value_from_active_release_result_semantics(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(
+        api_main, "_project_result_contract_safely", lambda _release: _fake_available_result_contract()
+    )
+
+    assert api_main._resolve_model_display_name(_TARGET_SLUG) == "HistGradientBoosting"
+
+
+def test_resolve_model_display_name_none_when_result_contract_unavailable(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "_project_result_contract_safely", lambda _release: {"status": "unavailable"})
+
+    assert api_main._resolve_model_display_name(_TARGET_SLUG) is None
+
+
+def test_resolve_model_display_name_none_when_model_descriptor_missing(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(
+        api_main,
+        "_project_result_contract_safely",
+        lambda _release: {"status": "available", "semantics": {"problem_type": "binary_classification"}},
+    )
+
+    assert api_main._resolve_model_display_name(_TARGET_SLUG) is None
+
+
+def test_resolve_model_display_name_none_when_display_name_blank_or_non_string(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    for malformed_display_name in ("", "   ", 123, None):
+        monkeypatch.setattr(
+            api_main,
+            "_project_result_contract_safely",
+            lambda _release, value=malformed_display_name: _fake_available_result_contract(display_name=value),
+        )
+        assert api_main._resolve_model_display_name(_TARGET_SLUG) is None
+
+
+def test_resolve_model_display_name_trims_surrounding_whitespace(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(
+        api_main,
+        "_project_result_contract_safely",
+        lambda _release: _fake_available_result_contract(display_name="  HistGradientBoosting  "),
+    )
+
+    assert api_main._resolve_model_display_name(_TARGET_SLUG) == "HistGradientBoosting"
+
+
+def test_resolve_model_display_name_none_when_dataset_unknown():
+    assert api_main._resolve_model_display_name("dataset-that-does-not-exist") is None
+
+
+def test_resolve_model_display_name_none_when_release_unavailable(monkeypatch):
+    def raise_release_unavailable(_dataset_slug):
+        raise ReleaseUnavailableError("missing release")
+
+    monkeypatch.setattr(api_main, "resolve_dataset", raise_release_unavailable)
+
+    assert api_main._resolve_model_display_name(_TARGET_SLUG) is None
+
+
+def test_list_datasets_endpoint_includes_model_display_name_and_continuous_regression_problem_type(monkeypatch):
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
+    monkeypatch.setattr(
+        api_main, "_project_result_contract_safely", lambda _release: _fake_available_result_contract()
+    )
+    _stub_snapshot_current(monkeypatch)
+
+    response = api_main.list_datasets_endpoint()
+
+    assert set(_SEEDED_DATASET_SLUGS) <= {entry["dataset_slug"] for entry in response["datasets"]}
+    for entry in response["datasets"]:
+        assert entry["problem_type"] == "continuous_regression"
+        assert entry["model_display_name"] == "HistGradientBoosting"
+        # AC4: no model internals beyond the bounded display_name projection.
+        assert "model_family" not in entry
+        assert "model_path" not in entry
+        assert "hyperparameters" not in entry
+        assert "hashes" not in entry
+
+
+def test_list_datasets_endpoint_model_display_name_fails_open_per_dataset_without_excluding_it(monkeypatch):
+    """
+    A malformed/unavailable model descriptor must omit only that dataset's
+    Model badge -- the dataset itself must remain listed, mirroring the
+    problem_type fail-open precedent above.
+    """
+    monkeypatch.setattr(api_main, "resolve_dataset_visibility", lambda dataset_slug: True)
+    monkeypatch.setattr(api_main, "is_dataset_needs_review", lambda _dataset_slug: False)
+    monkeypatch.setattr(api_main, "resolve_dataset", _fixture_resolve_dataset)
+    monkeypatch.setattr(api_main, "list_datasets", _fixture_two_dataset_listing)
+    monkeypatch.setattr(
+        api_main,
+        "_project_result_contract_safely",
+        lambda _release: {"status": "available", "semantics": {"problem_type": "binary_classification"}},
+    )
+    _stub_snapshot_current(monkeypatch)
+
+    response = api_main.list_datasets_endpoint()
+
+    slugs = {entry["dataset_slug"] for entry in response["datasets"]}
+    assert set(_SEEDED_DATASET_SLUGS) <= slugs
+    for entry in response["datasets"]:
+        assert entry["model_display_name"] is None
+
+
+# ---------------------------------------------------------------------------
 # Project Spec S0052: promoted Dataset Details default to draft/Needs review
 # and must never be publicly reachable through GET /datasets or
 # GET /datasets/{dataset_slug} until explicitly published/reviewed. This is a

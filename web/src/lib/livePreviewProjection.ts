@@ -14,6 +14,7 @@ import type { PerformanceFocus } from "../components/DatasetDetail/PerformanceSu
 import {
   presentDatasetDateOnly,
   resolveDatasetTargetDescription,
+  resolveModelDisplayName,
   safePublicSourceUrl,
   type DatasetDateFormat,
 } from "./datasetPresentation";
@@ -107,6 +108,7 @@ export type HomeCardPreviewProps = {
   iconOverride?: DatasetIconName;
   problemType?: string;
   performanceFocusId?: string | null;
+  modelDisplayName?: string | null;
 };
 
 export type DatasetDetailPreview = {
@@ -117,6 +119,7 @@ export type DatasetDetailPreview = {
   problemSummaryTitle: string;
   problemSummaryBody: string | null;
   performanceFocusId?: string | null;
+  modelDisplayName?: string | null;
 };
 
 function contractFields(contract: PreviewContract | null): PreviewContractField[] {
@@ -171,6 +174,7 @@ export function projectHomeCardPreview(
     iconOverride: form.home_card_icon || undefined,
     problemType: availableResultProblemType(resultContract) ?? context?.problem_type,
     performanceFocusId: form.performance_focus.focus_id,
+    modelDisplayName: resolveModelDisplayName(resultContract),
   };
 }
 
@@ -263,6 +267,7 @@ export function projectDatasetDetailPreview(
     problemSummaryTitle,
     problemSummaryBody,
     performanceFocusId: form.performance_focus.focus_id,
+    modelDisplayName: resolveModelDisplayName(resultContract),
   };
 }
 

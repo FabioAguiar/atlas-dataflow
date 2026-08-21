@@ -94,6 +94,56 @@ describe("release-derived continuous regression problem type (Project Spec S0229
       .toBe("continuous_regression");
   });
 });
+// Project Spec S0238: both Live Preview projection functions must derive the
+// Model badge only from the currently loaded, dataset-bound resultContract's
+// available-status semantics.model_descriptor.display_name -- never from the
+// draft form, context, or an invented fallback -- and must stay dataset-
+// switch-safe (idle/loading/unavailable/transport_failure/incompatible
+// states all resolve to no model name, never a stale prior dataset's name).
+describe("Live Preview projection: Model badge (Project Spec S0238)", () => {
+  it("projectHomeCardPreview derives modelDisplayName from the available result contract", () => {
+    expect(projectHomeCardPreview(dataset, draftForm, context, regressionResultContract).modelDisplayName)
+      .toBe("Gradient Boosting Regressor");
+    expect(projectHomeCardPreview(dataset, draftForm, context, multiclassResultContract).modelDisplayName)
+      .toBe("Forest");
+  });
+
+  it("projectDatasetDetailPreview derives modelDisplayName from the same available result contract authority", () => {
+    expect(
+      projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, regressionResultContract)
+        .modelDisplayName,
+    ).toBe("Gradient Boosting Regressor");
+  });
+
+  it.each([
+    ["idle", { status: "idle" as const }],
+    ["loading", { status: "loading" as const }],
+    ["unavailable", { status: "unavailable" as const, message: "unavailable" }],
+    ["transport_failure", { status: "transport_failure" as const, message: "network error" }],
+    ["incompatible", { status: "incompatible" as const, message: "incompatible bundle" }],
+  ])(
+    "never presents a stale model name -- %s resultContract state yields no modelDisplayName on either preview",
+    (_label, resultContract) => {
+      expect(projectHomeCardPreview(dataset, draftForm, context, resultContract).modelDisplayName).toBeNull();
+      expect(
+        projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, resultContract).modelDisplayName,
+      ).toBeNull();
+    },
+  );
+
+  it("omits modelDisplayName when the available descriptor's display_name is blank", () => {
+    const blankNameContract = {
+      status: "available" as const,
+      semantics: { ...regressionResultContract.semantics, model_descriptor: { model_family: "gradient_boosting", display_name: "   " } },
+    };
+
+    expect(projectHomeCardPreview(dataset, draftForm, context, blankNameContract).modelDisplayName).toBeNull();
+    expect(
+      projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, blankNameContract).modelDisplayName,
+    ).toBeNull();
+  });
+});
+
 // Project Spec S0205: the bounded public visualizations projection Instances
 // now reads from -- metrics.evaluation.sample_size above no longer feeds it.
 const visualizations = { charts: [], dataset_statistics: { instance_count: 7043 } };

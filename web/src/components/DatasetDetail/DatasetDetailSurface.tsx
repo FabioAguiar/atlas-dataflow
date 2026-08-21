@@ -12,6 +12,7 @@ export type DatasetDetailSurfaceProps = {
   datasetSubtitle?: string;
   analysisType?: string;
   performanceFocusId?: string | null;
+  modelDisplayName?: string | null;
   metadata: DatasetDetailMetadataItem[];
   problemSummaryTitle?: string;
   problemSummaryBody?: string | null;
@@ -43,6 +44,7 @@ export default function DatasetDetailSurface({
   datasetSubtitle,
   analysisType,
   performanceFocusId,
+  modelDisplayName,
   metadata,
   problemSummaryTitle,
   problemSummaryBody,
@@ -88,6 +90,7 @@ export default function DatasetDetailSurface({
         analysisType={analysisType}
         datasetTitle={datasetTitle}
         metadata={metadata}
+        modelDisplayName={modelDisplayName}
         performanceFocusId={performanceFocusId}
         subtitle={datasetSubtitle}
       />

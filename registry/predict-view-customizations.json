@@ -142,32 +142,32 @@
       "dataset_slug": "dry-bean",
       "field_hints": [
         {
-          "field_name": "Area",
+          "field_name": "Perimeter",
           "display_order_hint": 1,
           "group": "group-1"
         },
         {
-          "field_name": "Perimeter",
+          "field_name": "MajorAxisLength",
           "display_order_hint": 2,
           "group": "group-1"
         },
         {
-          "field_name": "MajorAxisLength",
+          "field_name": "ConvexArea",
           "display_order_hint": 3,
           "group": "group-1"
         },
         {
-          "field_name": "ConvexArea",
+          "field_name": "EquivDiameter",
           "display_order_hint": 4,
           "group": "group-1"
         },
         {
-          "field_name": "EquivDiameter",
+          "field_name": "MinorAxisLength",
           "display_order_hint": 5,
           "group": "group-1"
         },
         {
-          "field_name": "MinorAxisLength",
+          "field_name": "Area",
           "display_order_hint": 6,
           "group": "group-1"
         },

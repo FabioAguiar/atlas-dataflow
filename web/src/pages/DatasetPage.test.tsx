@@ -717,9 +717,14 @@ describe("DatasetPage Performance focus badge (Project Spec S0204)", () => {
 
     expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
     const headerBadges = document.querySelectorAll(".dataset-detail-header__badges .atlas-badge");
+    // Project Spec S0238: the header now renders the full problem/focus/model
+    // triad -- the release-bound Model badge (from the default fixture's
+    // result_contract.semantics.model_descriptor.display_name) joins the
+    // problem-type and Performance focus badges this test already covers.
     expect(Array.from(headerBadges).map((badge) => badge.textContent)).toEqual([
       "Binary Classification",
       "Overall discrimination",
+      "Gradient Boosting",
     ]);
   });
 
@@ -730,7 +735,9 @@ describe("DatasetPage Performance focus badge (Project Spec S0204)", () => {
     await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
 
     expect(await screen.findByText("Binary Classification")).toBeInTheDocument();
-    expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(1);
+    // Project Spec S0238: only the Performance focus badge is omitted here --
+    // the problem badge and the release-bound Model badge both still render.
+    expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(2);
   });
 
   it("does not change score rendering when a Performance focus badge is added", async () => {
@@ -750,6 +757,51 @@ describe("DatasetPage Performance focus badge (Project Spec S0204)", () => {
 
     expect(await screen.findByText("57.4%")).toBeInTheDocument();
     expect(container.querySelectorAll(".performance-summary__score")).toHaveLength(1);
+  });
+});
+
+// Project Spec S0238: the Model badge is derived from the already-loaded
+// /contract response's result_contract -- never a second /model-card or
+// /contract request, and omitted (not invented) when that contract is
+// unavailable.
+describe("DatasetPage Model badge (Project Spec S0238)", () => {
+  it("omits the Model badge, without an extra request, when the result contract is unavailable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      if (url.endsWith(`/datasets/${slug}/metrics`)) return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      if (url.endsWith(`/datasets/${slug}/visualizations`))
+        return jsonResponse({ dataset_slug: slug, visualizations: visualizationsPayload });
+      if (url.endsWith(`/datasets/${slug}/contract`))
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: { status: "unavailable", reason: "binary_result_semantics_unavailable" },
+        });
+      if (url.endsWith(`/datasets/${slug}`)) return jsonResponse(datasetMetadata);
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByText("Binary Classification");
+
+    const headerBadges = document.querySelectorAll(".dataset-detail-header__badges .atlas-badge");
+    expect(Array.from(headerBadges).map((badge) => badge.textContent)).toEqual(["Binary Classification"]);
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).endsWith(`/datasets/${slug}/contract`))).toHaveLength(1);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
+  });
+
+  it("renders the release-bound Model badge from the already-loaded /contract response with no additional request", async () => {
+    const fetchMock = installDatasetPageFetchMock();
+
+    renderDatasetPage();
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    expect(await screen.findByText("Gradient Boosting", { selector: ".dataset-detail-header__badges .atlas-badge" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).endsWith(`/datasets/${slug}/contract`))).toHaveLength(1);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
   });
 });
 
@@ -1352,7 +1404,12 @@ describe("DatasetPage public Result Card zero-probability initial projection (Pr
     expect(
       screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Gradient Boosting")).toBeInTheDocument();
+    // Project Spec S0238: "Gradient Boosting" now also renders in the shared
+    // header Model badge, so this assertion is scoped to the Result Card's
+    // own model-value element specifically.
+    expect(
+      screen.getByText("Gradient Boosting", { selector: ".binary-classification-result__model-value" }),
+    ).toBeInTheDocument();
     expect(container.querySelector(".result-panel--initial")).toBeInTheDocument();
 
     expect(fetchMock.mock.calls.some((call) => String(call[0]).endsWith(`/datasets/${slug}/inference`))).toBe(false);
@@ -1535,7 +1592,12 @@ describe("DatasetPage public Result Card zero-probability initial projection (Pr
     expect(
       screen.getByText("0%", { selector: ".binary-classification-result__probability-value" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Dataset B Model")).toBeInTheDocument();
+    // Project Spec S0238: "Dataset B Model" now also renders in the shared
+    // header Model badge, so this assertion is scoped to the Result Card's
+    // own model-value element specifically.
+    expect(
+      screen.getByText("Dataset B Model", { selector: ".binary-classification-result__model-value" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -2645,7 +2707,12 @@ describe("DatasetPage continuous-regression diagnostics (Project Spec S0228)", (
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(await screen.findByText("42.73")).toBeInTheDocument();
-    expect(screen.getByText("Gradient Boosting Regressor")).toBeInTheDocument();
+    // Project Spec S0238: "Gradient Boosting Regressor" now also renders in
+    // the shared header Model badge, so this assertion is scoped to the
+    // Result Card's own model-value element specifically.
+    expect(
+      screen.getByText("Gradient Boosting Regressor", { selector: ".continuous-regression-result__model-value" }),
+    ).toBeInTheDocument();
   });
 
   it("renders Actual vs Predicted and Residual Distribution below the primary analytics grid for a continuous-regression release", async () => {

@@ -94,6 +94,7 @@ export function datasetThemeStyle(value: unknown): DatasetThemeStyle {
 const PROBLEM_TYPE_LABELS: Record<string, string> = {
   binary_classification: "Binary Classification",
   multiclass_classification: "Multiclass Classification",
+  continuous_regression: "Continuous Regression",
   regression: "Regression",
   clustering: "Clustering",
   anomaly_detection: "Anomaly Detection",
@@ -250,6 +251,38 @@ export function getProblemTypeLabel(problemType?: string | null): string {
     return DEFAULT_PROBLEM_TYPE_LABEL;
   }
   return PROBLEM_TYPE_LABELS[problemType] ?? DEFAULT_PROBLEM_TYPE_LABEL;
+}
+
+/**
+ * Structurally accepts any bounded result-contract state carrying the
+ * governed model_descriptor.display_name (binary, multiclass, and
+ * continuous-regression result contracts all share this shape) without
+ * importing a concrete ResultContract type, so both the public Dataset
+ * Detail route and Dataset Admin Live Preview's locally-declared preview
+ * result-contract type can reuse this one authority (Project Spec S0238).
+ */
+export type DatasetModelDisplayNameResultInput =
+  | { status: string; semantics?: { model_descriptor?: { display_name?: unknown } | null } | null }
+  | null
+  | undefined;
+
+/**
+ * Project Spec S0238: the single shared release-bound Model badge authority
+ * -- available-status result-contract semantics only. Never falls back to
+ * registry tags/domain/title, profile/result-card copy, or a dataset/model-
+ * family guess; a missing/blank/non-string display_name resolves to null so
+ * callers omit the Model badge instead of inventing one.
+ */
+export function resolveModelDisplayName(resultContract: DatasetModelDisplayNameResultInput): string | null {
+  if (!resultContract || resultContract.status !== "available") {
+    return null;
+  }
+  const displayName = resultContract.semantics?.model_descriptor?.display_name;
+  if (typeof displayName !== "string") {
+    return null;
+  }
+  const trimmed = displayName.trim();
+  return trimmed || null;
 }
 
 // Not exhaustive of DatasetIconName's full curated icon bank -- only the

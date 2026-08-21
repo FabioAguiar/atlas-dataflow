@@ -571,12 +571,6 @@ h1 {
   font-weight: 700;
 }
 
-.dataset-card__badge {
-  border-color: var(--atlas-color-border-strong);
-  color: var(--atlas-color-accent-strong);
-  background: var(--atlas-color-accent-muted);
-}
-
 /*
  * Project Spec S0204: scoped Home Card badge row -- problem-type and
  * Performance focus badges sit side by side when space permits and wrap
@@ -779,6 +773,37 @@ h1 {
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+/*
+ * Project Spec S0238: three Theme Preset-aware badge color roles, owned by
+ * the shared DatasetIdentityBadges composition and reused unmodified by
+ * both the Home Card badge row (.dataset-card__badges above) and this
+ * Dataset Detail header badge group. Every value traces back to an
+ * existing Theme Preset token family -- accent for problem, chart_secondary
+ * for focus, border_strong/surface for model -- never a hardcoded
+ * hex/rgb/hsl value or a dataset/model-specific color map. Color stays
+ * supplemental: badge text alone carries the Problem/Focus/Model
+ * distinction. Declared with an .atlas-badge compound selector, after
+ * .dataset-detail-header__heading .atlas-badge above, so these roles win
+ * over it regardless of which surface renders the badge.
+ */
+.atlas-badge.dataset-identity-badge--problem {
+  border-color: var(--atlas-color-border-strong);
+  color: var(--atlas-color-accent-strong);
+  background: var(--atlas-color-accent-muted);
+}
+
+.atlas-badge.dataset-identity-badge--focus {
+  border-color: color-mix(in srgb, var(--dataset-theme-chart-secondary) 55%, var(--atlas-color-border-strong));
+  color: var(--atlas-color-text);
+  background: color-mix(in srgb, var(--dataset-theme-chart-secondary) 18%, var(--atlas-color-surface));
+}
+
+.atlas-badge.dataset-identity-badge--model {
+  border-color: var(--atlas-color-border-strong);
+  color: var(--atlas-color-text);
+  background: color-mix(in srgb, var(--atlas-color-border-strong) 24%, var(--atlas-color-surface));
 }
 
 /*

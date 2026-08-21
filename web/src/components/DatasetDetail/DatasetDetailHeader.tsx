@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
-import { Badge } from "../ui";
-import { getPerformanceFocusLabel } from "../../lib/performanceMetricMetadata";
+import DatasetIdentityBadges from "../DatasetIdentityBadges/DatasetIdentityBadges";
 
 export type DatasetDetailMetadataItem = {
   label: "Source" | "Instances" | "Features" | "Target" | "Release";
@@ -14,6 +13,7 @@ type DatasetDetailHeaderProps = {
   subtitle?: string;
   analysisType?: string;
   performanceFocusId?: string | null;
+  modelDisplayName?: string | null;
   metadata: DatasetDetailMetadataItem[];
 };
 
@@ -22,14 +22,9 @@ export default function DatasetDetailHeader({
   subtitle,
   analysisType,
   performanceFocusId,
+  modelDisplayName,
   metadata,
 }: DatasetDetailHeaderProps) {
-  // Project Spec S0204: an unknown/missing focus id must never render an
-  // empty or invented badge -- getPerformanceFocusLabel returns undefined
-  // for both.
-  const performanceFocusLabel = getPerformanceFocusLabel(performanceFocusId);
-  const hasBadges = Boolean(analysisType) || Boolean(performanceFocusLabel);
-
   return (
     <header className="dataset-detail-header">
       <nav className="dataset-detail-header__breadcrumb" aria-label="Breadcrumb">
@@ -40,14 +35,12 @@ export default function DatasetDetailHeader({
 
       <div className="dataset-detail-header__heading">
         <h1>{datasetTitle}</h1>
-        {hasBadges && (
-          <div className="dataset-detail-header__badges">
-            {analysisType && <Badge>{analysisType}</Badge>}
-            {performanceFocusLabel && (
-              <Badge className="dataset-detail-header__badge--focus">{performanceFocusLabel}</Badge>
-            )}
-          </div>
-        )}
+        <DatasetIdentityBadges
+          problemLabel={analysisType}
+          performanceFocusId={performanceFocusId}
+          modelDisplayName={modelDisplayName}
+          groupClassName="dataset-detail-header__badges"
+        />
       </div>
 
       {subtitle && <p className="dataset-detail-header__subtitle">{subtitle}</p>}

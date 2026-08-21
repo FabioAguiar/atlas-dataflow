@@ -366,20 +366,50 @@ def _resolve_problem_type(dataset_slug: str) -> str | None:
     release, or context is unavailable rather than raising or blocking the
     entire listing. Kept in the api layer (not registry/list.py) so it
     reuses load_public_context directly without introducing a registry ->
-    api dependency.
+    api dependency. Project Spec S0238: continuous_regression is accepted
+    directly from release-bound result semantics alongside binary/multiclass
+    classification, closing the Home/Detail label drift that previously fell
+    through to the public-context path for that variant only.
     """
     try:
         resolved = resolve_dataset(dataset_slug)
         result_contract = _project_result_contract_safely(resolved.active_release)
         semantics = result_contract.get("semantics") if result_contract.get("status") == "available" else None
         problem_type = semantics.get("problem_type") if isinstance(semantics, dict) else None
-        if problem_type in {"binary_classification", "multiclass_classification"}:
+        if problem_type in {"binary_classification", "multiclass_classification", "continuous_regression"}:
             return problem_type
         context = load_public_context(resolved.active_release)
     except (DatasetUnavailableError, ReleaseUnavailableError, RegistryInvalidError, PublicContextUnavailableError):
         return None
     problem_type = context.get("problem_type") if isinstance(context, dict) else None
     return problem_type if isinstance(problem_type, str) else None
+
+
+def _resolve_model_display_name(dataset_slug: str) -> str | None:
+    """
+    Resolve the bounded release-bound model display name for dataset_slug
+    from the same active-release result-contract semantics used by
+    _resolve_problem_type (Project Spec S0238), so the two badge authorities
+    can never diverge. Returns None whenever the dataset, release, or result
+    contract is unavailable, or the model descriptor is missing/malformed --
+    never falls back to registry tags/domain/title, never reads profile
+    result-card copy, and never loads model bytes or executes inference
+    (guaranteed by _project_result_contract_safely itself).
+    """
+    try:
+        resolved = resolve_dataset(dataset_slug)
+        result_contract = _project_result_contract_safely(resolved.active_release)
+    except (DatasetUnavailableError, ReleaseUnavailableError, RegistryInvalidError):
+        return None
+    if result_contract.get("status") != "available":
+        return None
+    semantics = result_contract.get("semantics")
+    model_descriptor = semantics.get("model_descriptor") if isinstance(semantics, dict) else None
+    display_name = model_descriptor.get("display_name") if isinstance(model_descriptor, dict) else None
+    if not isinstance(display_name, str):
+        return None
+    trimmed = display_name.strip()
+    return trimmed if trimmed else None
 
 
 def _inference_releases_root() -> Path:
@@ -538,7 +568,11 @@ def list_datasets_endpoint():
     visible_datasets = [d for d in datasets if _dataset_publicly_ready(d.dataset_slug)]
     return {
         "datasets": [
-            {**d._asdict(), "problem_type": _resolve_problem_type(d.dataset_slug)}
+            {
+                **d._asdict(),
+                "problem_type": _resolve_problem_type(d.dataset_slug),
+                "model_display_name": _resolve_model_display_name(d.dataset_slug),
+            }
             for d in visible_datasets
         ]
     }

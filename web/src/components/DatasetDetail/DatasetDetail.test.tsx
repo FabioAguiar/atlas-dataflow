@@ -138,6 +138,83 @@ describe("DatasetDetailHeader Performance focus badge (Project Spec S0204)", () 
   });
 });
 
+// Project Spec S0238: the release-bound Model badge joins the existing
+// problem/focus pair into a fixed three-role triad, shared with Home Card
+// through DatasetIdentityBadges, each carrying its own Theme Preset-derived
+// color role class.
+describe("DatasetDetailHeader Dataset identity badge triad (Project Spec S0238)", () => {
+  it("renders the problem, focus, and model badges in that exact order when all three authorities are available", () => {
+    renderHeader([], { performanceFocusId: "overall_discrimination", modelDisplayName: "HistGradientBoosting" });
+
+    const badges = Array.from(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      "Classificacao binaria",
+      "Overall discrimination",
+      "HistGradientBoosting",
+    ]);
+  });
+
+  it("assigns three distinct Theme Preset-derived role classes to the three badges", () => {
+    renderHeader([], { performanceFocusId: "overall_discrimination", modelDisplayName: "HistGradientBoosting" });
+
+    const badges = Array.from(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.className)).toEqual([
+      expect.stringContaining("dataset-identity-badge--problem"),
+      expect.stringContaining("dataset-identity-badge--focus"),
+      expect.stringContaining("dataset-identity-badge--model"),
+    ]);
+  });
+
+  it("omits only the Model badge when modelDisplayName is missing, leaving problem and focus intact", () => {
+    renderHeader([], { performanceFocusId: "overall_discrimination" });
+
+    const badges = Array.from(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.textContent)).toEqual(["Classificacao binaria", "Overall discrimination"]);
+  });
+
+  it("omits only the Model badge when modelDisplayName is blank", () => {
+    renderHeader([], { performanceFocusId: "overall_discrimination", modelDisplayName: "   " });
+
+    const badges = Array.from(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.textContent)).toEqual(["Classificacao binaria", "Overall discrimination"]);
+  });
+});
+
+// Project Spec S0238: badge role colors must trace back to Theme Preset
+// tokens only (accent for problem, chart_secondary for focus,
+// border_strong/surface for model) -- never a hardcoded hex/rgb/hsl literal
+// or a dataset/model-specific color map.
+describe("Dataset identity badge role color CSS contract (Project Spec S0238)", () => {
+  const appCss = readFileSync(`${process.cwd()}/src/App.css`, "utf8");
+
+  function ruleBody(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = appCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+    expect(match, `expected a CSS rule for selector "${selector}"`).not.toBeNull();
+    return match![1];
+  }
+
+  it("derives the problem role from the accent token family", () => {
+    expect(ruleBody(".atlas-badge.dataset-identity-badge--problem")).toMatch(/--atlas-color-accent/);
+  });
+
+  it("derives the focus role from the chart_secondary token family", () => {
+    expect(ruleBody(".atlas-badge.dataset-identity-badge--focus")).toMatch(/--dataset-theme-chart-secondary/);
+  });
+
+  it("derives the model role from the border_strong/structural token family", () => {
+    expect(ruleBody(".atlas-badge.dataset-identity-badge--model")).toMatch(/--atlas-color-border-strong/);
+  });
+
+  it("never hardcodes a hex/rgb/hsl color literal for any of the three badge roles", () => {
+    for (const role of ["problem", "focus", "model"]) {
+      const body = ruleBody(`.atlas-badge.dataset-identity-badge--${role}`);
+      expect(body).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+      expect(body).not.toMatch(/\brgb\(|\brgba\(|\bhsl\(|\bhsla\(/);
+    }
+  });
+});
+
 describe("Dataset Detail bounded presentation helpers (S0118)", () => {
   it.each([
     ["dd/mm/yyyy", "12/07/2026"],
@@ -739,6 +816,19 @@ describe("DatasetDetailSurface shared composition (S0119)", () => {
     renderSurface();
     expect(screen.getByText("Binary Classification")).toBeInTheDocument();
     expect(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge")).toHaveLength(1);
+  });
+
+  // Project Spec S0238: forwards modelDisplayName to the header, completing
+  // the shared problem/focus/model triad -- DatasetDetailSurface itself
+  // performs no result-contract inspection.
+  it("forwards modelDisplayName to the header, rendering the full problem/focus/model triad", () => {
+    renderSurface({ performanceFocusId: "overall_discrimination", modelDisplayName: "HistGradientBoosting" });
+    const badges = Array.from(document.querySelectorAll(".dataset-detail-header__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      "Binary Classification",
+      "Overall discrimination",
+      "HistGradientBoosting",
+    ]);
   });
 
   it("renders exactly three tabs labeled Overview, Inference and Documentation", () => {

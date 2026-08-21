@@ -33,6 +33,7 @@ type DatasetListingFixture = {
   visibility: string;
   tags: string[];
   problem_type?: string | null;
+  model_display_name?: string | null;
   home_card_icon?: string | null;
   home_card_media_ref?: string | null;
   short_description?: string | null;
@@ -472,5 +473,133 @@ describe("HomePage Performance focus badge (Project Spec S0204)", () => {
       "href",
       "/dataset/focused-dataset-content",
     );
+  });
+});
+
+// Project Spec S0238: the release-bound Model badge joins the existing
+// problem/focus pair into a fixed three-role triad, sourced only from the
+// API's own bounded model_display_name field -- never a per-card /contract
+// or /model-card request.
+describe("HomePage Dataset identity badge triad (Project Spec S0238)", () => {
+  it("renders the problem, focus, and model badges in that exact order when all three authorities are available", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "triad-dataset",
+        title: "Triad Dataset",
+        summary: "Dataset with problem_type, performance_focus_id, and model_display_name.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "continuous_regression",
+        performance_focus_id: "regression_performance",
+        model_display_name: "HistGradientBoosting",
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Triad Dataset");
+
+    const badges = Array.from(container.querySelectorAll(".dataset-card__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      "Continuous Regression",
+      "Regression performance",
+      "HistGradientBoosting",
+    ]);
+    expect(badges.map((badge) => badge.className)).toEqual([
+      expect.stringContaining("dataset-identity-badge--problem"),
+      expect.stringContaining("dataset-identity-badge--focus"),
+      expect.stringContaining("dataset-identity-badge--model"),
+    ]);
+  });
+
+  it('maps continuous_regression to exactly "Continuous Regression" (closing the prior Predictive Analysis drift)', async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "regression-dataset",
+        title: "Regression Dataset",
+        summary: "Continuous regression dataset.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "continuous_regression",
+      },
+    ]);
+
+    renderHomePage();
+
+    expect(await screen.findByText("Continuous Regression")).toBeInTheDocument();
+    expect(screen.queryByText("Predictive Analysis")).not.toBeInTheDocument();
+  });
+
+  it("omits only the Model badge when model_display_name is missing", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "no-model-dataset",
+        title: "No Model Dataset",
+        summary: "Dataset with a problem type but no release-bound model name.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "binary_classification",
+        performance_focus_id: "overall_discrimination",
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("No Model Dataset");
+
+    const badges = Array.from(container.querySelectorAll(".dataset-card__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.textContent)).toEqual(["Binary Classification", "Overall discrimination"]);
+  });
+
+  it("omits only the Model badge when model_display_name is blank", async () => {
+    installDatasetsFetchMock([
+      {
+        dataset_slug: "blank-model-dataset",
+        title: "Blank Model Dataset",
+        summary: "Dataset with a blank model_display_name.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        problem_type: "binary_classification",
+        model_display_name: "   ",
+      },
+    ]);
+
+    const { container } = renderHomePage();
+    await screen.findByText("Blank Model Dataset");
+
+    const badges = Array.from(container.querySelectorAll(".dataset-card__badges .atlas-badge"));
+    expect(badges.map((badge) => badge.textContent)).toEqual(["Binary Classification"]);
+  });
+
+  it("never issues a per-card /contract or /model-card request to obtain the model badge", async () => {
+    const fetchMock = installDatasetsFetchMock([
+      {
+        dataset_slug: "triad-dataset-a",
+        title: "Triad Dataset A",
+        summary: "First dataset.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        model_display_name: "Model A",
+      },
+      {
+        dataset_slug: "triad-dataset-b",
+        title: "Triad Dataset B",
+        summary: "Second dataset.",
+        domain: "synthetic",
+        visibility: "public",
+        tags: [],
+        model_display_name: "Model B",
+      },
+    ]);
+
+    renderHomePage();
+    await screen.findByText("Model A");
+    await screen.findByText("Model B");
+
+    expect(fetchMock.mock.calls).toHaveLength(1);
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/datasets$/);
   });
 });

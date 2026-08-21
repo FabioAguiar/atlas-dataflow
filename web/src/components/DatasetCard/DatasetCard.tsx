@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Card } from "../ui";
+import { Card } from "../ui";
 import {
   datasetThemeStyle,
   getDatasetIcon,
@@ -10,7 +10,7 @@ import {
   resolveDatasetThemePreset,
   type DatasetIconName,
 } from "../../lib/datasetPresentation";
-import { getPerformanceFocusLabel } from "../../lib/performanceMetricMetadata";
+import DatasetIdentityBadges from "../DatasetIdentityBadges/DatasetIdentityBadges";
 
 type DatasetCardProps = {
   slug: string;
@@ -20,6 +20,7 @@ type DatasetCardProps = {
   tags?: string[];
   problemType?: string;
   performanceFocusId?: string | null;
+  modelDisplayName?: string | null;
   iconOverride?: DatasetIconName;
   mediaRef?: string | null;
   themePreset?: string | null;
@@ -92,16 +93,13 @@ export default function DatasetCard({
   tags = [],
   problemType,
   performanceFocusId,
+  modelDisplayName,
   iconOverride,
   mediaRef,
   themePreset,
 }: DatasetCardProps) {
   const icon = iconOverride ?? getDatasetIcon(domain, tags);
   const analysisLabel = getProblemTypeLabel(problemType);
-  // Project Spec S0204: an unknown/missing focus id must never render an
-  // invented second badge -- getPerformanceFocusLabel returns undefined for
-  // both, and this component never falls back to the raw focus id.
-  const performanceFocusLabel = getPerformanceFocusLabel(performanceFocusId);
   const safeMediaRef = isSafeHomeCardMediaReference(mediaRef) ? mediaRef : null;
   const description = presentHomeCardDescription(summary);
   const resolvedTheme = resolveDatasetThemePreset(themePreset);
@@ -126,12 +124,12 @@ export default function DatasetCard({
       )}
       <div className="dataset-card__body">
         <h3 className="dataset-card__title">{title}</h3>
-        <div className="dataset-card__badges">
-          <Badge className="dataset-card__badge">{analysisLabel}</Badge>
-          {performanceFocusLabel && (
-            <Badge className="dataset-card__badge dataset-card__badge--focus">{performanceFocusLabel}</Badge>
-          )}
-        </div>
+        <DatasetIdentityBadges
+          problemLabel={analysisLabel}
+          performanceFocusId={performanceFocusId}
+          modelDisplayName={modelDisplayName}
+          groupClassName="dataset-card__badges"
+        />
         {description && <p className="dataset-card__description">{description}</p>}
       </div>
       <span className="dataset-card__action" aria-hidden="true">

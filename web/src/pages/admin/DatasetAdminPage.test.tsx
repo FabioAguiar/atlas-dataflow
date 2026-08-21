@@ -3304,6 +3304,77 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0238: the release-bound Model badge joins the existing
+  // problem/focus pair on every preview surface, sourced only from the
+  // currently loaded, dataset-bound result contract -- never an extra
+  // request, and always the same authority on both Home Card and Dataset
+  // Detail Live Preview.
+  describe("Dataset identity badge triad across preview surfaces (Project Spec S0238)", () => {
+    it("renders the release-bound Model badge in the Metadata & Card Home card preview, in problem/focus/model order", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      const previewCard = screen.getByRole("heading", { name: "Home card preview" }).closest<HTMLElement>(".dataset-admin-preview-card")!;
+      const badges = Array.from(previewCard.querySelectorAll(".dataset-card__badges .atlas-badge"));
+      expect(badges.map((badge) => badge.textContent)).toEqual([
+        "Binary Classification",
+        "Positive-class detection",
+        "Retention model",
+      ]);
+    });
+
+    it("renders the release-bound Model badge in Live Preview's Home Card, matching the Metadata & Card preview's authority", async () => {
+      const fetchMock = installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
+
+      const homeCardPanel = screen.getByRole("article", { name: "Home Card preview" });
+      const badges = Array.from(homeCardPanel.querySelectorAll(".dataset-card__badges .atlas-badge"));
+      expect(badges.map((badge) => badge.textContent)).toEqual([
+        "Binary Classification",
+        "Positive-class detection",
+        "Retention model",
+      ]);
+      // No extra request beyond the authoring context already fetched.
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/contract"))).toBe(false);
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/model-card"))).toBe(false);
+    });
+
+    it("renders the release-bound Model badge in Live Preview's Dataset Detail header, from the same authority as the Home Card", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      expect(screen.getByRole("tab", { name: "Dataset Detail", selected: true })).toBeInTheDocument();
+
+      const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
+      const badges = Array.from(headerBadges.querySelectorAll(".atlas-badge"));
+      // Live Preview's Dataset Detail header renders analysisType verbatim
+      // (unlike the Home Card, which humanizes through getProblemTypeLabel),
+      // matching this file's pre-existing S0204 header coverage above.
+      expect(badges.map((badge) => badge.textContent)).toEqual([
+        "binary_classification",
+        "Positive-class detection",
+        "Retention model",
+      ]);
+    });
+
+    it("omits only the Model badge when the loaded result contract carries no available model descriptor", async () => {
+      installFetchMock({ resultContractOverride: { status: "unavailable", reason: "binary_result_semantics_unavailable" } });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+
+      const headerBadges = document.querySelector(".dataset-detail-header__badges") as HTMLElement;
+      const badges = Array.from(headerBadges.querySelectorAll(".atlas-badge"));
+      expect(badges.map((badge) => badge.textContent)).toEqual(["binary_classification", "Positive-class detection"]);
+    });
+  });
+
   // Project Spec S0215: multiclass Performance focus authoring must never
   // default to or offer positive_class_detection, and must filter the
   // selectable score catalog to the multiclass-compatible subset.

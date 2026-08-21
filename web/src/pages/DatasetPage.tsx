@@ -25,6 +25,7 @@ import {
   presentDatasetDateOnly,
   resolveDatasetTargetDescription,
   resolveDatasetThemePreset,
+  resolveModelDisplayName,
   safePublicSourceUrl,
 } from "../lib/datasetPresentation";
 
@@ -423,6 +424,7 @@ export default function DatasetPage() {
     || undefined;
   const resultContract = contractState.status === "ready" ? contractState.data.result_contract : null;
   const analysisType = resolveAnalysisType(resultContract, context) ?? undefined;
+  const modelDisplayName = resolveModelDisplayName(resultContract);
   const sourceName = nonBlank(context?.source_name);
   const sourceHref = sourceName ? safePublicSourceUrl(context?.source_url) : null;
   const release = presentDatasetDateOnly(context?.release_date_label, context?.date_format);
@@ -580,6 +582,7 @@ export default function DatasetPage() {
           featureImportanceContent={featureImportanceContent}
           inferenceContent={inferenceContent}
           metadata={metadataItems}
+          modelDisplayName={modelDisplayName}
           performanceContent={performanceContent}
           performanceFocusId={context?.performance_focus?.focus_id}
           problemSummaryBody={problemSummaryText}

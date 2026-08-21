@@ -4561,6 +4561,7 @@ function DatasetDetailLivePreview({
       featureImportanceContent={featureImportanceContent}
       inferenceContent={inferenceContent}
       metadata={preview.metadata}
+      modelDisplayName={preview.modelDisplayName}
       performanceContent={performanceContent}
       performanceFocusId={preview.performanceFocusId}
       problemSummaryBody={preview.problemSummaryBody}

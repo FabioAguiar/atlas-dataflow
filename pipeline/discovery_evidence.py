@@ -890,6 +890,218 @@ def build_continuous_regression_result_semantics_intent(
     }
 
 
+# Project Spec S0243: a single reviewed univariate-forecasting result
+# semantics declaration. "approved" is the only status that may be promoted
+# into execution policy by
+# contract_derivation._materialize_univariate_forecasting_result_semantics;
+# "pending_review" keeps a declaration visible as an unresolved review item
+# without ever silently materializing into executable policy. Mirrors the
+# binary/multiclass/continuous_regression result_semantics_intent review-
+# status vocabulary and conventions above, but never owns or accepts a
+# dataset slug, target field name, time index field name, frequency,
+# forecast horizon, seasonal period, model family, actual forecast values,
+# future timestamps, history payload, or confidence intervals -- those
+# remain owned by dataset-semantic-intent.v4, candidate-preparation-
+# recipe.v2, or a later, separately governed contract.
+UNIVARIATE_FORECASTING_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION = (
+    "univariate_forecasting_result_semantics_intent.v1"
+)
+UNIVARIATE_FORECASTING_RESULT_SEMANTICS_REVIEW_STATUSES = frozenset(
+    {"approved", "pending_review"}
+)
+_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_PROBLEM_TYPE = "univariate_forecasting"
+_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_PRIMARY_OUTPUT = "forecast_series"
+_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_OUTPUT_STRUCTURE = "ordered_forecast_points"
+_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_FORECAST_VALUE_KIND = "continuous_numeric"
+
+
+def build_univariate_forecasting_result_semantics_intent(
+    review_status: str,
+    problem_type: str,
+    primary_output: str,
+    output_structure: str,
+    forecast_value_kind: str,
+    review_notes: str | None = None,
+) -> dict[str, Any]:
+    """Build a `univariate_forecasting_result_semantics_intent.v1` reviewed
+    declaration (Project Spec S0243).
+
+    Deliberately owns only result-behavior semantics -- no dataset slug,
+    target field name, time index field name, frequency, forecast horizon,
+    seasonal period, model family, actual forecast value, future timestamp,
+    history payload, or confidence interval parameter is ever accepted
+    here; the governed forecasting identity remains exclusively owned by
+    dataset-semantic-intent.v4 and candidate-preparation-recipe.v2, sourced
+    only at materialization time (see
+    contract_derivation._materialize_univariate_forecasting_result_semantics).
+    Only `review_status == "approved"` may later be promoted into
+    executable execution-contract policy; `"pending_review"` keeps the
+    declaration visible as an unresolved review item and this builder still
+    returns it rather than raising, mirroring
+    build_continuous_regression_result_semantics_intent's convention.
+    Raises ValueError on a structurally malformed declaration (unknown
+    review_status, wrong problem_type/primary_output/output_structure/
+    forecast_value_kind).
+    """
+    if review_status not in UNIVARIATE_FORECASTING_RESULT_SEMANTICS_REVIEW_STATUSES:
+        raise ValueError(
+            "review_status must be one of "
+            f"{sorted(UNIVARIATE_FORECASTING_RESULT_SEMANTICS_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    if problem_type != _UNIVARIATE_FORECASTING_RESULT_SEMANTICS_PROBLEM_TYPE:
+        raise ValueError(
+            f"problem_type must be exactly "
+            f"{_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_PROBLEM_TYPE!r}, got {problem_type!r}"
+        )
+    if primary_output != _UNIVARIATE_FORECASTING_RESULT_SEMANTICS_PRIMARY_OUTPUT:
+        raise ValueError(
+            f"primary_output must be exactly "
+            f"{_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_PRIMARY_OUTPUT!r}, got {primary_output!r}"
+        )
+    if output_structure != _UNIVARIATE_FORECASTING_RESULT_SEMANTICS_OUTPUT_STRUCTURE:
+        raise ValueError(
+            f"output_structure must be exactly "
+            f"{_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_OUTPUT_STRUCTURE!r}, got {output_structure!r}"
+        )
+    if forecast_value_kind != _UNIVARIATE_FORECASTING_RESULT_SEMANTICS_FORECAST_VALUE_KIND:
+        raise ValueError(
+            f"forecast_value_kind must be exactly "
+            f"{_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_FORECAST_VALUE_KIND!r}, "
+            f"got {forecast_value_kind!r}"
+        )
+
+    return {
+        "schema_version": UNIVARIATE_FORECASTING_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "problem_type": problem_type,
+        "primary_output": primary_output,
+        "output_structure": output_structure,
+        "forecast_value_kind": forecast_value_kind,
+        "review_notes": review_notes,
+    }
+
+
+# Project Spec S0243: a single reviewed forecasting evaluation-policy
+# declaration, bounded to the mae/rmse/seasonal_mase vocabulary. "approved"
+# is the only status that may be promoted into execution policy by
+# contract_derivation._build_execution_contract_v2; "pending_review" keeps
+# the declaration visible as an unresolved review item without ever
+# silently materializing into executable policy. This bounded vocabulary
+# can evolve in a future separately governed version -- MAPE/sMAPE and
+# every classification/continuous-regression metric id are always rejected
+# under this v1 forecasting evaluation-policy contract.
+UNIVARIATE_FORECASTING_EVALUATION_POLICY_INTENT_CONTRACT_VERSION = (
+    "univariate_forecasting_evaluation_policy_intent.v1"
+)
+UNIVARIATE_FORECASTING_EVALUATION_POLICY_REVIEW_STATUSES = frozenset(
+    {"approved", "pending_review"}
+)
+UNIVARIATE_FORECASTING_METRIC_IDS = frozenset({"mae", "rmse", "seasonal_mase"})
+_UNIVARIATE_FORECASTING_METRIC_DIRECTIONS: dict[str, str] = {
+    "mae": "lower_is_better",
+    "rmse": "lower_is_better",
+    "seasonal_mase": "lower_is_better",
+}
+_UNIVARIATE_FORECASTING_METRICS_REQUIRING_SEASONAL_PERIOD = frozenset({"seasonal_mase"})
+
+
+def _validate_univariate_forecasting_metric_entry(
+    metric_id: Any, seasonal_period: Any
+) -> dict[str, Any]:
+    """Validate and normalize a single forecasting metric entry.
+
+    Returns a strict `{"metric_id", "direction"[, "seasonal_period"]}`
+    entry. Raises ValueError for an unknown metric_id (including
+    mape/smape and every classification/continuous-regression metric id),
+    a missing/non-positive seasonal_period on seasonal_mase, or a
+    seasonal_period supplied alongside mae/rmse.
+    """
+    if metric_id not in UNIVARIATE_FORECASTING_METRIC_IDS:
+        raise ValueError(
+            f"unknown univariate forecasting evaluation metric: {metric_id!r}, must be one of "
+            f"{sorted(UNIVARIATE_FORECASTING_METRIC_IDS)}"
+        )
+    requires_seasonal_period = metric_id in _UNIVARIATE_FORECASTING_METRICS_REQUIRING_SEASONAL_PERIOD
+    if requires_seasonal_period:
+        if (
+            isinstance(seasonal_period, bool)
+            or not isinstance(seasonal_period, int)
+            or seasonal_period <= 0
+        ):
+            raise ValueError(
+                f"{metric_id} requires an explicit positive seasonal_period; a default of 12 "
+                "is never inserted"
+            )
+    elif seasonal_period is not None:
+        raise ValueError(f"{metric_id} must not carry a seasonal_period parameter")
+
+    entry = {"metric_id": metric_id, "direction": _UNIVARIATE_FORECASTING_METRIC_DIRECTIONS[metric_id]}
+    if requires_seasonal_period:
+        entry["seasonal_period"] = seasonal_period
+    return entry
+
+
+def build_univariate_forecasting_evaluation_policy_intent(
+    review_status: str,
+    primary_metric: dict[str, Any],
+    secondary_metrics: Sequence[dict[str, Any]] = (),
+    review_notes: str | None = None,
+) -> dict[str, Any]:
+    """Build a `univariate_forecasting_evaluation_policy_intent.v1` reviewed
+    declaration (Project Spec S0243).
+
+    `primary_metric` and each entry of `secondary_metrics` are caller-
+    supplied `{"metric_id": ..., "seasonal_period": <optional>}` mappings,
+    independently re-validated here via
+    `_validate_univariate_forecasting_metric_entry` -- metric ids are
+    bounded to mae/rmse/seasonal_mase for this contract version, every
+    supported metric carries explicit lower_is_better directionality,
+    seasonal_mase requires an explicit positive seasonal_period that is
+    never defaulted to 12, and mae/rmse reject a seasonal_period parameter.
+    Raises ValueError when the primary metric is duplicated in
+    secondary_metrics or when secondary_metrics contains a duplicate metric
+    id -- no metric computation ever occurs here.
+    """
+    if review_status not in UNIVARIATE_FORECASTING_EVALUATION_POLICY_REVIEW_STATUSES:
+        raise ValueError(
+            "review_status must be one of "
+            f"{sorted(UNIVARIATE_FORECASTING_EVALUATION_POLICY_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    if not isinstance(primary_metric, dict):
+        raise ValueError("primary_metric must be an object with a metric_id")
+    primary_entry = _validate_univariate_forecasting_metric_entry(
+        primary_metric.get("metric_id"), primary_metric.get("seasonal_period")
+    )
+
+    secondary_entries: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for candidate in secondary_metrics:
+        if not isinstance(candidate, dict):
+            raise ValueError("each secondary metric must be an object with a metric_id")
+        entry = _validate_univariate_forecasting_metric_entry(
+            candidate.get("metric_id"), candidate.get("seasonal_period")
+        )
+        if entry["metric_id"] in seen_ids:
+            raise ValueError(f"duplicate secondary metric id: {entry['metric_id']!r}")
+        seen_ids.add(entry["metric_id"])
+        secondary_entries.append(entry)
+
+    if primary_entry["metric_id"] in seen_ids:
+        raise ValueError(
+            f"primary metric {primary_entry['metric_id']!r} must not be duplicated in secondary_metrics"
+        )
+
+    return {
+        "schema_version": UNIVARIATE_FORECASTING_EVALUATION_POLICY_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "primary_metric": primary_entry,
+        "secondary_metrics": secondary_entries,
+        "review_notes": review_notes,
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -925,6 +1137,8 @@ def build_dataset_modeling_intent(
     binary_result_semantics_intent: dict[str, Any] | None = None,
     multiclass_result_semantics_intent: dict[str, Any] | None = None,
     continuous_regression_result_semantics_intent: dict[str, Any] | None = None,
+    univariate_forecasting_result_semantics_intent: dict[str, Any] | None = None,
+    univariate_forecasting_evaluation_policy_intent: dict[str, Any] | None = None,
     training_policy_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -955,6 +1169,17 @@ def build_dataset_modeling_intent(
     statistics, and does not redesign the older `target_intent`
     observational fields above. The authoritative continuous-regression
     target semantics remain the dataset-semantic-intent.v3 artifact.
+
+    `univariate_forecasting_result_semantics_intent` and
+    `univariate_forecasting_evaluation_policy_intent` (Project Spec S0243)
+    are optional reviewed forecasting declarations, built via
+    `build_univariate_forecasting_result_semantics_intent` and
+    `build_univariate_forecasting_evaluation_policy_intent` above. Both
+    default to `None`; when supplied, this builder carries them forward
+    verbatim -- it never owns target/time-index field identity, frequency,
+    forecast horizon, or seasonal period. The authoritative forecasting
+    identity remains dataset-semantic-intent.v4 and candidate-preparation-
+    recipe.v2.
 
     `training_policy_intent` (Project Spec S0216) is optional reviewed
     native training policy authoring intent -- execution-only fields
@@ -1026,6 +1251,16 @@ def build_dataset_modeling_intent(
         "continuous_regression_result_semantics_intent": (
             dict(continuous_regression_result_semantics_intent)
             if continuous_regression_result_semantics_intent is not None
+            else None
+        ),
+        "univariate_forecasting_result_semantics_intent": (
+            dict(univariate_forecasting_result_semantics_intent)
+            if univariate_forecasting_result_semantics_intent is not None
+            else None
+        ),
+        "univariate_forecasting_evaluation_policy_intent": (
+            dict(univariate_forecasting_evaluation_policy_intent)
+            if univariate_forecasting_evaluation_policy_intent is not None
             else None
         ),
         "training_policy_intent": (

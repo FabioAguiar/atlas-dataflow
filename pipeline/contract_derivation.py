@@ -81,6 +81,8 @@ from pipeline.discovery_evidence import (
     build_binary_result_semantics_intent,
     build_continuous_regression_result_semantics_intent,
     build_multiclass_result_semantics_intent,
+    build_univariate_forecasting_evaluation_policy_intent,
+    build_univariate_forecasting_result_semantics_intent,
 )
 
 
@@ -1532,6 +1534,176 @@ def _materialize_continuous_regression_result_semantics(
     return result_semantics, evidence
 
 
+# Project Spec S0243: materialize a reviewed, approved
+# univariate_forecasting_result_semantics_intent, requiring a valid
+# dataset-semantic-intent.v4 governed univariate-forecasting declaration,
+# into a normalized forecasting result_semantics block. Mirrors
+# _materialize_continuous_regression_result_semantics' independent
+# re-validation and "never blocks the whole contract on its own" evidence
+# shape -- the higher-level v1/v2 dispatch in _build_execution_contract is
+# what decides whether a forecasting-only failure here is allowed to fail
+# the whole materialization closed (see _build_execution_contract_v2).
+_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION = "univariate-forecasting-result-semantics.v1"
+_UNIVARIATE_FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION = "dataset-semantic-intent.v4"
+_UNIVARIATE_FORECASTING_TASK_TYPE = "univariate_forecasting"
+_UNIVARIATE_FORECASTING_TARGET_VALUE_KIND = "numeric"
+_UNIVARIATE_FORECASTING_MODE = "univariate"
+_UNIVARIATE_FORECASTING_SOURCE_EXOGENOUS_PREDICTORS = "forbidden"
+
+
+def _materialize_univariate_forecasting_result_semantics(
+    modeling_intent: dict[str, Any],
+    semantic_intent: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Return (result_semantics_or_None, materialization_evidence) for the
+    univariate-forecasting variant (Project Spec S0243).
+
+    Requires an approved, independently re-validated
+    `univariate_forecasting_result_semantics_intent` AND a valid
+    `dataset-semantic-intent.v4` declaring `target_semantics.task_type ==
+    "univariate_forecasting"`, `target_semantics.target_value_kind ==
+    "numeric"`, `target_semantics.forecasting_mode == "univariate"`,
+    `temporal_semantics.source_exogenous_predictors == "forbidden"`, a
+    non-empty target field, a non-empty time-index field, and a non-empty
+    frequency. Materializes only the bounded normalized output shape --
+    never target/time-index field names, frequency, forecast horizon,
+    seasonal period, review status/notes, evaluation policy, or model
+    metadata. Never raises; every rejection is a normal, reportable
+    `(None, evidence)` outcome.
+    """
+
+    def _blocked(reviewed_source_intent_present: bool, reason: str) -> tuple[None, dict[str, Any]]:
+        return None, {
+            "reviewed_source_intent_present": reviewed_source_intent_present,
+            "primary_output": None,
+            "output_structure": None,
+            "forecast_value_kind": None,
+            "semantic_intent_schema_version": None,
+            "no_defaults_inferred": True,
+            "readiness": "not_materialized",
+            "blocking_reasons": [reason],
+        }
+
+    intent = modeling_intent.get("univariate_forecasting_result_semantics_intent")
+    if not isinstance(intent, dict):
+        return _blocked(
+            False,
+            "univariate_forecasting_result_semantics_intent is absent from the dataset modeling intent",
+        )
+
+    review_status = intent.get("review_status")
+    if review_status != "approved":
+        return _blocked(
+            True,
+            f"univariate_forecasting_result_semantics_intent.review_status is {review_status!r}, "
+            "not 'approved'",
+        )
+
+    try:
+        rebuilt = build_univariate_forecasting_result_semantics_intent(
+            review_status=review_status,
+            problem_type=intent.get("problem_type"),
+            primary_output=intent.get("primary_output"),
+            output_structure=intent.get("output_structure"),
+            forecast_value_kind=intent.get("forecast_value_kind"),
+            review_notes=intent.get("review_notes"),
+        )
+    except ValueError as exc:
+        return _blocked(
+            True,
+            f"univariate_forecasting_result_semantics_intent failed independent re-validation: {exc}",
+        )
+
+    if not isinstance(semantic_intent, dict):
+        return _blocked(
+            True,
+            "univariate-forecasting materialization requires a dataset-semantic-intent.v4 semantic_intent",
+        )
+    semantic_schema_version = semantic_intent.get("schema_version")
+    if semantic_schema_version != _UNIVARIATE_FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION:
+        return _blocked(
+            True,
+            f"semantic_intent.schema_version is {semantic_schema_version!r}, not "
+            f"{_UNIVARIATE_FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION!r}",
+        )
+
+    target_semantics = semantic_intent.get("target_semantics")
+    if not isinstance(target_semantics, dict):
+        return _blocked(True, "semantic_intent.target_semantics is missing or malformed")
+
+    task_type = target_semantics.get("task_type")
+    if task_type != _UNIVARIATE_FORECASTING_TASK_TYPE:
+        return _blocked(
+            True,
+            f"semantic_intent.target_semantics.task_type is {task_type!r}, not "
+            f"{_UNIVARIATE_FORECASTING_TASK_TYPE!r}",
+        )
+
+    target_value_kind = target_semantics.get("target_value_kind")
+    if target_value_kind != _UNIVARIATE_FORECASTING_TARGET_VALUE_KIND:
+        return _blocked(
+            True,
+            f"semantic_intent.target_semantics.target_value_kind is {target_value_kind!r}, not "
+            f"{_UNIVARIATE_FORECASTING_TARGET_VALUE_KIND!r}",
+        )
+
+    forecasting_mode = target_semantics.get("forecasting_mode")
+    if forecasting_mode != _UNIVARIATE_FORECASTING_MODE:
+        return _blocked(
+            True,
+            f"semantic_intent.target_semantics.forecasting_mode is {forecasting_mode!r}, not "
+            f"{_UNIVARIATE_FORECASTING_MODE!r}",
+        )
+
+    target_field_name = target_semantics.get("target_field_name")
+    if not isinstance(target_field_name, str) or not target_field_name.strip():
+        return _blocked(
+            True, "semantic_intent.target_semantics.target_field_name must be a non-empty string"
+        )
+
+    temporal_semantics = semantic_intent.get("temporal_semantics")
+    if not isinstance(temporal_semantics, dict):
+        return _blocked(True, "semantic_intent.temporal_semantics is missing or malformed")
+
+    source_exogenous_predictors = temporal_semantics.get("source_exogenous_predictors")
+    if source_exogenous_predictors != _UNIVARIATE_FORECASTING_SOURCE_EXOGENOUS_PREDICTORS:
+        return _blocked(
+            True,
+            "semantic_intent.temporal_semantics.source_exogenous_predictors is "
+            f"{source_exogenous_predictors!r}, not {_UNIVARIATE_FORECASTING_SOURCE_EXOGENOUS_PREDICTORS!r}",
+        )
+
+    time_index_field_name = temporal_semantics.get("time_index_field_name")
+    if not isinstance(time_index_field_name, str) or not time_index_field_name.strip():
+        return _blocked(
+            True, "semantic_intent.temporal_semantics.time_index_field_name must be a non-empty string"
+        )
+
+    frequency = temporal_semantics.get("frequency")
+    if not isinstance(frequency, str) or not frequency.strip():
+        return _blocked(True, "semantic_intent.temporal_semantics.frequency must be a non-empty string")
+
+    result_semantics = {
+        "schema_version": _UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION,
+        "problem_type": rebuilt["problem_type"],
+        "primary_output": rebuilt["primary_output"],
+        "output_structure": rebuilt["output_structure"],
+        "forecast_value_kind": rebuilt["forecast_value_kind"],
+        "forecast_count_source": "forecast_horizon",
+    }
+    evidence = {
+        "reviewed_source_intent_present": True,
+        "primary_output": result_semantics["primary_output"],
+        "output_structure": result_semantics["output_structure"],
+        "forecast_value_kind": result_semantics["forecast_value_kind"],
+        "semantic_intent_schema_version": semantic_schema_version,
+        "no_defaults_inferred": True,
+        "readiness": "materialized",
+        "blocking_reasons": [],
+    }
+    return result_semantics, evidence
+
+
 def _result_semantics_status_and_reason(
     intent_present: bool, readiness: str, blocking_reasons: list[str]
 ) -> tuple[str, str | None]:
@@ -1548,12 +1720,14 @@ def _materialize_result_semantics(
     modeling_intent: dict[str, Any],
     semantic_intent: dict[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Closed result-semantics dispatch (Project Spec S0207, extended by S0223).
+    """Closed result-semantics dispatch (Project Spec S0207, extended by
+    S0223 and S0243).
 
     Exactly one variant materializer may ever run per execution contract, as
-    a closed three-way selection over
+    a closed four-way selection over
     `binary_result_semantics_intent`/`multiclass_result_semantics_intent`/
-    `continuous_regression_result_semantics_intent`: exactly one present
+    `continuous_regression_result_semantics_intent`/
+    `univariate_forecasting_result_semantics_intent`: exactly one present
     selects that variant's materializer; none present omits result_semantics
     entirely (the existing, unchanged behavior); more than one present fails
     closed with an explicit conflict rather than silently preferring any
@@ -1567,6 +1741,14 @@ def _materialize_result_semantics(
     for a binary-only or absent-intent contract see identical fields), and
     adds the common `requested_variant`/`materialized_schema_version`/
     `problem_type`/`status`/`reason` keys on top.
+
+    A solo, materializing `univariate_forecasting_result_semantics_intent`
+    is intercepted earlier by `_build_execution_contract`'s own dispatch and
+    routed to `_build_execution_contract_v2` before this function is ever
+    reached -- this function's own `"univariate_forecasting"` branch is only
+    exercised directly, or when forecasting is one side of a multi-intent
+    conflict (where the v1 tabular fallback below still applies, with
+    `result_semantics` omitted, exactly like every other conflict case).
     """
     binary_intent_present = isinstance(modeling_intent.get("binary_result_semantics_intent"), dict)
     multiclass_intent_present = isinstance(
@@ -1575,8 +1757,16 @@ def _materialize_result_semantics(
     continuous_regression_intent_present = isinstance(
         modeling_intent.get("continuous_regression_result_semantics_intent"), dict
     )
+    forecasting_intent_present = isinstance(
+        modeling_intent.get("univariate_forecasting_result_semantics_intent"), dict
+    )
     present_count = sum(
-        (binary_intent_present, multiclass_intent_present, continuous_regression_intent_present)
+        (
+            binary_intent_present,
+            multiclass_intent_present,
+            continuous_regression_intent_present,
+            forecasting_intent_present,
+        )
     )
 
     if present_count > 1:
@@ -1588,6 +1778,10 @@ def _materialize_result_semantics(
                 (
                     "continuous_regression_result_semantics_intent",
                     continuous_regression_intent_present,
+                ),
+                (
+                    "univariate_forecasting_result_semantics_intent",
+                    forecasting_intent_present,
                 ),
             )
             if present
@@ -1603,6 +1797,23 @@ def _materialize_result_semantics(
                 "materialize per execution contract"
             ),
         }
+
+    if forecasting_intent_present:
+        result_semantics, forecasting_evidence = _materialize_univariate_forecasting_result_semantics(
+            modeling_intent, semantic_intent
+        )
+        status, reason = _result_semantics_status_and_reason(
+            True, forecasting_evidence["readiness"], forecasting_evidence["blocking_reasons"]
+        )
+        evidence = dict(forecasting_evidence)
+        evidence["requested_variant"] = "univariate_forecasting"
+        evidence["materialized_schema_version"] = (
+            result_semantics["schema_version"] if result_semantics else None
+        )
+        evidence["problem_type"] = result_semantics["problem_type"] if result_semantics else None
+        evidence["status"] = status
+        evidence["reason"] = reason
+        return result_semantics, evidence
 
     if continuous_regression_intent_present:
         result_semantics, continuous_regression_evidence = (
@@ -1681,7 +1892,33 @@ def _build_execution_contract(
     `inferred_type`, using the same compatibility mapping enforced by
     `pipeline/validate_contract_consistency.py`, so a materialized contract
     always passes that consistency check by construction.
+
+    Project Spec S0243: when `univariate_forecasting_result_semantics_intent`
+    is present alone (no binary/multiclass/continuous_regression intent
+    alongside it), this function never runs the tabular body below at all --
+    it dispatches immediately to `_build_execution_contract_v2`, which
+    materializes the strict `execution_contract.v2` forecasting branch and
+    fails closed before any v1 tabular default is ever applied. When
+    forecasting is one side of a multi-intent conflict, this function falls
+    through to the unchanged v1 tabular body, where the closed
+    `_materialize_result_semantics` dispatcher reports the conflict and
+    `result_semantics` is simply omitted -- identical to every other
+    result-semantics conflict handled below.
     """
+    if isinstance(
+        modeling_intent.get("univariate_forecasting_result_semantics_intent"), dict
+    ) and not any(
+        isinstance(modeling_intent.get(key), dict)
+        for key in (
+            "binary_result_semantics_intent",
+            "multiclass_result_semantics_intent",
+            "continuous_regression_result_semantics_intent",
+        )
+    ):
+        return _build_execution_contract_v2(
+            modeling_intent, discovery_evidence, preparation_recipe, semantic_intent
+        )
+
     dataset_identity = modeling_intent.get("dataset_identity") or {}
     target_intent = modeling_intent.get("target_intent") or {}
     target_column = target_intent.get("target_column")
@@ -1856,6 +2093,349 @@ def _build_execution_contract(
     if result_semantics is not None:
         contract["result_semantics"] = result_semantics
     return contract
+
+
+# ---------------------------------------------------------------------------
+# Execution contract v2 materialization -- univariate forecasting
+# (Project Spec S0243)
+#
+# `_build_execution_contract_v2` is a dedicated materializer for the strict
+# `execution_contract.v2` branch. It is never reached through the tabular
+# `_build_execution_contract` body above -- `_build_execution_contract`
+# dispatches to this function immediately when a solo
+# `univariate_forecasting_result_semantics_intent` is present, before any
+# v1 tabular default (feature columns, split policy, modeling constraints)
+# is ever computed. Requires an approved forecasting evaluation-policy
+# intent, a valid `dataset-semantic-intent.v4`, and a valid
+# `candidate-preparation-recipe.v2`; the presence of a forecasting result
+# intent without compatible v4/v2 predecessors fails closed before any
+# historical default is ever applied.
+# ---------------------------------------------------------------------------
+
+EXECUTION_CONTRACT_V2_CONTRACT_VERSION = "execution_contract.v2"
+_FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION = "dataset-semantic-intent.v4"
+_FORECASTING_PREPARATION_RECIPE_SCHEMA_VERSION = "candidate-preparation-recipe.v2"
+_FORECASTING_PROBLEM_TYPE = "univariate_forecasting"
+_FORECASTING_SOURCE_EXOGENOUS_PREDICTORS = "forbidden"
+_FORECASTING_BACKTESTING_MODE = "expanding_window"
+
+_FORECASTING_TEMPORAL_INTEGRITY_REQUIRED_TRUE_KEYS = (
+    "strictly_increasing_index",
+    "unique_index",
+    "frequency_contiguous",
+    "target_missing_values_absent",
+    "target_values_finite",
+)
+_FORECASTING_LEAKAGE_CONTROL_REQUIRED_FALSE_KEYS = (
+    "random_shuffle_performed",
+    "future_targets_used_for_fold_fit",
+    "final_holdout_used_for_backtesting",
+    "final_holdout_used_for_model_selection",
+    "validation_targets_fed_back_within_fold",
+    "preprocessing_fit_on_validation_or_future",
+)
+
+
+class ExecutionContractV2ValidationError(ValueError):
+    """Raised when execution_contract.v2 materialization cannot proceed: a
+    required predecessor artifact (forecasting result intent, forecasting
+    evaluation-policy intent, dataset-semantic-intent.v4,
+    candidate-preparation-recipe.v2) is absent, unapproved, malformed, or
+    disagrees with another predecessor's identity/temporal-integrity/
+    leakage-control state. Forecasting materialization must fail closed
+    before any v1 tabular default is ever applied -- there is no partial
+    execution_contract.v2, since result_semantics/evaluation_policy/
+    temporal_evaluation are all required fields on that branch.
+    """
+
+    def __init__(self, reasons: list[str]) -> None:
+        self.reasons = list(reasons)
+        super().__init__(
+            "execution_contract.v2 materialization failed: " + "; ".join(reasons)
+        )
+
+
+def _build_execution_contract_v2(
+    modeling_intent: dict[str, Any],
+    discovery_evidence: dict[str, Any],
+    preparation_recipe: dict[str, Any] | None,
+    semantic_intent: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Materialize a strict `execution_contract.v2` univariate-forecasting
+    document. Raises `ExecutionContractV2ValidationError` for any structural
+    or cross-artifact identity failure -- this function never returns a
+    partially-populated contract.
+    """
+    result_semantics, result_semantics_evidence = _materialize_univariate_forecasting_result_semantics(
+        modeling_intent, semantic_intent
+    )
+    if result_semantics is None:
+        raise ExecutionContractV2ValidationError(result_semantics_evidence["blocking_reasons"])
+
+    evaluation_policy_intent = modeling_intent.get("univariate_forecasting_evaluation_policy_intent")
+    if not isinstance(evaluation_policy_intent, dict):
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_evaluation_policy_intent is required for "
+                "execution_contract.v2 and is absent from the dataset modeling intent"
+            ]
+        )
+    evaluation_policy_review_status = evaluation_policy_intent.get("review_status")
+    if evaluation_policy_review_status != "approved":
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_evaluation_policy_intent.review_status is "
+                f"{evaluation_policy_review_status!r}, not 'approved'"
+            ]
+        )
+    try:
+        rebuilt_evaluation_policy = build_univariate_forecasting_evaluation_policy_intent(
+            review_status=evaluation_policy_review_status,
+            primary_metric=evaluation_policy_intent.get("primary_metric"),
+            secondary_metrics=evaluation_policy_intent.get("secondary_metrics") or [],
+            review_notes=evaluation_policy_intent.get("review_notes"),
+        )
+    except ValueError as exc:
+        raise ExecutionContractV2ValidationError(
+            [
+                "univariate_forecasting_evaluation_policy_intent failed independent "
+                f"re-validation: {exc}"
+            ]
+        ) from exc
+
+    if not isinstance(semantic_intent, dict):
+        raise ExecutionContractV2ValidationError(
+            ["execution_contract.v2 materialization requires a dataset-semantic-intent.v4 semantic_intent"]
+        )
+    if semantic_intent.get("schema_version") != _FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION:
+        raise ExecutionContractV2ValidationError(
+            [
+                f"semantic_intent.schema_version is {semantic_intent.get('schema_version')!r}, not "
+                f"{_FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION!r}"
+            ]
+        )
+
+    if not isinstance(preparation_recipe, dict):
+        raise ExecutionContractV2ValidationError(
+            [
+                "execution_contract.v2 materialization requires a candidate-preparation-recipe.v2 "
+                "preparation_recipe"
+            ]
+        )
+    if preparation_recipe.get("schema_version") != _FORECASTING_PREPARATION_RECIPE_SCHEMA_VERSION:
+        raise ExecutionContractV2ValidationError(
+            [
+                f"preparation_recipe.schema_version is {preparation_recipe.get('schema_version')!r}, "
+                f"not {_FORECASTING_PREPARATION_RECIPE_SCHEMA_VERSION!r}"
+            ]
+        )
+    if preparation_recipe.get("problem_type") != _FORECASTING_PROBLEM_TYPE:
+        raise ExecutionContractV2ValidationError(
+            [
+                f"preparation_recipe.problem_type is {preparation_recipe.get('problem_type')!r}, not "
+                f"{_FORECASTING_PROBLEM_TYPE!r}"
+            ]
+        )
+    semantic_intent_ref = preparation_recipe.get("semantic_intent_ref") or {}
+    if semantic_intent_ref.get("schema_version") != _FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION:
+        raise ExecutionContractV2ValidationError(
+            [
+                "preparation_recipe.semantic_intent_ref.schema_version is "
+                f"{semantic_intent_ref.get('schema_version')!r}, not "
+                f"{_FORECASTING_SEMANTIC_INTENT_SCHEMA_VERSION!r}"
+            ]
+        )
+
+    reasons: list[str] = []
+
+    target_semantics = semantic_intent.get("target_semantics") or {}
+    temporal_semantics = semantic_intent.get("temporal_semantics") or {}
+    semantic_target_field = target_semantics.get("target_field_name")
+    semantic_time_index_field = temporal_semantics.get("time_index_field_name")
+    semantic_index_kind = temporal_semantics.get("index_value_kind")
+    semantic_frequency = temporal_semantics.get("frequency")
+
+    identity_mirror = preparation_recipe.get("semantic_identity_mirror") or {}
+    prep_target_field = identity_mirror.get("target_field_name")
+    prep_time_index_field = identity_mirror.get("time_index_field_name")
+    prep_index_kind = identity_mirror.get("index_value_kind")
+    prep_frequency = identity_mirror.get("frequency")
+
+    if semantic_target_field != prep_target_field:
+        reasons.append(
+            f"semantic_intent target field {semantic_target_field!r} does not match "
+            f"preparation_recipe.semantic_identity_mirror target field {prep_target_field!r}"
+        )
+    if semantic_time_index_field != prep_time_index_field:
+        reasons.append(
+            f"semantic_intent time-index field {semantic_time_index_field!r} does not match "
+            f"preparation_recipe.semantic_identity_mirror time-index field {prep_time_index_field!r}"
+        )
+    if semantic_index_kind != prep_index_kind:
+        reasons.append(
+            f"semantic_intent index_value_kind {semantic_index_kind!r} does not match "
+            f"preparation_recipe.semantic_identity_mirror index_value_kind {prep_index_kind!r}"
+        )
+    if semantic_frequency != prep_frequency:
+        reasons.append(
+            f"semantic_intent frequency {semantic_frequency!r} does not match "
+            f"preparation_recipe.semantic_identity_mirror frequency {prep_frequency!r}"
+        )
+
+    backtesting = preparation_recipe.get("backtesting") or {}
+    forecast_horizon = preparation_recipe.get("forecast_horizon")
+    if isinstance(forecast_horizon, bool) or not isinstance(forecast_horizon, int) or forecast_horizon <= 0:
+        reasons.append("preparation_recipe.forecast_horizon must be a positive integer")
+    elif backtesting.get("forecast_horizon") != forecast_horizon:
+        reasons.append(
+            "preparation_recipe.backtesting.forecast_horizon "
+            f"{backtesting.get('forecast_horizon')!r} does not match "
+            f"preparation_recipe.forecast_horizon {forecast_horizon!r}"
+        )
+    if backtesting.get("mode") != _FORECASTING_BACKTESTING_MODE:
+        reasons.append(
+            f"preparation_recipe.backtesting.mode is {backtesting.get('mode')!r}, not "
+            f"{_FORECASTING_BACKTESTING_MODE!r}"
+        )
+    fold_count = backtesting.get("fold_count")
+    if isinstance(fold_count, bool) or not isinstance(fold_count, int) or fold_count <= 0:
+        reasons.append("preparation_recipe.backtesting.fold_count must be a positive integer")
+
+    temporal_integrity = preparation_recipe.get("temporal_integrity") or {}
+    for key in _FORECASTING_TEMPORAL_INTEGRITY_REQUIRED_TRUE_KEYS:
+        if temporal_integrity.get(key) is not True:
+            reasons.append(f"preparation_recipe.temporal_integrity.{key} is not true")
+
+    leakage_controls = preparation_recipe.get("leakage_controls") or {}
+    for key in _FORECASTING_LEAKAGE_CONTROL_REQUIRED_FALSE_KEYS:
+        if leakage_controls.get(key) is not False:
+            reasons.append(f"preparation_recipe.leakage_controls.{key} is not false")
+
+    partitions = preparation_recipe.get("partitions") or {}
+    sealed_final_holdout = partitions.get("sealed_final_holdout") or {}
+    if sealed_final_holdout.get("prospectively_sealed") is not True:
+        reasons.append("preparation_recipe.partitions.sealed_final_holdout.prospectively_sealed is not true")
+    if sealed_final_holdout.get("used_for_backtesting") is not False:
+        reasons.append("preparation_recipe.partitions.sealed_final_holdout.used_for_backtesting is not false")
+    if sealed_final_holdout.get("used_for_model_selection") is not False:
+        reasons.append(
+            "preparation_recipe.partitions.sealed_final_holdout.used_for_model_selection is not false"
+        )
+
+    if reasons:
+        raise ExecutionContractV2ValidationError(reasons)
+
+    dataset_identity = modeling_intent.get("dataset_identity") or {}
+    seed = (discovery_evidence.get("generation_settings") or {}).get("seed")
+
+    temporal_evaluation = {
+        "preparation_schema_version": _FORECASTING_PREPARATION_RECIPE_SCHEMA_VERSION,
+        "backtesting_mode": _FORECASTING_BACKTESTING_MODE,
+        "fold_count": fold_count,
+        "final_holdout_prospectively_sealed": True,
+        "final_holdout_used_for_backtesting": False,
+        "final_holdout_used_for_model_selection": False,
+        "random_shuffle_performed": False,
+        "future_targets_used_for_fold_fit": False,
+        "validation_targets_fed_back_within_fold": False,
+        "preprocessing_fit_on_validation_or_future": False,
+    }
+    evaluation_policy = {
+        "primary_metric": dict(rebuilt_evaluation_policy["primary_metric"]),
+        "secondary_metrics": [dict(entry) for entry in rebuilt_evaluation_policy["secondary_metrics"]],
+    }
+
+    return {
+        "contract_version": EXECUTION_CONTRACT_V2_CONTRACT_VERSION,
+        "dataset_id": dataset_identity.get("dataset_slug"),
+        "problem_type": _FORECASTING_PROBLEM_TYPE,
+        "target_column": semantic_target_field,
+        "time_index_column": semantic_time_index_field,
+        "index_value_kind": semantic_index_kind,
+        "frequency": semantic_frequency,
+        "source_exogenous_predictors": _FORECASTING_SOURCE_EXOGENOUS_PREDICTORS,
+        "forecast_horizon": forecast_horizon,
+        "temporal_evaluation": temporal_evaluation,
+        "evaluation_policy": evaluation_policy,
+        "result_semantics": result_semantics,
+        "random_seed": seed if isinstance(seed, int) else None,
+    }
+
+
+def _build_execution_contract_v2_materialization_evidence(
+    modeling_intent: dict[str, Any],
+    preparation_recipe: dict[str, Any] | None,
+    execution_contract: dict[str, Any],
+    *,
+    execution_contract_relative_path: str,
+    discovery_evidence_relative_path: str | Path | None,
+    preparation_recipe_relative_path: str | Path | None,
+    prepared_data_metadata_relative_path: str | Path | None,
+    modeling_intent_relative_path: str | Path | None,
+    public_context_relative_path: str | Path | None,
+    raw_dataset_relative_path: str | Path | None,
+    generated_at: str | None,
+    semantic_intent: dict[str, Any] | None = None,
+    semantic_intent_relative_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Reduced evidence for an `execution_contract.v2` materialization
+    (Project Spec S0243, desired change O). Records only reduced facts
+    sufficient to prove the branch and its upstream sources -- never raw
+    target/history rows, fold target arrays, future result rows, model
+    bytes, coefficients, predictions, residuals, or external study paths.
+    """
+    dataset_identity = modeling_intent.get("dataset_identity") or {}
+    evaluation_policy = execution_contract["evaluation_policy"]
+    temporal_evaluation = execution_contract["temporal_evaluation"]
+    return {
+        "artifact_type": "execution_contract_materialization_evidence",
+        "contract_version": EXECUTION_CONTRACT_MATERIALIZATION_EVIDENCE_CONTRACT_VERSION,
+        "dataset_identity": dict(dataset_identity),
+        "execution_contract_ref": str(execution_contract_relative_path),
+        "source_artifact_references": {
+            "discovery_evidence_ref": (
+                str(discovery_evidence_relative_path) if discovery_evidence_relative_path else None
+            ),
+            "preparation_recipe_ref": (
+                str(preparation_recipe_relative_path) if preparation_recipe_relative_path else None
+            ),
+            "prepared_data_metadata_ref": (
+                str(prepared_data_metadata_relative_path)
+                if prepared_data_metadata_relative_path
+                else None
+            ),
+            "dataset_modeling_intent_ref": (
+                str(modeling_intent_relative_path) if modeling_intent_relative_path else None
+            ),
+            "public_context_ref": (
+                str(public_context_relative_path) if public_context_relative_path else None
+            ),
+            "raw_dataset_ref": (
+                str(raw_dataset_relative_path) if raw_dataset_relative_path else None
+            ),
+            "semantic_intent_ref": (
+                str(semantic_intent_relative_path) if semantic_intent_relative_path else None
+            ),
+        },
+        "execution_contract_version": execution_contract["contract_version"],
+        "requested_variant": "univariate_forecasting",
+        "materialized_result_schema_version": execution_contract["result_semantics"]["schema_version"],
+        "semantic_intent_schema_version": (semantic_intent or {}).get("schema_version"),
+        "preparation_recipe_schema_version": (preparation_recipe or {}).get("schema_version"),
+        "target_column": execution_contract["target_column"],
+        "time_index_column": execution_contract["time_index_column"],
+        "frequency": execution_contract["frequency"],
+        "forecast_horizon": execution_contract["forecast_horizon"],
+        "backtesting_mode": temporal_evaluation["backtesting_mode"],
+        "fold_count": temporal_evaluation["fold_count"],
+        "primary_metric_id": evaluation_policy["primary_metric"]["metric_id"],
+        "secondary_metric_ids": [entry["metric_id"] for entry in evaluation_policy["secondary_metrics"]],
+        "no_defaults_inferred": True,
+        "readiness": "materialized",
+        "blocking_reasons": [],
+        "execution_contract_boundary_confirmations": dict(EXECUTION_CONTRACT_BOUNDARY_CONFIRMATIONS),
+        "generated_at": generated_at or _utc_now_iso(),
+    }
 
 
 def _build_execution_contract_materialization_evidence(
@@ -2076,7 +2656,12 @@ def materialize_execution_contract(
         encoding="utf-8",
     )
 
-    evidence = _build_execution_contract_materialization_evidence(
+    evidence_builder = (
+        _build_execution_contract_v2_materialization_evidence
+        if execution_contract.get("contract_version") == EXECUTION_CONTRACT_V2_CONTRACT_VERSION
+        else _build_execution_contract_materialization_evidence
+    )
+    evidence = evidence_builder(
         modeling_intent,
         preparation_recipe,
         execution_contract,

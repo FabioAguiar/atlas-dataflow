@@ -2,215 +2,403 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "execution-contract.schema.json",
   "title": "Atlas DataFlow Execution Contract",
-  "description": "Schema defining execution_contract.v1 — the machine-readable contract governing training preparation, runtime inference, and contract projections. Execution-only fields that drive training are explicitly separated from runtime/public projection fields. Human-facing field descriptions, validation hints, and review notes from the human-facing contract draft (M22) are deliberately excluded — those belong to the promotion validator (M23-02) as reviewed human intent, not as executable operational rules.",
-  "type": "object",
-  "allOf": [
-    {
-      "description": "Project Spec S0231: when modeling_constraints.fixed_model_configuration.model_family is hist_gradient_boosting AND result_semantics.problem_type is continuous_regression, the fixed hyperparameters must be the bounded continuous-regression HGB shape (no class_weight, no random_state).",
-      "if": {
-        "properties": {
-          "modeling_constraints": {
-            "properties": {
-              "fixed_model_configuration": {
-                "properties": { "model_family": { "const": "hist_gradient_boosting" } },
-                "required": ["model_family"]
-              }
-            },
-            "required": ["fixed_model_configuration"]
-          },
-          "result_semantics": {
-            "properties": { "problem_type": { "const": "continuous_regression" } },
-            "required": ["problem_type"]
-          }
-        },
-        "required": ["modeling_constraints", "result_semantics"]
-      },
-      "then": {
-        "properties": {
-          "modeling_constraints": {
-            "properties": {
-              "fixed_model_configuration": {
-                "properties": {
-                  "hyperparameters": { "$ref": "#/definitions/hist_gradient_boosting_regression_hyperparameters" }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "description": "Project Spec S0231: every other hist_gradient_boosting fixed_model_configuration (result_semantics absent, or problem_type other than continuous_regression -- including the existing S0216 multiclass native case) keeps requiring the existing classification hyperparameter shape unchanged.",
-      "if": {
-        "properties": {
-          "modeling_constraints": {
-            "properties": {
-              "fixed_model_configuration": {
-                "properties": { "model_family": { "const": "hist_gradient_boosting" } },
-                "required": ["model_family"]
-              }
-            },
-            "required": ["fixed_model_configuration"]
-          }
-        },
-        "required": ["modeling_constraints"],
-        "not": {
-          "properties": {
-            "result_semantics": {
-              "properties": { "problem_type": { "const": "continuous_regression" } },
-              "required": ["problem_type"]
-            }
-          },
-          "required": ["result_semantics"]
-        }
-      },
-      "then": {
-        "properties": {
-          "modeling_constraints": {
-            "properties": {
-              "fixed_model_configuration": {
-                "properties": {
-                  "hyperparameters": { "$ref": "#/definitions/hist_gradient_boosting_hyperparameters" }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+  "description": "Schema defining the execution contract family governing training preparation, runtime inference, and contract projections. Project Spec S0243 refactors this schema into a closed discriminated union keyed by contract_version: execution_contract.v1 (unchanged in meaning -- tabular classification/regression) and execution_contract.v2 (new, strict, univariate-forecasting-only branch). A document must validate against exactly one branch; a document mixing v1 and v2 fields, or declaring an unknown contract_version, validates against neither and is rejected. Execution-only fields that drive training are explicitly separated from runtime/public projection fields. Human-facing field descriptions, validation hints, and review notes from the human-facing contract draft (M22) are deliberately excluded from v1 -- those belong to the promotion validator (M23-02) as reviewed human intent, not as executable operational rules.",
+  "oneOf": [
+    { "$ref": "#/definitions/execution_contract_v1" },
+    { "$ref": "#/definitions/execution_contract_v2" }
   ],
-  "required": [
-    "contract_version",
-    "dataset_id",
-    "target_column",
-    "feature_columns",
-    "ignored_columns",
-    "required_columns",
-    "optional_columns",
-    "feature_definitions",
-    "missing_value_policy",
-    "categorical_encoding_policy",
-    "numeric_handling",
-    "allowed_transformations",
-    "split_policy",
-    "random_seed",
-    "primary_metric",
-    "secondary_metrics",
-    "modeling_constraints"
-  ],
-  "additionalProperties": false,
-  "properties": {
-    "contract_version": {
-      "type": "string",
-      "const": "execution_contract.v1",
-      "description": "Fixed contract schema version identifier. Must always equal 'execution_contract.v1'. Used to detect contract version incompatibilities during promotion validation (M23-02) and projection derivation (M23-04). Not a semantic version — the runtime contract projection carries its own schema_version."
-    },
-    "dataset_id": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Dataset identifier. Must match the dataset slug used in the contracts directory (e.g., 'bank-marketing'). Used to associate this execution contract with its dataset-specific subdirectory and runtime contract instance."
-    },
-    "target_column": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Name of the column to predict. Must not appear in feature_columns or ignored_columns. Execution-only — not projected into the runtime contract features list, since the target is never an inference input."
-    },
-    "feature_columns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "description": "Ordered list of column names used as model inputs. Must be disjoint from ignored_columns and must not include target_column. Each name must have a corresponding entry in feature_definitions. Projected into the runtime contract features list via M23-04 projection derivation."
-    },
-    "ignored_columns": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "description": "Columns present in the dataset but excluded from both training and inference. Must not overlap with feature_columns or target_column. Execution-only — not projected into the runtime or public contract."
-    },
-    "required_columns": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "description": "Subset of feature_columns that must be present in every inference payload. Projected into the runtime contract as feature.required: true. Must be a subset of feature_columns."
-    },
-    "optional_columns": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      },
-      "description": "Subset of feature_columns that may be absent from an inference payload without triggering a validation failure. Projected into the runtime contract as feature.required: false. Must be a subset of feature_columns. The union of required_columns and optional_columns must equal feature_columns."
-    },
-    "feature_definitions": {
-      "type": "object",
-      "description": "Per-feature type and domain constraint definitions, keyed by feature name. Each key must be a name declared in feature_columns. Provides the type and domain information required to derive the runtime contract feature list in M23-04. Only feature_columns entries are permitted as keys — target_column and ignored_columns must not appear here. Human-facing descriptions, validation hints, and review notes from the human-facing contract draft are deliberately absent — those are reviewed intent (M22), not executable rules.",
-      "additionalProperties": {
-        "$ref": "#/definitions/feature_definition"
-      }
-    },
-    "missing_value_policy": {
-      "type": "object",
-      "description": "Per-feature missing value handling strategy, keyed by feature name. Each key must be a name declared in feature_columns. Governs pipeline preprocessing only — not runtime inference behavior. Human-facing 'validation_hint' fields from the M22 human-facing contract draft are deliberately not carried here.",
-      "additionalProperties": {
-        "$ref": "#/definitions/missing_value_strategy"
-      }
-    },
-    "categorical_encoding_policy": {
-      "$ref": "#/definitions/categorical_encoding",
-      "description": "Default encoding strategy applied to all categorical features. Execution-only — governs training preprocessing, not public-facing projection. Not projected into the runtime or public contract."
-    },
-    "numeric_handling": {
-      "$ref": "#/definitions/numeric_handling_strategy",
-      "description": "Numeric feature preprocessing approach applied to all numeric features before training. Execution-only — not projected into the runtime or public contract."
-    },
-    "allowed_transformations": {
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/transformation"
-      },
-      "description": "List of column transformations permitted under this contract. An empty array means no transformations beyond encoding and scaling are applied. Execution-only."
-    },
-    "split_policy": {
-      "$ref": "#/definitions/split_policy",
-      "description": "Dataset partitioning configuration for training, validation, and testing phases. Execution-only — not projected into the runtime or public contract."
-    },
-    "random_seed": {
-      "type": ["integer", "null"],
-      "description": "Random seed for reproducibility across training runs. Null indicates non-deterministic training. Execution-only."
-    },
-    "primary_metric": {
-      "$ref": "#/definitions/metric",
-      "description": "Primary evaluation metric used to select the best model checkpoint during training. Execution-only — not projected into the runtime or public contract."
-    },
-    "secondary_metrics": {
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/metric"
-      },
-      "description": "Candidate secondary evaluation metrics computed during training for monitoring. May be empty. Execution-only."
-    },
-    "modeling_constraints": {
-      "$ref": "#/definitions/modeling_constraints",
-      "description": "Constraints bounding the model family selection space and training strategy. Does not select a specific model — constrains what is permissible for this dataset. Execution-only."
-    },
-    "result_semantics": {
-      "$ref": "#/definitions/result_semantics",
-      "description": "Project Spec S0108: optional, backward-compatible normalized binary-result semantics. Present only on new binary execution contracts with a reviewed, approved binary_result_semantics_intent; strictly validated when present. Excludes authoring-only fields such as review status/notes — those remain in the dataset modeling intent, not here."
-    },
-    "model_source_mode": {
-      "type": "string",
-      "enum": ["atlas_internal_training", "validated_external_fitted_model"],
-      "description": "Project Spec S0157: optional, backward-compatible explicit model-source declaration. Absent means atlas_internal_training (legacy behavior, unchanged). validated_external_fitted_model is only ever an explicit declaration -- never inferred from model_family, modeling_constraints, or any other field -- and is rejected by the governed training entrypoint (pipeline/training.py) before estimator construction or fit."
-    }
-  },
   "definitions": {
+    "execution_contract_v1": {
+      "type": "object",
+      "allOf": [
+        {
+          "description": "Project Spec S0231: when modeling_constraints.fixed_model_configuration.model_family is hist_gradient_boosting AND result_semantics.problem_type is continuous_regression, the fixed hyperparameters must be the bounded continuous-regression HGB shape (no class_weight, no random_state).",
+          "if": {
+            "properties": {
+              "modeling_constraints": {
+                "properties": {
+                  "fixed_model_configuration": {
+                    "properties": { "model_family": { "const": "hist_gradient_boosting" } },
+                    "required": ["model_family"]
+                  }
+                },
+                "required": ["fixed_model_configuration"]
+              },
+              "result_semantics": {
+                "properties": { "problem_type": { "const": "continuous_regression" } },
+                "required": ["problem_type"]
+              }
+            },
+            "required": ["modeling_constraints", "result_semantics"]
+          },
+          "then": {
+            "properties": {
+              "modeling_constraints": {
+                "properties": {
+                  "fixed_model_configuration": {
+                    "properties": {
+                      "hyperparameters": { "$ref": "#/definitions/hist_gradient_boosting_regression_hyperparameters" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "description": "Project Spec S0231: every other hist_gradient_boosting fixed_model_configuration (result_semantics absent, or problem_type other than continuous_regression -- including the existing S0216 multiclass native case) keeps requiring the existing classification hyperparameter shape unchanged.",
+          "if": {
+            "properties": {
+              "modeling_constraints": {
+                "properties": {
+                  "fixed_model_configuration": {
+                    "properties": { "model_family": { "const": "hist_gradient_boosting" } },
+                    "required": ["model_family"]
+                  }
+                },
+                "required": ["fixed_model_configuration"]
+              }
+            },
+            "required": ["modeling_constraints"],
+            "not": {
+              "properties": {
+                "result_semantics": {
+                  "properties": { "problem_type": { "const": "continuous_regression" } },
+                  "required": ["problem_type"]
+                }
+              },
+              "required": ["result_semantics"]
+            }
+          },
+          "then": {
+            "properties": {
+              "modeling_constraints": {
+                "properties": {
+                  "fixed_model_configuration": {
+                    "properties": {
+                      "hyperparameters": { "$ref": "#/definitions/hist_gradient_boosting_hyperparameters" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "required": [
+        "contract_version",
+        "dataset_id",
+        "target_column",
+        "feature_columns",
+        "ignored_columns",
+        "required_columns",
+        "optional_columns",
+        "feature_definitions",
+        "missing_value_policy",
+        "categorical_encoding_policy",
+        "numeric_handling",
+        "allowed_transformations",
+        "split_policy",
+        "random_seed",
+        "primary_metric",
+        "secondary_metrics",
+        "modeling_constraints"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "type": "string",
+          "const": "execution_contract.v1",
+          "description": "Fixed contract schema version identifier. Must always equal 'execution_contract.v1'. Used to detect contract version incompatibilities during promotion validation (M23-02) and projection derivation (M23-04). Not a semantic version — the runtime contract projection carries its own schema_version."
+        },
+        "dataset_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dataset identifier. Must match the dataset slug used in the contracts directory (e.g., 'bank-marketing'). Used to associate this execution contract with its dataset-specific subdirectory and runtime contract instance."
+        },
+        "target_column": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the column to predict. Must not appear in feature_columns or ignored_columns. Execution-only — not projected into the runtime contract features list, since the target is never an inference input."
+        },
+        "feature_columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ordered list of column names used as model inputs. Must be disjoint from ignored_columns and must not include target_column. Each name must have a corresponding entry in feature_definitions. Projected into the runtime contract features list via M23-04 projection derivation."
+        },
+        "ignored_columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Columns present in the dataset but excluded from both training and inference. Must not overlap with feature_columns or target_column. Execution-only — not projected into the runtime or public contract."
+        },
+        "required_columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Subset of feature_columns that must be present in every inference payload. Projected into the runtime contract as feature.required: true. Must be a subset of feature_columns."
+        },
+        "optional_columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Subset of feature_columns that may be absent from an inference payload without triggering a validation failure. Projected into the runtime contract as feature.required: false. Must be a subset of feature_columns. The union of required_columns and optional_columns must equal feature_columns."
+        },
+        "feature_definitions": {
+          "type": "object",
+          "description": "Per-feature type and domain constraint definitions, keyed by feature name. Each key must be a name declared in feature_columns. Provides the type and domain information required to derive the runtime contract feature list in M23-04. Only feature_columns entries are permitted as keys — target_column and ignored_columns must not appear here. Human-facing descriptions, validation hints, and review notes from the human-facing contract draft are deliberately absent — those are reviewed intent (M22), not executable rules.",
+          "additionalProperties": {
+            "$ref": "#/definitions/feature_definition"
+          }
+        },
+        "missing_value_policy": {
+          "type": "object",
+          "description": "Per-feature missing value handling strategy, keyed by feature name. Each key must be a name declared in feature_columns. Governs pipeline preprocessing only — not runtime inference behavior. Human-facing 'validation_hint' fields from the M22 human-facing contract draft are deliberately not carried here.",
+          "additionalProperties": {
+            "$ref": "#/definitions/missing_value_strategy"
+          }
+        },
+        "categorical_encoding_policy": {
+          "$ref": "#/definitions/categorical_encoding",
+          "description": "Default encoding strategy applied to all categorical features. Execution-only — governs training preprocessing, not public-facing projection. Not projected into the runtime or public contract."
+        },
+        "numeric_handling": {
+          "$ref": "#/definitions/numeric_handling_strategy",
+          "description": "Numeric feature preprocessing approach applied to all numeric features before training. Execution-only — not projected into the runtime or public contract."
+        },
+        "allowed_transformations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/transformation"
+          },
+          "description": "List of column transformations permitted under this contract. An empty array means no transformations beyond encoding and scaling are applied. Execution-only."
+        },
+        "split_policy": {
+          "$ref": "#/definitions/split_policy",
+          "description": "Dataset partitioning configuration for training, validation, and testing phases. Execution-only — not projected into the runtime or public contract."
+        },
+        "random_seed": {
+          "type": ["integer", "null"],
+          "description": "Random seed for reproducibility across training runs. Null indicates non-deterministic training. Execution-only."
+        },
+        "primary_metric": {
+          "$ref": "#/definitions/metric",
+          "description": "Primary evaluation metric used to select the best model checkpoint during training. Execution-only — not projected into the runtime or public contract."
+        },
+        "secondary_metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/metric"
+          },
+          "description": "Candidate secondary evaluation metrics computed during training for monitoring. May be empty. Execution-only."
+        },
+        "modeling_constraints": {
+          "$ref": "#/definitions/modeling_constraints",
+          "description": "Constraints bounding the model family selection space and training strategy. Does not select a specific model — constrains what is permissible for this dataset. Execution-only."
+        },
+        "result_semantics": {
+          "$ref": "#/definitions/result_semantics",
+          "description": "Project Spec S0108: optional, backward-compatible normalized binary-result semantics. Present only on new binary execution contracts with a reviewed, approved binary_result_semantics_intent; strictly validated when present. Excludes authoring-only fields such as review status/notes — those remain in the dataset modeling intent, not here."
+        },
+        "model_source_mode": {
+          "type": "string",
+          "enum": ["atlas_internal_training", "validated_external_fitted_model"],
+          "description": "Project Spec S0157: optional, backward-compatible explicit model-source declaration. Absent means atlas_internal_training (legacy behavior, unchanged). validated_external_fitted_model is only ever an explicit declaration -- never inferred from model_family, modeling_constraints, or any other field -- and is rejected by the governed training entrypoint (pipeline/training.py) before estimator construction or fit."
+        }
+      }
+    },
+    "execution_contract_v2": {
+      "type": "object",
+      "description": "Project Spec S0243: strict, univariate-forecasting-only execution contract branch. Closed and disjoint from execution_contract_v1 -- additionalProperties is false and no v1 tabular field (feature_columns, split_policy, modeling_constraints, etc.) is a member of this branch. Never carries actual future forecast periods/values, model metadata, or a confidence/prediction interval contract -- those remain owned by later, separately governed contracts.",
+      "required": [
+        "contract_version",
+        "dataset_id",
+        "problem_type",
+        "target_column",
+        "time_index_column",
+        "index_value_kind",
+        "frequency",
+        "source_exogenous_predictors",
+        "forecast_horizon",
+        "temporal_evaluation",
+        "evaluation_policy",
+        "result_semantics",
+        "random_seed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "type": "string",
+          "const": "execution_contract.v2",
+          "description": "Fixed contract schema version identifier for the univariate-forecasting execution-contract branch. Must always equal 'execution_contract.v2'."
+        },
+        "dataset_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dataset identifier. Must match the dataset slug used in the contracts directory."
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "univariate_forecasting",
+          "description": "Closed problem-type discriminator for this branch. Only 'univariate_forecasting' is governed by execution_contract.v2."
+        },
+        "target_column": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single, exact forecasted target column identity. Never a list -- execution_contract.v2 governs exactly one target-column identity."
+        },
+        "time_index_column": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single, exact time-index column identity, sourced from and cross-checked against dataset-semantic-intent.v4 temporal_semantics.time_index_field_name."
+        },
+        "index_value_kind": {
+          "type": "string",
+          "enum": ["calendar_period", "timestamp", "ordinal_time"],
+          "description": "Kind of the temporal index's values, sourced from dataset-semantic-intent.v4 temporal_semantics.index_value_kind."
+        },
+        "frequency": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Non-empty, dataset-specific authored logical frequency identifier, sourced from dataset-semantic-intent.v4 temporal_semantics.frequency. Never a pandas/NumPy/statsmodels-specific alias vocabulary."
+        },
+        "source_exogenous_predictors": {
+          "type": "string",
+          "const": "forbidden",
+          "description": "Fixed: this univariate forecasting execution contract never includes source exogenous predictors. Never a generic feature_columns list."
+        },
+        "forecast_horizon": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Positive integer forecast horizon, sourced only from candidate-preparation-recipe.v2 and cross-checked against its backtesting.forecast_horizon. Never hardcoded to a dataset-specific constant by this schema."
+        },
+        "temporal_evaluation": {
+          "$ref": "#/definitions/forecasting_temporal_evaluation",
+          "description": "Reduced temporal-evaluation facts projected from candidate-preparation-recipe.v2. Never copies the full fold_schedule, raw periods, target values, validation values, predictions, or residuals."
+        },
+        "evaluation_policy": {
+          "$ref": "#/definitions/forecasting_evaluation_policy",
+          "description": "Materialized, bounded forecasting evaluation policy. Declares which metrics apply and their governed direction; never computes a metric value."
+        },
+        "result_semantics": {
+          "$ref": "#/definitions/univariate_forecasting_result_semantics",
+          "description": "Strict, normalized univariate-forecasting result semantics. Required on every execution_contract.v2 document -- forecasting has no result-semantics-optional tabular fallback shape."
+        },
+        "random_seed": {
+          "type": ["integer", "null"],
+          "description": "Random seed for downstream reproducibility. Null is representable and is never interpreted as permission for nondeterministic behavior. Not governed or required by S0243 itself."
+        }
+      }
+    },
+    "forecasting_temporal_evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preparation_schema_version",
+        "backtesting_mode",
+        "fold_count",
+        "final_holdout_prospectively_sealed",
+        "final_holdout_used_for_backtesting",
+        "final_holdout_used_for_model_selection",
+        "random_shuffle_performed",
+        "future_targets_used_for_fold_fit",
+        "validation_targets_fed_back_within_fold",
+        "preprocessing_fit_on_validation_or_future"
+      ],
+      "description": "Reduced facts needed for downstream execution, projected from candidate-preparation-recipe.v2. Never carries fold_schedule[], development/holdout start/end labels, raw periods, target values, validation values, predictions, or residuals -- those remain owned by preparation/evidence.",
+      "properties": {
+        "preparation_schema_version": { "type": "string", "const": "candidate-preparation-recipe.v2" },
+        "backtesting_mode": { "type": "string", "const": "expanding_window" },
+        "fold_count": { "type": "integer", "exclusiveMinimum": 0 },
+        "final_holdout_prospectively_sealed": { "type": "boolean", "const": true },
+        "final_holdout_used_for_backtesting": { "type": "boolean", "const": false },
+        "final_holdout_used_for_model_selection": { "type": "boolean", "const": false },
+        "random_shuffle_performed": { "type": "boolean", "const": false },
+        "future_targets_used_for_fold_fit": { "type": "boolean", "const": false },
+        "validation_targets_fed_back_within_fold": { "type": "boolean", "const": false },
+        "preprocessing_fit_on_validation_or_future": { "type": "boolean", "const": false }
+      }
+    },
+    "forecasting_metric_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id", "direction"],
+      "description": "One strict, bounded forecasting evaluation metric entry. seasonal_mase requires an explicit positive seasonal_period; mae/rmse must never carry one. No metric value is ever computed or recorded here.",
+      "properties": {
+        "metric_id": {
+          "type": "string",
+          "enum": ["mae", "rmse", "seasonal_mase"]
+        },
+        "direction": {
+          "type": "string",
+          "const": "lower_is_better"
+        },
+        "seasonal_period": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "metric_id": { "const": "seasonal_mase" } },
+            "required": ["metric_id"]
+          },
+          "then": { "required": ["seasonal_period"] }
+        },
+        {
+          "if": {
+            "properties": { "metric_id": { "enum": ["mae", "rmse"] } },
+            "required": ["metric_id"]
+          },
+          "then": { "not": { "required": ["seasonal_period"] } }
+        }
+      ]
+    },
+    "forecasting_evaluation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary_metric", "secondary_metrics"],
+      "description": "Materialized forecasting evaluation policy. primary_metric and every secondary_metrics entry are strict forecasting_metric_entry objects. Uniqueness of secondary metric ids and non-duplication of the primary metric within secondary_metrics are enforced by the materializer, not restated structurally here.",
+      "properties": {
+        "primary_metric": { "$ref": "#/definitions/forecasting_metric_entry" },
+        "secondary_metrics": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/forecasting_metric_entry" }
+        }
+      }
+    },
+    "univariate_forecasting_result_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "problem_type",
+        "primary_output",
+        "output_structure",
+        "forecast_value_kind",
+        "forecast_count_source"
+      ],
+      "description": "Project Spec S0243: strict normalized univariate-forecasting result semantics materialized from a reviewed, approved univariate_forecasting_result_semantics_intent. Defines semantics only, never a persisted prediction instance -- rejects classification/regression-only fields (positive_class, classes, probability_output, threshold, decision, interpretation, risk bands, predicted_value) and runtime-instance fields (period, timestamp, forecast, forecast_points, confidence_interval, prediction_interval, model_descriptor) by construction via additionalProperties: false.",
+      "properties": {
+        "schema_version": { "type": "string", "const": "univariate-forecasting-result-semantics.v1" },
+        "problem_type": { "type": "string", "const": "univariate_forecasting" },
+        "primary_output": { "type": "string", "const": "forecast_series" },
+        "output_structure": { "type": "string", "const": "ordered_forecast_points" },
+        "forecast_value_kind": { "type": "string", "const": "continuous_numeric" },
+        "forecast_count_source": { "type": "string", "const": "forecast_horizon" }
+      }
+    },
     "feature_definition": {
       "type": "object",
       "required": ["type"],
@@ -461,7 +649,7 @@
         "mae",
         "rmse"
       ],
-      "description": "Evaluation metric identifier. Scoped to Atlas classification use cases. roc_auc: area under ROC curve; f1: F1 score; accuracy: classification accuracy; log_loss: cross-entropy loss; pr_auc: area under precision-recall curve (this project's existing internal-training identifier, computed via average_precision_score). Project Spec S0157 additions for the external fitted-model evidence profile: average_precision (a distinct canonical identifier from pr_auc -- both remain valid and are never silently translated into one another; pr_auc is this project's established internal-training name, average_precision is the external evidence profile's own name for the same class of ranking metric, kept separate so provenance is never lost); precision; recall; f2 (F-beta with beta=2, recall-weighted); balanced_accuracy; brier_score (mean squared error of predicted probabilities, lower_is_better semantics, distinct from log_loss). Project Spec S0216 explicit multiclass-native aggregate additions: f1_macro, f1_weighted, precision_macro, recall_macro -- each a distinct, explicit multiclass aggregate identifier, never a silent reinterpretation of the binary-era f1/precision/recall ids (those never carry multiclass averaging semantics). Project Spec S0223 continuous-regression vocabulary additions: r2 (coefficient of determination; higher_is_better), mae (mean absolute error; lower_is_better), rmse (root mean squared error; lower_is_better) -- contract/training-policy vocabulary only; selecting r2/mae/rmse at contract-policy level does not imply metric computation support. The governed internal training entrypoint (pipeline/training.py) computes roc_auc/f1/accuracy/log_loss/pr_auc for binary native training and additionally accuracy/balanced_accuracy/f1_macro/f1_weighted/precision_macro/recall_macro/log_loss for fixed-configuration native multiclass training; every other identifier is schema-valid vocabulary for evidence artifacts and fails closed with a stable unsupported_metric error if ever selected as an internal training primary_metric outside those two governed sets. pipeline/training.py does not compute r2/mae/rmse as of S0223."
+      "description": "Evaluation metric identifier. Scoped to Atlas classification use cases. roc_auc: area under ROC curve; f1: F1 score; accuracy: classification accuracy; log_loss: cross-entropy loss; pr_auc: area under precision-recall curve (this project's existing internal-training identifier, computed via average_precision_score). Project Spec S0157 additions for the external fitted-model evidence profile: average_precision (a distinct canonical identifier from pr_auc -- both remain valid and are never silently translated into one another; pr_auc is this project's established internal-training name, average_precision is the external evidence profile's own name for the same class of ranking metric, kept separate so provenance is never lost); precision; recall; f2 (F-beta with beta=2, recall-weighted); balanced_accuracy; brier_score (mean squared error of predicted probabilities, lower_is_better semantics, distinct from log_loss). Project Spec S0216 explicit multiclass-native aggregate additions: f1_macro, f1_weighted, precision_macro, recall_macro -- each a distinct, explicit multiclass aggregate identifier, never a silent reinterpretation of the binary-era f1/precision/recall ids (those never carry multiclass averaging semantics). Project Spec S0223 continuous-regression vocabulary additions: r2 (coefficient of determination; higher_is_better), mae (mean absolute error; lower_is_better), rmse (root mean squared error; lower_is_better) -- contract/training-policy vocabulary only; selecting r2/mae/rmse at contract-policy level does not imply metric computation support. The governed internal training entrypoint (pipeline/training.py) computes roc_auc/f1/accuracy/log_loss/pr_auc for binary native training and additionally accuracy/balanced_accuracy/f1_macro/f1_weighted/precision_macro/recall_macro/log_loss for fixed-configuration native multiclass training; every other identifier is schema-valid vocabulary for evidence artifacts and fails closed with a stable unsupported_metric error if ever selected as an internal training primary_metric outside those two governed sets. pipeline/training.py does not compute r2/mae/rmse as of S0223. Project Spec S0243's mae/rmse/seasonal_mase forecasting evaluation-policy vocabulary is governed exclusively by execution_contract.v2's own forecasting_metric_entry definition, not by this v1-scoped metric enum -- seasonal_mase is intentionally never added here."
     },
     "modeling_constraints": {
       "type": "object",

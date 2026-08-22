@@ -7,9 +7,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.contract_derivation import (
     EXECUTION_CONTRACT_DRAFT_CONTRACT_VERSION,
+    EXECUTION_CONTRACT_V2_CONTRACT_VERSION,
+    ExecutionContractV2ValidationError,
     TrainingPolicyValidationError,
     _build_execution_contract,
     _build_execution_contract_materialization_evidence,
+    _build_execution_contract_v2_materialization_evidence,
     _check_safety,
     _derive_public_contract,
     _derive_public_feature,
@@ -23,12 +26,15 @@ from pipeline.contract_derivation import (
     categorical_validation_behavior,
     condition_value_type_compatible,
     conditional_policy_errors,
+    materialize_execution_contract,
     project_execution_contract_draft,
 )
 from pipeline.discovery_evidence import (
     build_binary_result_semantics_intent,
     build_continuous_regression_result_semantics_intent,
     build_multiclass_result_semantics_intent,
+    build_univariate_forecasting_evaluation_policy_intent,
+    build_univariate_forecasting_result_semantics_intent,
 )
 
 
@@ -1853,3 +1859,666 @@ def test_execution_contract_materialization_evidence_reports_training_policy_pre
     assert training_policy_materialization["reviewed_source_intent_present"] is True
     assert training_policy_materialization["materialized"] is True
     assert evidence["policy_defaults_requiring_future_review"] == []
+
+
+# ---------------------------------------------------------------------------
+# execution_contract.v2 -- strict univariate-forecasting materialization
+# (Project Spec S0243). Fixtures are synthetic and dataset-neutral, matching
+# the "campaign-response" precedent established above -- no Nottingham-
+# specific slug/path/field/cadence/horizon/seasonal period.
+# ---------------------------------------------------------------------------
+
+
+def _approved_forecasting_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="univariate_forecasting",
+        primary_output="forecast_series",
+        output_structure="ordered_forecast_points",
+        forecast_value_kind="continuous_numeric",
+        review_notes="Reviewed univariate-forecasting result semantics.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_result_semantics_intent(**kwargs)
+
+
+def _approved_forecasting_evaluation_policy_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        primary_metric={"metric_id": "mae"},
+        secondary_metrics=[{"metric_id": "seasonal_mase", "seasonal_period": 7}],
+        review_notes="Reviewed forecasting evaluation policy.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_evaluation_policy_intent(**kwargs)
+
+
+def _valid_semantic_intent_v4(
+    target_field_name="demand",
+    time_index_field_name="period",
+    task_type="univariate_forecasting",
+    target_value_kind="numeric",
+    forecasting_mode="univariate",
+    source_exogenous_predictors="forbidden",
+    index_value_kind="calendar_period",
+    frequency="monthly",
+) -> dict:
+    return {
+        "schema_version": "dataset-semantic-intent.v4",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": "synthetic-series"},
+        "authoring_generation_id": "gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": "univariate-predictive-forecasting",
+            "capability_profile_version": "v1",
+        },
+        "field_role_decisions": [
+            {"field_name": time_index_field_name, "role": "temporal_index", "include_in_features": False},
+            {"field_name": target_field_name, "role": "target", "include_in_features": False},
+        ],
+        "temporal_semantics": {
+            "time_index_field_name": time_index_field_name,
+            "index_value_kind": index_value_kind,
+            "frequency": frequency,
+            "source_exogenous_predictors": source_exogenous_predictors,
+        },
+        "target_semantics": {
+            "target_field_name": target_field_name,
+            "task_type": task_type,
+            "target_value_kind": target_value_kind,
+            "forecasting_mode": forecasting_mode,
+            "is_final_training_configuration": False,
+        },
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-22T00:00:00+00:00",
+    }
+
+
+def _valid_preparation_recipe_v2(
+    target_field_name="demand",
+    time_index_field_name="period",
+    index_value_kind="calendar_period",
+    frequency="monthly",
+    forecast_horizon=6,
+    backtesting_forecast_horizon=6,
+    backtesting_mode="expanding_window",
+    fold_count=5,
+    temporal_integrity_overrides=None,
+    leakage_control_overrides=None,
+    sealed_final_holdout_overrides=None,
+    problem_type="univariate_forecasting",
+    schema_version="candidate-preparation-recipe.v2",
+    semantic_intent_ref_schema_version="dataset-semantic-intent.v4",
+) -> dict:
+    temporal_integrity = {
+        "strictly_increasing_index": True,
+        "unique_index": True,
+        "frequency_contiguous": True,
+        "target_missing_values_absent": True,
+        "target_values_finite": True,
+    }
+    temporal_integrity.update(temporal_integrity_overrides or {})
+
+    leakage_controls = {
+        "random_shuffle_performed": False,
+        "future_targets_used_for_fold_fit": False,
+        "final_holdout_used_for_backtesting": False,
+        "final_holdout_used_for_model_selection": False,
+        "validation_targets_fed_back_within_fold": False,
+        "preprocessing_fit_on_validation_or_future": False,
+    }
+    leakage_controls.update(leakage_control_overrides or {})
+
+    sealed_final_holdout = {
+        "start_index_value": "2025-07",
+        "end_index_value": "2025-12",
+        "observation_count": 6,
+        "prospectively_sealed": True,
+        "used_for_backtesting": False,
+        "used_for_model_selection": False,
+    }
+    sealed_final_holdout.update(sealed_final_holdout_overrides or {})
+
+    return {
+        "schema_version": schema_version,
+        "producer": "pipeline/prepare_candidate.py",
+        "problem_type": problem_type,
+        "discovery_evidence_ref": {
+            "path": "evidence/discovery/synthetic-series.json",
+            "schema_version": "dataset-discovery-evidence.v1",
+        },
+        "semantic_intent_ref": {
+            "path": "pipeline/dataset-semantic-intent-instances/synthetic-series.json",
+            "schema_version": semantic_intent_ref_schema_version,
+            "sha256": "a" * 64,
+        },
+        "semantic_identity_mirror": {
+            "time_index_field_name": time_index_field_name,
+            "target_field_name": target_field_name,
+            "index_value_kind": index_value_kind,
+            "frequency": frequency,
+        },
+        "temporal_integrity": temporal_integrity,
+        "forecast_horizon": forecast_horizon,
+        "partitions": {
+            "development": {
+                "start_index_value": "2020-01", "end_index_value": "2025-06", "observation_count": 66,
+            },
+            "sealed_final_holdout": sealed_final_holdout,
+        },
+        "backtesting": {
+            "mode": backtesting_mode,
+            "initial_training_observations": 36,
+            "forecast_horizon": backtesting_forecast_horizon,
+            "origin_step_observations": 1,
+            "fold_count": fold_count,
+            "validation_targets_overlap": False,
+        },
+        "fold_schedule": [
+            {
+                "fold_index": 1, "training_observations": 36, "forecast_origin": "2023-01",
+                "validation_start": "2023-02", "validation_end": "2023-07", "validation_observations": 6,
+            }
+        ],
+        "leakage_controls": leakage_controls,
+        "preparation_boundary_confirmations": {
+            "model_training_performed": False,
+            "release_publication_performed": False,
+            "hidden_notebook_transformations": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+        "generated_at": "2026-08-22T00:00:00+00:00",
+    }
+
+
+def _modeling_intent_for_forecasting(
+    forecasting_result_semantics_intent=_MISSING,
+    forecasting_evaluation_policy_intent=_MISSING,
+    binary_result_semantics_intent=None,
+    multiclass_result_semantics_intent=None,
+    continuous_regression_result_semantics_intent=None,
+) -> dict:
+    training_policy_intent = (
+        _approved_continuous_regression_training_policy_intent()
+        if continuous_regression_result_semantics_intent is not None
+        else None
+    )
+    return {
+        "training_policy_intent": training_policy_intent,
+        "artifact_type": "dataset_modeling_intent",
+        "contract_version": "dataset_modeling_intent.v1",
+        "dataset_identity": {
+            "dataset_slug": "synthetic-series",
+            "dataset_source_ref": "data/raw/synthetic-series.csv",
+        },
+        "target_intent": {
+            "target_column": "demand",
+            "task_type": "univariate_forecasting",
+            "observed_labels": [],
+            "positive_label_candidate": None,
+            "observed_target_distribution": {},
+            "is_final_training_configuration": False,
+        },
+        "identifier_and_ignored_columns": [],
+        "initial_feature_candidates": ["age", "channel", "opted_in"],
+        "categorical_domain_intent": [],
+        "binary_result_semantics_intent": binary_result_semantics_intent,
+        "multiclass_result_semantics_intent": multiclass_result_semantics_intent,
+        "continuous_regression_result_semantics_intent": continuous_regression_result_semantics_intent,
+        "univariate_forecasting_result_semantics_intent": (
+            _approved_forecasting_result_semantics_intent()
+            if forecasting_result_semantics_intent is _MISSING
+            else forecasting_result_semantics_intent
+        ),
+        "univariate_forecasting_evaluation_policy_intent": (
+            _approved_forecasting_evaluation_policy_intent()
+            if forecasting_evaluation_policy_intent is _MISSING
+            else forecasting_evaluation_policy_intent
+        ),
+    }
+
+
+def test_execution_contract_v2_materializes_from_approved_fixtures():
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent,
+        {"generation_settings": {"seed": 0}},
+        _valid_preparation_recipe_v2(),
+        semantic_intent=_valid_semantic_intent_v4(),
+    )
+    assert contract["contract_version"] == EXECUTION_CONTRACT_V2_CONTRACT_VERSION
+    assert contract["problem_type"] == "univariate_forecasting"
+    assert contract["result_semantics"]["schema_version"] == "univariate-forecasting-result-semantics.v1"
+    assert contract["result_semantics"]["primary_output"] == "forecast_series"
+    assert contract["result_semantics"]["output_structure"] == "ordered_forecast_points"
+    assert contract["result_semantics"]["forecast_value_kind"] == "continuous_numeric"
+    assert contract["result_semantics"]["forecast_count_source"] == "forecast_horizon"
+
+
+def test_execution_contract_v2_forecast_horizon_sourced_from_preparation():
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent,
+        {},
+        _valid_preparation_recipe_v2(forecast_horizon=9, backtesting_forecast_horizon=9),
+        semantic_intent=_valid_semantic_intent_v4(),
+    )
+    assert contract["forecast_horizon"] == 9
+
+
+def test_execution_contract_v2_identities_sourced_from_semantic_intent():
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent,
+        {},
+        _valid_preparation_recipe_v2(
+            target_field_name="units_sold", time_index_field_name="week", frequency="weekly",
+        ),
+        semantic_intent=_valid_semantic_intent_v4(
+            target_field_name="units_sold", time_index_field_name="week", frequency="weekly",
+        ),
+    )
+    assert contract["target_column"] == "units_sold"
+    assert contract["time_index_column"] == "week"
+    assert contract["frequency"] == "weekly"
+
+
+def test_execution_contract_v2_carries_no_feature_columns():
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert "feature_columns" not in contract
+    assert "split_policy" not in contract
+    assert "modeling_constraints" not in contract
+
+
+def test_execution_contract_v2_carries_no_full_fold_schedule_or_future_forecast_points():
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert "fold_schedule" not in contract["temporal_evaluation"]
+    for forbidden in ("period", "timestamp", "forecast", "forecast_points", "predicted_value"):
+        assert forbidden not in contract["result_semantics"]
+
+
+def test_execution_contract_v2_pending_result_intent_does_not_materialize():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_result_semantics_intent=_approved_forecasting_result_semantics_intent(
+            review_status="pending_review"
+        )
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_pending_evaluation_policy_does_not_materialize():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_evaluation_policy_intent=_approved_forecasting_evaluation_policy_intent(
+            review_status="pending_review"
+        )
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_missing_evaluation_policy_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(forecasting_evaluation_policy_intent=None)
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_missing_semantic_intent_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=None
+        )
+
+
+def test_execution_contract_v2_wrong_semantic_intent_version_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    semantic_intent = _valid_semantic_intent_v4()
+    semantic_intent["schema_version"] = "dataset-semantic-intent.v3"
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=semantic_intent
+        )
+
+
+def test_execution_contract_v2_wrong_semantic_task_type_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    semantic_intent = _valid_semantic_intent_v4(task_type="multiclass_classification")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=semantic_intent
+        )
+
+
+def test_execution_contract_v2_wrong_forecasting_mode_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    semantic_intent = _valid_semantic_intent_v4(forecasting_mode="multivariate")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=semantic_intent
+        )
+
+
+def test_execution_contract_v2_wrong_target_value_kind_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    semantic_intent = _valid_semantic_intent_v4(target_value_kind="continuous_numeric")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=semantic_intent
+        )
+
+
+def test_execution_contract_v2_source_exogenous_predictors_mismatch_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    semantic_intent = _valid_semantic_intent_v4(source_exogenous_predictors="allowed")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=semantic_intent
+        )
+
+
+def test_execution_contract_v2_missing_preparation_recipe_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, None, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_wrong_preparation_recipe_version_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(schema_version="candidate-preparation-recipe.v1")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_wrong_preparation_recipe_problem_type_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(problem_type="continuous_regression")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_target_identity_mismatch_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(target_field_name="other_target")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_time_index_identity_mismatch_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(time_index_field_name="other_period")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_frequency_mismatch_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(frequency="weekly")
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_horizon_backtesting_mismatch_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(forecast_horizon=6, backtesting_forecast_horizon=12)
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "strictly_increasing_index", "unique_index", "frequency_contiguous",
+        "target_missing_values_absent", "target_values_finite",
+    ],
+)
+def test_execution_contract_v2_invalid_temporal_integrity_fails_closed(key):
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(temporal_integrity_overrides={key: False})
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "random_shuffle_performed", "future_targets_used_for_fold_fit",
+        "final_holdout_used_for_backtesting", "final_holdout_used_for_model_selection",
+        "validation_targets_fed_back_within_fold", "preprocessing_fit_on_validation_or_future",
+    ],
+)
+def test_execution_contract_v2_invalid_leakage_control_fails_closed(key):
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(leakage_control_overrides={key: True})
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_unsealed_final_holdout_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(
+        sealed_final_holdout_overrides={"prospectively_sealed": False}
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_consumed_final_holdout_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2(
+        sealed_final_holdout_overrides={"used_for_backtesting": True}
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_binary_and_forecasting_intents_conflict():
+    modeling_intent = _modeling_intent_for_forecasting(
+        binary_result_semantics_intent=_approved_binary_result_semantics_intent()
+    )
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None,
+        semantic_intent=_valid_semantic_intent_v4(),
+    )
+    assert "result_semantics" not in contract
+    assert contract["contract_version"] == "execution_contract.v1"
+
+
+def test_execution_contract_multiclass_and_forecasting_intents_conflict():
+    modeling_intent = _modeling_intent_for_forecasting(
+        multiclass_result_semantics_intent=_approved_multiclass_result_semantics_intent()
+    )
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None,
+        semantic_intent=_valid_semantic_intent_v4(),
+    )
+    assert "result_semantics" not in contract
+    assert contract["contract_version"] == "execution_contract.v1"
+
+
+def test_execution_contract_continuous_regression_and_forecasting_intents_conflict():
+    modeling_intent = _modeling_intent_for_forecasting(
+        continuous_regression_result_semantics_intent=_approved_continuous_regression_result_semantics_intent()
+    )
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None,
+        semantic_intent=_valid_semantic_intent_v4(),
+    )
+    assert "result_semantics" not in contract
+    assert contract["contract_version"] == "execution_contract.v1"
+
+
+def test_execution_contract_binary_multiclass_continuous_regression_forecasting_four_way_conflict():
+    modeling_intent = _modeling_intent_for_forecasting(
+        binary_result_semantics_intent=_approved_binary_result_semantics_intent(),
+        multiclass_result_semantics_intent=_approved_multiclass_result_semantics_intent(),
+        continuous_regression_result_semantics_intent=_approved_continuous_regression_result_semantics_intent(),
+    )
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None,
+        semantic_intent=_valid_semantic_intent_v4(),
+    )
+    assert "result_semantics" not in contract
+    assert contract["contract_version"] == "execution_contract.v1"
+
+
+def test_execution_contract_absence_of_all_four_result_intents_still_omits_result_semantics():
+    modeling_intent = _modeling_intent_for_result_semantics(binary_result_semantics_intent=None)
+    modeling_intent["multiclass_result_semantics_intent"] = None
+    modeling_intent["continuous_regression_result_semantics_intent"] = None
+    modeling_intent["univariate_forecasting_result_semantics_intent"] = None
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    assert "result_semantics" not in contract
+    assert contract["contract_version"] == "execution_contract.v1"
+
+
+def test_execution_contract_v2_validates_against_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    modeling_intent = _modeling_intent_for_forecasting()
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_materialization_evidence_is_reduced_and_deterministic():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2()
+    semantic_intent = _valid_semantic_intent_v4()
+    contract = _build_execution_contract(
+        modeling_intent, {}, preparation_recipe, semantic_intent=semantic_intent
+    )
+    evidence = _build_execution_contract_v2_materialization_evidence(
+        modeling_intent,
+        preparation_recipe,
+        contract,
+        execution_contract_relative_path="contracts/synthetic-series/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path="pipeline/preparation-recipe-instances/synthetic-series.json",
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        semantic_intent=semantic_intent,
+        semantic_intent_relative_path="pipeline/dataset-semantic-intent-instances/synthetic-series.json",
+        generated_at="2026-08-22T00:00:00+00:00",
+    )
+    assert evidence["requested_variant"] == "univariate_forecasting"
+    assert evidence["execution_contract_version"] == "execution_contract.v2"
+    assert evidence["materialized_result_schema_version"] == "univariate-forecasting-result-semantics.v1"
+    assert evidence["semantic_intent_schema_version"] == "dataset-semantic-intent.v4"
+    assert evidence["preparation_recipe_schema_version"] == "candidate-preparation-recipe.v2"
+    assert evidence["forecast_horizon"] == 6
+    assert evidence["backtesting_mode"] == "expanding_window"
+    assert evidence["fold_count"] == 5
+    assert evidence["primary_metric_id"] == "mae"
+    assert evidence["secondary_metric_ids"] == ["seasonal_mase"]
+    assert evidence["no_defaults_inferred"] is True
+    assert evidence["readiness"] == "materialized"
+    assert evidence["blocking_reasons"] == []
+    for forbidden_key in (
+        "raw_target_values", "fold_target_arrays", "future_result_rows", "model_bytes",
+        "coefficients", "predictions", "residuals", "external_study_path",
+    ):
+        assert forbidden_key not in evidence
+
+    second_evidence = _build_execution_contract_v2_materialization_evidence(
+        modeling_intent,
+        preparation_recipe,
+        contract,
+        execution_contract_relative_path="contracts/synthetic-series/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path="pipeline/preparation-recipe-instances/synthetic-series.json",
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        semantic_intent=semantic_intent,
+        semantic_intent_relative_path="pipeline/dataset-semantic-intent-instances/synthetic-series.json",
+        generated_at="2026-08-22T00:00:00+00:00",
+    )
+    assert evidence == second_evidence
+
+
+def test_materialize_execution_contract_writes_v2_and_v2_evidence(tmp_path):
+    schema_dir = tmp_path / "contracts"
+    schema_dir.mkdir()
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    (schema_dir / "execution-contract.schema.json").write_text(
+        schema_path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2()
+    semantic_intent = _valid_semantic_intent_v4()
+    result = materialize_execution_contract(
+        modeling_intent,
+        {},
+        "contracts/synthetic-series/execution-contract.json",
+        tmp_path,
+        preparation_recipe=preparation_recipe,
+        evidence_output_relative_path="evidence/synthetic-series/execution-contract-materialization-evidence.json",
+        semantic_intent=semantic_intent,
+        generated_at="2026-08-22T00:00:00+00:00",
+    )
+    assert result["execution_contract"]["contract_version"] == "execution_contract.v2"
+    assert result["execution_contract_materialization_evidence"]["requested_variant"] == (
+        "univariate_forecasting"
+    )
+    written_contract = json.loads(
+        (tmp_path / "contracts/synthetic-series/execution-contract.json").read_text(encoding="utf-8")
+    )
+    assert written_contract["contract_version"] == "execution_contract.v2"

@@ -17,12 +17,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline.discovery_evidence import (
     CONTINUOUS_REGRESSION_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
+    UNIVARIATE_FORECASTING_EVALUATION_POLICY_INTENT_CONTRACT_VERSION,
+    UNIVARIATE_FORECASTING_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     authoring_helper_evidence_policy,
     build_binary_result_semantics_intent,
     build_categorical_domain_declaration,
     build_continuous_regression_result_semantics_intent,
     build_dataset_modeling_intent,
     build_multiclass_result_semantics_intent,
+    build_univariate_forecasting_evaluation_policy_intent,
+    build_univariate_forecasting_result_semantics_intent,
     derive_feature_candidates,
     generate_discovery_evidence,
     load_dataset_csv,
@@ -1072,3 +1076,271 @@ def test_modeling_intent_existing_multiclass_result_semantics_behavior_unchanged
     intent = _build_telco_shaped_modeling_intent(multiclass_result_semantics_intent=multiclass_intent)
     assert intent["multiclass_result_semantics_intent"] == multiclass_intent
     assert intent["continuous_regression_result_semantics_intent"] is None
+
+
+# --- reviewed univariate-forecasting result semantics intent (Project Spec S0243) ---
+
+
+def _build_univariate_forecasting_result_semantics_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        problem_type="univariate_forecasting",
+        primary_output="forecast_series",
+        output_structure="ordered_forecast_points",
+        forecast_value_kind="continuous_numeric",
+        review_notes="Reviewed univariate-forecasting result semantics.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_result_semantics_intent(**kwargs)
+
+
+def test_forecasting_result_semantics_intent_approved_shape():
+    intent = _build_univariate_forecasting_result_semantics_intent()
+    assert intent["schema_version"] == UNIVARIATE_FORECASTING_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION
+    assert intent["review_status"] == "approved"
+    assert intent["problem_type"] == "univariate_forecasting"
+    assert intent["primary_output"] == "forecast_series"
+    assert intent["output_structure"] == "ordered_forecast_points"
+    assert intent["forecast_value_kind"] == "continuous_numeric"
+    assert set(intent.keys()) == {
+        "schema_version",
+        "review_status",
+        "problem_type",
+        "primary_output",
+        "output_structure",
+        "forecast_value_kind",
+        "review_notes",
+    }
+
+
+def test_forecasting_result_semantics_intent_pending_review_is_representable_but_not_approved():
+    intent = _build_univariate_forecasting_result_semantics_intent(review_status="pending_review")
+    assert intent["review_status"] == "pending_review"
+    assert intent["review_status"] != "approved"
+
+
+def test_forecasting_result_semantics_intent_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        _build_univariate_forecasting_result_semantics_intent(review_status="candidate_only")
+
+
+def test_forecasting_result_semantics_intent_rejects_wrong_problem_type():
+    with pytest.raises(ValueError):
+        _build_univariate_forecasting_result_semantics_intent(problem_type="continuous_regression")
+
+
+def test_forecasting_result_semantics_intent_rejects_wrong_primary_output():
+    with pytest.raises(ValueError):
+        _build_univariate_forecasting_result_semantics_intent(primary_output="predicted_value")
+
+
+def test_forecasting_result_semantics_intent_rejects_wrong_output_structure():
+    with pytest.raises(ValueError):
+        _build_univariate_forecasting_result_semantics_intent(output_structure="scalar")
+
+
+def test_forecasting_result_semantics_intent_rejects_wrong_forecast_value_kind():
+    with pytest.raises(ValueError):
+        _build_univariate_forecasting_result_semantics_intent(forecast_value_kind="categorical")
+
+
+def test_forecasting_result_semantics_intent_builder_exposes_no_target_time_or_horizon_authority():
+    import inspect
+
+    signature = inspect.signature(build_univariate_forecasting_result_semantics_intent)
+    for forbidden_param in (
+        "dataset_slug",
+        "target_field_name",
+        "time_index_field_name",
+        "frequency",
+        "forecast_horizon",
+        "seasonal_period",
+        "model_family",
+        "forecast_values",
+        "future_timestamps",
+        "history",
+        "confidence_interval",
+    ):
+        assert forbidden_param not in signature.parameters
+
+
+def test_modeling_intent_forecasting_result_semantics_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["univariate_forecasting_result_semantics_intent"] is None
+
+
+def test_modeling_intent_carries_forecasting_result_semantics_intent_verbatim():
+    forecasting_intent = _build_univariate_forecasting_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        univariate_forecasting_result_semantics_intent=forecasting_intent
+    )
+    assert intent["univariate_forecasting_result_semantics_intent"] == forecasting_intent
+
+
+def test_modeling_intent_existing_fields_unchanged_alongside_forecasting_result_semantics_default():
+    binary_intent = _build_binary_result_semantics_intent()
+    multiclass_intent = _build_multiclass_result_semantics_intent()
+    continuous_regression_intent = _build_continuous_regression_result_semantics_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        binary_result_semantics_intent=binary_intent,
+        multiclass_result_semantics_intent=multiclass_intent,
+        continuous_regression_result_semantics_intent=continuous_regression_intent,
+    )
+    assert intent["binary_result_semantics_intent"] == binary_intent
+    assert intent["multiclass_result_semantics_intent"] == multiclass_intent
+    assert intent["continuous_regression_result_semantics_intent"] == continuous_regression_intent
+    assert intent["univariate_forecasting_result_semantics_intent"] is None
+    assert intent["univariate_forecasting_evaluation_policy_intent"] is None
+
+
+# --- reviewed univariate-forecasting evaluation-policy intent (Project Spec S0243) ---
+
+
+def _build_forecasting_evaluation_policy_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        primary_metric={"metric_id": "mae"},
+        secondary_metrics=[{"metric_id": "rmse"}],
+        review_notes="Reviewed forecasting evaluation policy.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_evaluation_policy_intent(**kwargs)
+
+
+def test_forecasting_evaluation_policy_intent_approved_shape():
+    intent = _build_forecasting_evaluation_policy_intent()
+    assert intent["schema_version"] == UNIVARIATE_FORECASTING_EVALUATION_POLICY_INTENT_CONTRACT_VERSION
+    assert intent["review_status"] == "approved"
+    assert intent["primary_metric"] == {"metric_id": "mae", "direction": "lower_is_better"}
+    assert intent["secondary_metrics"] == [{"metric_id": "rmse", "direction": "lower_is_better"}]
+    assert set(intent.keys()) == {
+        "schema_version",
+        "review_status",
+        "primary_metric",
+        "secondary_metrics",
+        "review_notes",
+    }
+
+
+def test_forecasting_evaluation_policy_intent_pending_review_is_representable_but_not_approved():
+    intent = _build_forecasting_evaluation_policy_intent(review_status="pending_review")
+    assert intent["review_status"] == "pending_review"
+    assert intent["review_status"] != "approved"
+
+
+def test_forecasting_evaluation_policy_intent_mae_accepted_with_lower_is_better():
+    intent = _build_forecasting_evaluation_policy_intent(
+        primary_metric={"metric_id": "mae"}, secondary_metrics=[]
+    )
+    assert intent["primary_metric"] == {"metric_id": "mae", "direction": "lower_is_better"}
+
+
+def test_forecasting_evaluation_policy_intent_rmse_accepted_with_lower_is_better():
+    intent = _build_forecasting_evaluation_policy_intent(
+        primary_metric={"metric_id": "rmse"}, secondary_metrics=[]
+    )
+    assert intent["primary_metric"] == {"metric_id": "rmse", "direction": "lower_is_better"}
+
+
+def test_forecasting_evaluation_policy_intent_seasonal_mase_accepted_only_with_explicit_positive_period():
+    intent = _build_forecasting_evaluation_policy_intent(
+        primary_metric={"metric_id": "seasonal_mase", "seasonal_period": 12},
+        secondary_metrics=[],
+    )
+    assert intent["primary_metric"] == {
+        "metric_id": "seasonal_mase",
+        "direction": "lower_is_better",
+        "seasonal_period": 12,
+    }
+
+
+def test_forecasting_evaluation_policy_intent_seasonal_mase_without_seasonal_period_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "seasonal_mase"}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_seasonal_mase_zero_period_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "seasonal_mase", "seasonal_period": 0}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_seasonal_mase_negative_period_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "seasonal_mase", "seasonal_period": -1}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_seasonal_period_never_defaults_to_twelve():
+    intent = _build_forecasting_evaluation_policy_intent(
+        primary_metric={"metric_id": "mae"}, secondary_metrics=[]
+    )
+    assert "seasonal_period" not in intent["primary_metric"]
+
+
+def test_forecasting_evaluation_policy_intent_mae_with_seasonal_period_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "mae", "seasonal_period": 12}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_rmse_with_seasonal_period_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "rmse", "seasonal_period": 12}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_unknown_metric_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "mape"}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_smape_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "smape"}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_classification_metric_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "roc_auc"}, secondary_metrics=[]
+        )
+
+
+def test_forecasting_evaluation_policy_intent_duplicate_secondary_metric_ids_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "mae"},
+            secondary_metrics=[{"metric_id": "rmse"}, {"metric_id": "rmse"}],
+        )
+
+
+def test_forecasting_evaluation_policy_intent_primary_metric_duplicated_in_secondary_rejected():
+    with pytest.raises(ValueError):
+        _build_forecasting_evaluation_policy_intent(
+            primary_metric={"metric_id": "mae"},
+            secondary_metrics=[{"metric_id": "mae"}],
+        )
+
+
+def test_modeling_intent_forecasting_evaluation_policy_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["univariate_forecasting_evaluation_policy_intent"] is None
+
+
+def test_modeling_intent_carries_forecasting_evaluation_policy_intent_verbatim():
+    policy_intent = _build_forecasting_evaluation_policy_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        univariate_forecasting_evaluation_policy_intent=policy_intent
+    )
+    assert intent["univariate_forecasting_evaluation_policy_intent"] == policy_intent

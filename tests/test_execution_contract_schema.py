@@ -26,6 +26,21 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _all_error_messages(errors) -> list[str]:
+    """Flatten top-level jsonschema error messages together with every
+    nested sub-error message from a oneOf branch's own context (Project
+    Spec S0243: the schema's top level is now a v1/v2 oneOf, so a single
+    missing-field failure surfaces as one top-level "not valid under any of
+    the given schemas" error whose per-branch detail lives in
+    error.context, not in error.message itself)."""
+    messages = []
+    for error in errors:
+        messages.append(error.message)
+        for sub_error in getattr(error, "context", None) or []:
+            messages.extend(_all_error_messages([sub_error]))
+    return messages
+
+
 def _valid_contract() -> dict:
     """Minimal well-formed execution contract based on bank-marketing dataset structure."""
     return {
@@ -95,7 +110,7 @@ def test_missing_target_column_rejected():
     errors = list(validator.iter_errors(contract))
 
     assert errors, "Expected validation error for missing target_column"
-    assert any("target_column" in error.message for error in errors)
+    assert any("target_column" in message for message in _all_error_messages(errors))
 
 
 def test_missing_contract_version_rejected():
@@ -107,7 +122,7 @@ def test_missing_contract_version_rejected():
     errors = list(validator.iter_errors(contract))
 
     assert errors, "Expected validation error for missing contract_version"
-    assert any("contract_version" in error.message for error in errors)
+    assert any("contract_version" in message for message in _all_error_messages(errors))
 
 
 def test_missing_modeling_constraints_rejected():
@@ -119,7 +134,7 @@ def test_missing_modeling_constraints_rejected():
     errors = list(validator.iter_errors(contract))
 
     assert errors, "Expected validation error for missing modeling_constraints"
-    assert any("modeling_constraints" in error.message for error in errors)
+    assert any("modeling_constraints" in message for message in _all_error_messages(errors))
 
 
 def test_invalid_missing_value_policy_rejected():
@@ -2406,3 +2421,386 @@ def test_hgb_regression_hyperparameters_never_expose_callable_or_module_strings(
 
     validator = jsonschema.Draft7Validator(schema)
     assert list(validator.iter_errors(contract))
+
+
+# ---------------------------------------------------------------------------
+# execution_contract.v2 -- strict univariate-forecasting branch
+# (Project Spec S0243). Fixtures are synthetic and dataset-neutral, matching
+# the "campaign-response"/"bank-marketing" precedent established above -- no
+# Nottingham-specific slug/path/field/cadence/horizon/seasonal period.
+# ---------------------------------------------------------------------------
+
+
+def _valid_forecasting_result_semantics() -> dict:
+    return {
+        "schema_version": "univariate-forecasting-result-semantics.v1",
+        "problem_type": "univariate_forecasting",
+        "primary_output": "forecast_series",
+        "output_structure": "ordered_forecast_points",
+        "forecast_value_kind": "continuous_numeric",
+        "forecast_count_source": "forecast_horizon",
+    }
+
+
+def _valid_forecasting_temporal_evaluation() -> dict:
+    return {
+        "preparation_schema_version": "candidate-preparation-recipe.v2",
+        "backtesting_mode": "expanding_window",
+        "fold_count": 5,
+        "final_holdout_prospectively_sealed": True,
+        "final_holdout_used_for_backtesting": False,
+        "final_holdout_used_for_model_selection": False,
+        "random_shuffle_performed": False,
+        "future_targets_used_for_fold_fit": False,
+        "validation_targets_fed_back_within_fold": False,
+        "preprocessing_fit_on_validation_or_future": False,
+    }
+
+
+def _valid_forecasting_evaluation_policy() -> dict:
+    return {
+        "primary_metric": {"metric_id": "mae", "direction": "lower_is_better"},
+        "secondary_metrics": [
+            {"metric_id": "seasonal_mase", "direction": "lower_is_better", "seasonal_period": 7},
+        ],
+    }
+
+
+def _valid_execution_contract_v2() -> dict:
+    return {
+        "contract_version": "execution_contract.v2",
+        "dataset_id": "synthetic-series",
+        "problem_type": "univariate_forecasting",
+        "target_column": "demand",
+        "time_index_column": "period",
+        "index_value_kind": "calendar_period",
+        "frequency": "monthly",
+        "source_exogenous_predictors": "forbidden",
+        "forecast_horizon": 6,
+        "temporal_evaluation": _valid_forecasting_temporal_evaluation(),
+        "evaluation_policy": _valid_forecasting_evaluation_policy(),
+        "result_semantics": _valid_forecasting_result_semantics(),
+        "random_seed": 0,
+    }
+
+
+def test_valid_execution_contract_v2_forecasting_validates():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_valid_execution_contract_v2(), schema)
+
+
+def test_execution_contract_v2_random_seed_null_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["random_seed"] = None
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_wrong_contract_version_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["contract_version"] = "execution_contract.v3"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_wrong_problem_type_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["problem_type"] = "continuous_regression"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["target_column", "time_index_column", "frequency", "forecast_horizon", "index_value_kind"],
+)
+def test_execution_contract_v2_missing_required_identity_field_rejected(field):
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    del contract[field]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_horizon_zero_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["forecast_horizon"] = 0
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_horizon_negative_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["forecast_horizon"] = -3
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_feature_columns_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["feature_columns"] = ["age", "channel"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_split_policy_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["split_policy"] = {
+        "strategy": "random", "train_ratio": 0.7, "val_ratio": 0.15, "test_ratio": 0.15,
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_modeling_constraints_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["modeling_constraints"] = {"allowed_model_families": ["gradient_boosting"]}
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_full_fold_schedule_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["temporal_evaluation"]["fold_schedule"] = [
+        {
+            "fold_index": 1, "training_observations": 36, "forecast_origin": "2023-01",
+            "validation_start": "2023-02", "validation_end": "2023-07", "validation_observations": 6,
+        }
+    ]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_actual_forecast_points_payload_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["result_semantics"]["forecast_points"] = [{"period": "2026-01", "forecast": 42.0}]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_scalar_predicted_value_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["result_semantics"]["predicted_value"] = 42.0
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_classification_only_result_fields_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["result_semantics"]["positive_class"] = {"class_id": "Yes", "event_label": "Churn"}
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_confidence_interval_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["result_semantics"]["confidence_interval"] = {"lower": 10.0, "upper": 20.0}
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_model_descriptor_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["result_semantics"]["model_descriptor"] = {"family": "arima"}
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_wrong_result_semantics_schema_version_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["result_semantics"]["schema_version"] = "univariate-forecasting-result-semantics.v2"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_source_exogenous_predictors_must_be_forbidden():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["source_exogenous_predictors"] = "allowed"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_temporal_evaluation_wrong_backtesting_mode_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["temporal_evaluation"]["backtesting_mode"] = "k_fold"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_temporal_evaluation_final_holdout_used_for_backtesting_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["temporal_evaluation"]["final_holdout_used_for_backtesting"] = True
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_evaluation_policy_mae_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "mae", "direction": "lower_is_better"},
+        "secondary_metrics": [],
+    }
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_evaluation_policy_rmse_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "rmse", "direction": "lower_is_better"},
+        "secondary_metrics": [],
+    }
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_evaluation_policy_seasonal_mase_with_positive_period_validates():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "seasonal_mase", "direction": "lower_is_better", "seasonal_period": 12},
+        "secondary_metrics": [],
+    }
+    jsonschema.validate(contract, schema)
+
+
+def test_execution_contract_v2_evaluation_policy_seasonal_mase_without_period_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "seasonal_mase", "direction": "lower_is_better"},
+        "secondary_metrics": [],
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_evaluation_policy_seasonal_mase_zero_period_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "seasonal_mase", "direction": "lower_is_better", "seasonal_period": 0},
+        "secondary_metrics": [],
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_evaluation_policy_seasonal_mase_negative_period_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "seasonal_mase", "direction": "lower_is_better", "seasonal_period": -1},
+        "secondary_metrics": [],
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_evaluation_policy_mae_with_seasonal_period_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "mae", "direction": "lower_is_better", "seasonal_period": 12},
+        "secondary_metrics": [],
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_evaluation_policy_rmse_with_seasonal_period_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": "rmse", "direction": "lower_is_better", "seasonal_period": 12},
+        "secondary_metrics": [],
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+@pytest.mark.parametrize("unknown_metric_id", ["mape", "smape", "roc_auc", "accuracy", "r2"])
+def test_execution_contract_v2_evaluation_policy_unknown_metric_rejected(unknown_metric_id):
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["evaluation_policy"] = {
+        "primary_metric": {"metric_id": unknown_metric_id, "direction": "lower_is_better"},
+        "secondary_metrics": [],
+    }
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_mixed_v1_v2_document_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_contract()
+    v2_fields = _valid_execution_contract_v2()
+    contract["problem_type"] = v2_fields["problem_type"]
+    contract["time_index_column"] = v2_fields["time_index_column"]
+    contract["forecast_horizon"] = v2_fields["forecast_horizon"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_unknown_execution_contract_version_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["contract_version"] = "execution_contract.v0"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_and_v1_are_disjoint_branches():
+    """A schema-valid v1 document must never also validate as v2, and vice
+    versa -- oneOf must select exactly one branch."""
+    schema = _load_json(SCHEMA_PATH)
+    validator = jsonschema.Draft7Validator(schema)
+    assert not list(validator.iter_errors(_valid_contract()))
+    assert not list(validator.iter_errors(_valid_execution_contract_v2()))
+
+    v1_as_v2_candidate = dict(_valid_contract())
+    v1_as_v2_candidate["problem_type"] = "univariate_forecasting"
+    assert list(validator.iter_errors(v1_as_v2_candidate))

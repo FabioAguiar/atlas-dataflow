@@ -1147,3 +1147,543 @@ class TestNoDatasetOrConcreteConditionInContinuousRegressionPath:
         source = inspect.getsource(authoring_contracts._resolve_semantic_intent_schema)
         for forbidden in ("concrete compressive", "cement", "blast furnace slag", "fly ash", "superplasticizer"):
             assert forbidden not in source.lower()
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0241: Univariate Forecasting Capability and Temporal
+# Semantic Intent Contract.
+# ---------------------------------------------------------------------------
+
+SEMANTIC_INTENT_V4_SCHEMA_PATH = REPO_ROOT / "pipeline" / "dataset-semantic-intent.v4.schema.json"
+
+UNIVARIATE_FORECASTING_ROLES = {
+    "discovery_evidence": DISCOVERY_EVIDENCE_BYTES,
+    "semantic_intent": SEMANTIC_INTENT_BYTES,
+    "preparation_recipe": PREPARATION_RECIPE_BYTES,
+    "model_artifact": MODEL_ARTIFACT_BYTES,
+}
+
+
+def _univariate_forecasting_profile() -> dict:
+    """Project Spec S0241: an additive, non-operational univariate-
+    forecasting capability profile, in-memory mirror of pipeline/
+    capabilities/univariate-predictive-forecasting.v1.json -- a synthetic,
+    dataset-neutral fixture, not the real committed file."""
+    return {
+        "schema_version": "capability-profile.v1",
+        "artifact_type": "capability_profile",
+        "capability_profile_id": "univariate-predictive-forecasting",
+        "capability_profile_version": "v1",
+        "support_status": "requires_future_contract_evolution",
+        "semantic_requirements": {
+            "target_semantics_applicability": "required",
+            "split_semantics_applicability": "required",
+        },
+        "artifact_roles": [
+            {"role_name": "discovery_evidence", "applicability": "required"},
+            {"role_name": "semantic_intent", "applicability": "required"},
+            {"role_name": "preparation_recipe", "applicability": "required"},
+            {"role_name": "model_artifact", "applicability": "required", "authoring_boundary_applicability": "optional"},
+            {"role_name": "visual_evidence", "applicability": "optional"},
+            {"role_name": "no_model_analysis_summary", "applicability": "forbidden"},
+        ],
+        "prediction_runtime": {
+            "applicable": True,
+            "mode": "single_model_univariate_forecasting",
+        },
+        "publication": {
+            "public_prediction_capability_applicability": "optional",
+        },
+        "capability_boundary_confirmations": {
+            "dataset_specific_selector_used": False,
+            "dataset_specific_feature_names_present": False,
+            "concrete_model_hashes_present": False,
+            "model_bytes_embedded": False,
+            "release_instance_metadata_embedded": False,
+            "absolute_external_path_present": False,
+            "training_result_values_embedded": False,
+        },
+        "generated_at": "2026-08-22T00:00:00+00:00",
+    }
+
+
+def _univariate_forecasting_semantic_intent_for(
+    profile: dict,
+    *,
+    time_index_field_name: str = "period_index",
+    target_field_name: str = "series_value",
+    temporal_index_role: str = "temporal_index",
+    target_role: str = "target",
+    extra_field_role_decisions: list[dict] | None = None,
+    extra_temporal_fields: dict | None = None,
+    extra_target_fields: dict | None = None,
+) -> dict:
+    field_role_decisions = [
+        {"field_name": time_index_field_name, "role": temporal_index_role, "include_in_features": False},
+        {"field_name": target_field_name, "role": target_role, "include_in_features": False},
+    ]
+    if extra_field_role_decisions:
+        field_role_decisions.extend(extra_field_role_decisions)
+    document = {
+        "schema_version": "dataset-semantic-intent.v4",
+        "artifact_type": "dataset_semantic_intent",
+        "dataset_identity": {"dataset_slug": DATASET_SLUG},
+        "authoring_generation_id": "authoring-gen-0001",
+        "governing_capability_profile": {
+            "capability_profile_id": profile["capability_profile_id"],
+            "capability_profile_version": profile["capability_profile_version"],
+        },
+        "field_role_decisions": field_role_decisions,
+        "semantic_boundary_confirmations": {
+            "observed_source_statistics_embedded": False,
+            "scientific_conclusions_embedded": False,
+            "training_outcome_embedded": False,
+            "release_state_embedded": False,
+            "model_bytes_embedded": False,
+        },
+        "generated_at": "2026-08-22T00:00:00+00:00",
+    }
+    temporal_semantics = {
+        "time_index_field_name": time_index_field_name,
+        "index_value_kind": "calendar_period",
+        "frequency": "monthly",
+        "source_exogenous_predictors": "forbidden",
+    }
+    if extra_temporal_fields:
+        temporal_semantics.update(extra_temporal_fields)
+    document["temporal_semantics"] = temporal_semantics
+    target_semantics = {
+        "target_field_name": target_field_name,
+        "task_type": "univariate_forecasting",
+        "target_value_kind": "numeric",
+        "forecasting_mode": "univariate",
+        "is_final_training_configuration": False,
+    }
+    if extra_target_fields:
+        target_semantics.update(extra_target_fields)
+    document["target_semantics"] = target_semantics
+    return document
+
+
+class TestSemanticIntentV4SchemaDispatch:
+    """Project Spec S0241: authoring_contracts dispatches dataset-semantic-
+    intent.v4 through the same closed local registry used for v1/v2/v3, by
+    the artifact's own declared schema_version only."""
+
+    def test_v4_schema_is_valid_json_schema(self):
+        schema = _load_schema(SEMANTIC_INTENT_V4_SCHEMA_PATH)
+        jsonschema.Draft202012Validator.check_schema(schema)
+
+    def test_v4_schema_dispatch_works(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        assert semantic_intent["schema_version"] == "dataset-semantic-intent.v4"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is True, result.failures
+
+    def test_unknown_v5_schema_version_is_rejected(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        semantic_intent["schema_version"] = "dataset-semantic-intent.v5"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+        assert any(failure.code == "unknown_semantic_intent_schema_version" for failure in result.failures)
+
+
+class TestValidGenericUnivariateForecastingAuthoringContract:
+    def test_valid_univariate_forecasting_manifest_profile_and_semantic_intent_pass(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(
+            manifest, profile, semantic_intent=semantic_intent, expected_dataset_slug=DATASET_SLUG
+        )
+
+        assert result.manifest_schema_valid is True
+        assert result.semantic_intent_schema_valid is True
+        assert result.capability_profile_schema_valid is True
+        assert result.valid is True, result.failures
+        assert result.failures == ()
+        assert result.capability_profile_id == "univariate-predictive-forecasting"
+        assert result.capability_profile_version == "v1"
+
+    def test_task_type_is_exactly_univariate_forecasting(self):
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["task_type"] == "univariate_forecasting"
+
+    def test_target_value_kind_is_exactly_numeric(self):
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["target_value_kind"] == "numeric"
+
+    def test_forecasting_mode_is_exactly_univariate(self):
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["forecasting_mode"] == "univariate"
+
+    def test_target_field_name_identifies_exactly_one_target_field(self):
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        assert isinstance(semantic_intent["target_semantics"]["target_field_name"], str)
+        assert semantic_intent["target_semantics"]["target_field_name"] == "series_value"
+
+    def test_temporal_semantics_present_with_governed_fields(self):
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        temporal_semantics = semantic_intent["temporal_semantics"]
+        assert temporal_semantics["time_index_field_name"] == "period_index"
+        assert temporal_semantics["index_value_kind"] == "calendar_period"
+        assert temporal_semantics["frequency"] == "monthly"
+        assert temporal_semantics["source_exogenous_predictors"] == "forbidden"
+
+
+class TestForecastingV4RejectsClassificationAndRegressionOwnedFields:
+    def test_classification_and_regression_owned_target_fields_are_rejected(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        for forbidden_field, forbidden_value in (
+            ("positive_class", {"class_id": "yes"}),
+            ("negative_class", {"class_id": "no"}),
+            ("classes", [{"class_id": "a", "display_label": "A"}]),
+            ("class_order", ["a", "b"]),
+            ("threshold", 0.5),
+            ("probability_output", True),
+            ("risk_bands", ["low", "high"]),
+            ("continuous_numeric_target_value_kind", True),
+            ("count_semantics", {"kind": "poisson"}),
+            ("exposure", "days"),
+            ("offset", "log_exposure"),
+            ("output_targets", ["a", "b"]),
+            ("target_fields", ["a", "b"]),
+            ("forecast_horizon", 12),
+            ("model_family", "arima"),
+            ("training_metrics", {"mae": 1.0}),
+        ):
+            semantic_intent = _univariate_forecasting_semantic_intent_for(
+                profile, extra_target_fields={forbidden_field: forbidden_value}
+            )
+
+            result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+            assert result.semantic_intent_schema_valid is False, forbidden_field
+            assert result.valid is False, forbidden_field
+
+
+class TestForecastingV4TemporalSemanticsRejectsLaterContractFields:
+    def test_temporal_semantics_forbids_split_and_horizon_owned_fields(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        for forbidden_field, forbidden_value in (
+            ("forecast_horizon", 12),
+            ("seasonal_period", 12),
+            ("backtesting_folds", 5),
+            ("holdout_boundaries", {"start": "2020-01", "end": "2020-12"}),
+            ("training_window_lengths", [24, 36]),
+            ("model_coefficients", [0.1, 0.2]),
+            ("runtime_history_length", 24),
+            ("future_result_rows", 12),
+        ):
+            semantic_intent = _univariate_forecasting_semantic_intent_for(
+                profile, extra_temporal_fields={forbidden_field: forbidden_value}
+            )
+
+            result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+            assert result.semantic_intent_schema_valid is False, forbidden_field
+            assert result.valid is False, forbidden_field
+
+    def test_source_exogenous_predictors_must_be_exactly_forbidden(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile, extra_temporal_fields={"source_exogenous_predictors": "optional"}
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+
+    def test_frequency_must_be_non_empty(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile, extra_temporal_fields={"frequency": ""}
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+
+    def test_frequency_is_not_restricted_to_a_single_dataset_cadence(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        for frequency in ("monthly", "daily", "quarterly", "irregular_business_days", "custom-5min"):
+            semantic_intent = _univariate_forecasting_semantic_intent_for(
+                profile, extra_temporal_fields={"frequency": frequency}
+            )
+
+            result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+            assert result.semantic_intent_schema_valid is True, frequency
+            assert result.valid is True, (frequency, result.failures)
+
+    def test_index_value_kind_accepts_only_governed_values(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile, extra_temporal_fields={"index_value_kind": "row_number"}
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is False
+        assert result.valid is False
+
+
+class TestForecastingFieldRoleVocabularyIncludeInFeatures:
+    def test_temporal_index_include_in_features_true_is_rejected(self):
+        schema = _load_schema(SEMANTIC_INTENT_V4_SCHEMA_PATH)
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        semantic_intent["field_role_decisions"][0]["include_in_features"] = True
+
+        validator = jsonschema.Draft202012Validator(schema)
+        errors = list(validator.iter_errors(semantic_intent))
+        assert errors != []
+
+    def test_target_include_in_features_true_is_rejected(self):
+        schema = _load_schema(SEMANTIC_INTENT_V4_SCHEMA_PATH)
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+        semantic_intent["field_role_decisions"][1]["include_in_features"] = True
+
+        validator = jsonschema.Draft202012Validator(schema)
+        errors = list(validator.iter_errors(semantic_intent))
+        assert errors != []
+
+    def test_identifier_include_in_features_true_is_rejected(self):
+        schema = _load_schema(SEMANTIC_INTENT_V4_SCHEMA_PATH)
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile,
+            extra_field_role_decisions=[
+                {"field_name": "series_id", "role": "identifier", "include_in_features": True}
+            ],
+        )
+
+        validator = jsonschema.Draft202012Validator(schema)
+        errors = list(validator.iter_errors(semantic_intent))
+        assert errors != []
+
+    def test_ignored_include_in_features_true_is_rejected(self):
+        schema = _load_schema(SEMANTIC_INTENT_V4_SCHEMA_PATH)
+        profile = _univariate_forecasting_profile()
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile,
+            extra_field_role_decisions=[
+                {"field_name": "source_notes", "role": "ignored", "include_in_features": True}
+            ],
+        )
+
+        validator = jsonschema.Draft202012Validator(schema)
+        errors = list(validator.iter_errors(semantic_intent))
+        assert errors != []
+
+    def test_v1_v2_v3_role_vocabularies_do_not_accept_temporal_index(self):
+        for schema_path in (
+            SEMANTIC_INTENT_SCHEMA_PATH,
+            REPO_ROOT / "pipeline" / "dataset-semantic-intent.v2.schema.json",
+            REPO_ROOT / "pipeline" / "dataset-semantic-intent.v3.schema.json",
+        ):
+            schema = _load_schema(schema_path)
+            field_role_decisions_schema = schema["properties"]["field_role_decisions"]["items"]
+            validator = jsonschema.Draft202012Validator(field_role_decisions_schema)
+            errors = list(
+                validator.iter_errors(
+                    {"field_name": "period_index", "role": "temporal_index", "include_in_features": False}
+                )
+            )
+            assert errors != [], schema_path
+
+
+class TestForecastingTemporalTargetFieldIdentityConsistency:
+    """Project Spec S0241: authoring validation proves authored-meaning-only
+    cross-field agreement between temporal_semantics/target_semantics and
+    field_role_decisions -- never inspects source data, timestamp gaps,
+    frequency conformance, or a derived split."""
+
+    def test_temporal_index_field_name_role_agreement_required(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile, temporal_index_role="feature")
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "temporal_index_field_role_mismatch" for failure in result.failures)
+
+    def test_target_field_name_role_agreement_required(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile, target_role="ignored")
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "forecasting_target_field_role_mismatch" for failure in result.failures)
+
+    def test_temporal_index_and_target_must_differ(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile, time_index_field_name="same_field", target_field_name="same_field"
+        )
+        semantic_intent["field_role_decisions"] = [
+            {"field_name": "same_field", "role": "target", "include_in_features": False}
+        ]
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.valid is False
+        assert any(failure.code == "temporal_index_equals_target_field" for failure in result.failures)
+
+    def test_source_predictive_feature_is_rejected(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile,
+            extra_field_role_decisions=[
+                {"field_name": "external_regressor", "role": "feature", "include_in_features": True}
+            ],
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "forecasting_source_feature_forbidden" for failure in result.failures)
+
+    def test_non_feature_ignored_or_identifier_fields_remain_permitted(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(
+            profile,
+            extra_field_role_decisions=[
+                {"field_name": "series_id", "role": "identifier", "include_in_features": False},
+                {"field_name": "source_notes", "role": "ignored", "include_in_features": False},
+            ],
+        )
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.valid is True, result.failures
+
+
+class TestForecastingTaskRuntimeModeConsistency:
+    """Project Spec S0241: univariate_forecasting must agree only with
+    single_model_univariate_forecasting; every classification/regression
+    cross-combination must be rejected."""
+
+    def test_forecasting_task_with_forecasting_runtime_mode_agrees(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert not any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+        assert result.valid is True, result.failures
+
+    def test_forecasting_task_with_binary_runtime_mode_is_rejected(self):
+        profile = _binary_classification_profile()
+        manifest = _manifest_for(profile, roles=BINARY_CLASSIFICATION_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_forecasting_task_with_multiclass_runtime_mode_is_rejected(self):
+        profile = _multiclass_classification_profile()
+        manifest = _manifest_for(profile, roles=MULTICLASS_CLASSIFICATION_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_forecasting_task_with_continuous_regression_runtime_mode_is_rejected(self):
+        profile = _continuous_regression_profile()
+        manifest = _manifest_for(profile, roles=CONTINUOUS_REGRESSION_ROLES)
+        semantic_intent = _univariate_forecasting_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_binary_task_with_forecasting_runtime_mode_is_rejected(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _semantic_intent_for(profile, include_target=True)
+        assert semantic_intent["target_semantics"]["task_type"] == "binary_classification"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_multiclass_task_with_forecasting_runtime_mode_is_rejected(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _multiclass_semantic_intent_for(profile)
+        assert semantic_intent["target_semantics"]["task_type"] == "multiclass_classification"
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+    def test_continuous_regression_task_with_forecasting_runtime_mode_is_rejected(self):
+        profile = _univariate_forecasting_profile()
+        manifest = _manifest_for(profile, roles=UNIVARIATE_FORECASTING_ROLES)
+        semantic_intent = _continuous_regression_semantic_intent_for(profile)
+
+        result = validate_authoring_contracts(manifest, profile, semantic_intent=semantic_intent)
+
+        assert result.semantic_intent_schema_valid is True
+        assert result.valid is False
+        assert any(failure.code == "task_runtime_mode_mismatch" for failure in result.failures)
+
+
+class TestNoDatasetOrConditionInForecastingPath:
+    def test_validate_authoring_contracts_contains_no_nottingham_specific_conditional(self):
+        source = inspect.getsource(authoring_contracts.validate_authoring_contracts)
+        for forbidden in ("nottingham", "nottem", "airline passenger"):
+            assert forbidden not in source.lower()
+
+    def test_resolve_semantic_intent_schema_contains_no_nottingham_specific_conditional(self):
+        source = inspect.getsource(authoring_contracts._resolve_semantic_intent_schema)
+        for forbidden in ("nottingham", "nottem", "airline passenger"):
+            assert forbidden not in source.lower()

@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/pipeline/dataset-semantic-intent.v4.schema.json",
+  "title": "Atlas DataFlow Dataset Semantic Intent v4",
+  "description": "Project Spec S0241. Governed, dataset-specific authored meaning for one dataset, reviewed by a human authoring the dataset's Atlas integration -- v4 of pipeline/dataset-semantic-intent.schema.json, additive and non-mutating of the v1/v2/v3 contracts. Preserves the same architecture-level authored-meaning ownership boundary as v1/v2/v3 (field role decisions, missing-value/categorical intent, human-reviewed public meaning) but adds a governed univariate forecasting target_semantics shape and a required temporal_semantics object, and adds 'temporal_index' to this schema version's own field-role vocabulary only. Never defines a positive/negative class, classes, class order, a threshold, a probability output, a risk band, count semantics, multiple target fields, a scalar continuous-regression result, a forecast horizon, a seasonal period, backtesting folds, holdout boundaries, training window lengths, model coefficients, runtime history length, or future result rows -- those remain owned by v1/v2/v3 or by a later, separately governed schema version. Must never own observed source measurements, scientific EDA conclusions, or training outcomes, the same as v1/v2/v3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "dataset_identity",
+    "authoring_generation_id",
+    "governing_capability_profile",
+    "field_role_decisions",
+    "temporal_semantics",
+    "semantic_boundary_confirmations",
+    "generated_at"
+  ],
+  "$defs": {
+    "dataset_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-._][a-z0-9]+)*$"
+    },
+    "capability_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "dataset-semantic-intent.v4",
+      "description": "Schema version for this dataset semantic-intent document."
+    },
+    "artifact_type": {
+      "type": "string",
+      "const": "dataset_semantic_intent",
+      "description": "Explicit artifact type identifying this document as governed dataset semantic intent."
+    },
+    "dataset_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_slug"],
+      "description": "Dataset-specific identity this semantic intent governs. Every semantic decision in this document is scoped to exactly this dataset.",
+      "properties": {
+        "dataset_slug": {
+          "$ref": "#/$defs/dataset_identifier",
+          "description": "Stable dataset slug this semantic intent belongs to."
+        },
+        "dataset_logical_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional human-readable dataset name."
+        }
+      }
+    },
+    "authoring_generation_id": {
+      "$ref": "#/$defs/dataset_identifier",
+      "description": "Identifier of the immutable authoring generation this semantic intent belongs to. Must agree with the referencing dataset-integration authoring manifest's authoring_generation.authoring_generation_id."
+    },
+    "governing_capability_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_profile_id", "capability_profile_version"],
+      "description": "Typed identity/version of the capability profile that determines whether target_semantics is required, optional, or forbidden for this document. Must agree with the referencing authoring manifest's selected capability profile.",
+      "properties": {
+        "capability_profile_id": {"$ref": "#/$defs/capability_identifier"},
+        "capability_profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^v[0-9]+$"
+        }
+      }
+    },
+    "field_role_decisions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Authored, reviewed role decision for each field this semantic intent covers. Observed facts (types, null rates, cardinality) must come from discovery evidence, not from this array. 'temporal_index' is added to the role vocabulary in this schema version only.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field_name", "role", "include_in_features"],
+        "properties": {
+          "field_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Field/column name this decision covers."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["identifier", "feature", "target", "ignored", "derived", "temporal_index"],
+            "description": "Authored semantic role for this field. 'identifier' fields are never features. 'target' is only valid when governing_capability_profile permits target semantics. 'temporal_index' identifies the single authored time index field for a univariate forecasting authoring generation."
+          },
+          "include_in_features": {
+            "type": "boolean",
+            "description": "Explicit feature inclusion/exclusion intent for this field. Must be false when role is 'identifier', 'target', 'ignored', or 'temporal_index'."
+          },
+          "exclusion_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required rationale when include_in_features is false and role is not 'identifier'."
+          },
+          "missing_value_intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["policy"],
+            "description": "Authored missing-value semantic intent for this field, distinct from discovery evidence's observed null counts.",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": ["no_missing_expected", "impute_fixed_value", "impute_statistical", "treat_as_category", "requires_review"],
+                "description": "Authored policy for how missing values in this field are semantically intended to be treated."
+              },
+              "fixed_value": {
+                "description": "Typed fixed value used only when policy is 'impute_fixed_value'."
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "categorical_domain_intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["accepted_values", "review_status", "closed_for_inference"],
+            "description": "Authored categorical/domain intent for this field, present only when the field has a reviewed closed or open domain.",
+            "properties": {
+              "accepted_values": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1
+              },
+              "review_status": {
+                "type": "string",
+                "enum": ["approved", "requires_review"]
+              },
+              "closed_for_inference": {
+                "type": "boolean",
+                "description": "True when accepted_values is authored as a provably complete, closed domain rather than an open/inferred sample."
+              },
+              "source_basis": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Traceable rationale for how this domain was reviewed, e.g. a reference to the discovery evidence field observation it was reviewed against."
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {"required": ["role"], "properties": {"role": {"const": "temporal_index"}}},
+            "then": {"properties": {"include_in_features": {"const": false}}}
+          },
+          {
+            "if": {"required": ["role"], "properties": {"role": {"const": "target"}}},
+            "then": {"properties": {"include_in_features": {"const": false}}}
+          },
+          {
+            "if": {"required": ["role"], "properties": {"role": {"const": "identifier"}}},
+            "then": {"properties": {"include_in_features": {"const": false}}}
+          },
+          {
+            "if": {"required": ["role"], "properties": {"role": {"const": "ignored"}}},
+            "then": {"properties": {"include_in_features": {"const": false}}}
+          }
+        ]
+      }
+    },
+    "temporal_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time_index_field_name", "index_value_kind", "frequency", "source_exogenous_predictors"],
+      "description": "Required, governed temporal semantics for a univariate forecasting authoring generation. Never defines forecast_horizon, seasonal_period, backtesting folds, holdout boundaries, training window lengths, model coefficients, runtime history length, or future result rows -- those belong to later, separately governed contracts.",
+      "properties": {
+        "time_index_field_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single, exact source field name this document authors as the forecasting time index. Must resolve to exactly one field_role_decisions entry with role=temporal_index."
+        },
+        "index_value_kind": {
+          "type": "string",
+          "enum": ["calendar_period", "timestamp", "ordinal_time"],
+          "description": "Authored kind of the temporal index's values."
+        },
+        "frequency": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Non-empty, dataset-specific authored logical frequency identifier. Never an enum restricted to a single dataset's cadence and never a pandas, NumPy, statsmodels, or database-specific alias vocabulary."
+        },
+        "source_exogenous_predictors": {
+          "type": "string",
+          "const": "forbidden",
+          "description": "Fixed: this univariate forecasting authoring generation never includes source exogenous predictors."
+        }
+      }
+    },
+    "target_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_field_name", "task_type", "target_value_kind", "forecasting_mode", "is_final_training_configuration"],
+      "description": "Authored governed univariate forecasting target semantics. Must be entirely omitted -- not present as a null or empty placeholder -- when governing_capability_profile forbids target semantics. Never defines a positive/negative class, classes, class order, a threshold, a probability output, a risk band, count-regression exposure/offset semantics, a scalar continuous-regression predicted_value semantics, multiple target fields, a forecast horizon, a model family, or training metrics -- those remain owned by v1/v2/v3 or by a later, separately governed schema version.",
+      "properties": {
+        "target_field_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single, exact field name this target semantics governs. Identifies exactly one target field; this schema never accepts a target list."
+        },
+        "task_type": {
+          "type": "string",
+          "const": "univariate_forecasting",
+          "description": "Only 'univariate_forecasting' is a governed task type under this schema version. A new task_type value requires a new schema version, never an ad hoc string."
+        },
+        "target_value_kind": {
+          "type": "string",
+          "const": "numeric",
+          "description": "Authored analytical intent that the forecasted target field is numeric. Must never be derived from observed dtype, cardinality, number of unique values, integer/float storage representation, training estimator family, or model output observed at runtime."
+        },
+        "forecasting_mode": {
+          "type": "string",
+          "const": "univariate",
+          "description": "Fixed: this schema version governs only the univariate forecasting mode. A multivariate, hierarchical, or exogenous forecasting mode requires separately governed evolution."
+        },
+        "is_final_training_configuration": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must always be false. Target semantics authored here are not final training configuration without later validation and stage authorization."
+        }
+      }
+    },
+    "authored_public_meaning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["human_reviewed"],
+      "description": "Optional human-reviewed safe public-meaning or projection intent for this dataset, distinct from any generated public contract.",
+      "properties": {
+        "human_reviewed": {
+          "type": "boolean"
+        },
+        "safe_projection_intent": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "authoring_rationale_refs": {
+      "type": "array",
+      "description": "Optional traceability references to authoring rationale or governed scientific-evidence artifacts this semantic intent was reviewed against. Must not embed raw scientific-evidence payloads.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reference_kind", "reference_id"],
+        "properties": {
+          "reference_kind": {
+            "type": "string",
+            "enum": ["source_verification_evidence", "external_scientific_evidence", "authoring_note"]
+          },
+          "reference_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "semantic_boundary_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_source_statistics_embedded",
+        "scientific_conclusions_embedded",
+        "training_outcome_embedded",
+        "release_state_embedded",
+        "model_bytes_embedded"
+      ],
+      "description": "Explicit confirmation that this semantic-intent document does not own observed facts, scientific conclusions, training outcomes, release state, or model bytes. All flags are required and fixed.",
+      "properties": {
+        "observed_source_statistics_embedded": {"type": "boolean", "const": false},
+        "scientific_conclusions_embedded": {"type": "boolean", "const": false},
+        "training_outcome_embedded": {"type": "boolean", "const": false},
+        "release_state_embedded": {"type": "boolean", "const": false},
+        "model_bytes_embedded": {"type": "boolean", "const": false}
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this semantic-intent document was generated."
+    }
+  }
+}

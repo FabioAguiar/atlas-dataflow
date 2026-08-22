@@ -36,6 +36,7 @@ _MANIFEST_SCHEMA_PATH = Path(__file__).parent / "dataset-integration-authoring-m
 _SEMANTIC_INTENT_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.schema.json"
 _SEMANTIC_INTENT_V2_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.v2.schema.json"
 _SEMANTIC_INTENT_V3_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.v3.schema.json"
+_SEMANTIC_INTENT_V4_SCHEMA_PATH = Path(__file__).parent / "dataset-semantic-intent.v4.schema.json"
 _CAPABILITY_PROFILE_SCHEMA_PATH = Path(__file__).parent / "capability-profile.schema.json"
 
 # Closed local registry dispatching semantic-intent schema selection by the
@@ -46,6 +47,7 @@ _SEMANTIC_INTENT_SCHEMA_REGISTRY: dict[str, Path] = {
     "dataset-semantic-intent.v1": _SEMANTIC_INTENT_SCHEMA_PATH,
     "dataset-semantic-intent.v2": _SEMANTIC_INTENT_V2_SCHEMA_PATH,
     "dataset-semantic-intent.v3": _SEMANTIC_INTENT_V3_SCHEMA_PATH,
+    "dataset-semantic-intent.v4": _SEMANTIC_INTENT_V4_SCHEMA_PATH,
 }
 
 # Architecture-level task/runtime compatibility, enforced only when a
@@ -54,6 +56,7 @@ _TASK_TYPE_TO_RUNTIME_MODE: dict[str, str] = {
     "binary_classification": "single_model_binary_classification",
     "multiclass_classification": "single_model_multiclass_classification",
     "continuous_regression": "single_model_continuous_regression",
+    "univariate_forecasting": "single_model_univariate_forecasting",
 }
 
 
@@ -563,6 +566,79 @@ def validate_authoring_contracts(
                     field_path="target_semantics.task_type",
                 )
             )
+
+    # --- Forecasting temporal/target field identity consistency -------------
+    # Authored-meaning-only cross-check for dataset-semantic-intent.v4:
+    # proves the temporal index and target field names each resolve to
+    # exactly one field-role decision with the expected role, that they
+    # differ, and that no source field is included as a predictive feature.
+    # Never inspects source data, measures timestamp gaps, infers frequency,
+    # calculates lags, or derives a split.
+    if semantic_intent_instance is not None and "temporal_semantics" in semantic_intent_instance:
+        temporal_semantics = semantic_intent_instance["temporal_semantics"]
+        field_role_decisions = semantic_intent_instance.get("field_role_decisions", [])
+        time_index_field_name = temporal_semantics["time_index_field_name"]
+
+        def _roles_for(field_name: str) -> list[str]:
+            return [decision["role"] for decision in field_role_decisions if decision["field_name"] == field_name]
+
+        temporal_index_roles = _roles_for(time_index_field_name)
+        if temporal_index_roles != ["temporal_index"]:
+            failures.append(
+                ValidationFailure(
+                    code="temporal_index_field_role_mismatch",
+                    message=(
+                        f"temporal_semantics.time_index_field_name {time_index_field_name!r} does not resolve to "
+                        "exactly one field_role_decisions entry with role=temporal_index"
+                    ),
+                    field_path="temporal_semantics.time_index_field_name",
+                )
+            )
+
+        target_semantics = semantic_intent_instance.get("target_semantics")
+        if target_semantics is not None:
+            target_field_name = target_semantics["target_field_name"]
+            target_roles = _roles_for(target_field_name)
+            if target_roles != ["target"]:
+                failures.append(
+                    ValidationFailure(
+                        code="forecasting_target_field_role_mismatch",
+                        message=(
+                            f"target_semantics.target_field_name {target_field_name!r} does not resolve to "
+                            "exactly one field_role_decisions entry with role=target"
+                        ),
+                        field_path="target_semantics.target_field_name",
+                    )
+                )
+            if time_index_field_name == target_field_name:
+                failures.append(
+                    ValidationFailure(
+                        code="temporal_index_equals_target_field",
+                        message=(
+                            "temporal_semantics.time_index_field_name must differ from "
+                            "target_semantics.target_field_name"
+                        ),
+                        field_path="temporal_semantics.time_index_field_name",
+                    )
+                )
+
+        if temporal_semantics.get("source_exogenous_predictors") == "forbidden":
+            predictive_feature_fields = [
+                decision["field_name"]
+                for decision in field_role_decisions
+                if decision.get("role") == "feature" and decision.get("include_in_features") is True
+            ]
+            if predictive_feature_fields:
+                failures.append(
+                    ValidationFailure(
+                        code="forecasting_source_feature_forbidden",
+                        message=(
+                            "univariate forecasting forbids source predictive features but found: "
+                            f"{predictive_feature_fields!r}"
+                        ),
+                        field_path="field_role_decisions",
+                    )
+                )
 
     valid = not failures
 

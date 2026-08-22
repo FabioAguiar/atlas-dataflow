@@ -1102,6 +1102,219 @@ def build_univariate_forecasting_evaluation_policy_intent(
     }
 
 
+# Project Spec S0244: a single reviewed univariate-forecasting training-policy
+# declaration -- a frozen, fixed model specification the S0244 training
+# entrypoint must replay unchanged on every backtesting fold and the final
+# development fit. "approved" is the only status that may later be promoted
+# into execution policy by contract_derivation._build_execution_contract_v2;
+# "pending_review" keeps the declaration visible as an unresolved review item
+# without ever silently materializing into executable policy. This builder
+# deliberately never accepts a dataset slug, external project path,
+# constructor import string, callable, model bytes, forecast metric value, or
+# actual period/target -- the fixed_model_configuration vocabulary below is a
+# closed, library-neutral set of scalar hyperparameters only.
+UNIVARIATE_FORECASTING_TRAINING_POLICY_INTENT_CONTRACT_VERSION = (
+    "univariate_forecasting_training_policy_intent.v1"
+)
+UNIVARIATE_FORECASTING_TRAINING_POLICY_REVIEW_STATUSES = frozenset(
+    {"approved", "pending_review"}
+)
+# The only model family this v1 training-policy intent recognizes. A future
+# family requires a new, separately authorized whitelist -- never an ad hoc
+# extension here. Because this is a strict membership check against a closed
+# set of plain strings, no module path, class path, or callable can ever be
+# accepted as a model family.
+UNIVARIATE_FORECASTING_MODEL_FAMILIES = frozenset({"deterministic_seasonal_trend_ols"})
+_UNIVARIATE_FORECASTING_SELECTION_MODE = "fixed_configuration"
+_UNIVARIATE_FORECASTING_FIXED_CONFIGURATION_REQUIRED_FIELDS = (
+    "include_intercept",
+    "linear_time_trend",
+    "seasonal_effects",
+    "seasonal_period",
+    "reference_season_position",
+    "trend_origin",
+)
+_UNIVARIATE_FORECASTING_FINALIZATION_POLICY_REQUIRED_VALUES: dict[str, Any] = {
+    "backtesting_refit_each_fold": True,
+    "final_fit_scope": "full_development",
+    "freeze_before_final_holdout_open": True,
+    "final_holdout_evaluation_count": 1,
+    "final_holdout_used_for_adjustment": False,
+    "final_holdout_used_for_model_selection": False,
+    "no_retuning_after_final_holdout": True,
+}
+
+
+def _validate_deterministic_seasonal_trend_ols_fixed_configuration(
+    fixed_model_configuration: Any,
+) -> dict[str, Any]:
+    """Validate and normalize the closed deterministic_seasonal_trend_ols
+    fixed configuration. Raises ValueError for any missing/unknown key,
+    wrong type, or out-of-range value -- including
+    `reference_season_position >= seasonal_period`.
+    """
+    if not isinstance(fixed_model_configuration, dict):
+        raise ValueError("fixed_model_configuration must be an object")
+    required = set(_UNIVARIATE_FORECASTING_FIXED_CONFIGURATION_REQUIRED_FIELDS)
+    missing = required - set(fixed_model_configuration)
+    if missing:
+        raise ValueError(
+            f"fixed_model_configuration is missing required fields: {sorted(missing)}"
+        )
+    unknown = set(fixed_model_configuration) - required
+    if unknown:
+        raise ValueError(
+            f"fixed_model_configuration contains unrecognized fields: {sorted(unknown)}"
+        )
+
+    include_intercept = fixed_model_configuration["include_intercept"]
+    if include_intercept is not True:
+        raise ValueError("fixed_model_configuration.include_intercept must be true")
+
+    linear_time_trend = fixed_model_configuration["linear_time_trend"]
+    if linear_time_trend is not True:
+        raise ValueError("fixed_model_configuration.linear_time_trend must be true")
+
+    seasonal_effects = fixed_model_configuration["seasonal_effects"]
+    if seasonal_effects != "additive_indicators":
+        raise ValueError(
+            "fixed_model_configuration.seasonal_effects must be exactly "
+            f"'additive_indicators', got {seasonal_effects!r}"
+        )
+
+    seasonal_period = fixed_model_configuration["seasonal_period"]
+    if (
+        isinstance(seasonal_period, bool)
+        or not isinstance(seasonal_period, int)
+        or seasonal_period <= 1
+    ):
+        raise ValueError(
+            "fixed_model_configuration.seasonal_period must be an explicit integer > 1"
+        )
+
+    reference_season_position = fixed_model_configuration["reference_season_position"]
+    if (
+        isinstance(reference_season_position, bool)
+        or not isinstance(reference_season_position, int)
+        or reference_season_position < 0
+    ):
+        raise ValueError(
+            "fixed_model_configuration.reference_season_position must be an explicit "
+            "integer >= 0"
+        )
+    if reference_season_position >= seasonal_period:
+        raise ValueError(
+            "fixed_model_configuration.reference_season_position must be strictly less "
+            f"than seasonal_period: {reference_season_position!r} >= {seasonal_period!r}"
+        )
+
+    trend_origin = fixed_model_configuration["trend_origin"]
+    if trend_origin != "development_start":
+        raise ValueError(
+            "fixed_model_configuration.trend_origin must be exactly 'development_start', "
+            f"got {trend_origin!r}"
+        )
+
+    return {
+        "include_intercept": True,
+        "linear_time_trend": True,
+        "seasonal_effects": "additive_indicators",
+        "seasonal_period": seasonal_period,
+        "reference_season_position": reference_season_position,
+        "trend_origin": "development_start",
+    }
+
+
+def _validate_univariate_forecasting_finalization_policy(finalization_policy: Any) -> dict[str, Any]:
+    """Validate and normalize the closed finalization policy. Raises
+    ValueError for any missing/unknown key or a value deviating from the one
+    frozen, S0244-required value for that key.
+    """
+    if not isinstance(finalization_policy, dict):
+        raise ValueError("finalization_policy must be an object")
+    required = set(_UNIVARIATE_FORECASTING_FINALIZATION_POLICY_REQUIRED_VALUES)
+    missing = required - set(finalization_policy)
+    if missing:
+        raise ValueError(f"finalization_policy is missing required fields: {sorted(missing)}")
+    unknown = set(finalization_policy) - required
+    if unknown:
+        raise ValueError(f"finalization_policy contains unrecognized fields: {sorted(unknown)}")
+    for key, expected in _UNIVARIATE_FORECASTING_FINALIZATION_POLICY_REQUIRED_VALUES.items():
+        if finalization_policy[key] != expected:
+            raise ValueError(
+                f"finalization_policy.{key} must be exactly {expected!r}, "
+                f"got {finalization_policy[key]!r}"
+            )
+    return dict(_UNIVARIATE_FORECASTING_FINALIZATION_POLICY_REQUIRED_VALUES)
+
+
+def build_univariate_forecasting_training_policy_intent(
+    review_status: str,
+    selection_mode: str,
+    model_selection_performed: bool,
+    model_family: str,
+    fixed_model_configuration: dict[str, Any],
+    finalization_policy: dict[str, Any],
+    review_notes: str | None = None,
+) -> dict[str, Any]:
+    """Build a `univariate_forecasting_training_policy_intent.v1` reviewed
+    declaration (Project Spec S0244).
+
+    Every value is an explicit caller-supplied parameter with no defaults --
+    this builder never inserts illustrative/prototype values automatically.
+    Only `review_status == "approved"` may later be promoted into executable
+    execution-contract policy by
+    `contract_derivation._build_execution_contract_v2`; `"pending_review"`
+    keeps the declaration visible as an unresolved review item and this
+    builder still returns it rather than raising, mirroring
+    `build_univariate_forecasting_evaluation_policy_intent`'s convention --
+    but every structural/value validation below still applies regardless of
+    review_status, since a pending declaration must still be well-formed.
+    Raises ValueError on a structurally malformed declaration (unknown
+    review_status, wrong selection_mode, model_selection_performed not
+    exactly False, unknown model_family, a malformed/out-of-range
+    fixed_model_configuration, or a finalization_policy deviating from the
+    one frozen S0244 protocol).
+    """
+    if review_status not in UNIVARIATE_FORECASTING_TRAINING_POLICY_REVIEW_STATUSES:
+        raise ValueError(
+            "review_status must be one of "
+            f"{sorted(UNIVARIATE_FORECASTING_TRAINING_POLICY_REVIEW_STATUSES)}, "
+            f"got {review_status!r}"
+        )
+    if selection_mode != _UNIVARIATE_FORECASTING_SELECTION_MODE:
+        raise ValueError(
+            f"selection_mode must be exactly {_UNIVARIATE_FORECASTING_SELECTION_MODE!r}, "
+            f"got {selection_mode!r}"
+        )
+    if model_selection_performed is not False:
+        raise ValueError(
+            f"model_selection_performed must be exactly False, got {model_selection_performed!r}"
+        )
+    if model_family not in UNIVARIATE_FORECASTING_MODEL_FAMILIES:
+        raise ValueError(
+            f"model_family must be one of {sorted(UNIVARIATE_FORECASTING_MODEL_FAMILIES)}, "
+            f"got {model_family!r}"
+        )
+    normalized_fixed_model_configuration = _validate_deterministic_seasonal_trend_ols_fixed_configuration(
+        fixed_model_configuration
+    )
+    normalized_finalization_policy = _validate_univariate_forecasting_finalization_policy(
+        finalization_policy
+    )
+
+    return {
+        "schema_version": UNIVARIATE_FORECASTING_TRAINING_POLICY_INTENT_CONTRACT_VERSION,
+        "review_status": review_status,
+        "selection_mode": selection_mode,
+        "model_selection_performed": model_selection_performed,
+        "model_family": model_family,
+        "fixed_model_configuration": normalized_fixed_model_configuration,
+        "finalization_policy": normalized_finalization_policy,
+        "review_notes": review_notes,
+    }
+
+
 MODELING_INTENT_BOUNDARY_CONFIRMATIONS: dict[str, bool] = {
     "is_execution_contract": False,
     "is_runtime_contract": False,
@@ -1139,6 +1352,7 @@ def build_dataset_modeling_intent(
     continuous_regression_result_semantics_intent: dict[str, Any] | None = None,
     univariate_forecasting_result_semantics_intent: dict[str, Any] | None = None,
     univariate_forecasting_evaluation_policy_intent: dict[str, Any] | None = None,
+    univariate_forecasting_training_policy_intent: dict[str, Any] | None = None,
     training_policy_intent: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -1180,6 +1394,15 @@ def build_dataset_modeling_intent(
     forecast horizon, or seasonal period. The authoritative forecasting
     identity remains dataset-semantic-intent.v4 and candidate-preparation-
     recipe.v2.
+
+    `univariate_forecasting_training_policy_intent` (Project Spec S0244) is
+    an optional reviewed frozen forecasting training-policy declaration,
+    built via `build_univariate_forecasting_training_policy_intent` above.
+    Defaults to `None`; when supplied, this builder carries it forward
+    verbatim -- it never owns model-family selection, hyperparameters, or
+    finalization policy itself. Materialization into execution_contract.v2
+    is owned exclusively by
+    `contract_derivation._build_execution_contract_v2`.
 
     `training_policy_intent` (Project Spec S0216) is optional reviewed
     native training policy authoring intent -- execution-only fields
@@ -1261,6 +1484,11 @@ def build_dataset_modeling_intent(
         "univariate_forecasting_evaluation_policy_intent": (
             dict(univariate_forecasting_evaluation_policy_intent)
             if univariate_forecasting_evaluation_policy_intent is not None
+            else None
+        ),
+        "univariate_forecasting_training_policy_intent": (
+            dict(univariate_forecasting_training_policy_intent)
+            if univariate_forecasting_training_policy_intent is not None
             else None
         ),
         "training_policy_intent": (

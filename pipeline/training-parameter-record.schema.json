@@ -2,13 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-parameter-record.schema.json",
   "title": "Atlas DataFlow Training Parameter Record",
-  "description": "Five schema-version-discriminated profiles are supported: training-parameter-record.v1 (unchanged -- the reduced provenance artifact emitted by a governed M24 training run under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json, linking the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes), training-parameter-record.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training provenance, carrying explicit fixed-finalization protocol evidence and a governed multiclass classification_evidence claim), training-parameter-record.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training provenance, mirroring v2's fixed-finalization protocol evidence with a governed continuous-regression regression_evidence claim in place of classification_evidence), training-parameter-record.external-fitted-model.v1 (Project Spec S0157, describing an already-fitted external model's parameters/provenance from a validated handoff/projection flow, binary-classification-oriented), and training-parameter-record.external-fitted-model.v2 (Project Spec S0208, the same external-handoff profile generalized to a multiclass classification_evidence claim in place of v1's binary positive-class ownership). None of the five profiles embed raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
+  "description": "Six schema-version-discriminated profiles are supported: training-parameter-record.v1 (unchanged -- the reduced provenance artifact emitted by a governed M24 training run under pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json, linking the consumed execution contract and prepared dataset to the produced model and metrics artifacts using SHA-256 hashes), training-parameter-record.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training provenance, carrying explicit fixed-finalization protocol evidence and a governed multiclass classification_evidence claim), training-parameter-record.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training provenance, mirroring v2's fixed-finalization protocol evidence with a governed continuous-regression regression_evidence claim in place of classification_evidence), training-parameter-record.v4 (Project Spec S0244, Atlas-native univariate forecasting training provenance, linking execution contract, preparation recipe, prepared dataset, model artifact, and metrics artifact by SHA-256 and recording the frozen backtesting/finalization protocol), training-parameter-record.external-fitted-model.v1 (Project Spec S0157, describing an already-fitted external model's parameters/provenance from a validated handoff/projection flow, binary-classification-oriented), and training-parameter-record.external-fitted-model.v2 (Project Spec S0208, the same external-handoff profile generalized to a multiclass classification_evidence claim in place of v1's binary positive-class ownership). None of the six profiles embed raw dataset contents, model bytes, raw logs, raw runtime data, raw API payloads, secrets, or notebook state.",
   "type": "object",
   "required": ["schema_version"],
   "oneOf": [
     { "$ref": "#/$defs/internal_run_record_v1" },
     { "$ref": "#/$defs/internal_run_record_v2" },
     { "$ref": "#/$defs/internal_run_record_v3" },
+    { "$ref": "#/$defs/internal_run_record_v4" },
     { "$ref": "#/$defs/external_fitted_model_record_v1" },
     { "$ref": "#/$defs/external_fitted_model_record_v2" }
   ],
@@ -1149,6 +1150,315 @@
           }
         }
       }
+    },
+    "internal_run_record_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0244: Atlas-native univariate forecasting training provenance, emitted alongside training-metrics.v4 at pipeline/training-runs/{dataset_slug}/{run_id}/training-parameter-record.json. Links execution contract, preparation recipe, prepared dataset, model artifact, and metrics artifact by SHA-256, and records the reduced frozen backtesting/finalization protocol. Never embeds raw series rows, full fold target arrays, external-study paths, raw logs, secrets, or model bytes.",
+      "required": [
+        "schema_version",
+        "record_kind",
+        "problem_type",
+        "training_timestamp",
+        "training_run_identity",
+        "consumed_inputs",
+        "produced_outputs",
+        "serializer",
+        "controlled_entrypoint_provenance",
+        "permitted_execution_contract_fields",
+        "training_parameters",
+        "forecasting_evidence",
+        "hashes",
+        "record_boundary_confirmations",
+        "evidence_policy"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-parameter-record.v4"
+        },
+        "record_kind": {
+          "type": "string",
+          "const": "training_parameter_record"
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "univariate_forecasting"
+        },
+        "training_run_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug", "run_id", "output_directory"],
+          "properties": {
+            "dataset_slug": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^train-[0-9]{8}T[0-9]{6}Z$"
+            },
+            "output_directory": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
+            }
+          }
+        },
+        "consumed_inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "execution_contract_path",
+            "preparation_recipe_path",
+            "dataset_path",
+            "execution_contract_dataset_id",
+            "prepared_dataset_dataset_id"
+          ],
+          "description": "Reduced references to the governed forecasting training inputs, including the preparation recipe -- the sole authority for the full expanding-window fold schedule, never duplicated into execution_contract.v2.",
+          "properties": {
+            "execution_contract_path": { "type": "string", "minLength": 1 },
+            "preparation_recipe_path": { "type": "string", "minLength": 1 },
+            "dataset_path": { "type": "string", "minLength": 1 },
+            "execution_contract_dataset_id": { "type": "string", "minLength": 1 },
+            "prepared_dataset_dataset_id": { "type": "string", "minLength": 1 }
+          }
+        },
+        "produced_outputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["serialized_model_path", "training_parameter_record_path"],
+          "properties": {
+            "serialized_model_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model\\.[A-Za-z0-9._-]+$"
+            },
+            "training_parameter_record_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/training-parameter-record\\.json$"
+            },
+            "metrics_path": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/metrics\\.json$"
+            },
+            "model_selection_evidence_path": {
+              "type": "null",
+              "description": "Project Spec S0244: forecasting training never performs model selection, so this is always null -- never a path."
+            },
+            "model_card_input_path": {
+              "type": ["string", "null"],
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/model-card-input\\.json$",
+              "description": "Absent (null) for forecasting unless the existing generic model-card representation can represent forecasting without inventing new schema."
+            }
+          }
+        },
+        "training_timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "serializer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "installed_version", "serialization_format_version"],
+          "properties": {
+            "name": { "type": "string", "const": "joblib" },
+            "installed_version": { "type": "string", "minLength": 1 },
+            "serialization_format_version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "controlled_entrypoint_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "marker_version", "marker_kind", "entrypoint", "generated_at", "run_id",
+            "output_directory", "execution_contract_sha256", "prepared_dataset_sha256", "marker_id"
+          ],
+          "properties": {
+            "marker_version": { "type": "string", "const": "controlled-entrypoint-provenance.v1" },
+            "marker_kind": { "type": "string", "const": "controlled_training_entrypoint" },
+            "entrypoint": { "type": "string", "const": "pipeline.training.train_from_paths" },
+            "generated_at": { "type": "string", "format": "date-time" },
+            "run_id": { "type": "string", "pattern": "^train-[0-9]{8}T[0-9]{6}Z$" },
+            "output_directory": {
+              "type": "string",
+              "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$"
+            },
+            "execution_contract_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "prepared_dataset_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "marker_id": { "$ref": "#/$defs/sha256_hex" }
+          }
+        },
+        "permitted_execution_contract_fields": {
+          "type": "array",
+          "minItems": 14,
+          "maxItems": 14,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "contract_version", "dataset_id", "problem_type", "target_column",
+              "time_index_column", "index_value_kind", "frequency",
+              "source_exogenous_predictors", "forecast_horizon", "temporal_evaluation",
+              "evaluation_policy", "result_semantics", "training_policy", "random_seed"
+            ]
+          }
+        },
+        "training_parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_family", "fixed_model_configuration", "target_column",
+            "time_index_column", "frequency", "forecast_horizon", "random_seed",
+            "primary_metric", "secondary_metrics", "selection_mode",
+            "model_selection_performed", "finalization_policy",
+            "backtesting_protocol", "final_holdout_protocol"
+          ],
+          "description": "Reduced parameter values for reproducibility and audit. Never includes feature_columns, split_policy, or modeling_constraints -- forecasting training never reuses the v1 tabular training-policy shape.",
+          "properties": {
+            "model_family": { "type": "string", "const": "deterministic_seasonal_trend_ols" },
+            "fixed_model_configuration": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "include_intercept", "linear_time_trend", "seasonal_effects",
+                "seasonal_period", "reference_season_position", "trend_origin"
+              ],
+              "properties": {
+                "include_intercept": { "type": "boolean", "const": true },
+                "linear_time_trend": { "type": "boolean", "const": true },
+                "seasonal_effects": { "type": "string", "const": "additive_indicators" },
+                "seasonal_period": { "type": "integer", "exclusiveMinimum": 1 },
+                "reference_season_position": { "type": "integer", "minimum": 0 },
+                "trend_origin": { "type": "string", "const": "development_start" }
+              }
+            },
+            "target_column": { "type": "string", "minLength": 1 },
+            "time_index_column": { "type": "string", "minLength": 1 },
+            "frequency": { "type": "string", "minLength": 1 },
+            "forecast_horizon": { "type": "integer", "exclusiveMinimum": 0 },
+            "random_seed": { "type": ["integer", "null"] },
+            "primary_metric": { "$ref": "#/$defs/forecasting_metric_name_v4" },
+            "secondary_metrics": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/forecasting_metric_name_v4" }
+            },
+            "selection_mode": { "type": "string", "const": "fixed_configuration" },
+            "model_selection_performed": { "type": "boolean", "const": false },
+            "finalization_policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "backtesting_refit_each_fold", "final_fit_scope",
+                "freeze_before_final_holdout_open", "final_holdout_evaluation_count",
+                "final_holdout_used_for_adjustment", "final_holdout_used_for_model_selection",
+                "no_retuning_after_final_holdout"
+              ],
+              "properties": {
+                "backtesting_refit_each_fold": { "type": "boolean", "const": true },
+                "final_fit_scope": { "type": "string", "const": "full_development" },
+                "freeze_before_final_holdout_open": { "type": "boolean", "const": true },
+                "final_holdout_evaluation_count": { "type": "integer", "const": 1 },
+                "final_holdout_used_for_adjustment": { "type": "boolean", "const": false },
+                "final_holdout_used_for_model_selection": { "type": "boolean", "const": false },
+                "no_retuning_after_final_holdout": { "type": "boolean", "const": true }
+              }
+            },
+            "backtesting_protocol": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mode", "fold_count", "development_observations"],
+              "properties": {
+                "mode": { "type": "string", "const": "expanding_window" },
+                "fold_count": { "type": "integer", "exclusiveMinimum": 0 },
+                "development_observations": { "type": "integer", "exclusiveMinimum": 0 }
+              }
+            },
+            "final_holdout_protocol": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["observation_count", "model_frozen_before_open", "evaluation_count"],
+              "properties": {
+                "observation_count": { "type": "integer", "exclusiveMinimum": 0 },
+                "model_frozen_before_open": { "type": "boolean", "const": true },
+                "evaluation_count": { "type": "integer", "const": 1 }
+              }
+            }
+          }
+        },
+        "forecasting_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "result_semantics_schema_version", "training_policy_schema_version"],
+          "properties": {
+            "problem_type": { "type": "string", "const": "univariate_forecasting" },
+            "result_semantics_schema_version": {
+              "type": "string",
+              "const": "univariate-forecasting-result-semantics.v1"
+            },
+            "training_policy_schema_version": {
+              "type": "string",
+              "const": "univariate-forecasting-training-policy.v1"
+            }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm", "execution_contract_sha256", "preparation_recipe_sha256",
+            "prepared_dataset_sha256", "model_artifact_sha256"
+          ],
+          "properties": {
+            "algorithm": { "type": "string", "const": "sha256" },
+            "execution_contract_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "preparation_recipe_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "prepared_dataset_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "model_artifact_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "metrics_sha256": {
+              "anyOf": [{ "$ref": "#/$defs/sha256_hex" }, { "type": "null" }]
+            }
+          }
+        },
+        "record_boundary_confirmations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "is_metrics_artifact", "raw_dataset_embedded", "model_bytes_embedded",
+            "notebook_state_embedded", "unauthorized_contract_fields_consumed",
+            "controlled_entrypoint_provenance_marker_present"
+          ],
+          "properties": {
+            "is_metrics_artifact": { "type": "boolean", "const": false },
+            "raw_dataset_embedded": { "type": "boolean", "const": false },
+            "model_bytes_embedded": { "type": "boolean", "const": false },
+            "notebook_state_embedded": { "type": "boolean", "const": false },
+            "unauthorized_contract_fields_consumed": { "type": "boolean", "const": false },
+            "controlled_entrypoint_provenance_marker_present": { "type": "boolean", "const": true }
+          }
+        },
+        "evidence_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "raw_logs_prohibited", "raw_runtime_prohibited", "raw_api_payloads_prohibited",
+            "secrets_prohibited", "private_source_paths_prohibited",
+            "raw_artifact_contents_prohibited", "reduced_and_sanitized"
+          ],
+          "properties": {
+            "raw_logs_prohibited": { "type": "boolean", "const": true },
+            "raw_runtime_prohibited": { "type": "boolean", "const": true },
+            "raw_api_payloads_prohibited": { "type": "boolean", "const": true },
+            "secrets_prohibited": { "type": "boolean", "const": true },
+            "private_source_paths_prohibited": { "type": "boolean", "const": true },
+            "raw_artifact_contents_prohibited": { "type": "boolean", "const": true },
+            "reduced_and_sanitized": { "type": "boolean", "const": true }
+          }
+        }
+      }
+    },
+    "forecasting_metric_name_v4": {
+      "type": "string",
+      "enum": ["mae", "rmse", "seasonal_mase"]
     },
     "external_fitted_model_record_v1": {
       "type": "object",

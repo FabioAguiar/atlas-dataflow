@@ -2,13 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/training-metrics.schema.json",
   "title": "Atlas DataFlow Training Metrics Artifact",
-  "description": "Reduced metrics artifact. Five schema-version-discriminated profiles are supported: training-metrics.v1 (unchanged, emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json, computed from the controlled evaluation split only), training-metrics.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training, distinguishing a descriptive validation evaluation from a sealed final-test evaluation), training-metrics.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training, mirroring v2's descriptive-validation/sealed-final-test discipline with r2/mae/rmse regression evidence in place of classification evidence), training-metrics.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow, distinguishing cross-validation, validation, and final-test partition roles), and training-metrics.external-fitted-model.v2 (Project Spec S0215, the multiclass external variant).",
+  "description": "Reduced metrics artifact. Six schema-version-discriminated profiles are supported: training-metrics.v1 (unchanged, emitted by a governed M24 training run at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json, computed from the controlled evaluation split only), training-metrics.v2 (Project Spec S0216, Atlas-native fixed-configuration multiclass training, distinguishing a descriptive validation evaluation from a sealed final-test evaluation), training-metrics.v3 (Project Spec S0224, Atlas-native fixed-configuration continuous-regression training, mirroring v2's descriptive-validation/sealed-final-test discipline with r2/mae/rmse regression evidence in place of classification evidence), training-metrics.v4 (Project Spec S0244, Atlas-native univariate forecasting training, separating expanding-window backtesting evidence from a sealed final-holdout evaluation opened exactly once), training-metrics.external-fitted-model.v1 (Project Spec S0157, produced by a validated external handoff/projection flow, distinguishing cross-validation, validation, and final-test partition roles), and training-metrics.external-fitted-model.v2 (Project Spec S0215, the multiclass external variant).",
   "type": "object",
   "required": ["schema_version"],
   "oneOf": [
     { "$ref": "#/$defs/internal_run_metrics_v1" },
     { "$ref": "#/$defs/internal_run_metrics_v2" },
     { "$ref": "#/$defs/internal_run_metrics_v3" },
+    { "$ref": "#/$defs/internal_run_metrics_v4" },
     { "$ref": "#/$defs/external_metrics_v1" },
     { "$ref": "#/$defs/external_metrics_v2" }
   ],
@@ -438,6 +439,207 @@
       "properties": {
         "name": { "$ref": "#/$defs/continuous_regression_metric_name_v3" },
         "value": { "type": "number" }
+      }
+    },
+    "internal_run_metrics_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Project Spec S0244: Atlas-native univariate forecasting training metrics, emitted alongside training-parameter-record.v4 at pipeline/training-runs/{dataset_slug}/{run_id}/metrics.json. Separates expanding-window backtesting evidence (frozen fixed-configuration replay, never model selection) from a sealed final_holdout_evaluation opened exactly once after backtesting completes. Metric ids are bounded to mae/rmse/seasonal_mase; values must be finite numbers -- enforced by validating code alongside this schema, since JSON Schema's 'number' type alone does not reject NaN/Infinity. Fold summaries and horizon-wise entries never carry raw y_true/y_pred arrays.",
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "created_at",
+        "training_run_identity",
+        "forecasting_evidence",
+        "evaluation_policy",
+        "backtesting_evaluation",
+        "final_holdout_evaluation",
+        "path_references",
+        "hashes",
+        "evidence_policy"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "training-metrics.v4"
+        },
+        "artifact_kind": {
+          "type": "string",
+          "const": "training_metrics"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "training_run_identity": {
+          "$ref": "#/$defs/training_run_identity"
+        },
+        "forecasting_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "result_semantics_schema_version", "forecast_horizon"],
+          "properties": {
+            "problem_type": { "type": "string", "const": "univariate_forecasting" },
+            "result_semantics_schema_version": {
+              "type": "string",
+              "const": "univariate-forecasting-result-semantics.v1"
+            },
+            "forecast_horizon": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        "evaluation_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary_metric", "secondary_metrics"],
+          "properties": {
+            "primary_metric": { "$ref": "#/$defs/forecasting_metric_policy_entry_v4" },
+            "secondary_metrics": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/forecasting_metric_policy_entry_v4" }
+            }
+          }
+        },
+        "backtesting_evaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fold_count", "forecast_count", "pooled_metrics", "fold_summaries", "horizon_mae"],
+          "properties": {
+            "fold_count": { "type": "integer", "exclusiveMinimum": 0 },
+            "forecast_count": { "type": "integer", "exclusiveMinimum": 0 },
+            "pooled_metrics": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/forecasting_metric_value_v4" }
+            },
+            "fold_summaries": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/forecasting_fold_summary_v4" }
+            },
+            "horizon_mae": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/forecasting_horizon_mae_entry_v4" }
+            }
+          }
+        },
+        "final_holdout_evaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Sealed final holdout, opened exactly once after backtesting completes. Never used for adjustment, retuning, or model selection.",
+          "required": [
+            "evaluation_count",
+            "observation_count",
+            "metrics",
+            "model_frozen_before_open",
+            "used_for_adjustment",
+            "used_for_retuning",
+            "used_for_model_selection"
+          ],
+          "properties": {
+            "evaluation_count": { "type": "integer", "const": 1 },
+            "observation_count": { "type": "integer", "exclusiveMinimum": 0 },
+            "metrics": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/forecasting_metric_value_v4" }
+            },
+            "model_frozen_before_open": { "type": "boolean", "const": true },
+            "used_for_adjustment": { "type": "boolean", "const": false },
+            "used_for_retuning": { "type": "boolean", "const": false },
+            "used_for_model_selection": { "type": "boolean", "const": false }
+          }
+        },
+        "path_references": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metrics_path",
+            "training_parameter_record_path",
+            "execution_contract_path",
+            "preparation_recipe_path",
+            "dataset_path"
+          ],
+          "properties": {
+            "metrics_path": { "$ref": "#/$defs/metrics_path" },
+            "training_parameter_record_path": { "$ref": "#/$defs/training_parameter_record_path" },
+            "execution_contract_path": { "type": "string", "minLength": 1 },
+            "preparation_recipe_path": { "type": "string", "minLength": 1 },
+            "dataset_path": { "type": "string", "minLength": 1 }
+          }
+        },
+        "hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "execution_contract_sha256", "preparation_recipe_sha256"],
+          "properties": {
+            "algorithm": { "type": "string", "const": "sha256" },
+            "execution_contract_sha256": { "$ref": "#/$defs/sha256_hex" },
+            "preparation_recipe_sha256": { "$ref": "#/$defs/sha256_hex" }
+          }
+        },
+        "evidence_policy": {
+          "$ref": "#/$defs/evidence_policy"
+        }
+      }
+    },
+    "forecasting_metric_name_v4": {
+      "type": "string",
+      "enum": ["mae", "rmse", "seasonal_mase"]
+    },
+    "forecasting_metric_value_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "$ref": "#/$defs/forecasting_metric_name_v4" },
+        "value": { "type": "number" }
+      }
+    },
+    "forecasting_metric_policy_entry_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id", "direction"],
+      "description": "Mirrors contracts/execution-contract.schema.json#/definitions/forecasting_metric_entry. seasonal_mase requires an explicit positive seasonal_period; mae/rmse must never carry one.",
+      "properties": {
+        "metric_id": { "$ref": "#/$defs/forecasting_metric_name_v4" },
+        "direction": { "type": "string", "const": "lower_is_better" },
+        "seasonal_period": { "type": "integer", "exclusiveMinimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "metric_id": { "const": "seasonal_mase" } }, "required": ["metric_id"] },
+          "then": { "required": ["seasonal_period"] }
+        },
+        {
+          "if": { "properties": { "metric_id": { "enum": ["mae", "rmse"] } }, "required": ["metric_id"] },
+          "then": { "not": { "required": ["seasonal_period"] } }
+        }
+      ]
+    },
+    "forecasting_fold_summary_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A single backtesting fold's reduced summary. Never carries raw y_true/y_pred arrays.",
+      "required": ["fold_index", "forecast_origin", "validation_observations", "metrics"],
+      "properties": {
+        "fold_index": { "type": "integer", "minimum": 0 },
+        "forecast_origin": { "type": "string", "minLength": 1 },
+        "validation_observations": { "type": "integer", "exclusiveMinimum": 0 },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/forecasting_metric_value_v4" }
+        }
+      }
+    },
+    "forecasting_horizon_mae_entry_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["horizon_step", "mae", "observation_count"],
+      "properties": {
+        "horizon_step": { "type": "integer", "exclusiveMinimum": 0 },
+        "mae": { "type": "number" },
+        "observation_count": { "type": "integer", "exclusiveMinimum": 0 }
       }
     },
     "external_metrics_v1": {

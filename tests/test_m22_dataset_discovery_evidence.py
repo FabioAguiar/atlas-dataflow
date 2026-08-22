@@ -19,6 +19,7 @@ from pipeline.discovery_evidence import (
     MULTICLASS_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_EVALUATION_POLICY_INTENT_CONTRACT_VERSION,
     UNIVARIATE_FORECASTING_RESULT_SEMANTICS_INTENT_CONTRACT_VERSION,
+    UNIVARIATE_FORECASTING_TRAINING_POLICY_INTENT_CONTRACT_VERSION,
     authoring_helper_evidence_policy,
     build_binary_result_semantics_intent,
     build_categorical_domain_declaration,
@@ -27,6 +28,7 @@ from pipeline.discovery_evidence import (
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
     build_univariate_forecasting_result_semantics_intent,
+    build_univariate_forecasting_training_policy_intent,
     derive_feature_candidates,
     generate_discovery_evidence,
     load_dataset_csv,
@@ -1344,3 +1346,191 @@ def test_modeling_intent_carries_forecasting_evaluation_policy_intent_verbatim()
         univariate_forecasting_evaluation_policy_intent=policy_intent
     )
     assert intent["univariate_forecasting_evaluation_policy_intent"] == policy_intent
+
+
+# --- reviewed univariate-forecasting training-policy intent (Project Spec S0244) ---
+
+
+def _forecasting_fixed_model_configuration(**overrides) -> dict:
+    base = dict(
+        include_intercept=True,
+        linear_time_trend=True,
+        seasonal_effects="additive_indicators",
+        seasonal_period=12,
+        reference_season_position=0,
+        trend_origin="development_start",
+    )
+    base.update(overrides)
+    return base
+
+
+def _forecasting_finalization_policy(**overrides) -> dict:
+    base = dict(
+        backtesting_refit_each_fold=True,
+        final_fit_scope="full_development",
+        freeze_before_final_holdout_open=True,
+        final_holdout_evaluation_count=1,
+        final_holdout_used_for_adjustment=False,
+        final_holdout_used_for_model_selection=False,
+        no_retuning_after_final_holdout=True,
+    )
+    base.update(overrides)
+    return base
+
+
+def _build_forecasting_training_policy_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        selection_mode="fixed_configuration",
+        model_selection_performed=False,
+        model_family="deterministic_seasonal_trend_ols",
+        fixed_model_configuration=_forecasting_fixed_model_configuration(),
+        finalization_policy=_forecasting_finalization_policy(),
+        review_notes="Reviewed frozen forecasting specification.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_training_policy_intent(**kwargs)
+
+
+def test_forecasting_training_policy_intent_approved_shape():
+    intent = _build_forecasting_training_policy_intent()
+    assert intent["schema_version"] == UNIVARIATE_FORECASTING_TRAINING_POLICY_INTENT_CONTRACT_VERSION
+    assert intent["review_status"] == "approved"
+    assert intent["selection_mode"] == "fixed_configuration"
+    assert intent["model_selection_performed"] is False
+    assert intent["model_family"] == "deterministic_seasonal_trend_ols"
+    assert intent["fixed_model_configuration"] == _forecasting_fixed_model_configuration()
+    assert intent["finalization_policy"] == _forecasting_finalization_policy()
+    assert set(intent.keys()) == {
+        "schema_version",
+        "review_status",
+        "selection_mode",
+        "model_selection_performed",
+        "model_family",
+        "fixed_model_configuration",
+        "finalization_policy",
+        "review_notes",
+    }
+
+
+def test_forecasting_training_policy_intent_pending_review_is_representable_but_not_approved():
+    intent = _build_forecasting_training_policy_intent(review_status="pending_review")
+    assert intent["review_status"] == "pending_review"
+    assert intent["review_status"] != "approved"
+
+
+def test_forecasting_training_policy_intent_rejects_unknown_review_status():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(review_status="rejected")
+
+
+def test_forecasting_training_policy_intent_rejects_wrong_selection_mode():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(selection_mode="evaluate_allowed_families")
+
+
+def test_forecasting_training_policy_intent_rejects_model_selection_performed_true():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(model_selection_performed=True)
+
+
+def test_forecasting_training_policy_intent_rejects_wrong_model_family():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(model_family="seasonal_naive")
+
+
+def test_forecasting_training_policy_intent_rejects_module_class_callable_model_family():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(
+            model_family="statsmodels.tsa.api.SARIMAX"
+        )
+
+
+def test_forecasting_training_policy_intent_rejects_missing_hyperparameters():
+    incomplete = _forecasting_fixed_model_configuration()
+    del incomplete["seasonal_period"]
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(fixed_model_configuration=incomplete)
+
+
+def test_forecasting_training_policy_intent_rejects_unknown_hyperparameter():
+    extra = _forecasting_fixed_model_configuration()
+    extra["constructor_path"] = "statsmodels.tsa.api.SARIMAX"
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(fixed_model_configuration=extra)
+
+
+def test_forecasting_training_policy_intent_rejects_seasonal_period_of_one():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(
+            fixed_model_configuration=_forecasting_fixed_model_configuration(seasonal_period=1)
+        )
+
+
+def test_forecasting_training_policy_intent_rejects_non_positive_seasonal_period():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(
+            fixed_model_configuration=_forecasting_fixed_model_configuration(seasonal_period=0)
+        )
+
+
+def test_forecasting_training_policy_intent_rejects_reference_position_outside_seasonal_period():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(
+            fixed_model_configuration=_forecasting_fixed_model_configuration(
+                seasonal_period=12, reference_season_position=12
+            )
+        )
+
+
+def test_forecasting_training_policy_intent_rejects_reference_position_beyond_seasonal_period():
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(
+            fixed_model_configuration=_forecasting_fixed_model_configuration(
+                seasonal_period=12, reference_season_position=20
+            )
+        )
+
+
+def test_forecasting_training_policy_intent_accepts_reference_position_at_zero_boundary():
+    intent = _build_forecasting_training_policy_intent(
+        fixed_model_configuration=_forecasting_fixed_model_configuration(
+            seasonal_period=4, reference_season_position=0
+        )
+    )
+    assert intent["fixed_model_configuration"]["reference_season_position"] == 0
+
+
+def test_forecasting_training_policy_intent_rejects_incomplete_finalization_policy():
+    incomplete = _forecasting_finalization_policy()
+    del incomplete["no_retuning_after_final_holdout"]
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(finalization_policy=incomplete)
+
+
+def test_forecasting_training_policy_intent_rejects_deviating_finalization_policy_value():
+    deviating = _forecasting_finalization_policy(final_holdout_used_for_model_selection=True)
+    with pytest.raises(ValueError):
+        _build_forecasting_training_policy_intent(finalization_policy=deviating)
+
+
+def test_modeling_intent_forecasting_training_policy_intent_defaults_to_none():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["univariate_forecasting_training_policy_intent"] is None
+
+
+def test_modeling_intent_carries_forecasting_training_policy_intent_verbatim():
+    policy_intent = _build_forecasting_training_policy_intent()
+    intent = _build_telco_shaped_modeling_intent(
+        univariate_forecasting_training_policy_intent=policy_intent
+    )
+    assert intent["univariate_forecasting_training_policy_intent"] == policy_intent
+
+
+def test_modeling_intent_historical_fields_unchanged_alongside_forecasting_training_policy_default():
+    intent = _build_telco_shaped_modeling_intent()
+    assert intent["contract_version"] == "dataset_modeling_intent.v1"
+    assert intent["target_intent"]["target_column"] == "Churn"
+    assert intent["univariate_forecasting_result_semantics_intent"] is None
+    assert intent["univariate_forecasting_evaluation_policy_intent"] is None
+    assert intent["training_policy_intent"] is None

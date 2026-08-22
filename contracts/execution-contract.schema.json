@@ -233,6 +233,7 @@
         "temporal_evaluation",
         "evaluation_policy",
         "result_semantics",
+        "training_policy",
         "random_seed"
       ],
       "additionalProperties": false,
@@ -293,6 +294,10 @@
         "result_semantics": {
           "$ref": "#/definitions/univariate_forecasting_result_semantics",
           "description": "Strict, normalized univariate-forecasting result semantics. Required on every execution_contract.v2 document -- forecasting has no result-semantics-optional tabular fallback shape."
+        },
+        "training_policy": {
+          "$ref": "#/definitions/univariate_forecasting_training_policy",
+          "description": "Project Spec S0244: strict, normalized, frozen forecasting training-policy specification materialized from a reviewed, approved univariate_forecasting_training_policy_intent. Required on every execution_contract.v2 document. Never reuses v1 modeling_constraints/training_policy_intent shape -- forecasting training is dataset-neutral, fixed-configuration only, and never performs model selection."
         },
         "random_seed": {
           "type": ["integer", "null"],
@@ -397,6 +402,79 @@
         "output_structure": { "type": "string", "const": "ordered_forecast_points" },
         "forecast_value_kind": { "type": "string", "const": "continuous_numeric" },
         "forecast_count_source": { "type": "string", "const": "forecast_horizon" }
+      }
+    },
+    "univariate_forecasting_training_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "selection_mode",
+        "model_selection_performed",
+        "model_family",
+        "fixed_model_configuration",
+        "finalization_policy"
+      ],
+      "description": "Project Spec S0244: strict, normalized, frozen univariate-forecasting training-policy specification materialized from a reviewed, approved univariate_forecasting_training_policy_intent. Never carries review_status/review_notes -- those remain authoring-only fields on the dataset modeling intent, not on the execution contract. Never reuses execution_contract_v1's modeling_constraints/fixed_model_configuration shape (which is classification/regression-scoped and permits a different, disjoint set of model families).",
+      "properties": {
+        "schema_version": { "type": "string", "const": "univariate-forecasting-training-policy.v1" },
+        "selection_mode": { "type": "string", "const": "fixed_configuration" },
+        "model_selection_performed": { "type": "boolean", "const": false },
+        "model_family": { "type": "string", "const": "deterministic_seasonal_trend_ols" },
+        "fixed_model_configuration": { "$ref": "#/definitions/deterministic_seasonal_trend_ols_fixed_configuration" },
+        "finalization_policy": { "$ref": "#/definitions/univariate_forecasting_finalization_policy" }
+      }
+    },
+    "deterministic_seasonal_trend_ols_fixed_configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "include_intercept",
+        "linear_time_trend",
+        "seasonal_effects",
+        "seasonal_period",
+        "reference_season_position",
+        "trend_origin"
+      ],
+      "description": "Project Spec S0244: the complete, explicit, library-neutral set of whitelisted deterministic_seasonal_trend_ols hyperparameters. No statsmodels/sklearn constructor path, module path, class path, or callable is ever a member of this shape. reference_season_position must be strictly less than seasonal_period -- enforced by the independent Python materializer/builder, since JSON Schema draft-07 cannot express this cross-field constraint generically without a fixed seasonal_period value.",
+      "properties": {
+        "include_intercept": { "type": "boolean", "const": true },
+        "linear_time_trend": { "type": "boolean", "const": true },
+        "seasonal_effects": { "type": "string", "const": "additive_indicators" },
+        "seasonal_period": {
+          "type": "integer",
+          "exclusiveMinimum": 1,
+          "description": "Explicit, dataset-specific governed seasonal period. Must never be hardcoded to 12 or any other dataset-specific constant by this schema itself."
+        },
+        "reference_season_position": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Explicit, dataset-specific omitted reference seasonal indicator position. Must be strictly less than seasonal_period."
+        },
+        "trend_origin": { "type": "string", "const": "development_start" }
+      }
+    },
+    "univariate_forecasting_finalization_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backtesting_refit_each_fold",
+        "final_fit_scope",
+        "freeze_before_final_holdout_open",
+        "final_holdout_evaluation_count",
+        "final_holdout_used_for_adjustment",
+        "final_holdout_used_for_model_selection",
+        "no_retuning_after_final_holdout"
+      ],
+      "description": "Project Spec S0244: the one frozen finalization/fit protocol every execution_contract.v2 training_policy must declare. Every field is a fixed constant -- there is no configurable finalization protocol variant.",
+      "properties": {
+        "backtesting_refit_each_fold": { "type": "boolean", "const": true },
+        "final_fit_scope": { "type": "string", "const": "full_development" },
+        "freeze_before_final_holdout_open": { "type": "boolean", "const": true },
+        "final_holdout_evaluation_count": { "type": "integer", "const": 1 },
+        "final_holdout_used_for_adjustment": { "type": "boolean", "const": false },
+        "final_holdout_used_for_model_selection": { "type": "boolean", "const": false },
+        "no_retuning_after_final_holdout": { "type": "boolean", "const": true }
       }
     },
     "feature_definition": {

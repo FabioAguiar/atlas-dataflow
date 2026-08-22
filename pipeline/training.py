@@ -28,7 +28,7 @@ import json
 import math
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -93,6 +93,49 @@ _BOOLEAN_ENCODED_VALUES = frozenset({"0", "1", "true", "false", "yes", "no", "t"
 # Project Spec S0224 adds mae/rmse (continuous-regression, lower_is_better).
 _LOWER_IS_BETTER_METRICS = frozenset({"log_loss", "mae", "rmse"})
 
+# Project Spec S0244: execution_contract.v2 univariate-forecasting dispatch
+# identities and the closed forecasting training-interface field/metric
+# vocabularies. Forecasting is dispatched strictly from these governed
+# identities -- never inferred from target dtype, frequency, dataset slug,
+# or model family alone.
+EXECUTION_CONTRACT_V2_VERSION = "execution_contract.v2"
+NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE = "univariate_forecasting"
+NATIVE_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION = (
+    "univariate-forecasting-result-semantics.v1"
+)
+NATIVE_UNIVARIATE_FORECASTING_TRAINING_POLICY_SCHEMA_VERSION = (
+    "univariate-forecasting-training-policy.v1"
+)
+NATIVE_UNIVARIATE_FORECASTING_PREPARATION_RECIPE_SCHEMA_VERSION = (
+    "candidate-preparation-recipe.v2"
+)
+NATIVE_UNIVARIATE_FORECASTING_TRAINING_PARAMETER_RECORD_VERSION = "training-parameter-record.v4"
+NATIVE_UNIVARIATE_FORECASTING_TRAINING_METRICS_VERSION = "training-metrics.v4"
+NATIVE_UNIVARIATE_FORECASTING_MODEL_FAMILY = "deterministic_seasonal_trend_ols"
+NATIVE_UNIVARIATE_FORECASTING_METRIC_NAMES = ("mae", "rmse", "seasonal_mase")
+NATIVE_UNIVARIATE_FORECASTING_BACKTESTING_MODE = "expanding_window"
+
+# Project Spec S0244: closed list of execution_contract.v2 fields the
+# forecasting training entrypoint may consume. Deliberately excludes every
+# v1 tabular-only field (feature_columns, split_policy, modeling_constraints,
+# etc.) -- the forecasting branch never relies on them.
+PERMITTED_EXECUTION_CONTRACT_FIELDS_V2 = frozenset({
+    "contract_version",
+    "dataset_id",
+    "problem_type",
+    "target_column",
+    "time_index_column",
+    "index_value_kind",
+    "frequency",
+    "source_exogenous_predictors",
+    "forecast_horizon",
+    "temporal_evaluation",
+    "evaluation_policy",
+    "result_semantics",
+    "training_policy",
+    "random_seed",
+})
+
 
 class TrainingInputError(ValueError):
     """Structured, actionable validation error raised before training starts."""
@@ -132,19 +175,34 @@ class TrainingResult:
     training_parameter_record_path: str
     metrics_path: str
     model_selection_evidence_path: str | None
-    model_card_input_path: str
-    model_card_path: str
-    analytical_visualizations_path: str
-    serializer_name: str
-    serializer_version: str
-    serialization_format_version: str
-    training_timestamp: str
-    hashes: dict[str, str]
-    metrics: dict[str, float]
-    model_selection_evidence_produced: bool
+    # Project Spec S0244 (Desired Change O): additive optional fields --
+    # a forecasting TrainingResult leaves these None rather than fabricating
+    # a model-card or analytical-visualization artifact for a branch that
+    # never generates one. Every historical (binary/multiclass/regression)
+    # call site continues to pass explicit non-None values, so this default
+    # never changes existing behavior.
+    model_card_input_path: str | None = None
+    model_card_path: str | None = None
+    analytical_visualizations_path: str | None = None
+    serializer_name: str = SERIALIZER_NAME
+    serializer_version: str = ""
+    serialization_format_version: str = ""
+    training_timestamp: str = ""
+    hashes: dict[str, str | None] = field(default_factory=dict)
+    metrics: dict[str, float] = field(default_factory=dict)
+    model_selection_evidence_produced: bool = False
+    # Project Spec S0244: reduced forecasting-only summary fields. Always
+    # None for binary/multiclass/continuous-regression runs.
+    problem_type: str | None = None
+    time_index_column: str | None = None
+    frequency: str | None = None
+    forecast_horizon: int | None = None
+    development_observations: int | None = None
+    backtesting_fold_count: int | None = None
+    final_holdout_observations: int | None = None
 
     def to_summary(self) -> dict[str, Any]:
-        return {
+        summary = {
             "status": self.status,
             "model_family": self.model_family,
             "task_type": self.task_type,
@@ -176,10 +234,21 @@ class TrainingResult:
             "metrics_artifact_produced": True,
             "metrics": self.metrics,
             "model_selection_evidence_produced": self.model_selection_evidence_produced,
-            "model_card_input_produced": True,
-            "model_card_produced": True,
+            "model_card_input_produced": self.model_card_input_path is not None,
+            "model_card_produced": self.model_card_path is not None,
             "training_parameter_record_persisted": True,
         }
+        if self.problem_type == "univariate_forecasting":
+            summary["forecasting_evidence"] = {
+                "problem_type": self.problem_type,
+                "time_index_column": self.time_index_column,
+                "frequency": self.frequency,
+                "forecast_horizon": self.forecast_horizon,
+                "development_observations": self.development_observations,
+                "backtesting_fold_count": self.backtesting_fold_count,
+                "final_holdout_observations": self.final_holdout_observations,
+            }
+        return summary
 
 
 def _load_json_file(path: Path, field_name: str) -> dict[str, Any]:
@@ -395,6 +464,16 @@ def _sha256_file(path: Path) -> str:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+# Project Spec S0244: fixed at import time and never monkeypatched by tests
+# (unlike _repo_root() above, which existing tests deliberately redirect to
+# an isolated tmp_path fake repo root for training-run output isolation).
+# Governed schema files (contracts/execution-contract.schema.json,
+# pipeline/candidate-preparation-recipe.schema.json) are part of the actual
+# installed module tree, not per-run output, so they are always resolved
+# from the real module location.
+_SCHEMA_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _repo_relative_path(path: Path) -> str:
@@ -2118,6 +2197,7 @@ def train_from_paths(
     execution_contract_path: str | Path,
     dataset_path: str | Path,
     *,
+    preparation_recipe_path: str | Path | None = None,
     dataset_slug: str | None = None,
     run_id: str | None = None,
 ) -> TrainingResult:
@@ -2125,6 +2205,52 @@ def train_from_paths(
     contract_path = Path(execution_contract_path)
     prepared_dataset_path = Path(dataset_path)
     full_contract = _load_json_file(contract_path, "execution_contract_path")
+
+    # Project Spec S0244 (Desired Change F): execution_contract.v2 dispatches
+    # strictly by contract_version/problem_type/result_semantics.schema_version/
+    # training_policy.schema_version. This check runs before every v1-specific
+    # gate below (_require_execution_ready_contract, _load_execution_contract),
+    # since those gates assume execution_contract.v1 shape and would reject a
+    # v2 document outright rather than routing it to the forecasting branch.
+    if full_contract.get("contract_version") == EXECUTION_CONTRACT_V2_VERSION:
+        dispatch_result_semantics = full_contract.get("result_semantics")
+        dispatch_training_policy = full_contract.get("training_policy")
+        if (
+            full_contract.get("problem_type") == NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE
+            and isinstance(dispatch_result_semantics, dict)
+            and dispatch_result_semantics.get("schema_version")
+            == NATIVE_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION
+            and isinstance(dispatch_training_policy, dict)
+            and dispatch_training_policy.get("schema_version")
+            == NATIVE_UNIVARIATE_FORECASTING_TRAINING_POLICY_SCHEMA_VERSION
+        ):
+            if not preparation_recipe_path:
+                raise TrainingInputError(
+                    "missing_required_input",
+                    "preparation_recipe_path is required for univariate forecasting training.",
+                    field="preparation_recipe_path",
+                )
+            return _train_native_univariate_forecasting_fixed_configuration(
+                full_contract=full_contract,
+                contract_path=contract_path,
+                preparation_recipe_path=Path(preparation_recipe_path),
+                prepared_dataset_path=prepared_dataset_path,
+                dataset_slug=dataset_slug,
+                run_id=run_id,
+            )
+        raise TrainingInputError(
+            "unsupported_execution_contract_v2",
+            (
+                "execution_contract.v2 training requires problem_type="
+                f"{NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE!r}, result_semantics.schema_version="
+                f"{NATIVE_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION!r}, and "
+                "training_policy.schema_version="
+                f"{NATIVE_UNIVARIATE_FORECASTING_TRAINING_POLICY_SCHEMA_VERSION!r}; no other "
+                "execution_contract.v2 shape is supported by this governed training entrypoint."
+            ),
+            field="contract_version",
+        )
+
     _require_execution_ready_contract(full_contract)
     _require_atlas_trainable_model_source(full_contract)
     contract = _load_execution_contract(contract_path)
@@ -4870,6 +4996,916 @@ def _train_native_continuous_regression_fixed_configuration(
     )
 
 
+def _validate_against_schema_file(
+    instance: dict[str, Any], schema_path: Path, field_name: str
+) -> None:
+    """Independently schema-validate `instance` against `schema_path`.
+
+    Project Spec S0244: a hand-built execution_contract.v2 or
+    candidate-preparation-recipe.v2 document that fails canonical schema
+    validation must never train. Auto-selects the correct jsonschema
+    validator for the schema's own declared `$schema` (draft-07 for
+    contracts/execution-contract.schema.json, draft 2020-12 for
+    pipeline/candidate-preparation-recipe.schema.json).
+    """
+    try:
+        import jsonschema
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "jsonschema is required for governed execution_contract.v2/preparation-recipe "
+            "schema validation. Install jsonschema in the training environment.",
+            field=field_name,
+        ) from exc
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    validator_cls = jsonschema.validators.validator_for(schema)
+    validator = validator_cls(schema)
+    errors = sorted(validator.iter_errors(instance), key=lambda e: list(e.path))
+    if errors:
+        raise TrainingInputError(
+            "schema_validation_failed",
+            f"{field_name} failed schema validation: "
+            + "; ".join(e.message for e in errors[:5]),
+            field=field_name,
+        )
+
+
+def _load_execution_contract_v2(full_contract: dict[str, Any]) -> dict[str, Any]:
+    """Independently re-validate and reduce a v2 execution contract to its
+    permitted forecasting training-consumption field subset.
+
+    Project Spec S0244 (Desired Change F, G): never consumes
+    feature_columns, split_policy, or modeling_constraints -- those are not
+    members of PERMITTED_EXECUTION_CONTRACT_FIELDS_V2 and are therefore
+    never present in the reduced dict this function returns.
+    """
+    reduced = {
+        field_name: full_contract[field_name]
+        for field_name in PERMITTED_EXECUTION_CONTRACT_FIELDS_V2
+        if field_name in full_contract
+    }
+    for required in (
+        "dataset_id",
+        "problem_type",
+        "target_column",
+        "time_index_column",
+        "index_value_kind",
+        "frequency",
+        "source_exogenous_predictors",
+        "forecast_horizon",
+        "temporal_evaluation",
+        "evaluation_policy",
+        "result_semantics",
+        "training_policy",
+    ):
+        _require_contract_field(reduced, required)
+    if "random_seed" not in reduced:
+        raise TrainingInputError(
+            "missing_contract_field",
+            "execution contract is missing required field: random_seed",
+            field="random_seed",
+        )
+    if reduced["random_seed"] is not None and (
+        not isinstance(reduced["random_seed"], int)
+        or isinstance(reduced["random_seed"], bool)
+    ):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "execution contract random_seed must be an integer or null.",
+            field="random_seed",
+        )
+    if reduced["source_exogenous_predictors"] != "forbidden":
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "univariate forecasting execution contract source_exogenous_predictors must be "
+            "'forbidden'.",
+            field="source_exogenous_predictors",
+        )
+    training_policy = reduced["training_policy"]
+    if training_policy.get("model_family") != NATIVE_UNIVARIATE_FORECASTING_MODEL_FAMILY:
+        raise TrainingInputError(
+            "unsupported_model_family",
+            "univariate forecasting fixed_configuration model family is not natively "
+            f"supported: {training_policy.get('model_family')!r}",
+            field="training_policy.model_family",
+        )
+    if training_policy.get("model_selection_performed") is not False:
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "univariate forecasting training_policy.model_selection_performed must be false.",
+            field="training_policy.model_selection_performed",
+        )
+    fixed_model_configuration = training_policy.get("fixed_model_configuration") or {}
+    seasonal_period = fixed_model_configuration.get("seasonal_period")
+    reference_season_position = fixed_model_configuration.get("reference_season_position")
+    if (
+        not isinstance(seasonal_period, int)
+        or isinstance(seasonal_period, bool)
+        or not isinstance(reference_season_position, int)
+        or isinstance(reference_season_position, bool)
+        or reference_season_position >= seasonal_period
+    ):
+        raise TrainingInputError(
+            "invalid_contract_field",
+            "training_policy.fixed_model_configuration.reference_season_position must be an "
+            "explicit integer strictly less than seasonal_period. This is re-checked "
+            "independently here as defense in depth -- the JSON schema alone cannot express "
+            "this cross-field constraint.",
+            field="training_policy.fixed_model_configuration.reference_season_position",
+        )
+    return reduced
+
+
+def _load_and_validate_forecasting_preparation_recipe(
+    preparation_recipe_path: Path, contract: dict[str, Any]
+) -> dict[str, Any]:
+    """Load, independently schema-validate, and cross-check the preparation
+    recipe against the execution contract (Project Spec S0244, Desired
+    Change H). All disagreements are fatal before any model fitting."""
+    recipe = _load_json_file(preparation_recipe_path, "preparation_recipe_path")
+    _validate_against_schema_file(
+        recipe,
+        _SCHEMA_REPO_ROOT / "pipeline" / "candidate-preparation-recipe.schema.json",
+        "preparation_recipe_path",
+    )
+    if recipe.get("schema_version") != NATIVE_UNIVARIATE_FORECASTING_PREPARATION_RECIPE_SCHEMA_VERSION:
+        raise TrainingInputError(
+            "invalid_preparation_recipe",
+            "preparation_recipe schema_version is "
+            f"{recipe.get('schema_version')!r}, not "
+            f"{NATIVE_UNIVARIATE_FORECASTING_PREPARATION_RECIPE_SCHEMA_VERSION!r}.",
+            field="preparation_recipe_path",
+        )
+    if recipe.get("problem_type") != NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE:
+        raise TrainingInputError(
+            "invalid_preparation_recipe",
+            f"preparation_recipe problem_type is {recipe.get('problem_type')!r}, not "
+            f"{NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE!r}.",
+            field="preparation_recipe_path",
+        )
+
+    mismatches: list[str] = []
+    identity_mirror = recipe.get("semantic_identity_mirror") or {}
+    if identity_mirror.get("target_field_name") != contract["target_column"]:
+        mismatches.append("target identity")
+    if identity_mirror.get("time_index_field_name") != contract["time_index_column"]:
+        mismatches.append("time-index identity")
+    if identity_mirror.get("index_value_kind") != contract["index_value_kind"]:
+        mismatches.append("index_value_kind")
+    if identity_mirror.get("frequency") != contract["frequency"]:
+        mismatches.append("frequency")
+
+    forecast_horizon = contract["forecast_horizon"]
+    backtesting = recipe.get("backtesting") or {}
+    if recipe.get("forecast_horizon") != forecast_horizon:
+        mismatches.append("forecast_horizon (recipe top-level)")
+    if backtesting.get("forecast_horizon") != forecast_horizon:
+        mismatches.append("forecast_horizon (recipe backtesting)")
+    if backtesting.get("mode") != NATIVE_UNIVARIATE_FORECASTING_BACKTESTING_MODE:
+        mismatches.append("backtesting.mode")
+
+    temporal_evaluation = contract["temporal_evaluation"]
+    if backtesting.get("mode") != temporal_evaluation.get("backtesting_mode"):
+        mismatches.append("backtesting.mode vs temporal_evaluation.backtesting_mode")
+    if backtesting.get("fold_count") != temporal_evaluation.get("fold_count"):
+        mismatches.append("backtesting.fold_count vs temporal_evaluation.fold_count")
+
+    leakage_controls = recipe.get("leakage_controls") or {}
+    for key in (
+        "random_shuffle_performed",
+        "future_targets_used_for_fold_fit",
+        "final_holdout_used_for_backtesting",
+        "final_holdout_used_for_model_selection",
+        "validation_targets_fed_back_within_fold",
+        "preprocessing_fit_on_validation_or_future",
+    ):
+        if leakage_controls.get(key) is not False or temporal_evaluation.get(key) is not False:
+            mismatches.append(f"leakage_controls.{key}")
+
+    temporal_integrity = recipe.get("temporal_integrity") or {}
+    for key in (
+        "strictly_increasing_index",
+        "unique_index",
+        "frequency_contiguous",
+        "target_missing_values_absent",
+        "target_values_finite",
+    ):
+        if temporal_integrity.get(key) is not True:
+            mismatches.append(f"temporal_integrity.{key}")
+
+    partitions = recipe.get("partitions") or {}
+    sealed_final_holdout = partitions.get("sealed_final_holdout") or {}
+    if sealed_final_holdout.get("prospectively_sealed") is not True:
+        mismatches.append("partitions.sealed_final_holdout.prospectively_sealed")
+    if temporal_evaluation.get("final_holdout_prospectively_sealed") is not True:
+        mismatches.append("temporal_evaluation.final_holdout_prospectively_sealed")
+    if sealed_final_holdout.get("observation_count") != forecast_horizon:
+        mismatches.append(
+            "partitions.sealed_final_holdout.observation_count does not equal forecast_horizon"
+        )
+
+    fold_schedule = recipe.get("fold_schedule") or []
+    if len(fold_schedule) != backtesting.get("fold_count"):
+        mismatches.append("fold_schedule length vs backtesting.fold_count")
+
+    if mismatches:
+        raise TrainingInputError(
+            "preparation_recipe_identity_mismatch",
+            "execution_contract.v2 and preparation_recipe disagree on: " + "; ".join(mismatches),
+            field="preparation_recipe_path",
+        )
+    return recipe
+
+
+def _forecasting_row_time_index_label(row: dict[str, Any], time_index_column: str) -> str:
+    return str(row[time_index_column])
+
+
+def _load_and_authenticate_forecasting_series(
+    prepared_dataset_path: Path,
+    contract: dict[str, Any],
+    preparation_recipe: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Load the prepared univariate series and independently authenticate
+    it against execution_contract.v2 and the preparation recipe (Project
+    Spec S0244, Desired Change G, H). Never sorts, deduplicates, or mutates
+    the supplied row order -- a malformed input always fails closed."""
+    rows, prepared_dataset_id = _load_prepared_dataset(prepared_dataset_path)
+    if not rows:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "prepared series must contain at least one row.",
+            field="dataset_path",
+        )
+
+    time_index_column = str(contract["time_index_column"])
+    target_column = str(contract["target_column"])
+
+    for position, row in enumerate(rows):
+        if time_index_column not in row or _is_missing_dataset_value(row[time_index_column]):
+            raise TrainingInputError(
+                "invalid_prepared_dataset",
+                f"prepared series row {position} is missing time_index_column "
+                f"{time_index_column!r}.",
+                field="dataset_path",
+            )
+        if target_column not in row or _is_missing_dataset_value(row[target_column]):
+            raise TrainingInputError(
+                "invalid_prepared_dataset",
+                f"prepared series row {position} is missing target_column {target_column!r}.",
+                field="dataset_path",
+            )
+        if not _is_numeric_dataset_value(row[target_column]):
+            raise TrainingInputError(
+                "invalid_prepared_dataset",
+                f"prepared series row {position} target value is not numeric/finite.",
+                field="dataset_path",
+            )
+
+    time_index_labels = [_forecasting_row_time_index_label(row, time_index_column) for row in rows]
+    if len(set(time_index_labels)) != len(time_index_labels):
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "prepared series time_index_column values are not unique.",
+            field="dataset_path",
+        )
+
+    sort_keys = [_forecasting_temporal_sort_key(row[time_index_column]) for row in rows]
+    for previous, current in zip(sort_keys, sort_keys[1:]):
+        if not previous < current:
+            raise TrainingInputError(
+                "invalid_prepared_dataset",
+                "prepared series time_index_column is not strictly increasing in supplied "
+                "order. Malformed input is never auto-sorted.",
+                field="dataset_path",
+            )
+
+    partitions = preparation_recipe["partitions"]
+    development = partitions["development"]
+    sealed_final_holdout = partitions["sealed_final_holdout"]
+    development_observation_count = int(development["observation_count"])
+    holdout_observation_count = int(sealed_final_holdout["observation_count"])
+    if len(rows) != development_observation_count + holdout_observation_count:
+        raise TrainingInputError(
+            "invalid_prepared_dataset",
+            "prepared series row count does not equal preparation_recipe development + "
+            "sealed_final_holdout observation counts.",
+            field="dataset_path",
+        )
+
+    boundary_checks = (
+        (0, development["start_index_value"]),
+        (development_observation_count - 1, development["end_index_value"]),
+        (development_observation_count, sealed_final_holdout["start_index_value"]),
+        (len(rows) - 1, sealed_final_holdout["end_index_value"]),
+    )
+    for row_index, expected_label in boundary_checks:
+        if time_index_labels[row_index] != expected_label:
+            raise TrainingInputError(
+                "invalid_prepared_dataset",
+                f"prepared series row {row_index} time_index label "
+                f"{time_index_labels[row_index]!r} does not match preparation_recipe "
+                f"boundary label {expected_label!r}.",
+                field="dataset_path",
+            )
+
+    for fold in preparation_recipe["fold_schedule"]:
+        training_observations = int(fold["training_observations"])
+        validation_observations = int(fold["validation_observations"])
+        if training_observations + validation_observations > development_observation_count:
+            raise TrainingInputError(
+                "invalid_preparation_recipe",
+                f"fold {fold['fold_index']} training_observations + validation_observations "
+                "exceeds the development partition boundary.",
+                field="preparation_recipe_path",
+            )
+        if time_index_labels[training_observations - 1] != fold["forecast_origin"]:
+            raise TrainingInputError(
+                "invalid_preparation_recipe",
+                f"fold {fold['fold_index']} forecast_origin does not match the actual row "
+                "index label.",
+                field="preparation_recipe_path",
+            )
+        if time_index_labels[training_observations] != fold["validation_start"]:
+            raise TrainingInputError(
+                "invalid_preparation_recipe",
+                f"fold {fold['fold_index']} validation_start does not match the actual row "
+                "index label.",
+                field="preparation_recipe_path",
+            )
+        if (
+            time_index_labels[training_observations + validation_observations - 1]
+            != fold["validation_end"]
+        ):
+            raise TrainingInputError(
+                "invalid_preparation_recipe",
+                f"fold {fold['fold_index']} validation_end does not match the actual row "
+                "index label.",
+                field="preparation_recipe_path",
+            )
+
+    return rows, prepared_dataset_id
+
+
+def _forecasting_temporal_sort_key(value: Any) -> tuple[int, Any]:
+    """Return a generic, dataset-neutral ordering key for one time-index
+    value. Never parses a dataset-specific calendar system -- attempts a
+    numeric interpretation first (covers ordinal_time), then an ISO 8601
+    date/datetime interpretation (covers calendar_period/timestamp values
+    that are already lexicographically well-formed but not necessarily
+    string-sortable for every representation), and finally falls back to
+    plain string comparison."""
+    if isinstance(value, bool):
+        return (2, str(value))
+    if isinstance(value, (int, float)):
+        return (0, float(value))
+    if isinstance(value, str):
+        try:
+            return (0, float(value))
+        except ValueError:
+            pass
+        try:
+            return (1, datetime.fromisoformat(value))
+        except ValueError:
+            pass
+        return (2, value)
+    return (2, str(value))
+
+
+def _deterministic_seasonal_trend_design_matrix(
+    positions: list[int], seasonal_period: int, reference_season_position: int
+) -> list[list[float]]:
+    """Build the explicit numeric design matrix for
+    deterministic_seasonal_trend_ols (Project Spec S0244, Desired Change I):
+    intercept, linear observation-order trend, and additive seasonal
+    indicator columns for every position except reference_season_position.
+    `positions` are absolute 0-indexed row positions from the development
+    series' first observation -- passing the actual absolute row positions
+    for a fold's validation window or the final holdout window naturally
+    continues the same observation-order axis without any special-casing."""
+    matrix: list[list[float]] = []
+    for position in positions:
+        row = [1.0, float(position)]
+        season = position % seasonal_period
+        for candidate_season in range(seasonal_period):
+            if candidate_season == reference_season_position:
+                continue
+            row.append(1.0 if season == candidate_season else 0.0)
+        matrix.append(row)
+    return matrix
+
+
+def _build_deterministic_seasonal_trend_ols_estimator():
+    try:
+        from sklearn.linear_model import LinearRegression
+    except ImportError as exc:
+        raise TrainingInputError(
+            "missing_training_dependency",
+            "scikit-learn is required for governed training. Install scikit-learn in the "
+            "training environment.",
+            field="training_policy.fixed_model_configuration",
+        ) from exc
+    # No intercept column is added by sklearn -- this estimator's design
+    # matrix already includes an explicit intercept column, and no runtime
+    # randomness is accepted for this deterministic family.
+    return LinearRegression(fit_intercept=False)
+
+
+def _forecast_mae(y_true: list[float], y_pred: list[float]) -> float:
+    if not y_true or len(y_true) != len(y_pred):
+        raise TrainingInputError(
+            "invalid_metric_value",
+            "mae requires equal-length, non-empty finite true/prediction arrays.",
+            field="mae",
+        )
+    errors = [abs(t - p) for t, p in zip(y_true, y_pred)]
+    return _finite_metric_value("mae", sum(errors) / len(errors))
+
+
+def _forecast_rmse(y_true: list[float], y_pred: list[float]) -> float:
+    if not y_true or len(y_true) != len(y_pred):
+        raise TrainingInputError(
+            "invalid_metric_value",
+            "rmse requires equal-length, non-empty finite true/prediction arrays.",
+            field="rmse",
+        )
+    squared_errors = [(t - p) ** 2 for t, p in zip(y_true, y_pred)]
+    return _finite_metric_value("rmse", math.sqrt(sum(squared_errors) / len(squared_errors)))
+
+
+def _seasonal_mase_scale(training_history: list[float], seasonal_period: int) -> float:
+    if len(training_history) <= seasonal_period:
+        raise TrainingInputError(
+            "invalid_metric_value",
+            "seasonal_mase requires more training history observations than the seasonal "
+            "period.",
+            field="seasonal_mase",
+        )
+    diffs = [
+        abs(training_history[t] - training_history[t - seasonal_period])
+        for t in range(seasonal_period, len(training_history))
+    ]
+    scale = sum(diffs) / len(diffs)
+    if not math.isfinite(scale) or scale <= 0:
+        raise TrainingInputError(
+            "invalid_metric_value",
+            "seasonal_mase scale is non-finite or non-positive.",
+            field="seasonal_mase",
+        )
+    return scale
+
+
+def _forecast_seasonal_mase(
+    y_true: list[float], y_pred: list[float], training_history: list[float], seasonal_period: int
+) -> tuple[float, float]:
+    if not y_true or len(y_true) != len(y_pred):
+        raise TrainingInputError(
+            "invalid_metric_value",
+            "seasonal_mase requires equal-length, non-empty finite true/prediction arrays.",
+            field="seasonal_mase",
+        )
+    scale = _seasonal_mase_scale(training_history, seasonal_period)
+    ratios = [abs(t - p) / scale for t, p in zip(y_true, y_pred)]
+    return _finite_metric_value("seasonal_mase", sum(ratios) / len(ratios)), scale
+
+
+def _native_forecasting_requested_metric_entries(
+    contract: dict[str, Any],
+) -> list[dict[str, Any]]:
+    evaluation_policy = contract["evaluation_policy"]
+    entries = [dict(evaluation_policy["primary_metric"])]
+    seen = {entries[0]["metric_id"]}
+    for entry in evaluation_policy.get("secondary_metrics") or []:
+        if entry["metric_id"] not in seen:
+            entries.append(dict(entry))
+            seen.add(entry["metric_id"])
+    return entries
+
+
+def _compute_fold_forecast_metrics(
+    y_true: list[float],
+    y_pred: list[float],
+    training_history: list[float],
+    requested_metric_entries: list[dict[str, Any]],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Compute only the requested (mae/rmse/seasonal_mase) metrics for one
+    fold or the final holdout. Rejects any other metric id even if another
+    historical helper in this module recognizes it. Returns
+    (metric_values, seasonal_mase_scale_by_name)."""
+    values: dict[str, float] = {}
+    scales: dict[str, float] = {}
+    for entry in requested_metric_entries:
+        metric_id = entry["metric_id"]
+        if metric_id not in NATIVE_UNIVARIATE_FORECASTING_METRIC_NAMES:
+            raise TrainingInputError(
+                "unsupported_metric",
+                f"unsupported univariate-forecasting evaluation metric: {metric_id!r}",
+                field="evaluation_policy",
+            )
+        if metric_id == "mae":
+            values["mae"] = _forecast_mae(y_true, y_pred)
+        elif metric_id == "rmse":
+            values["rmse"] = _forecast_rmse(y_true, y_pred)
+        elif metric_id == "seasonal_mase":
+            seasonal_period = entry.get("seasonal_period")
+            if (
+                isinstance(seasonal_period, bool)
+                or not isinstance(seasonal_period, int)
+                or seasonal_period <= 0
+            ):
+                raise TrainingInputError(
+                    "invalid_contract_field",
+                    "seasonal_mase requires an explicit positive seasonal_period.",
+                    field="evaluation_policy.seasonal_period",
+                )
+            value, scale = _forecast_seasonal_mase(y_true, y_pred, training_history, seasonal_period)
+            values["seasonal_mase"] = value
+            scales["seasonal_mase"] = scale
+    return values, scales
+
+
+def _train_native_univariate_forecasting_fixed_configuration(
+    *,
+    full_contract: dict[str, Any],
+    contract_path: Path,
+    preparation_recipe_path: Path,
+    prepared_dataset_path: Path,
+    dataset_slug: str | None,
+    run_id: str | None,
+) -> TrainingResult:
+    """Atlas-native univariate forecasting training (Project Spec S0244).
+
+    Replays the frozen deterministic_seasonal_trend_ols specification on
+    every S0242 expanding-window backtesting fold (never model selection),
+    then performs one fresh final fit on the complete development partition,
+    freezes it, and evaluates the sealed final holdout exactly once. Never
+    reads the external scientific study, loads external model bytes, or
+    fabricates a feature-columns/model-card/analytical-visualization
+    artifact for this branch.
+    """
+    _validate_against_schema_file(
+        full_contract,
+        _SCHEMA_REPO_ROOT / "contracts" / "execution-contract.schema.json",
+        "execution_contract_path",
+    )
+    contract = _load_execution_contract_v2(full_contract)
+    preparation_recipe = _load_and_validate_forecasting_preparation_recipe(
+        preparation_recipe_path, contract
+    )
+    rows, prepared_dataset_id = _load_and_authenticate_forecasting_series(
+        prepared_dataset_path, contract, preparation_recipe
+    )
+    if prepared_dataset_id is not None and str(prepared_dataset_id) != str(contract["dataset_id"]):
+        raise TrainingInputError(
+            "dataset_id_mismatch",
+            "prepared dataset dataset_id does not match execution contract dataset_id.",
+            field="dataset_id",
+        )
+
+    target_column = str(contract["target_column"])
+    time_index_column = str(contract["time_index_column"])
+    forecast_horizon = int(contract["forecast_horizon"])
+    training_policy = contract["training_policy"]
+    model_family = str(training_policy["model_family"])
+    fixed_model_configuration = training_policy["fixed_model_configuration"]
+    seasonal_period = int(fixed_model_configuration["seasonal_period"])
+    reference_season_position = int(fixed_model_configuration["reference_season_position"])
+
+    development_observation_count = int(
+        preparation_recipe["partitions"]["development"]["observation_count"]
+    )
+    ordered_fold_schedule = sorted(
+        preparation_recipe["fold_schedule"], key=lambda entry: entry["fold_index"]
+    )
+    requested_metric_entries = _native_forecasting_requested_metric_entries(contract)
+
+    fold_summaries: list[dict[str, Any]] = []
+    pooled_true: list[float] = []
+    pooled_pred: list[float] = []
+    pooled_seasonal_mase_ratios: list[float] = []
+    horizon_points: dict[int, list[tuple[float, float]]] = {}
+
+    # Project Spec S0244 (Desired Change J): the frozen expanding-window
+    # backtest. No candidate search, no hyperparameter tuning, no
+    # practical-tie logic -- exactly one frozen configuration is replayed,
+    # a fresh estimator per fold, never carrying fitted state forward.
+    for fold in ordered_fold_schedule:
+        training_observations = int(fold["training_observations"])
+        validation_observations = int(fold["validation_observations"])
+
+        fit_positions = list(range(0, training_observations))
+        training_history = [float(rows[i][target_column]) for i in fit_positions]
+        design_matrix = _deterministic_seasonal_trend_design_matrix(
+            fit_positions, seasonal_period, reference_season_position
+        )
+        fold_model = _build_deterministic_seasonal_trend_ols_estimator()
+        fold_model.fit(design_matrix, training_history)
+
+        forecast_positions = list(range(training_observations, training_observations + forecast_horizon))
+        forecast_design_matrix = _deterministic_seasonal_trend_design_matrix(
+            forecast_positions, seasonal_period, reference_season_position
+        )
+        # Complete forecast vector produced before any validation target is read.
+        forecast_vector = [float(value) for value in fold_model.predict(forecast_design_matrix)]
+
+        validation_positions = list(
+            range(training_observations, training_observations + validation_observations)
+        )
+        y_true = [float(rows[i][target_column]) for i in validation_positions]
+        y_pred = forecast_vector[:validation_observations]
+
+        fold_metric_values, fold_scales = _compute_fold_forecast_metrics(
+            y_true, y_pred, training_history, requested_metric_entries
+        )
+        fold_summaries.append({
+            "fold_index": int(fold["fold_index"]),
+            "forecast_origin": str(fold["forecast_origin"]),
+            "validation_observations": validation_observations,
+            "metrics": [
+                {"name": name, "value": value} for name, value in fold_metric_values.items()
+            ],
+        })
+
+        pooled_true.extend(y_true)
+        pooled_pred.extend(y_pred)
+        if "seasonal_mase" in fold_scales:
+            scale = fold_scales["seasonal_mase"]
+            pooled_seasonal_mase_ratios.extend(abs(t - p) / scale for t, p in zip(y_true, y_pred))
+        for step, (t, p) in enumerate(zip(y_true, y_pred), start=1):
+            horizon_points.setdefault(step, []).append((t, p))
+
+    pooled_metric_values: dict[str, float] = {}
+    for entry in requested_metric_entries:
+        metric_id = entry["metric_id"]
+        if metric_id == "mae":
+            pooled_metric_values["mae"] = _forecast_mae(pooled_true, pooled_pred)
+        elif metric_id == "rmse":
+            pooled_metric_values["rmse"] = _forecast_rmse(pooled_true, pooled_pred)
+        elif metric_id == "seasonal_mase":
+            pooled_metric_values["seasonal_mase"] = _finite_metric_value(
+                "seasonal_mase",
+                sum(pooled_seasonal_mase_ratios) / len(pooled_seasonal_mase_ratios),
+            )
+
+    horizon_mae: list[dict[str, Any]] = []
+    for step in sorted(horizon_points):
+        points = horizon_points[step]
+        step_mae = _forecast_mae([t for t, _ in points], [p for _, p in points])
+        horizon_mae.append({
+            "horizon_step": step,
+            "mae": step_mae,
+            "observation_count": len(points),
+        })
+
+    # Project Spec S0244 (Desired Change L): fresh final fit on the complete
+    # development partition, frozen before the sealed final holdout opens.
+    final_fit_positions = list(range(0, development_observation_count))
+    final_development_history = [float(rows[i][target_column]) for i in final_fit_positions]
+    final_design_matrix = _deterministic_seasonal_trend_design_matrix(
+        final_fit_positions, seasonal_period, reference_season_position
+    )
+    final_model = _build_deterministic_seasonal_trend_ols_estimator()
+    final_model.fit(final_design_matrix, final_development_history)
+
+    holdout_positions = list(range(development_observation_count, len(rows)))
+    holdout_design_matrix = _deterministic_seasonal_trend_design_matrix(
+        holdout_positions, seasonal_period, reference_season_position
+    )
+    # Complete holdout forecast produced before any holdout target is read.
+    holdout_forecast_vector = [float(value) for value in final_model.predict(holdout_design_matrix)]
+    if len(holdout_forecast_vector) != forecast_horizon:
+        raise TrainingInputError(
+            "invalid_preparation_recipe",
+            "final holdout observation count does not equal forecast_horizon.",
+            field="preparation_recipe_path",
+        )
+
+    y_true_holdout = [float(rows[i][target_column]) for i in holdout_positions]
+    y_pred_holdout = holdout_forecast_vector
+
+    holdout_metric_values, _holdout_scales = _compute_fold_forecast_metrics(
+        y_true_holdout, y_pred_holdout, final_development_history, requested_metric_entries
+    )
+
+    selected_dataset_slug = dataset_slug or _dataset_slug_from_dataset_id(str(contract["dataset_id"]))
+    selected_run_id = run_id or _new_run_id()
+    output_directory = _training_output_directory(selected_dataset_slug, selected_run_id)
+    model_artifact_path = output_directory / MODEL_ARTIFACT_FILENAME
+    parameter_record_path = output_directory / TRAINING_PARAMETER_RECORD_FILENAME
+    metrics_path = output_directory / METRICS_ARTIFACT_FILENAME
+    serializer_version = _serializer_version()
+    training_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    model_artifact_sha256 = _serialize_model(final_model, model_artifact_path)
+    controlled_entrypoint_provenance = _controlled_entrypoint_provenance_marker(
+        contract_path=contract_path,
+        dataset_path=prepared_dataset_path,
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
+
+    metrics_artifact = {
+        "schema_version": NATIVE_UNIVARIATE_FORECASTING_TRAINING_METRICS_VERSION,
+        "artifact_kind": "training_metrics",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "forecasting_evidence": {
+            "problem_type": NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE,
+            "result_semantics_schema_version": NATIVE_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION,
+            "forecast_horizon": forecast_horizon,
+        },
+        "evaluation_policy": {
+            "primary_metric": dict(contract["evaluation_policy"]["primary_metric"]),
+            "secondary_metrics": [
+                dict(entry) for entry in contract["evaluation_policy"].get("secondary_metrics") or []
+            ],
+        },
+        "backtesting_evaluation": {
+            "fold_count": len(fold_summaries),
+            "forecast_count": len(pooled_true),
+            "pooled_metrics": [
+                {"name": name, "value": value} for name, value in pooled_metric_values.items()
+            ],
+            "fold_summaries": fold_summaries,
+            "horizon_mae": horizon_mae,
+        },
+        "final_holdout_evaluation": {
+            "evaluation_count": 1,
+            "observation_count": len(y_true_holdout),
+            "metrics": [
+                {"name": name, "value": value} for name, value in holdout_metric_values.items()
+            ],
+            "model_frozen_before_open": True,
+            "used_for_adjustment": False,
+            "used_for_retuning": False,
+            "used_for_model_selection": False,
+        },
+        "path_references": {
+            "metrics_path": _repo_relative_path(metrics_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "preparation_recipe_path": _reduced_path_reference(preparation_recipe_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+            "preparation_recipe_sha256": _sha256_file(preparation_recipe_path),
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+    metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
+
+    training_parameter_record = {
+        "schema_version": NATIVE_UNIVARIATE_FORECASTING_TRAINING_PARAMETER_RECORD_VERSION,
+        "record_kind": "training_parameter_record",
+        "problem_type": NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE,
+        "training_timestamp": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "consumed_inputs": {
+            "execution_contract_path": _reduced_path_reference(contract_path),
+            "preparation_recipe_path": _reduced_path_reference(preparation_recipe_path),
+            "dataset_path": _reduced_path_reference(prepared_dataset_path),
+            "execution_contract_dataset_id": str(contract["dataset_id"]),
+            "prepared_dataset_dataset_id": str(prepared_dataset_id or contract["dataset_id"]),
+        },
+        "produced_outputs": {
+            "serialized_model_path": _repo_relative_path(model_artifact_path),
+            "training_parameter_record_path": _repo_relative_path(parameter_record_path),
+            "metrics_path": _repo_relative_path(metrics_path),
+            "model_selection_evidence_path": None,
+            "model_card_input_path": None,
+        },
+        "serializer": {
+            "name": SERIALIZER_NAME,
+            "installed_version": serializer_version,
+            "serialization_format_version": f"{SERIALIZER_NAME}-{serializer_version}",
+        },
+        "controlled_entrypoint_provenance": controlled_entrypoint_provenance,
+        "permitted_execution_contract_fields": sorted(PERMITTED_EXECUTION_CONTRACT_FIELDS_V2),
+        "training_parameters": {
+            "model_family": model_family,
+            "fixed_model_configuration": _json_safe(fixed_model_configuration),
+            "target_column": target_column,
+            "time_index_column": time_index_column,
+            "frequency": str(contract["frequency"]),
+            "forecast_horizon": forecast_horizon,
+            "random_seed": contract.get("random_seed"),
+            "primary_metric": contract["evaluation_policy"]["primary_metric"]["metric_id"],
+            "secondary_metrics": [
+                entry["metric_id"] for entry in contract["evaluation_policy"].get("secondary_metrics") or []
+            ],
+            "selection_mode": "fixed_configuration",
+            "model_selection_performed": False,
+            "finalization_policy": _json_safe(training_policy["finalization_policy"]),
+            "backtesting_protocol": {
+                "mode": NATIVE_UNIVARIATE_FORECASTING_BACKTESTING_MODE,
+                "fold_count": len(fold_summaries),
+                "development_observations": development_observation_count,
+            },
+            "final_holdout_protocol": {
+                "observation_count": len(y_true_holdout),
+                "model_frozen_before_open": True,
+                "evaluation_count": 1,
+            },
+        },
+        "forecasting_evidence": {
+            "problem_type": NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE,
+            "result_semantics_schema_version": NATIVE_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION,
+            "training_policy_schema_version": NATIVE_UNIVARIATE_FORECASTING_TRAINING_POLICY_SCHEMA_VERSION,
+        },
+        "hashes": {
+            "algorithm": "sha256",
+            "execution_contract_sha256": _sha256_file(contract_path),
+            "preparation_recipe_sha256": _sha256_file(preparation_recipe_path),
+            "prepared_dataset_sha256": _sha256_file(prepared_dataset_path),
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+        },
+        "record_boundary_confirmations": {
+            "is_metrics_artifact": False,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "notebook_state_embedded": False,
+            "unauthorized_contract_fields_consumed": False,
+            "controlled_entrypoint_provenance_marker_present": True,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "raw_artifact_contents_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+    }
+    parameter_record_sha256 = _write_parameter_record(parameter_record_path, training_parameter_record)
+
+    return TrainingResult(
+        status="trained",
+        model=final_model,
+        model_family=model_family,
+        task_type=NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE,
+        train_indices=final_fit_positions,
+        evaluation_indices=holdout_positions,
+        dataset_id=str(contract["dataset_id"]),
+        target_column=target_column,
+        feature_columns=[],
+        primary_metric=contract["evaluation_policy"]["primary_metric"]["metric_id"],
+        output_directory=f"{_repo_relative_path(output_directory)}/",
+        serialized_model_path=_repo_relative_path(model_artifact_path),
+        training_parameter_record_path=_repo_relative_path(parameter_record_path),
+        metrics_path=_repo_relative_path(metrics_path),
+        model_selection_evidence_path=None,
+        model_card_input_path=None,
+        model_card_path=None,
+        analytical_visualizations_path=None,
+        serializer_name=SERIALIZER_NAME,
+        serializer_version=serializer_version,
+        serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
+        training_timestamp=training_timestamp,
+        hashes={
+            "execution_contract_sha256": training_parameter_record["hashes"]["execution_contract_sha256"],
+            "preparation_recipe_sha256": training_parameter_record["hashes"]["preparation_recipe_sha256"],
+            "prepared_dataset_sha256": training_parameter_record["hashes"]["prepared_dataset_sha256"],
+            "model_artifact_sha256": model_artifact_sha256,
+            "metrics_sha256": metrics_sha256,
+            "training_parameter_record_sha256": parameter_record_sha256,
+            "model_card_input_sha256": None,
+            "model_card_sha256": None,
+            "model_selection_evidence_sha256": None,
+            "analytical_visualizations_sha256": None,
+        },
+        metrics=holdout_metric_values,
+        model_selection_evidence_produced=False,
+        problem_type=NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE,
+        time_index_column=time_index_column,
+        frequency=str(contract["frequency"]),
+        forecast_horizon=forecast_horizon,
+        development_observations=development_observation_count,
+        backtesting_fold_count=len(fold_summaries),
+        final_holdout_observations=len(y_true_holdout),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Train a governed Atlas model from an execution contract and prepared dataset."
@@ -4885,6 +5921,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Explicit path to the prepared dataset file (.csv or .json).",
     )
     parser.add_argument(
+        "--preparation-recipe-path",
+        help=(
+            "Explicit path to the authenticated candidate-preparation-recipe.v2 JSON file. "
+            "Required only for execution_contract.v2 univariate-forecasting training."
+        ),
+    )
+    parser.add_argument(
         "--dataset-slug",
         help="Optional dataset slug for pipeline/training-runs/{dataset_slug}/{run_id}/. Defaults to a slug derived from execution_contract.dataset_id.",
     )
@@ -4898,6 +5941,7 @@ def main(argv: list[str] | None = None) -> int:
         result = train_from_paths(
             args.execution_contract_path,
             args.dataset_path,
+            preparation_recipe_path=args.preparation_recipe_path,
             dataset_slug=args.dataset_slug,
             run_id=args.run_id,
         )

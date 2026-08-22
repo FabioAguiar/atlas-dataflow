@@ -2466,6 +2466,40 @@ def _valid_forecasting_evaluation_policy() -> dict:
     }
 
 
+def _valid_forecasting_fixed_model_configuration() -> dict:
+    return {
+        "include_intercept": True,
+        "linear_time_trend": True,
+        "seasonal_effects": "additive_indicators",
+        "seasonal_period": 7,
+        "reference_season_position": 0,
+        "trend_origin": "development_start",
+    }
+
+
+def _valid_forecasting_finalization_policy() -> dict:
+    return {
+        "backtesting_refit_each_fold": True,
+        "final_fit_scope": "full_development",
+        "freeze_before_final_holdout_open": True,
+        "final_holdout_evaluation_count": 1,
+        "final_holdout_used_for_adjustment": False,
+        "final_holdout_used_for_model_selection": False,
+        "no_retuning_after_final_holdout": True,
+    }
+
+
+def _valid_forecasting_training_policy() -> dict:
+    return {
+        "schema_version": "univariate-forecasting-training-policy.v1",
+        "selection_mode": "fixed_configuration",
+        "model_selection_performed": False,
+        "model_family": "deterministic_seasonal_trend_ols",
+        "fixed_model_configuration": _valid_forecasting_fixed_model_configuration(),
+        "finalization_policy": _valid_forecasting_finalization_policy(),
+    }
+
+
 def _valid_execution_contract_v2() -> dict:
     return {
         "contract_version": "execution_contract.v2",
@@ -2480,6 +2514,7 @@ def _valid_execution_contract_v2() -> dict:
         "temporal_evaluation": _valid_forecasting_temporal_evaluation(),
         "evaluation_policy": _valid_forecasting_evaluation_policy(),
         "result_semantics": _valid_forecasting_result_semantics(),
+        "training_policy": _valid_forecasting_training_policy(),
         "random_seed": 0,
     }
 
@@ -2804,3 +2839,151 @@ def test_execution_contract_v2_and_v1_are_disjoint_branches():
     v1_as_v2_candidate = dict(_valid_contract())
     v1_as_v2_candidate["problem_type"] = "univariate_forecasting"
     assert list(validator.iter_errors(v1_as_v2_candidate))
+
+
+# ---------------------------------------------------------------------------
+# execution_contract.v2 -- strict forecasting training_policy branch
+# (Project Spec S0244)
+# ---------------------------------------------------------------------------
+
+
+def test_execution_contract_v2_training_policy_validates():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_valid_execution_contract_v2(), schema)
+
+
+def test_execution_contract_v2_missing_training_policy_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    del contract["training_policy"]
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_wrong_schema_version_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["schema_version"] = "univariate-forecasting-training-policy.v2"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_wrong_selection_mode_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["selection_mode"] = "evaluate_allowed_families"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_model_selection_performed_true_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["model_selection_performed"] = True
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_wrong_model_family_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["model_family"] = "seasonal_naive"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+@pytest.mark.parametrize("seasonal_period", [0, 1, -3])
+def test_execution_contract_v2_training_policy_invalid_seasonal_period_rejected(seasonal_period):
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["fixed_model_configuration"]["seasonal_period"] = seasonal_period
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_negative_reference_position_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["fixed_model_configuration"]["reference_season_position"] = -1
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_reference_position_beyond_seasonal_period_not_caught_by_schema_alone():
+    """JSON Schema draft-07 cannot express reference_season_position <
+    seasonal_period as a generic cross-field constraint without a fixed
+    seasonal_period value, so a structurally valid-looking but
+    cross-field-invalid document still validates against the schema here --
+    it is rejected instead by the independent Python re-validation in
+    pipeline.discovery_evidence.build_univariate_forecasting_training_policy_intent
+    and pipeline.contract_derivation._build_execution_contract_v2 (see
+    tests/test_m22_dataset_discovery_evidence.py and
+    tests/test_contract_derivation.py for that coverage)."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["fixed_model_configuration"]["seasonal_period"] = 7
+    contract["training_policy"]["fixed_model_configuration"]["reference_season_position"] = 7
+    jsonschema.validate(contract, schema)
+
+    from pipeline.discovery_evidence import build_univariate_forecasting_training_policy_intent
+
+    with pytest.raises(ValueError):
+        build_univariate_forecasting_training_policy_intent(
+            review_status="approved",
+            selection_mode="fixed_configuration",
+            model_selection_performed=False,
+            model_family="deterministic_seasonal_trend_ols",
+            fixed_model_configuration=contract["training_policy"]["fixed_model_configuration"],
+            finalization_policy=contract["training_policy"]["finalization_policy"],
+        )
+
+
+def test_execution_contract_v2_training_policy_unknown_fixed_config_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["fixed_model_configuration"]["extra_field"] = "unexpected"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+@pytest.mark.parametrize("field", ["constructor_path", "callable", "module", "class_path"])
+def test_execution_contract_v2_training_policy_module_class_callable_fields_rejected(field):
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["fixed_model_configuration"][field] = "statsmodels.tsa.api.SARIMAX"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_unknown_finalization_policy_field_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["finalization_policy"]["extra_field"] = "unexpected"
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_execution_contract_v2_training_policy_deviating_finalization_value_rejected():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _valid_execution_contract_v2()
+    contract["training_policy"]["finalization_policy"]["final_holdout_used_for_model_selection"] = True
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_historical_v1_contracts_remain_valid_alongside_v2_training_policy_addition():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_valid_contract(), schema)
+    jsonschema.validate(_fixed_configuration_contract(), schema)
+    jsonschema.validate(_fixed_hgb_regression_contract(), schema)

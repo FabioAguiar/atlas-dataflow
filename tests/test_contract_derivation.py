@@ -35,6 +35,7 @@ from pipeline.discovery_evidence import (
     build_multiclass_result_semantics_intent,
     build_univariate_forecasting_evaluation_policy_intent,
     build_univariate_forecasting_result_semantics_intent,
+    build_univariate_forecasting_training_policy_intent,
 )
 
 
@@ -1893,6 +1894,47 @@ def _approved_forecasting_evaluation_policy_intent(**overrides):
     return build_univariate_forecasting_evaluation_policy_intent(**kwargs)
 
 
+def _forecasting_fixed_model_configuration(**overrides) -> dict:
+    base = dict(
+        include_intercept=True,
+        linear_time_trend=True,
+        seasonal_effects="additive_indicators",
+        seasonal_period=7,
+        reference_season_position=0,
+        trend_origin="development_start",
+    )
+    base.update(overrides)
+    return base
+
+
+def _forecasting_finalization_policy(**overrides) -> dict:
+    base = dict(
+        backtesting_refit_each_fold=True,
+        final_fit_scope="full_development",
+        freeze_before_final_holdout_open=True,
+        final_holdout_evaluation_count=1,
+        final_holdout_used_for_adjustment=False,
+        final_holdout_used_for_model_selection=False,
+        no_retuning_after_final_holdout=True,
+    )
+    base.update(overrides)
+    return base
+
+
+def _approved_forecasting_training_policy_intent(**overrides):
+    kwargs = dict(
+        review_status="approved",
+        selection_mode="fixed_configuration",
+        model_selection_performed=False,
+        model_family="deterministic_seasonal_trend_ols",
+        fixed_model_configuration=_forecasting_fixed_model_configuration(),
+        finalization_policy=_forecasting_finalization_policy(),
+        review_notes="Reviewed frozen forecasting specification.",
+    )
+    kwargs.update(overrides)
+    return build_univariate_forecasting_training_policy_intent(**kwargs)
+
+
 def _valid_semantic_intent_v4(
     target_field_name="demand",
     time_index_field_name="period",
@@ -2047,6 +2089,7 @@ def _valid_preparation_recipe_v2(
 def _modeling_intent_for_forecasting(
     forecasting_result_semantics_intent=_MISSING,
     forecasting_evaluation_policy_intent=_MISSING,
+    forecasting_training_policy_intent=_MISSING,
     binary_result_semantics_intent=None,
     multiclass_result_semantics_intent=None,
     continuous_regression_result_semantics_intent=None,
@@ -2088,6 +2131,11 @@ def _modeling_intent_for_forecasting(
             if forecasting_evaluation_policy_intent is _MISSING
             else forecasting_evaluation_policy_intent
         ),
+        "univariate_forecasting_training_policy_intent": (
+            _approved_forecasting_training_policy_intent()
+            if forecasting_training_policy_intent is _MISSING
+            else forecasting_training_policy_intent
+        ),
     }
 
 
@@ -2106,6 +2154,14 @@ def test_execution_contract_v2_materializes_from_approved_fixtures():
     assert contract["result_semantics"]["output_structure"] == "ordered_forecast_points"
     assert contract["result_semantics"]["forecast_value_kind"] == "continuous_numeric"
     assert contract["result_semantics"]["forecast_count_source"] == "forecast_horizon"
+    assert contract["training_policy"] == {
+        "schema_version": "univariate-forecasting-training-policy.v1",
+        "selection_mode": "fixed_configuration",
+        "model_selection_performed": False,
+        "model_family": "deterministic_seasonal_trend_ols",
+        "fixed_model_configuration": _forecasting_fixed_model_configuration(),
+        "finalization_policy": _forecasting_finalization_policy(),
+    }
 
 
 def test_execution_contract_v2_forecast_horizon_sourced_from_preparation():
@@ -2357,6 +2413,133 @@ def test_execution_contract_v2_consumed_final_holdout_fails_closed():
         _build_execution_contract(
             modeling_intent, {}, preparation_recipe, semantic_intent=_valid_semantic_intent_v4()
         )
+
+
+# ---------------------------------------------------------------------------
+# execution_contract.v2 -- forecasting training-policy materialization
+# (Project Spec S0244)
+# ---------------------------------------------------------------------------
+
+
+def test_execution_contract_v2_training_policy_missing_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(forecasting_training_policy_intent=None)
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_training_policy_pending_fails_closed():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_training_policy_intent=_approved_forecasting_training_policy_intent(
+            review_status="pending_review"
+        )
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_training_policy_malformed_fixed_configuration_fails_closed():
+    # A hand-built (not builder-validated) modeling intent, mirroring how
+    # test_execution_contract_v2_wrong_semantic_intent_version_fails_closed
+    # mutates an already-built object to exercise contract_derivation's own
+    # independent re-validation rather than the discovery_evidence builder's.
+    training_policy_intent = _approved_forecasting_training_policy_intent()
+    del training_policy_intent["fixed_model_configuration"]["seasonal_period"]
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_training_policy_intent=training_policy_intent
+    )
+    with pytest.raises(ExecutionContractV2ValidationError):
+        _build_execution_contract(
+            modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+        )
+
+
+def test_execution_contract_v2_training_policy_unknown_family_fails_closed():
+    with pytest.raises(ValueError):
+        _approved_forecasting_training_policy_intent(model_family="seasonal_naive")
+
+
+def test_execution_contract_v2_training_policy_seasonal_period_reference_mismatch_fails_closed():
+    with pytest.raises(ValueError):
+        _approved_forecasting_training_policy_intent(
+            fixed_model_configuration=_forecasting_fixed_model_configuration(
+                seasonal_period=7, reference_season_position=7
+            )
+        )
+
+
+def test_execution_contract_v2_training_policy_review_notes_do_not_leak_into_contract():
+    modeling_intent = _modeling_intent_for_forecasting(
+        forecasting_training_policy_intent=_approved_forecasting_training_policy_intent(
+            review_notes="internal reviewer note that must never appear on the execution contract"
+        )
+    )
+    contract = _build_execution_contract(
+        modeling_intent, {}, _valid_preparation_recipe_v2(), semantic_intent=_valid_semantic_intent_v4()
+    )
+    assert "review_status" not in contract["training_policy"]
+    assert "review_notes" not in contract["training_policy"]
+    assert set(contract["training_policy"].keys()) == {
+        "schema_version",
+        "selection_mode",
+        "model_selection_performed",
+        "model_family",
+        "fixed_model_configuration",
+        "finalization_policy",
+    }
+
+
+def test_execution_contract_v2_training_policy_projection_evidence_reduced_facts():
+    modeling_intent = _modeling_intent_for_forecasting()
+    preparation_recipe = _valid_preparation_recipe_v2()
+    semantic_intent = _valid_semantic_intent_v4()
+    contract = _build_execution_contract(
+        modeling_intent, {}, preparation_recipe, semantic_intent=semantic_intent
+    )
+    evidence = _build_execution_contract_v2_materialization_evidence(
+        modeling_intent,
+        preparation_recipe,
+        contract,
+        execution_contract_relative_path="contracts/synthetic-series/execution-contract.json",
+        discovery_evidence_relative_path=None,
+        preparation_recipe_relative_path=None,
+        prepared_data_metadata_relative_path=None,
+        modeling_intent_relative_path=None,
+        public_context_relative_path=None,
+        raw_dataset_relative_path=None,
+        semantic_intent=semantic_intent,
+        semantic_intent_relative_path=None,
+        generated_at="2026-08-22T00:00:00+00:00",
+    )
+    assert evidence["training_policy_schema_version"] == "univariate-forecasting-training-policy.v1"
+    assert evidence["training_policy_selection_mode"] == "fixed_configuration"
+    assert evidence["training_policy_model_selection_performed"] is False
+    assert evidence["training_policy_model_family"] == "deterministic_seasonal_trend_ols"
+
+
+def test_execution_contract_v1_tabular_path_unaffected_by_forecasting_training_policy():
+    modeling_intent = _modeling_intent_for_result_semantics(
+        binary_result_semantics_intent=_approved_binary_result_semantics_intent()
+    )
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None
+    )
+    assert contract["contract_version"] == "execution_contract.v1"
+    assert "training_policy" not in contract
+
+
+def test_execution_contract_v1_never_enters_forecasting_training_policy_intent_path():
+    modeling_intent = _modeling_intent_for_result_semantics(
+        binary_result_semantics_intent=_approved_binary_result_semantics_intent()
+    )
+    modeling_intent["univariate_forecasting_training_policy_intent"] = None
+    contract = _build_execution_contract(
+        modeling_intent, _discovery_evidence_for_result_semantics(), None
+    )
+    assert contract["contract_version"] == "execution_contract.v1"
 
 
 def test_execution_contract_binary_and_forecasting_intents_conflict():

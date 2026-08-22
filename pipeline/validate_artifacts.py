@@ -79,6 +79,32 @@ _REQUIRED_BOUNDARY_FIELDS = [
     "inferred_rules_applied_without_approval",
 ]
 
+_RECIPE_SCHEMA_VERSION_V1 = "candidate-preparation-recipe.v1"
+_RECIPE_SCHEMA_VERSION_V2 = "candidate-preparation-recipe.v2"
+
+_TEMPORAL_INTEGRITY_FIELDS = [
+    "strictly_increasing_index",
+    "unique_index",
+    "frequency_contiguous",
+    "target_missing_values_absent",
+    "target_values_finite",
+]
+
+_LEAKAGE_CONTROL_FIELDS = [
+    "random_shuffle_performed",
+    "future_targets_used_for_fold_fit",
+    "final_holdout_used_for_backtesting",
+    "final_holdout_used_for_model_selection",
+    "validation_targets_fed_back_within_fold",
+    "preprocessing_fit_on_validation_or_future",
+]
+
+_V2_PREPARATION_BOUNDARY_FIELDS = [
+    "model_training_performed",
+    "release_publication_performed",
+    "hidden_notebook_transformations",
+]
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -180,14 +206,12 @@ def _validate_contract_draft(
     }
 
 
-def _validate_recipe(
+def _validate_recipe_v1(
+    recipe: dict[str, Any],
     recipe_path: Path,
-    repo_root: Path,
+    schema_valid: bool,
+    schema_error: str | None,
 ) -> dict[str, Any]:
-    recipe = _load_json(recipe_path)
-    schema_path = repo_root / _RECIPE_SCHEMA
-    schema_valid, schema_error = _schema_validate(recipe, schema_path)
-
     discovery_ref = recipe.get("discovery_evidence_ref", {})
     discovery_ref_path_present = bool(discovery_ref.get("path"))
 
@@ -209,6 +233,7 @@ def _validate_recipe(
 
     return {
         "path": _reduced_path(recipe_path),
+        "recipe_schema_version": recipe.get("schema_version"),
         "schema_validation": {
             "schema": _RECIPE_SCHEMA,
             "valid": schema_valid,
@@ -225,6 +250,216 @@ def _validate_recipe(
         "preparation_boundary_confirmations_all_false": bc_all_false,
         "preparation_boundary_confirmations_missing_fields": bc_missing,
         "candidate_output_produced": recipe.get("candidate_output", {}).get("produced"),
+        "temporal_validation": None,
+    }
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _validate_recipe_v2(
+    recipe: dict[str, Any],
+    recipe_path: Path,
+    schema_valid: bool,
+    schema_error: str | None,
+) -> dict[str, Any]:
+    discovery_ref = recipe.get("discovery_evidence_ref", {}) or {}
+    semantic_ref = recipe.get("semantic_intent_ref", {}) or {}
+    identity_mirror = recipe.get("semantic_identity_mirror", {}) or {}
+    temporal_integrity = recipe.get("temporal_integrity", {}) or {}
+    forecast_horizon = recipe.get("forecast_horizon")
+    partitions = recipe.get("partitions", {}) or {}
+    development = partitions.get("development", {}) or {}
+    holdout = partitions.get("sealed_final_holdout", {}) or {}
+    backtesting = recipe.get("backtesting", {}) or {}
+    fold_schedule = recipe.get("fold_schedule", []) or []
+    leakage_controls = recipe.get("leakage_controls", {}) or {}
+
+    checks: dict[str, bool] = {}
+
+    checks["semantic_intent_ref_version_is_v4"] = (
+        semantic_ref.get("schema_version") == "dataset-semantic-intent.v4"
+    )
+    checks["forecast_horizon_is_positive"] = _is_positive_int(forecast_horizon)
+    checks["development_observation_count_is_positive"] = _is_positive_int(
+        development.get("observation_count")
+    )
+    checks["final_holdout_observation_count_equals_forecast_horizon"] = (
+        _is_positive_int(holdout.get("observation_count"))
+        and holdout.get("observation_count") == forecast_horizon
+    )
+    checks["backtesting_mode_is_expanding_window"] = backtesting.get("mode") == "expanding_window"
+    checks["backtesting_forecast_horizon_equals_governed_horizon"] = (
+        backtesting.get("forecast_horizon") == forecast_horizon
+    )
+    checks["initial_training_observations_is_positive"] = _is_positive_int(
+        backtesting.get("initial_training_observations")
+    )
+    checks["origin_step_observations_is_positive"] = _is_positive_int(
+        backtesting.get("origin_step_observations")
+    )
+
+    fold_count = backtesting.get("fold_count")
+    checks["fold_count_equals_schedule_length"] = (
+        _is_positive_int(fold_count) and fold_count == len(fold_schedule)
+    )
+
+    fold_indices = [
+        f.get("fold_index") for f in fold_schedule if isinstance(f, dict)
+    ]
+    expected_indices = list(range(1, len(fold_schedule) + 1))
+    checks["fold_indices_contiguous_and_unique"] = (
+        len(fold_schedule) > 0
+        and all(isinstance(i, int) for i in fold_indices)
+        and sorted(fold_indices) == expected_indices
+        and len(fold_indices) == len(set(fold_indices))
+    )
+
+    initial_training = backtesting.get("initial_training_observations")
+    origin_step = backtesting.get("origin_step_observations")
+    development_count = development.get("observation_count")
+
+    first_training_ok = False
+    growth_ok = False
+    validation_counts_ok = False
+    within_development_ok = False
+
+    if checks["fold_indices_contiguous_and_unique"] and isinstance(initial_training, int):
+        ordered_folds = sorted(fold_schedule, key=lambda f: f.get("fold_index"))
+
+        first_training_ok = ordered_folds[0].get("training_observations") == initial_training
+
+        growth_ok = True
+        prev_training = ordered_folds[0].get("training_observations")
+        for fold in ordered_folds[1:]:
+            training = fold.get("training_observations")
+            if not (
+                isinstance(training, int)
+                and isinstance(prev_training, int)
+                and isinstance(origin_step, int)
+                and training == prev_training + origin_step
+            ):
+                growth_ok = False
+            prev_training = training
+
+        validation_counts_ok = True
+        within_development_ok = True
+        for fold in ordered_folds:
+            validation_observations = fold.get("validation_observations")
+            training_observations = fold.get("training_observations")
+            if validation_observations != forecast_horizon:
+                validation_counts_ok = False
+            if not (
+                isinstance(training_observations, int)
+                and isinstance(validation_observations, int)
+                and isinstance(development_count, int)
+                and training_observations + validation_observations <= development_count
+            ):
+                within_development_ok = False
+
+    checks["first_fold_training_count_equals_initial_training_count"] = first_training_ok
+    checks["subsequent_training_counts_follow_expanding_window_step"] = growth_ok
+    checks["every_fold_validation_count_equals_forecast_horizon"] = validation_counts_ok
+    checks["every_fold_remains_inside_development_observation_count"] = within_development_ok
+
+    validation_targets_overlap = backtesting.get("validation_targets_overlap")
+    checks["origin_step_at_least_horizon_when_overlap_forbidden"] = (
+        validation_targets_overlap is False
+        and isinstance(origin_step, int)
+        and isinstance(forecast_horizon, int)
+        and origin_step >= forecast_horizon
+    )
+
+    checks["temporal_integrity_confirmations_all_true"] = bool(temporal_integrity) and all(
+        temporal_integrity.get(f) is True for f in _TEMPORAL_INTEGRITY_FIELDS
+    )
+    checks["leakage_control_confirmations_all_false"] = bool(leakage_controls) and all(
+        leakage_controls.get(f) is False for f in _LEAKAGE_CONTROL_FIELDS
+    )
+
+    bc = recipe.get("preparation_boundary_confirmations", {}) or {}
+    bc_missing = [f for f in _V2_PREPARATION_BOUNDARY_FIELDS if f not in bc]
+    bc_all_false = not bc_missing and all(
+        bc.get(f) is False for f in _V2_PREPARATION_BOUNDARY_FIELDS
+    )
+
+    failed_checks = [name for name, ok in checks.items() if not ok]
+    temporal_valid = bool(schema_valid) and not failed_checks
+
+    return {
+        "path": _reduced_path(recipe_path),
+        "recipe_schema_version": recipe.get("schema_version"),
+        "schema_validation": {
+            "schema": _RECIPE_SCHEMA,
+            "valid": schema_valid,
+            "error": schema_error,
+        },
+        "traceability": {
+            "discovery_evidence_ref_path_present": bool(discovery_ref.get("path")),
+            "discovery_evidence_ref_path": discovery_ref.get("path"),
+            "semantic_intent_ref_path_present": bool(semantic_ref.get("path")),
+            "semantic_identity_mirror_fields_present": all(
+                f in identity_mirror
+                for f in [
+                    "time_index_field_name",
+                    "target_field_name",
+                    "index_value_kind",
+                    "frequency",
+                ]
+            ),
+        },
+        "preparation_boundary_confirmations_all_false": bc_all_false,
+        "preparation_boundary_confirmations_missing_fields": bc_missing,
+        "candidate_output_produced": None,
+        "temporal_validation": {
+            "checks": checks,
+            "failed_checks": failed_checks,
+            "valid": temporal_valid,
+        },
+    }
+
+
+def _validate_recipe(
+    recipe_path: Path,
+    repo_root: Path,
+) -> dict[str, Any]:
+    recipe = _load_json(recipe_path)
+    schema_path = repo_root / _RECIPE_SCHEMA
+    schema_valid, schema_error = _schema_validate(recipe, schema_path)
+
+    schema_version = recipe.get("schema_version")
+
+    if schema_version == _RECIPE_SCHEMA_VERSION_V2:
+        return _validate_recipe_v2(recipe, recipe_path, schema_valid, schema_error)
+
+    if schema_version == _RECIPE_SCHEMA_VERSION_V1:
+        return _validate_recipe_v1(recipe, recipe_path, schema_valid, schema_error)
+
+    # Unknown or missing recipe schema_version: fail closed. Never silently
+    # treat as v1 -- do not run v1 traceability extraction against a document
+    # that never declared itself as candidate-preparation-recipe.v1.
+    return {
+        "path": _reduced_path(recipe_path),
+        "recipe_schema_version": schema_version,
+        "schema_validation": {
+            "schema": _RECIPE_SCHEMA,
+            "valid": False,
+            "error": schema_error
+            or f"Unknown or missing candidate-preparation-recipe schema_version: {schema_version!r}",
+        },
+        "traceability": {
+            "discovery_evidence_ref_path_present": False,
+            "discovery_evidence_ref_path": None,
+            "all_transformations_have_review_status": False,
+            "transformation_count": 0,
+            "candidate_status_present": False,
+            "candidate_status_fields_present": False,
+        },
+        "preparation_boundary_confirmations_all_false": False,
+        "preparation_boundary_confirmations_missing_fields": list(_REQUIRED_BOUNDARY_FIELDS),
+        "candidate_output_produced": None,
+        "temporal_validation": None,
     }
 
 

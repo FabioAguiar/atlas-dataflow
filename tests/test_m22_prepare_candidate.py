@@ -1459,3 +1459,163 @@ def test_invalid_visualizations_artifact_is_rejected_by_publisher_validation(tmp
     assert any(
         reason.get("code") == "visualizations_schema_incompatible" for reason in rejection_reasons
     )
+
+
+# ---------------------------------------------------------------------------
+# S0242 -- governed temporal preparation/backtesting recipe (v2), shared writer
+# ---------------------------------------------------------------------------
+#
+# candidate-preparation-recipe.v2 is validated/written through the existing
+# shared, schema-agnostic write_preparation_recipe writer. No parallel
+# dataset-specific writer is introduced by S0242; these tests build a
+# synthetic v2 document in-memory and prove the shared writer accepts it.
+
+def _synthetic_v2_fold(index, initial_training, origin_step, horizon):
+    training = initial_training + (index - 1) * origin_step
+    origin = training
+    return {
+        "fold_index": index,
+        "training_observations": training,
+        "forecast_origin": str(origin),
+        "validation_start": str(origin + 1),
+        "validation_end": str(origin + horizon),
+        "validation_observations": horizon,
+    }
+
+
+def _synthetic_v2_recipe(**overrides):
+    horizon = 6
+    initial_training = 60
+    origin_step = 6
+    fold_count = 5
+    development_count = initial_training + (fold_count - 1) * origin_step + horizon
+
+    recipe = {
+        "schema_version": "candidate-preparation-recipe.v2",
+        "producer": "pipeline/prepare_temporal_candidate.py",
+        "problem_type": "univariate_forecasting",
+        "discovery_evidence_ref": {
+            "path": "discovery-evidence.json",
+            "schema_version": "dataset-discovery-evidence.v1",
+        },
+        "semantic_intent_ref": {
+            "path": "semantic-intent.json",
+            "schema_version": "dataset-semantic-intent.v4",
+            "sha256": "a" * 64,
+        },
+        "semantic_identity_mirror": {
+            "time_index_field_name": "period",
+            "target_field_name": "value",
+            "index_value_kind": "calendar_period",
+            "frequency": "monthly",
+        },
+        "temporal_integrity": {
+            "strictly_increasing_index": True,
+            "unique_index": True,
+            "frequency_contiguous": True,
+            "target_missing_values_absent": True,
+            "target_values_finite": True,
+        },
+        "forecast_horizon": horizon,
+        "partitions": {
+            "development": {
+                "start_index_value": "1",
+                "end_index_value": str(development_count),
+                "observation_count": development_count,
+            },
+            "sealed_final_holdout": {
+                "start_index_value": str(development_count + 1),
+                "end_index_value": str(development_count + horizon),
+                "observation_count": horizon,
+                "prospectively_sealed": True,
+                "used_for_backtesting": False,
+                "used_for_model_selection": False,
+            },
+        },
+        "backtesting": {
+            "mode": "expanding_window",
+            "initial_training_observations": initial_training,
+            "forecast_horizon": horizon,
+            "origin_step_observations": origin_step,
+            "fold_count": fold_count,
+            "validation_targets_overlap": False,
+        },
+        "fold_schedule": [
+            _synthetic_v2_fold(i, initial_training, origin_step, horizon)
+            for i in range(1, fold_count + 1)
+        ],
+        "leakage_controls": {
+            "random_shuffle_performed": False,
+            "future_targets_used_for_fold_fit": False,
+            "final_holdout_used_for_backtesting": False,
+            "final_holdout_used_for_model_selection": False,
+            "validation_targets_fed_back_within_fold": False,
+            "preprocessing_fit_on_validation_or_future": False,
+        },
+        "preparation_boundary_confirmations": {
+            "model_training_performed": False,
+            "release_publication_performed": False,
+            "hidden_notebook_transformations": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+        "generated_at": "2026-08-22T00:00:00+00:00",
+    }
+    recipe.update(overrides)
+    return recipe
+
+
+def test_synthetic_v2_recipe_validates_against_shared_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+
+    schema_path = REPO_ROOT / "pipeline" / "candidate-preparation-recipe.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    jsonschema.validate(_synthetic_v2_recipe(), schema)
+
+
+def test_write_preparation_recipe_writes_and_validates_synthetic_v2_document(tmp_path):
+    try:
+        import jsonschema  # noqa: F401
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+
+    recipe = _synthetic_v2_recipe()
+    out = tmp_path / "temporal-recipe.json"
+    write_preparation_recipe(out, recipe, REPO_ROOT)
+    assert out.exists()
+    loaded = json.loads(out.read_text(encoding="utf-8"))
+    assert loaded["schema_version"] == "candidate-preparation-recipe.v2"
+
+
+def test_write_preparation_recipe_rejects_invalid_synthetic_v2_document(tmp_path):
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+
+    bad_recipe = _synthetic_v2_recipe(forecast_horizon=-1)
+    out = tmp_path / "bad-temporal-recipe.json"
+    with pytest.raises(jsonschema.ValidationError):
+        write_preparation_recipe(out, bad_recipe, REPO_ROOT)
+
+
+def test_write_preparation_recipe_still_writes_v1_document_through_shared_writer(
+    tmp_path, fixture_csv, fixture_evidence, rules_file
+):
+    """No parallel dataset-specific writer was added for v2 -- the same
+    write_preparation_recipe entry point continues to serve v1 unchanged."""
+    rules = rules_file({"column_selection": ["age", "label"]})
+    recipe, _, _ = prepare_candidate(fixture_evidence, fixture_csv, rules)
+    out = tmp_path / "v1-recipe.json"
+    write_preparation_recipe(out, recipe, REPO_ROOT)
+    loaded = json.loads(out.read_text(encoding="utf-8"))
+    assert loaded["schema_version"] == "candidate-preparation-recipe.v1"

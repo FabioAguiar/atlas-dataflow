@@ -593,3 +593,452 @@ def test_write_artifact_validation_record(tmp_path, fixture_dataset):
     loaded = json.loads(out.read_text(encoding="utf-8"))
     assert loaded["schema_version"] == "artifact-validation-record.v1"
     assert loaded["hash_records"]["raw_input_hash"]["hash"] is not None
+
+
+# ---------------------------------------------------------------------------
+# S0242 -- governed temporal preparation and backtesting (candidate-preparation-recipe.v2)
+# ---------------------------------------------------------------------------
+#
+# Synthetic-only fixtures. No live dataset or external scientific artifact is
+# used. These tests prove: (1) v1 fixtures/behavior above are untouched by
+# this section; (2) validate_artifacts() dispatches recipe validation by
+# explicit schema_version; (3) a valid synthetic v2 temporal recipe validates
+# end to end; (4) each governed v2 arithmetic/state rejection is enforced
+# (schema-level or cross-field validator-level); (5) unknown/missing recipe
+# schema_version fails closed rather than silently being treated as v1.
+
+def _v2_fold(index, initial_training, origin_step, horizon):
+    training = initial_training + (index - 1) * origin_step
+    origin = training
+    return {
+        "fold_index": index,
+        "training_observations": training,
+        "forecast_origin": str(origin),
+        "validation_start": str(origin + 1),
+        "validation_end": str(origin + horizon),
+        "validation_observations": horizon,
+    }
+
+
+def _v2_recipe(
+    horizon=6,
+    initial_training=60,
+    origin_step=6,
+    fold_count=5,
+    **overrides,
+):
+    development_count = initial_training + (fold_count - 1) * origin_step + horizon
+    fold_schedule = overrides.pop("fold_schedule", None)
+    if fold_schedule is None:
+        fold_schedule = [
+            _v2_fold(i, initial_training, origin_step, horizon)
+            for i in range(1, fold_count + 1)
+        ]
+
+    recipe = {
+        "schema_version": "candidate-preparation-recipe.v2",
+        "producer": "pipeline/prepare_temporal_candidate.py",
+        "problem_type": "univariate_forecasting",
+        "discovery_evidence_ref": {
+            "path": "discovery-evidence.json",
+            "schema_version": "dataset-discovery-evidence.v1",
+        },
+        "semantic_intent_ref": {
+            "path": "semantic-intent.json",
+            "schema_version": "dataset-semantic-intent.v4",
+            "sha256": "a" * 64,
+        },
+        "semantic_identity_mirror": {
+            "time_index_field_name": "period",
+            "target_field_name": "value",
+            "index_value_kind": "calendar_period",
+            "frequency": "monthly",
+        },
+        "temporal_integrity": {
+            "strictly_increasing_index": True,
+            "unique_index": True,
+            "frequency_contiguous": True,
+            "target_missing_values_absent": True,
+            "target_values_finite": True,
+        },
+        "forecast_horizon": horizon,
+        "partitions": {
+            "development": {
+                "start_index_value": "1",
+                "end_index_value": str(development_count),
+                "observation_count": development_count,
+            },
+            "sealed_final_holdout": {
+                "start_index_value": str(development_count + 1),
+                "end_index_value": str(development_count + horizon),
+                "observation_count": horizon,
+                "prospectively_sealed": True,
+                "used_for_backtesting": False,
+                "used_for_model_selection": False,
+            },
+        },
+        "backtesting": {
+            "mode": "expanding_window",
+            "initial_training_observations": initial_training,
+            "forecast_horizon": horizon,
+            "origin_step_observations": origin_step,
+            "fold_count": fold_count,
+            "validation_targets_overlap": False,
+        },
+        "fold_schedule": fold_schedule,
+        "leakage_controls": {
+            "random_shuffle_performed": False,
+            "future_targets_used_for_fold_fit": False,
+            "final_holdout_used_for_backtesting": False,
+            "final_holdout_used_for_model_selection": False,
+            "validation_targets_fed_back_within_fold": False,
+            "preprocessing_fit_on_validation_or_future": False,
+        },
+        "preparation_boundary_confirmations": {
+            "model_training_performed": False,
+            "release_publication_performed": False,
+            "hidden_notebook_transformations": False,
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "private_source_paths_prohibited": True,
+            "reduced_and_sanitized": True,
+        },
+        "generated_at": "2026-08-22T00:00:00+00:00",
+    }
+    recipe.update(overrides)
+    return recipe
+
+
+def _deep_merge(base: dict, patch: dict) -> dict:
+    out = json.loads(json.dumps(base))
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+@pytest.fixture
+def fixture_recipe_v2(tmp_path):
+    p = tmp_path / "recipe-v2.json"
+    _write_json(p, _v2_recipe())
+    return p
+
+
+def _require_jsonschema():
+    try:
+        import jsonschema  # noqa: F401
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+
+
+# --- schema_version dispatch ---
+
+def test_v1_fixture_still_dispatches_to_v1_validation(fixture_recipe_produced):
+    record = validate_artifacts(recipe_path=fixture_recipe_produced, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["recipe_schema_version"] == "candidate-preparation-recipe.v1"
+    assert result["temporal_validation"] is None
+    # v1 reduced fields are unchanged (Q section).
+    assert result["traceability"]["discovery_evidence_ref_path_present"] is True
+    assert result["traceability"]["all_transformations_have_review_status"] is True
+    assert result["traceability"]["candidate_status_present"] is True
+    assert result["preparation_boundary_confirmations_all_false"] is True
+    assert result["candidate_output_produced"] is True
+
+
+def test_valid_synthetic_v2_recipe_validates(fixture_recipe_v2):
+    _require_jsonschema()
+    record = validate_artifacts(recipe_path=fixture_recipe_v2, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["recipe_schema_version"] == "candidate-preparation-recipe.v2"
+    assert result["schema_validation"]["valid"] is True
+    assert result["temporal_validation"]["valid"] is True
+    assert result["temporal_validation"]["failed_checks"] == []
+
+
+def test_unknown_recipe_schema_version_fails_closed(tmp_path):
+    bad = _v2_recipe()
+    bad["schema_version"] = "candidate-preparation-recipe.v3"
+    p = tmp_path / "unknown-version-recipe.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["schema_validation"]["valid"] is False
+    assert result["temporal_validation"] is None
+    # never silently treated as v1
+    assert result["preparation_boundary_confirmations_all_false"] is False
+
+
+def test_missing_recipe_schema_version_fails_closed(tmp_path):
+    bad = _v2_recipe()
+    del bad["schema_version"]
+    p = tmp_path / "missing-version-recipe.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["schema_validation"]["valid"] is False
+    assert result["temporal_validation"] is None
+
+
+def test_mixed_v1_v2_document_is_rejected(tmp_path):
+    _require_jsonschema()
+    mixed = _v2_recipe()
+    mixed["candidate_status"] = {
+        "is_final_training_input": False,
+        "requires_m23_validation": True,
+        "authorized_for": "candidate_only",
+    }
+    p = tmp_path / "mixed-recipe.json"
+    _write_json(p, mixed)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["schema_validation"]["valid"] is False
+
+
+# --- schema-level v2 rejections ---
+
+def test_v2_rejects_unknown_extra_properties(tmp_path):
+    _require_jsonschema()
+    bad = _v2_recipe()
+    bad["unexpected_field"] = "not allowed"
+    p = tmp_path / "extra-prop.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    assert record["validation_results"]["recipe"]["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_wrong_problem_type(tmp_path):
+    _require_jsonschema()
+    bad = _v2_recipe(problem_type="time_series_forecasting")
+    p = tmp_path / "wrong-problem-type.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    assert record["validation_results"]["recipe"]["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_semantic_intent_version_other_than_v4(tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"semantic_intent_ref": {"schema_version": "dataset-semantic-intent.v3"}})
+    p = tmp_path / "wrong-semantic-version.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_horizon_le_zero(tmp_path):
+    _require_jsonschema()
+    bad = _v2_recipe()
+    bad["forecast_horizon"] = 0
+    p = tmp_path / "zero-horizon.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    assert record["validation_results"]["recipe"]["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_non_expanding_backtesting_mode(tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"backtesting": {"mode": "kfold"}})
+    p = tmp_path / "non-expanding-mode.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_zero_initial_training_size(tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"backtesting": {"initial_training_observations": 0}})
+    p = tmp_path / "zero-initial-training.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    assert record["validation_results"]["recipe"]["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_negative_origin_step(tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"backtesting": {"origin_step_observations": -1}})
+    p = tmp_path / "negative-origin-step.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    assert record["validation_results"]["recipe"]["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_temporal_integrity_false_state(tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"temporal_integrity": {"unique_index": False}})
+    p = tmp_path / "temporal-integrity-false.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["schema_validation"]["valid"] is False
+
+
+def test_v2_rejects_any_leakage_control_true_state(tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"leakage_controls": {"random_shuffle_performed": True}})
+    p = tmp_path / "leakage-true.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert result["schema_validation"]["valid"] is False
+
+
+def test_v2_contains_no_raw_target_or_model_payload(tmp_path):
+    _require_jsonschema()
+    for forbidden_field in ["target_values", "predictions", "model_coefficients", "metrics"]:
+        bad = _v2_recipe()
+        bad[forbidden_field] = [1, 2, 3]
+        p = tmp_path / f"forbidden-{forbidden_field}.json"
+        _write_json(p, bad)
+        record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+        assert record["validation_results"]["recipe"]["schema_validation"]["valid"] is False, forbidden_field
+
+
+# --- cross-field arithmetic rejections (validator-level, section P) ---
+
+def test_v2_rejects_holdout_count_not_equal_horizon(fixture_recipe_v2, tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"partitions": {"sealed_final_holdout": {"observation_count": 7}}})
+    p = tmp_path / "holdout-mismatch.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert (
+        "final_holdout_observation_count_equals_forecast_horizon"
+        in result["temporal_validation"]["failed_checks"]
+    )
+    assert result["temporal_validation"]["valid"] is False
+
+
+def test_v2_rejects_horizon_disagreement_across_sections(tmp_path):
+    _require_jsonschema()
+    bad = _deep_merge(_v2_recipe(), {"backtesting": {"forecast_horizon": 3}})
+    p = tmp_path / "horizon-disagreement.json"
+    _write_json(p, bad)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert (
+        "backtesting_forecast_horizon_equals_governed_horizon"
+        in result["temporal_validation"]["failed_checks"]
+    )
+
+
+def test_v2_rejects_fold_count_schedule_length_mismatch(tmp_path):
+    _require_jsonschema()
+    recipe = _v2_recipe(fold_count=6)  # backtesting.fold_count=6 but schedule stays length 5
+    recipe["fold_schedule"] = [
+        _v2_fold(i, 60, 6, 6) for i in range(1, 6)
+    ]
+    p = tmp_path / "fold-count-mismatch.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert "fold_count_equals_schedule_length" in result["temporal_validation"]["failed_checks"]
+
+
+def test_v2_rejects_duplicate_fold_indices(tmp_path):
+    _require_jsonschema()
+    recipe = _v2_recipe()
+    recipe["fold_schedule"][-1]["fold_index"] = recipe["fold_schedule"][0]["fold_index"]
+    p = tmp_path / "duplicate-fold-index.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert "fold_indices_contiguous_and_unique" in result["temporal_validation"]["failed_checks"]
+
+
+def test_v2_rejects_gapped_fold_indices(tmp_path):
+    _require_jsonschema()
+    recipe = _v2_recipe()
+    recipe["fold_schedule"][-1]["fold_index"] = 99
+    p = tmp_path / "gapped-fold-index.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert "fold_indices_contiguous_and_unique" in result["temporal_validation"]["failed_checks"]
+
+
+def test_v2_rejects_incorrect_first_training_count(tmp_path):
+    _require_jsonschema()
+    recipe = _v2_recipe()
+    recipe["fold_schedule"][0]["training_observations"] = 999
+    p = tmp_path / "wrong-first-training-count.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert (
+        "first_fold_training_count_equals_initial_training_count"
+        in result["temporal_validation"]["failed_checks"]
+    )
+
+
+def test_v2_rejects_incorrect_expanding_window_growth(tmp_path):
+    _require_jsonschema()
+    recipe = _v2_recipe()
+    recipe["fold_schedule"][2]["training_observations"] += 1
+    p = tmp_path / "wrong-growth.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert (
+        "subsequent_training_counts_follow_expanding_window_step"
+        in result["temporal_validation"]["failed_checks"]
+    )
+
+
+def test_v2_rejects_validation_window_count_not_equal_horizon(tmp_path):
+    _require_jsonschema()
+    recipe = _v2_recipe()
+    recipe["fold_schedule"][1]["validation_observations"] = 99
+    p = tmp_path / "wrong-validation-count.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert (
+        "every_fold_validation_count_equals_forecast_horizon"
+        in result["temporal_validation"]["failed_checks"]
+    )
+
+
+def test_v2_rejects_fold_extending_beyond_development(tmp_path):
+    _require_jsonschema()
+    recipe = _v2_recipe()
+    recipe["fold_schedule"][-1]["training_observations"] = recipe["partitions"]["development"]["observation_count"]
+    p = tmp_path / "fold-beyond-development.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert (
+        "every_fold_remains_inside_development_observation_count"
+        in result["temporal_validation"]["failed_checks"]
+    )
+
+
+def test_v2_rejects_non_overlap_claim_when_origin_step_less_than_horizon(tmp_path):
+    _require_jsonschema()
+    # origin_step (3) < horizon (6) while validation_targets_overlap is still
+    # (falsely) declared False -- non-overlap claim is not mechanically true.
+    recipe = _v2_recipe(origin_step=3)
+    p = tmp_path / "origin-step-lt-horizon.json"
+    _write_json(p, recipe)
+    record = validate_artifacts(recipe_path=p, repo_root=REPO_ROOT)
+    result = record["validation_results"]["recipe"]
+    assert (
+        "origin_step_at_least_horizon_when_overlap_forbidden"
+        in result["temporal_validation"]["failed_checks"]
+    )
+
+
+# --- shared writer / write_preparation_recipe compatibility ---
+
+def test_recipe_v2_validates_against_schema_directly(fixture_recipe_v2):
+    _require_jsonschema()
+    record = validate_artifacts(recipe_path=fixture_recipe_v2, repo_root=REPO_ROOT)
+    assert record["validation_results"]["recipe"]["schema_validation"]["valid"] is True

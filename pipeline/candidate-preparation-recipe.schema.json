@@ -2,296 +2,597 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/candidate-preparation-recipe.schema.json",
   "title": "Atlas DataFlow Dataset Preparation Recipe",
-  "description": "Governed preparation recipe for a dataset candidate produced by pipeline/prepare_candidate.py (M22-04). Records every transformation applied — column selection, type normalization, row filtering, missing-value handling, and categorical treatment — with reason and review status. Inferred transformations must carry review_status 'inferred_pending_review' and must not be silently applied. The prepared candidate carries explicit candidate status and is not final training input without later validation and stage authorization (M23+). Raw dataset content, raw logs, raw runtime data, raw API payloads, and secrets are prohibited.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "producer",
-    "dataset_identity",
-    "discovery_evidence_ref",
-    "transformations",
-    "candidate_output",
-    "candidate_status",
-    "generation_settings",
-    "generated_at",
-    "preparation_boundary_confirmations",
-    "evidence_policy"
+  "description": "Governed preparation recipe for a dataset candidate. Closed discriminated union keyed by schema_version. 'candidate-preparation-recipe.v1' (pipeline/prepare_candidate.py, M22-04) records every historical/tabular transformation applied to a dataset candidate -- column selection, type normalization, row filtering, missing-value handling, and categorical treatment -- with reason and review status; the prepared candidate carries explicit candidate status and is not final training input without later validation and stage authorization (M23+). 'candidate-preparation-recipe.v2' (Project Spec S0242) is a separate, additive branch governing univariate-forecasting temporal preparation and expanding-window backtesting geometry; it references dataset-semantic-intent.v4 rather than duplicating semantic authority and never fits a model or computes a metric. A document must validate as exactly one branch; a v1 document must never validate as v2, a v2 document must never validate as v1, and a mixed v1/v2 document must fail. Raw dataset content, raw logs, raw runtime data, raw API payloads, and secrets are prohibited in every branch.",
+  "oneOf": [
+    {"$ref": "#/$defs/recipe_v1"},
+    {"$ref": "#/$defs/recipe_v2"}
   ],
   "$defs": {
     "sha256_hex": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
       "description": "Lowercase 64-character hex-encoded SHA-256 digest."
-    }
-  },
-  "properties": {
-    "schema_version": {
-      "type": "string",
-      "const": "candidate-preparation-recipe.v1",
-      "description": "Schema version for this dataset preparation recipe."
     },
-    "producer": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Pipeline component that produced this preparation recipe."
-    },
-    "dataset_identity": {
+    "recipe_v1": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "row_count_before", "column_count_before"],
-      "description": "Reduced dataset identity before transformation. Must not embed raw dataset contents or private absolute paths.",
+      "required": [
+        "schema_version",
+        "producer",
+        "dataset_identity",
+        "discovery_evidence_ref",
+        "transformations",
+        "candidate_output",
+        "candidate_status",
+        "generation_settings",
+        "generated_at",
+        "preparation_boundary_confirmations",
+        "evidence_policy"
+      ],
       "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Dataset name derived from the source file stem or filename."
-        },
-        "row_count_before": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Total number of rows in the dataset before any transformation."
-        },
-        "column_count_before": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Total number of columns in the dataset before any transformation."
-        }
-      }
-    },
-    "discovery_evidence_ref": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["path", "schema_version"],
-      "description": "Traceability reference to the M22-02 discovery evidence artifact consumed as input. Records only a stable path reference and schema version — raw evidence content must not be embedded.",
-      "properties": {
-        "path": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Reduced path reference to the discovery evidence JSON artifact. Must not contain private absolute path details."
-        },
         "schema_version": {
           "type": "string",
-          "minLength": 1,
-          "description": "Schema version of the consumed discovery evidence artifact."
+          "const": "candidate-preparation-recipe.v1",
+          "description": "Schema version for this dataset preparation recipe."
         },
-        "sha256": {
-          "$ref": "#/$defs/sha256_hex",
-          "description": "Optional integrity reference: SHA-256 of the consumed discovery evidence artifact's bytes. Absent in recipes generated before this field existed."
-        }
-      }
-    },
-    "no_transform_policy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["applies", "reason"],
-      "description": "Optional explicit, typed no-transform policy. When applies is true, this recipe intentionally declares no transformations (transformations must be empty) rather than leaving an empty transformations array with ambiguous semantics. Absent in recipes generated before this field existed, which continue to be interpreted the prior way (transformations is authoritative on its own).",
-      "properties": {
-        "applies": {
-          "type": "boolean",
-          "description": "True when this dataset/capability combination is explicitly governed by a no-transform policy."
-        },
-        "reason": {
+        "producer": {
           "type": "string",
           "minLength": 1,
-          "description": "Explicit, reviewable rationale for the no-transform policy. Must not be a placeholder."
-        }
-      }
-    },
-    "transformations": {
-      "type": "array",
-      "description": "Ordered list of all transformation rules recorded in this recipe. Every transformation applied to the dataset must appear here. Inferred rules that were not applied must also appear, marked with review_status 'inferred_pending_review'.",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "transformation_type",
-          "description",
-          "source_columns",
-          "target_columns",
-          "reason",
-          "review_status"
-        ],
-        "properties": {
-          "transformation_type": {
-            "type": "string",
-            "enum": [
-              "column_selection",
-              "type_normalization",
-              "row_filtering",
-              "missing_value_handling",
-              "categorical_treatment"
-            ],
-            "description": "Category of transformation. Must be one of the M22-04 authorized transformation types."
-          },
-          "description": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Human-readable description of what this transformation does."
-          },
-          "source_columns": {
-            "type": "array",
-            "items": {"type": "string", "minLength": 1},
-            "description": "Column names affected as inputs by this transformation. Empty for dataset-wide transformations."
-          },
-          "target_columns": {
-            "type": "array",
-            "items": {"type": "string", "minLength": 1},
-            "description": "Column names produced or updated by this transformation. Empty for row-filtering transformations that do not produce new columns."
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Traceable reason why this transformation was declared or inferred. Must be explicit and reviewable."
-          },
-          "review_status": {
-            "type": "string",
-            "enum": [
-              "explicit",
-              "inferred_pending_review",
-              "inferred_approved"
-            ],
-            "description": "Authorization status of this transformation rule. 'explicit' means declared by the operator in the preparation rules input. 'inferred_pending_review' means the rule was derived from discovery evidence and requires human review before application. 'inferred_approved' means the rule was inferred and subsequently approved by a human reviewer. Only 'explicit' and 'inferred_approved' rules are applied; 'inferred_pending_review' rules are recorded but not applied."
+          "description": "Pipeline component that produced this preparation recipe."
+        },
+        "dataset_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "row_count_before", "column_count_before"],
+          "description": "Reduced dataset identity before transformation. Must not embed raw dataset contents or private absolute paths.",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Dataset name derived from the source file stem or filename."
+            },
+            "row_count_before": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Total number of rows in the dataset before any transformation."
+            },
+            "column_count_before": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Total number of columns in the dataset before any transformation."
+            }
           }
-        }
-      }
-    },
-    "candidate_output": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["produced", "reason_not_produced", "row_count_after", "column_count_after"],
-      "description": "Records whether a prepared dataset candidate was produced and its post-transformation dimensions.",
-      "properties": {
-        "produced": {
-          "type": "boolean",
-          "description": "True when a prepared candidate was written; false when no safe prepared candidate could be produced."
         },
-        "reason_not_produced": {
-          "type": ["string", "null"],
-          "description": "Explanation of why no prepared candidate was produced. Must be non-null when produced is false."
+        "discovery_evidence_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "schema_version"],
+          "description": "Traceability reference to the M22-02 discovery evidence artifact consumed as input. Records only a stable path reference and schema version -- raw evidence content must not be embedded.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reduced path reference to the discovery evidence JSON artifact. Must not contain private absolute path details."
+            },
+            "schema_version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Schema version of the consumed discovery evidence artifact."
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "Optional integrity reference: SHA-256 of the consumed discovery evidence artifact's bytes. Absent in recipes generated before this field existed."
+            }
+          }
         },
-        "row_count_after": {
-          "type": ["integer", "null"],
-          "minimum": 0,
-          "description": "Total number of rows in the prepared candidate. Null when no candidate was produced."
+        "no_transform_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applies", "reason"],
+          "description": "Optional explicit, typed no-transform policy. When applies is true, this recipe intentionally declares no transformations (transformations must be empty) rather than leaving an empty transformations array with ambiguous semantics. Absent in recipes generated before this field existed, which continue to be interpreted the prior way (transformations is authoritative on its own).",
+          "properties": {
+            "applies": {
+              "type": "boolean",
+              "description": "True when this dataset/capability combination is explicitly governed by a no-transform policy."
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Explicit, reviewable rationale for the no-transform policy. Must not be a placeholder."
+            }
+          }
         },
-        "column_count_after": {
-          "type": ["integer", "null"],
-          "minimum": 0,
-          "description": "Total number of columns in the prepared candidate. Null when no candidate was produced."
-        }
-      }
-    },
-    "candidate_status": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["is_final_training_input", "requires_m23_validation", "authorized_for"],
-      "description": "Explicit declaration of the prepared candidate's status. The candidate is not final training input without later validation and stage authorization (M23+).",
-      "properties": {
-        "is_final_training_input": {
-          "type": "boolean",
-          "const": false,
-          "description": "Must always be false. The prepared candidate requires M23+ validation before it may be used as final training input."
+        "transformations": {
+          "type": "array",
+          "description": "Ordered list of all transformation rules recorded in this recipe. Every transformation applied to the dataset must appear here. Inferred rules that were not applied must also appear, marked with review_status 'inferred_pending_review'.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "transformation_type",
+              "description",
+              "source_columns",
+              "target_columns",
+              "reason",
+              "review_status"
+            ],
+            "properties": {
+              "transformation_type": {
+                "type": "string",
+                "enum": [
+                  "column_selection",
+                  "type_normalization",
+                  "row_filtering",
+                  "missing_value_handling",
+                  "categorical_treatment"
+                ],
+                "description": "Category of transformation. Must be one of the M22-04 authorized transformation types."
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Human-readable description of what this transformation does."
+              },
+              "source_columns": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": "Column names affected as inputs by this transformation. Empty for dataset-wide transformations."
+              },
+              "target_columns": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": "Column names produced or updated by this transformation. Empty for row-filtering transformations that do not produce new columns."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Traceable reason why this transformation was declared or inferred. Must be explicit and reviewable."
+              },
+              "review_status": {
+                "type": "string",
+                "enum": [
+                  "explicit",
+                  "inferred_pending_review",
+                  "inferred_approved"
+                ],
+                "description": "Authorization status of this transformation rule. 'explicit' means declared by the operator in the preparation rules input. 'inferred_pending_review' means the rule was derived from discovery evidence and requires human review before application. 'inferred_approved' means the rule was inferred and subsequently approved by a human reviewer. Only 'explicit' and 'inferred_approved' rules are applied; 'inferred_pending_review' rules are recorded but not applied."
+              }
+            }
+          }
         },
-        "requires_m23_validation": {
-          "type": "boolean",
-          "const": true,
-          "description": "Must always be true. M23+ validation and stage authorization are required before promotion."
+        "candidate_output": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["produced", "reason_not_produced", "row_count_after", "column_count_after"],
+          "description": "Records whether a prepared dataset candidate was produced and its post-transformation dimensions.",
+          "properties": {
+            "produced": {
+              "type": "boolean",
+              "description": "True when a prepared candidate was written; false when no safe prepared candidate could be produced."
+            },
+            "reason_not_produced": {
+              "type": ["string", "null"],
+              "description": "Explanation of why no prepared candidate was produced. Must be non-null when produced is false."
+            },
+            "row_count_after": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Total number of rows in the prepared candidate. Null when no candidate was produced."
+            },
+            "column_count_after": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Total number of columns in the prepared candidate. Null when no candidate was produced."
+            }
+          }
         },
-        "authorized_for": {
+        "candidate_status": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["is_final_training_input", "requires_m23_validation", "authorized_for"],
+          "description": "Explicit declaration of the prepared candidate's status. The candidate is not final training input without later validation and stage authorization (M23+).",
+          "properties": {
+            "is_final_training_input": {
+              "type": "boolean",
+              "const": false,
+              "description": "Must always be false. The prepared candidate requires M23+ validation before it may be used as final training input."
+            },
+            "requires_m23_validation": {
+              "type": "boolean",
+              "const": true,
+              "description": "Must always be true. M23+ validation and stage authorization are required before promotion."
+            },
+            "authorized_for": {
+              "type": "string",
+              "const": "candidate_only",
+              "description": "The prepared output is authorized as a candidate only, not as a final or published artifact."
+            }
+          }
+        },
+        "generation_settings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["generator_version", "preparation_rules_source"],
+          "description": "Settings that determined this preparation run.",
+          "properties": {
+            "generator_version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Generator version string for traceability."
+            },
+            "preparation_rules_source": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reduced path reference to the preparation rules input. Must not contain private absolute paths."
+            }
+          }
+        },
+        "generated_at": {
           "type": "string",
-          "const": "candidate_only",
-          "description": "The prepared output is authorized as a candidate only, not as a final or published artifact."
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when this recipe was generated."
+        },
+        "preparation_boundary_confirmations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "complex_feature_engineering_performed",
+            "model_training_performed",
+            "release_publication_performed",
+            "hidden_notebook_transformations",
+            "inferred_rules_applied_without_approval"
+          ],
+          "description": "Explicit confirmation that preparation did not perform forbidden operations.",
+          "properties": {
+            "complex_feature_engineering_performed": {
+              "type": "boolean",
+              "const": false,
+              "description": "Complex feature engineering beyond M22 authorized scope must never be performed."
+            },
+            "model_training_performed": {
+              "type": "boolean",
+              "const": false,
+              "description": "Model training must never be performed by the preparation pipeline."
+            },
+            "release_publication_performed": {
+              "type": "boolean",
+              "const": false,
+              "description": "Release publication must never be performed by the preparation pipeline."
+            },
+            "hidden_notebook_transformations": {
+              "type": "boolean",
+              "const": false,
+              "description": "Hidden notebook-state transformations are explicitly prohibited. All transformations must be recorded in this recipe."
+            },
+            "inferred_rules_applied_without_approval": {
+              "type": "boolean",
+              "const": false,
+              "description": "Inferred rules with review_status 'inferred_pending_review' must never be applied. Only 'explicit' and 'inferred_approved' rules are applied."
+            }
+          }
+        },
+        "evidence_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "raw_logs_prohibited",
+            "raw_runtime_prohibited",
+            "raw_api_payloads_prohibited",
+            "secrets_prohibited",
+            "private_source_paths_prohibited",
+            "reduced_and_sanitized"
+          ],
+          "description": "Safety policy for this preparation recipe. All flags are required and fixed. Mirrors the pipeline evidence_policy convention.",
+          "properties": {
+            "raw_logs_prohibited": {"type": "boolean", "const": true},
+            "raw_runtime_prohibited": {"type": "boolean", "const": true},
+            "raw_api_payloads_prohibited": {"type": "boolean", "const": true},
+            "secrets_prohibited": {"type": "boolean", "const": true},
+            "private_source_paths_prohibited": {"type": "boolean", "const": true},
+            "reduced_and_sanitized": {"type": "boolean", "const": true}
+          }
+        },
+        "normalization_notes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Optional list of non-fatal notes from type normalization (e.g., rows where casting failed). Present only when normalization encountered non-fatal issues."
         }
       }
     },
-    "generation_settings": {
+    "recipe_v2": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["generator_version", "preparation_rules_source"],
-      "description": "Settings that determined this preparation run.",
+      "description": "Project Spec S0242. Governed univariate-forecasting temporal preparation and expanding-window backtesting recipe. Additive to, and closed apart from, candidate-preparation-recipe.v1. References dataset-semantic-intent.v4 for authored semantic authority rather than duplicating it. Never embeds raw target/observed/forecast arrays, model families, coefficients, or metrics; never fits a model; never computes a metric; never performs release publication.",
+      "required": [
+        "schema_version",
+        "producer",
+        "problem_type",
+        "discovery_evidence_ref",
+        "semantic_intent_ref",
+        "semantic_identity_mirror",
+        "temporal_integrity",
+        "forecast_horizon",
+        "partitions",
+        "backtesting",
+        "fold_schedule",
+        "leakage_controls",
+        "preparation_boundary_confirmations",
+        "evidence_policy",
+        "generated_at"
+      ],
       "properties": {
-        "generator_version": {
+        "schema_version": {
+          "type": "string",
+          "const": "candidate-preparation-recipe.v2",
+          "description": "Schema version for this governed temporal forecasting preparation/backtesting recipe."
+        },
+        "producer": {
           "type": "string",
           "minLength": 1,
-          "description": "Generator version string for traceability."
+          "description": "Pipeline component that produced this temporal preparation recipe."
         },
-        "preparation_rules_source": {
+        "problem_type": {
           "type": "string",
-          "minLength": 1,
-          "description": "Reduced path reference to the preparation rules input. Must not contain private absolute paths."
+          "const": "univariate_forecasting",
+          "description": "Single closed discriminator identifying the governed capability/task this recipe prepares for. Never a competing generic-core dispatch identity such as time_series_forecasting, forecasting_univariate, or a dataset-specific term."
+        },
+        "discovery_evidence_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "schema_version"],
+          "description": "Reduced traceability reference to the Atlas discovery evidence artifact consumed as input. Records only a stable path reference and schema version -- raw evidence content must not be embedded.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reduced path reference to the discovery evidence JSON artifact. Must not contain private absolute path details."
+            },
+            "schema_version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Schema version of the consumed discovery evidence artifact."
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "Optional integrity reference: SHA-256 of the consumed discovery evidence artifact's bytes."
+            }
+          }
+        },
+        "semantic_intent_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "schema_version", "sha256"],
+          "description": "Reduced, immutable reference to the governing dataset-semantic-intent.v4 artifact. Must not embed the semantic-intent payload; only path, schema_version, and an integrity hash are carried.",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reduced, repository-safe path reference to the governing semantic-intent document. Must not contain private absolute path details."
+            },
+            "schema_version": {
+              "type": "string",
+              "const": "dataset-semantic-intent.v4",
+              "description": "The governing semantic-intent document must be exactly dataset-semantic-intent.v4."
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256_hex",
+              "description": "Required integrity reference: SHA-256 of the consumed semantic-intent artifact's bytes."
+            }
+          }
+        },
+        "semantic_identity_mirror": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["time_index_field_name", "target_field_name", "index_value_kind", "frequency"],
+          "description": "Minimum identities mirrored from the already-reviewed dataset-semantic-intent.v4 authority for later cross-artifact consistency checks. These are mirrors only; they must never become a second authoring authority, and later materialization/validation must reject disagreement rather than silently prefer one copy.",
+          "properties": {
+            "time_index_field_name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Mirror of the governing semantic-intent document's temporal_semantics.time_index_field_name."
+            },
+            "target_field_name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Mirror of the governing semantic-intent document's target_semantics.target_field_name."
+            },
+            "index_value_kind": {
+              "type": "string",
+              "enum": ["calendar_period", "timestamp", "ordinal_time"],
+              "description": "Mirror of the governing semantic-intent document's temporal_semantics.index_value_kind."
+            },
+            "frequency": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Mirror of the governing semantic-intent document's temporal_semantics.frequency. Non-empty, dataset-specific; never a pandas/NumPy/statsmodels-specific alias vocabulary."
+            }
+          }
+        },
+        "temporal_integrity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "strictly_increasing_index",
+            "unique_index",
+            "frequency_contiguous",
+            "target_missing_values_absent",
+            "target_values_finite"
+          ],
+          "description": "Closed, required confirmation that the Atlas-owned prepared series passed all required temporal integrity checks before this recipe is considered ready for backtesting. A false state anywhere in this block means the recipe is not a valid ready v2 backtesting input; the schema/validator never sorts duplicate or out-of-order periods to satisfy this contract.",
+          "properties": {
+            "strictly_increasing_index": {"type": "boolean", "const": true},
+            "unique_index": {"type": "boolean", "const": true},
+            "frequency_contiguous": {"type": "boolean", "const": true},
+            "target_missing_values_absent": {"type": "boolean", "const": true},
+            "target_values_finite": {"type": "boolean", "const": true}
+          }
+        },
+        "forecast_horizon": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Dataset-specific governed forecast horizon. Must be a positive integer and must never be hardcoded to 12 or any other dataset-specific constant by the schema itself."
+        },
+        "partitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["development", "sealed_final_holdout"],
+          "description": "Future-only partition contract. Each partition exposes reduced boundary identity and observation count without target values.",
+          "properties": {
+            "development": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["start_index_value", "end_index_value", "observation_count"],
+              "description": "Development partition used for backtesting fold construction.",
+              "properties": {
+                "start_index_value": {"type": "string", "minLength": 1, "description": "Reduced boundary label; not a raw timestamp/period array."},
+                "end_index_value": {"type": "string", "minLength": 1, "description": "Reduced boundary label; not a raw timestamp/period array."},
+                "observation_count": {"type": "integer", "exclusiveMinimum": 0}
+              }
+            },
+            "sealed_final_holdout": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "start_index_value",
+                "end_index_value",
+                "observation_count",
+                "prospectively_sealed",
+                "used_for_backtesting",
+                "used_for_model_selection"
+              ],
+              "description": "Prospectively sealed final future holdout. Governs operational preparation/backtesting from the Atlas authoring/training boundary forward; does not claim historical invisibility during all prior exploratory work.",
+              "properties": {
+                "start_index_value": {"type": "string", "minLength": 1, "description": "Reduced boundary label; not a raw timestamp/period array."},
+                "end_index_value": {"type": "string", "minLength": 1, "description": "Reduced boundary label; not a raw timestamp/period array."},
+                "observation_count": {"type": "integer", "exclusiveMinimum": 0},
+                "prospectively_sealed": {"type": "boolean", "const": true},
+                "used_for_backtesting": {"type": "boolean", "const": false},
+                "used_for_model_selection": {"type": "boolean", "const": false}
+              }
+            }
+          }
+        },
+        "backtesting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "initial_training_observations",
+            "forecast_horizon",
+            "origin_step_observations",
+            "fold_count",
+            "validation_targets_overlap"
+          ],
+          "description": "Expanding-window backtesting policy. Random shuffle and stratified/k-fold modes are never valid aliases of this policy's temporal mode.",
+          "properties": {
+            "mode": {"type": "string", "const": "expanding_window"},
+            "initial_training_observations": {"type": "integer", "exclusiveMinimum": 0},
+            "forecast_horizon": {"type": "integer", "exclusiveMinimum": 0, "description": "Must equal the top-level/partition governed forecast_horizon."},
+            "origin_step_observations": {"type": "integer", "exclusiveMinimum": 0},
+            "fold_count": {"type": "integer", "exclusiveMinimum": 0},
+            "validation_targets_overlap": {"type": "boolean", "const": false}
+          }
+        },
+        "fold_schedule": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Deterministic reduced fold schedule whose length must equal backtesting.fold_count. Reduced boundary labels are traceability values only; raw timestamps/period arrays and target arrays must not be embedded.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fold_index",
+              "training_observations",
+              "forecast_origin",
+              "validation_start",
+              "validation_end",
+              "validation_observations"
+            ],
+            "properties": {
+              "fold_index": {"type": "integer", "minimum": 1},
+              "training_observations": {"type": "integer", "exclusiveMinimum": 0},
+              "forecast_origin": {"type": "string", "minLength": 1},
+              "validation_start": {"type": "string", "minLength": 1},
+              "validation_end": {"type": "string", "minLength": 1},
+              "validation_observations": {"type": "integer", "exclusiveMinimum": 0}
+            }
+          }
+        },
+        "leakage_controls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "random_shuffle_performed",
+            "future_targets_used_for_fold_fit",
+            "final_holdout_used_for_backtesting",
+            "final_holdout_used_for_model_selection",
+            "validation_targets_fed_back_within_fold",
+            "preprocessing_fit_on_validation_or_future"
+          ],
+          "description": "Closed, required temporal leakage-control confirmations. These are preparation/backtesting boundary confirmations, not a replacement for later recomputation/verification by training.",
+          "properties": {
+            "random_shuffle_performed": {"type": "boolean", "const": false},
+            "future_targets_used_for_fold_fit": {"type": "boolean", "const": false},
+            "final_holdout_used_for_backtesting": {"type": "boolean", "const": false},
+            "final_holdout_used_for_model_selection": {"type": "boolean", "const": false},
+            "validation_targets_fed_back_within_fold": {"type": "boolean", "const": false},
+            "preprocessing_fit_on_validation_or_future": {"type": "boolean", "const": false}
+          }
+        },
+        "preparation_boundary_confirmations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_training_performed",
+            "release_publication_performed",
+            "hidden_notebook_transformations"
+          ],
+          "description": "Explicit confirmation that temporal preparation did not perform forbidden operations. Meaning is unchanged from the equivalent candidate-preparation-recipe.v1 fields.",
+          "properties": {
+            "model_training_performed": {
+              "type": "boolean",
+              "const": false,
+              "description": "Model training must never be performed by preparation."
+            },
+            "release_publication_performed": {
+              "type": "boolean",
+              "const": false,
+              "description": "Release publication must never be performed by preparation."
+            },
+            "hidden_notebook_transformations": {
+              "type": "boolean",
+              "const": false,
+              "description": "Hidden notebook-state transformations are explicitly prohibited. All transformations must be recorded in this recipe."
+            }
+          }
+        },
+        "evidence_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "raw_logs_prohibited",
+            "raw_runtime_prohibited",
+            "raw_api_payloads_prohibited",
+            "secrets_prohibited",
+            "private_source_paths_prohibited",
+            "reduced_and_sanitized"
+          ],
+          "description": "Safety policy for this temporal preparation recipe. All flags are required and fixed. Meaning is unchanged from the equivalent candidate-preparation-recipe.v1 evidence_policy.",
+          "properties": {
+            "raw_logs_prohibited": {"type": "boolean", "const": true},
+            "raw_runtime_prohibited": {"type": "boolean", "const": true},
+            "raw_api_payloads_prohibited": {"type": "boolean", "const": true},
+            "secrets_prohibited": {"type": "boolean", "const": true},
+            "private_source_paths_prohibited": {"type": "boolean", "const": true},
+            "reduced_and_sanitized": {"type": "boolean", "const": true}
+          }
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when this recipe was generated."
         }
       }
-    },
-    "generated_at": {
-      "type": "string",
-      "format": "date-time",
-      "description": "ISO 8601 timestamp when this recipe was generated."
-    },
-    "preparation_boundary_confirmations": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "complex_feature_engineering_performed",
-        "model_training_performed",
-        "release_publication_performed",
-        "hidden_notebook_transformations",
-        "inferred_rules_applied_without_approval"
-      ],
-      "description": "Explicit confirmation that preparation did not perform forbidden operations.",
-      "properties": {
-        "complex_feature_engineering_performed": {
-          "type": "boolean",
-          "const": false,
-          "description": "Complex feature engineering beyond M22 authorized scope must never be performed."
-        },
-        "model_training_performed": {
-          "type": "boolean",
-          "const": false,
-          "description": "Model training must never be performed by the preparation pipeline."
-        },
-        "release_publication_performed": {
-          "type": "boolean",
-          "const": false,
-          "description": "Release publication must never be performed by the preparation pipeline."
-        },
-        "hidden_notebook_transformations": {
-          "type": "boolean",
-          "const": false,
-          "description": "Hidden notebook-state transformations are explicitly prohibited. All transformations must be recorded in this recipe."
-        },
-        "inferred_rules_applied_without_approval": {
-          "type": "boolean",
-          "const": false,
-          "description": "Inferred rules with review_status 'inferred_pending_review' must never be applied. Only 'explicit' and 'inferred_approved' rules are applied."
-        }
-      }
-    },
-    "evidence_policy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "raw_logs_prohibited",
-        "raw_runtime_prohibited",
-        "raw_api_payloads_prohibited",
-        "secrets_prohibited",
-        "private_source_paths_prohibited",
-        "reduced_and_sanitized"
-      ],
-      "description": "Safety policy for this preparation recipe. All flags are required and fixed. Mirrors the pipeline evidence_policy convention.",
-      "properties": {
-        "raw_logs_prohibited": {"type": "boolean", "const": true},
-        "raw_runtime_prohibited": {"type": "boolean", "const": true},
-        "raw_api_payloads_prohibited": {"type": "boolean", "const": true},
-        "secrets_prohibited": {"type": "boolean", "const": true},
-        "private_source_paths_prohibited": {"type": "boolean", "const": true},
-        "reduced_and_sanitized": {"type": "boolean", "const": true}
-      }
-    },
-    "normalization_notes": {
-      "type": "array",
-      "items": {"type": "string", "minLength": 1},
-      "description": "Optional list of non-fatal notes from type normalization (e.g., rows where casting failed). Present only when normalization encountered non-fatal issues."
     }
   }
 }

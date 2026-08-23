@@ -23,6 +23,22 @@ from pipeline.training import _prepared_dataset_metadata_blocking_reasons
 
 INFERENCE_BUNDLE_SCHEMA = "contracts/inference-bundle.schema.json"
 INFERENCE_BUNDLE_VERSION = "inference_bundle.v1"
+# Project Spec S0245: strict, disjoint Atlas-native univariate-forecasting
+# inference-bundle branch. Never routed through the v1 tabular builder --
+# see _build_forecasting_bundle and materialize_governed_inference_bundle's
+# explicit execution_contract.contract_version/problem_type dispatch.
+INFERENCE_BUNDLE_VERSION_V2 = "inference_bundle.v2"
+FORECASTING_EXECUTION_CONTRACT_VERSION = "execution_contract.v2"
+FORECASTING_PROBLEM_TYPE = "univariate_forecasting"
+FORECASTING_TRAINING_PARAMETER_RECORD_VERSION = "training-parameter-record.v4"
+FORECASTING_TRAINING_METRICS_VERSION = "training-metrics.v4"
+FORECASTING_PREPARATION_RECIPE_VERSION = "candidate-preparation-recipe.v2"
+FORECASTING_MODEL_FAMILY = "deterministic_seasonal_trend_ols"
+FORECASTING_TRAINING_POLICY_SCHEMA_VERSION = "univariate-forecasting-training-policy.v1"
+FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION = "univariate-forecasting-result-semantics.v1"
+FORECASTING_RESULT_SCHEMA_VERSION = "univariate-forecasting-result.v1"
+FORECASTING_LOADER_STRATEGY = "joblib_sklearn_forecasting_adapter"
+FORECASTING_PREDICTION_INTERFACE = "forecast_series"
 DEFAULT_MODEL_PACKAGE_REFERENCE = "models/model.pkl"
 SUPPORTED_SERIALIZATION_FORMAT = "joblib"
 SUPPORTED_LOADER_STRATEGY = "joblib_sklearn_predict"
@@ -60,6 +76,9 @@ MODEL_FAMILY_DISPLAY_NAMES: dict[str, str] = {
     # estimator family -- an internal training record can never reach this
     # entry either, for the same reason as hist_gradient_boosting above.
     "decision_tree": "Decision Tree",
+    # Project Spec S0245: the sole inference_bundle.v2 forecasting model
+    # family. Deterministic projection only -- never editable profile copy.
+    "deterministic_seasonal_trend_ols": "Deterministic Seasonal-Trend OLS",
 }
 # Project Spec S0191: bounded governed pairing of external public-result
 # model_family to its required estimator_identity, mirroring
@@ -1194,6 +1213,35 @@ def _validate_against_schema(instance: dict[str, Any], schema_path: Path, label:
         )
 
 
+# Project Spec S0245 Desired Change L: reused to structurally validate
+# execution_contract.v2, training-parameter-record.v4, training-metrics.v4,
+# and candidate-preparation-recipe.v2 against their canonical repository
+# schemas before any forecasting field is trusted. Distinct from
+# _validate_against_schema (reserved for the S0180 external fitted-model
+# evidence family) only in its error code, so a forecasting schema failure
+# is never mistaken for an external-evidence failure.
+def _validate_forecasting_artifact_schema(instance: dict[str, Any], schema_path: Path, label: str) -> None:
+    schema = _load_json_file(schema_path, f"{label}_schema_path")
+    try:
+        import jsonschema
+    except ImportError as exc:
+        raise BundleGenerationError(
+            "schema_validation_unavailable",
+            "jsonschema is required to validate forecasting evidence.",
+            field="jsonschema",
+        ) from exc
+    validator = jsonschema.Draft202012Validator(schema)
+    errors = sorted(validator.iter_errors(instance), key=lambda error: list(error.path))
+    if errors:
+        first = errors[0]
+        path = ".".join(str(part) for part in first.path) or "<root>"
+        raise BundleGenerationError(
+            "forecasting_evidence_schema_invalid",
+            f"{label}.{path}: {first.message}",
+            field=f"{label}.{path}",
+        )
+
+
 def _build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     execution_contract_path = Path(args.execution_contract)
     runtime_contract_path = Path(args.runtime_contract)
@@ -2089,6 +2137,442 @@ def _build_external_bundle(
     return bundle
 
 
+# Project Spec S0245: Atlas-native univariate forecasting inference_bundle.v2
+# generation. Never routes through the v1 helpers above (which require
+# feature columns/preprocessing) -- the forecasting branch carries a reduced
+# frozen-model descriptor instead. Never deserializes the model artifact
+# (joblib.load is never called here -- only hashlib.sha256 over its bytes),
+# never retrains/refits, and never opens/evaluates the final holdout. All
+# required upstream evidence (execution_contract.v2, training-parameter-
+# record.v4, training-metrics.v4, candidate-preparation-recipe.v2) is
+# structurally schema-validated and cross-checked before any field is
+# projected into the bundle.
+def _resolve_forecasting_dataset_slug(
+    args: argparse.Namespace,
+    execution_contract: dict[str, Any],
+    training_parameter_record: dict[str, Any],
+) -> str:
+    identity = _require_mapping(training_parameter_record, "training_run_identity")
+    record_dataset_slug = _require_string(identity, "dataset_slug")
+    dataset_slug = args.dataset_slug or record_dataset_slug
+    if not DATASET_SLUG_RE.fullmatch(dataset_slug):
+        raise BundleGenerationError(
+            "invalid_dataset_identity",
+            "dataset_slug must match ^[a-z0-9]+(?:-[a-z0-9]+)*$.",
+            field="dataset_slug",
+        )
+    if record_dataset_slug != dataset_slug:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "training_parameter_record.training_run_identity.dataset_slug does not match dataset_slug.",
+            field="training_run_identity.dataset_slug",
+        )
+    dataset_id = execution_contract.get("dataset_id")
+    if isinstance(dataset_id, str) and _slugify_dataset_id(dataset_id) != dataset_slug:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "execution contract dataset_id does not match the training dataset_slug.",
+            field="dataset_id",
+        )
+    return dataset_slug
+
+
+def _forecasting_cross_check_equal(actual: Any, expected: Any, field: str) -> None:
+    if actual != expected:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            f"{field} disagrees across execution contract, training evidence, and preparation evidence.",
+            field=field,
+        )
+
+
+def _build_forecasting_bundle(
+    args: argparse.Namespace,
+    resolved_repo_root: Path,
+) -> dict[str, Any]:
+    execution_contract_path = Path(args.execution_contract)
+    runtime_contract_path = Path(args.runtime_contract)
+    public_contract_path = Path(args.public_contract)
+    training_record_path = Path(args.training_parameter_record)
+    metrics_path = Path(args.training_metrics)
+    model_artifact_path = Path(args.model_artifact)
+    dataset_context_path = Path(args.dataset_context)
+    schema_path = Path(args.inference_bundle_schema)
+
+    execution_contract = _load_json_file(execution_contract_path, "execution_contract_path")
+    runtime_contract = _load_json_file(runtime_contract_path, "runtime_contract_path")
+    public_contract = _load_json_file(public_contract_path, "public_contract_path")
+    training_record = _load_json_file(training_record_path, "training_parameter_record_path")
+    metrics = _load_json_file(metrics_path, "training_metrics_path")
+
+    if execution_contract.get("contract_version") != FORECASTING_EXECUTION_CONTRACT_VERSION:
+        raise BundleGenerationError(
+            "invalid_contract_version",
+            f"execution contract must declare contract_version {FORECASTING_EXECUTION_CONTRACT_VERSION!r}.",
+            field="execution_contract.contract_version",
+        )
+    if execution_contract.get("problem_type") != FORECASTING_PROBLEM_TYPE:
+        raise BundleGenerationError(
+            "invalid_problem_type",
+            f"execution_contract.v2 problem_type must be {FORECASTING_PROBLEM_TYPE!r}.",
+            field="execution_contract.problem_type",
+        )
+    _validate_forecasting_artifact_schema(
+        execution_contract,
+        _repo_root() / "contracts" / "execution-contract.schema.json",
+        "execution_contract_path",
+    )
+
+    if training_record.get("schema_version") != FORECASTING_TRAINING_PARAMETER_RECORD_VERSION:
+        raise BundleGenerationError(
+            "invalid_forecasting_evidence_profile",
+            f"training_parameter_record must declare schema_version {FORECASTING_TRAINING_PARAMETER_RECORD_VERSION!r}.",
+            field="training_parameter_record_path",
+        )
+    if training_record.get("problem_type") != FORECASTING_PROBLEM_TYPE:
+        raise BundleGenerationError(
+            "invalid_problem_type",
+            f"training_parameter_record.problem_type must be {FORECASTING_PROBLEM_TYPE!r}.",
+            field="training_parameter_record.problem_type",
+        )
+    _validate_forecasting_artifact_schema(
+        training_record,
+        _repo_root() / "pipeline" / "training-parameter-record.schema.json",
+        "training_parameter_record_path",
+    )
+
+    if metrics.get("schema_version") != FORECASTING_TRAINING_METRICS_VERSION:
+        raise BundleGenerationError(
+            "invalid_forecasting_evidence_profile",
+            f"training_metrics must declare schema_version {FORECASTING_TRAINING_METRICS_VERSION!r}.",
+            field="training_metrics_path",
+        )
+    _validate_forecasting_artifact_schema(
+        metrics,
+        _repo_root() / "pipeline" / "training-metrics.schema.json",
+        "training_metrics_path",
+    )
+
+    # Project Spec S0245 Desired Change J: derive the preparation recipe and
+    # prepared dataset paths from the authenticated v4 training record --
+    # never from a prepared_data_metadata.v1 artifact (that requirement is
+    # forecasting-specific and never imposed here).
+    consumed_inputs = _require_mapping(training_record, "consumed_inputs")
+    preparation_recipe_ref = _require_string(consumed_inputs, "preparation_recipe_path")
+    dataset_ref = _require_string(consumed_inputs, "dataset_path")
+    preparation_recipe_path = resolved_repo_root / preparation_recipe_ref
+    prepared_dataset_path = resolved_repo_root / dataset_ref
+
+    preparation_recipe = _load_json_file(preparation_recipe_path, "preparation_recipe_path")
+    if preparation_recipe.get("schema_version") != FORECASTING_PREPARATION_RECIPE_VERSION:
+        raise BundleGenerationError(
+            "invalid_forecasting_evidence_profile",
+            f"preparation_recipe must declare schema_version {FORECASTING_PREPARATION_RECIPE_VERSION!r}.",
+            field="preparation_recipe_path",
+        )
+    _validate_forecasting_artifact_schema(
+        preparation_recipe,
+        _repo_root() / "pipeline" / "candidate-preparation-recipe.schema.json",
+        "preparation_recipe_path",
+    )
+
+    # Hash reconciliation: never trust the training record's own hashes
+    # without independently recomputing them from the referenced bytes.
+    hashes = _require_mapping(training_record, "hashes")
+    _verify_hash(
+        hashes.get("execution_contract_sha256"),
+        _sha256_file(execution_contract_path),
+        "hashes.execution_contract_sha256",
+    )
+    _verify_hash(
+        hashes.get("preparation_recipe_sha256"),
+        _sha256_file(preparation_recipe_path),
+        "hashes.preparation_recipe_sha256",
+    )
+    _verify_hash(
+        hashes.get("prepared_dataset_sha256"),
+        _sha256_file(prepared_dataset_path),
+        "hashes.prepared_dataset_sha256",
+    )
+    _verify_hash(
+        hashes.get("model_artifact_sha256"),
+        _sha256_file(model_artifact_path),
+        "hashes.model_artifact_sha256",
+    )
+    if hashes.get("metrics_sha256") is not None:
+        _verify_hash(hashes.get("metrics_sha256"), _sha256_file(metrics_path), "hashes.metrics_sha256")
+
+    # Same training-run identity across the parameter record and metrics.
+    record_identity = _training_identity(training_record)
+    metrics_identity = _training_identity(metrics)
+    if record_identity != metrics_identity:
+        raise BundleGenerationError(
+            "stale_or_inconsistent_artifact",
+            "training metrics training_run_identity does not match the training parameter record.",
+            field="training_run_identity",
+        )
+
+    dataset_slug = _resolve_forecasting_dataset_slug(args, execution_contract, training_record)
+
+    # Cross-artifact temporal/horizon identity reconciliation (Desired
+    # Change I). Every field here is free-form in at least one of the three
+    # artifacts (not already const-pinned identically by every schema), so
+    # a real equality check is required -- schema validation alone cannot
+    # catch a stale/mismatched combination.
+    training_parameters = _require_mapping(training_record, "training_parameters")
+    semantic_identity_mirror = _require_mapping(preparation_recipe, "semantic_identity_mirror")
+    forecasting_evidence_metrics = _require_mapping(metrics, "forecasting_evidence")
+
+    target_column = _require_string(execution_contract, "target_column")
+    _forecasting_cross_check_equal(
+        training_parameters.get("target_column"), target_column, "target_column"
+    )
+    _forecasting_cross_check_equal(
+        semantic_identity_mirror.get("target_field_name"), target_column, "target_column"
+    )
+
+    time_index_column = _require_string(execution_contract, "time_index_column")
+    _forecasting_cross_check_equal(
+        training_parameters.get("time_index_column"), time_index_column, "time_index_column"
+    )
+    _forecasting_cross_check_equal(
+        semantic_identity_mirror.get("time_index_field_name"), time_index_column, "time_index_column"
+    )
+
+    index_value_kind = _require_string(execution_contract, "index_value_kind")
+    _forecasting_cross_check_equal(
+        semantic_identity_mirror.get("index_value_kind"), index_value_kind, "index_value_kind"
+    )
+
+    frequency = _require_string(execution_contract, "frequency")
+    _forecasting_cross_check_equal(training_parameters.get("frequency"), frequency, "frequency")
+    _forecasting_cross_check_equal(semantic_identity_mirror.get("frequency"), frequency, "frequency")
+
+    forecast_horizon = execution_contract.get("forecast_horizon")
+    if not isinstance(forecast_horizon, int) or isinstance(forecast_horizon, bool) or forecast_horizon <= 0:
+        raise BundleGenerationError(
+            "invalid_forecasting_evidence_profile",
+            "execution_contract.forecast_horizon must be a positive integer.",
+            field="execution_contract.forecast_horizon",
+        )
+    _forecasting_cross_check_equal(
+        training_parameters.get("forecast_horizon"), forecast_horizon, "forecast_horizon"
+    )
+    _forecasting_cross_check_equal(
+        preparation_recipe.get("forecast_horizon"), forecast_horizon, "forecast_horizon"
+    )
+    _forecasting_cross_check_equal(
+        forecasting_evidence_metrics.get("forecast_horizon"), forecast_horizon, "forecast_horizon"
+    )
+
+    training_policy = _require_mapping(execution_contract, "training_policy")
+    contract_fixed_model_configuration = _require_mapping(training_policy, "fixed_model_configuration")
+    record_fixed_model_configuration = _require_mapping(training_parameters, "fixed_model_configuration")
+    _forecasting_cross_check_equal(
+        record_fixed_model_configuration,
+        contract_fixed_model_configuration,
+        "training_policy.fixed_model_configuration",
+    )
+
+    development = _require_mapping(
+        _require_mapping(preparation_recipe, "partitions"), "development"
+    )
+    backtesting_protocol = _require_mapping(training_parameters, "backtesting_protocol")
+    _forecasting_cross_check_equal(
+        backtesting_protocol.get("development_observations"),
+        development.get("observation_count"),
+        "backtesting_protocol.development_observations",
+    )
+
+    # Never deserialize model bytes, retrain/refit, or open/evaluate the
+    # final holdout -- only hash the already-produced, already-evaluated
+    # frozen model artifact.
+    model_artifact_sha256 = _sha256_file(model_artifact_path)
+
+    release_id = args.release_id
+    if not isinstance(release_id, str) or not RELEASE_ID_RE.fullmatch(release_id):
+        raise BundleGenerationError(
+            "missing_required_field",
+            "release_id must be provided by --release-id for a forecasting bundle "
+            "(forecasting training metrics carry no release_id fallback).",
+            field="release_id",
+        )
+    release_package_reference = _validate_release_relative(
+        args.release_package_reference, "release_package_reference"
+    )
+    model_package_reference = _validate_release_relative(
+        args.model_package_reference, "model_package_reference", file_path=True
+    )
+
+    generated_at = _utc_now_iso()
+    bundle_id = f"{dataset_slug}-inference-bundle-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+
+    execution_contract_ref = _versioned_ref(
+        execution_contract_path, args.execution_contract_ref, execution_contract, "execution_contract_ref"
+    )
+    runtime_contract_ref = _versioned_ref(
+        runtime_contract_path, args.runtime_contract_ref, runtime_contract, "runtime_contract_ref"
+    )
+    public_contract_ref = _versioned_ref(
+        public_contract_path, args.public_contract_ref, public_contract, "public_contract_ref"
+    )
+    training_parameter_record_ref = _versioned_ref(
+        training_record_path, args.training_parameter_record_ref, training_record, "training_parameter_record_ref"
+    )
+    training_metrics_ref = _versioned_ref(
+        metrics_path, args.training_metrics_ref, metrics, "training_metrics_ref"
+    )
+    preparation_recipe_ref_value = _versioned_ref(
+        preparation_recipe_path, preparation_recipe_ref, preparation_recipe, "preparation_recipe_ref"
+    )
+
+    finalization_policy = _require_mapping(training_parameters, "finalization_policy")
+
+    bundle: dict[str, Any] = {
+        "contract_version": INFERENCE_BUNDLE_VERSION_V2,
+        "bundle_identity": {
+            "bundle_id": bundle_id,
+            "artifact_kind": "inference_bundle",
+            "created_at": generated_at,
+        },
+        "dataset_context": {
+            "dataset_slug": dataset_slug,
+            "dataset_context_reference": _artifact_ref(
+                dataset_context_path, args.dataset_context_ref, "dataset_context_ref"
+            ),
+        },
+        "release_context": {
+            "release_id": release_id,
+            "release_package_reference": release_package_reference,
+        },
+        "contract_references": {
+            "execution_contract": execution_contract_ref,
+            "runtime_contract": runtime_contract_ref,
+            "public_contract": public_contract_ref,
+        },
+        "prepared_dataset": {
+            "prepared_dataset_reference": _artifact_ref(
+                prepared_dataset_path, dataset_ref, "prepared_dataset_ref"
+            ),
+            "prepared_dataset_sha256": _sha256_file(prepared_dataset_path),
+        },
+        "preparation_evidence": {
+            "preparation_recipe": preparation_recipe_ref_value,
+        },
+        "training_evidence": {
+            "training_run_identity": record_identity,
+            "training_parameter_record": training_parameter_record_ref,
+            "training_metrics": training_metrics_ref,
+        },
+        "frozen_model": {
+            "state": "frozen",
+            "model_artifact": {
+                "path": model_package_reference,
+                "sha256": model_artifact_sha256,
+                "source_training_parameter_record_path": training_parameter_record_ref["path"],
+            },
+            "model_family": FORECASTING_MODEL_FAMILY,
+            "training_policy_schema_version": FORECASTING_TRAINING_POLICY_SCHEMA_VERSION,
+            "fixed_model_configuration": dict(record_fixed_model_configuration),
+            "temporal_identity": {
+                "target_column": target_column,
+                "time_index_column": time_index_column,
+                "index_value_kind": index_value_kind,
+                "frequency": frequency,
+                "source_exogenous_predictors": "forbidden",
+                "forecast_horizon": forecast_horizon,
+            },
+            "training_scope": {
+                "start": development.get("start_index_value"),
+                "end": development.get("end_index_value"),
+                "observation_count": development.get("observation_count"),
+            },
+            "finalization": {
+                "selection_mode": training_parameters.get("selection_mode"),
+                "model_selection_performed": training_parameters.get("model_selection_performed"),
+                "final_fit_scope": finalization_policy.get("final_fit_scope"),
+                "frozen_before_final_holdout_open": finalization_policy.get("freeze_before_final_holdout_open"),
+                "final_holdout_evaluation_count": finalization_policy.get("final_holdout_evaluation_count"),
+                "final_holdout_used_for_adjustment": finalization_policy.get("final_holdout_used_for_adjustment"),
+                "final_holdout_used_for_model_selection": finalization_policy.get(
+                    "final_holdout_used_for_model_selection"
+                ),
+                "no_retuning_after_final_holdout": finalization_policy.get("no_retuning_after_final_holdout"),
+            },
+        },
+        "runtime_execution": {
+            "execution_strategy": "in_process",
+            "serialization_format": SUPPORTED_SERIALIZATION_FORMAT,
+            "loader_strategy": FORECASTING_LOADER_STRATEGY,
+            "prediction_interface": FORECASTING_PREDICTION_INTERFACE,
+            "model_family": FORECASTING_MODEL_FAMILY,
+        },
+        "input_schema": {
+            "runtime_contract_reference": "contract_references.runtime_contract",
+            "payload_shape": "runtime_contract_history_series",
+            "input_policy_source": "runtime_contract",
+        },
+        "output_schema": {
+            "result_schema_version": FORECASTING_RESULT_SCHEMA_VERSION,
+            "primary_output": "forecast_series",
+            "output_structure": "ordered_forecast_points",
+            "forecast_value_kind": "continuous_numeric",
+            "forecast_count_source": "frozen_model.temporal_identity.forecast_horizon",
+        },
+        "compatibility_constraints": {
+            "requires_contract_versions": {
+                "execution_contract": FORECASTING_EXECUTION_CONTRACT_VERSION,
+                "runtime_contract": runtime_contract_ref["contract_version"],
+                "public_contract": public_contract_ref["contract_version"],
+            },
+            "requires_hash_match": True,
+            "requires_release_relative_paths": True,
+            "requires_supported_loader": True,
+            "requires_supported_serialization": True,
+            "requires_temporal_identity_match": True,
+            "requires_frozen_model_specification_match": True,
+            "requires_forecast_horizon_match": True,
+        },
+        "result_semantics": {
+            "schema_version": FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION,
+            "problem_type": FORECASTING_PROBLEM_TYPE,
+            "result_schema_version": FORECASTING_RESULT_SCHEMA_VERSION,
+            "primary_output": "forecast_series",
+            "output_structure": "ordered_forecast_points",
+            "forecast_value_kind": "continuous_numeric",
+            "forecast_count_source": "forecast_horizon",
+            "model_descriptor": {
+                "model_family": FORECASTING_MODEL_FAMILY,
+                "display_name": MODEL_FAMILY_DISPLAY_NAMES[FORECASTING_MODEL_FAMILY],
+            },
+        },
+        "model_provenance_origin": "atlas_internal_training",
+        "boundary_confirmations": {
+            "release_relative_paths_only": True,
+            "absolute_paths_embedded": False,
+            "parent_traversal_embedded": False,
+            "notebook_state_embedded": False,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "runtime_payload_validation_duplicated": False,
+            "training_internals_required_at_runtime": False,
+            "external_scientific_project_dependency": False,
+            "external_model_artifact_used": False,
+            "model_selection_performed": False,
+            "final_model_frozen": True,
+            "final_holdout_used_for_adjustment": False,
+        },
+    }
+
+    if args.description:
+        bundle["bundle_identity"]["description"] = args.description
+    if args.candidate_id:
+        bundle["release_context"]["candidate_id"] = args.candidate_id
+
+    _validate_bundle_schema(bundle, schema_path)
+    return bundle
+
+
 def _write_bundle(bundle: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -2146,7 +2630,7 @@ def materialize_governed_inference_bundle(
     dataset_context_path: str | Path,
     prepared_data_metadata_path: str | Path | None = None,
     output_path: str | Path,
-    prediction_type: str,
+    prediction_type: str | None = None,
     repo_root: str | Path | None = None,
     dataset_slug: str | None = None,
     class_labels: list[str] | None = None,
@@ -2309,6 +2793,95 @@ def materialize_governed_inference_bundle(
             ],
         }
 
+    # Project Spec S0245 Desired Change K: explicit bundle-version dispatch
+    # from the execution contract's own contract_version/problem_type,
+    # before either builder path is committed to. Anything other than
+    # execution_contract.v1 or execution_contract.v2 + problem_type =
+    # univariate_forecasting fails closed here rather than being routed to
+    # the v1 tabular builder (which requires feature columns/preprocessing).
+    try:
+        execution_contract_for_dispatch = _load_json_file(
+            Path(execution_contract_path), "execution_contract_path"
+        )
+    except BundleGenerationError as exc:
+        return {"status": "blocked", "blocking_reasons": [str(exc)], "error": exc.to_dict()["error"]}
+
+    dispatch_contract_version = execution_contract_for_dispatch.get("contract_version")
+
+    if dispatch_contract_version == FORECASTING_EXECUTION_CONTRACT_VERSION:
+        if execution_contract_for_dispatch.get("problem_type") != FORECASTING_PROBLEM_TYPE:
+            return {
+                "status": "blocked",
+                "blocking_reasons": [
+                    "execution_contract.v2 problem_type must be "
+                    f"{FORECASTING_PROBLEM_TYPE!r}.",
+                ],
+            }
+
+        run_id = Path(training_result["output_directory"]).name
+        try:
+            provisional_release_id = _derive_provisional_release_id(run_id)
+        except BundleGenerationError as exc:
+            return {"status": "blocked", "blocking_reasons": [str(exc)]}
+
+        namespace = argparse.Namespace(
+            execution_contract=str(Path(execution_contract_path)),
+            runtime_contract=str(Path(runtime_contract_path)),
+            public_contract=str(Path(public_contract_path)),
+            training_parameter_record=str(
+                resolved_repo_root / training_result["training_parameter_record_path"]
+            ),
+            training_metrics=str(resolved_repo_root / training_result["metrics_path"]),
+            model_artifact=str(resolved_repo_root / training_result["serialized_model_path"]),
+            output=str(Path(output_path)),
+            release_package_reference=GOVERNED_INFERENCE_BUNDLE_RELEASE_PACKAGE_REFERENCE,
+            model_package_reference=model_package_reference or DEFAULT_MODEL_PACKAGE_REFERENCE,
+            release_id=provisional_release_id,
+            dataset_slug=dataset_slug,
+            dataset_context=str(Path(dataset_context_path)),
+            candidate_id=None,
+            description=None,
+            execution_contract_ref=execution_contract_ref,
+            runtime_contract_ref=runtime_contract_ref,
+            public_contract_ref=public_contract_ref,
+            dataset_context_ref=dataset_context_ref,
+            training_parameter_record_ref=training_result["training_parameter_record_path"],
+            training_metrics_ref=training_result["metrics_path"],
+            inference_bundle_schema=(
+                str(Path(inference_bundle_schema_path))
+                if inference_bundle_schema_path
+                else str(_repo_root() / INFERENCE_BUNDLE_SCHEMA)
+            ),
+        )
+
+        try:
+            bundle = _build_forecasting_bundle(namespace, resolved_repo_root)
+            _write_bundle(bundle, Path(output_path))
+        except BundleGenerationError as exc:
+            return {
+                "status": "blocked",
+                "blocking_reasons": [str(exc)],
+                "error": exc.to_dict()["error"],
+            }
+
+        return {
+            "status": "generated",
+            "output_path": str(output_path),
+            "bundle_id": bundle["bundle_identity"]["bundle_id"],
+            "bundle_contract_version": INFERENCE_BUNDLE_VERSION_V2,
+            "training_run_id": run_id,
+            "provisional_release_id": provisional_release_id,
+            "prepared_dataset_reference": bundle["prepared_dataset"]["prepared_dataset_reference"]["path"],
+        }
+
+    if dispatch_contract_version != "execution_contract.v1":
+        return {
+            "status": "blocked",
+            "blocking_reasons": [
+                f"execution_contract.contract_version is not supported: {dispatch_contract_version!r}.",
+            ],
+        }
+
     if not prepared_data_metadata_path:
         return {
             "status": "blocked",
@@ -2388,6 +2961,7 @@ def materialize_governed_inference_bundle(
         "status": "generated",
         "output_path": str(output_path),
         "bundle_id": bundle["bundle_identity"]["bundle_id"],
+        "bundle_contract_version": INFERENCE_BUNDLE_VERSION,
         "training_run_id": run_id,
         "provisional_release_id": provisional_release_id,
         "prepared_dataset_reference": prepared_reference,

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atlas-dataflow.local/schemas/contracts/univariate-forecasting-result.schema.json",
+  "title": "univariate-forecasting-result.v1",
+  "description": "Project Spec S0246: strict, persisted schema for a governed Atlas-native univariate-forecasting runtime prediction result -- the schema named (but not implemented) by inference_bundle.v2's output_schema.result_schema_version (Project Spec S0245). Mirrors contracts/continuous-regression-result.schema.json's shape discipline: a governed identity plus an ordered multi-step forecast series and the frozen model_descriptor. Cross-field cardinality/order/finiteness/future-index rules that JSON Schema cannot express (len(forecast_points) == forecast_horizon, horizon_step sequence 1..H, future_time_index strictly progressing from forecast_origin) must be enforced separately by the runtime validator. Never includes an observed target, history rows, a residual, a confidence/prediction interval, training metrics, release metadata, or external-study metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "problem_type",
+    "forecast_origin",
+    "frequency",
+    "forecast_horizon",
+    "forecast_points",
+    "model_descriptor"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "univariate-forecasting-result.v1"
+    },
+    "problem_type": {
+      "type": "string",
+      "const": "univariate_forecasting"
+    },
+    "forecast_origin": {
+      "type": ["string", "integer"],
+      "description": "The last validated history time-index value the forecast was generated from. Never a boolean."
+    },
+    "frequency": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The governed logical frequency the forecast series advances by. Never a pandas/NumPy/statsmodels-specific alias vocabulary."
+    },
+    "forecast_horizon": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "forecast_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/forecast_point"
+      }
+    },
+    "model_descriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_family", "display_name"],
+      "properties": {
+        "model_family": {
+          "type": "string",
+          "const": "deterministic_seasonal_trend_ols"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Deterministic projection of model_family via a fixed code mapping. Never editable profile copy."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "forecast_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["horizon_step", "future_time_index", "forecast"],
+      "properties": {
+        "horizon_step": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "future_time_index": {
+          "type": ["string", "integer"],
+          "description": "Deterministic future time-index value, strictly after the forecast origin. Never a boolean."
+        },
+        "forecast": {
+          "type": "number",
+          "description": "Finite numeric forecast value. Never rounded, bucketed, or dataset-unit-labeled by this contract."
+        }
+      }
+    }
+  }
+}

@@ -15,6 +15,7 @@ from runtime.inference import (
     validate_binary_classification_result,
     validate_continuous_regression_result,
     validate_multiclass_classification_result,
+    validate_univariate_forecasting_result,
 )
 
 
@@ -32,6 +33,13 @@ _CONTINUOUS_REGRESSION_EXPECTED = (
     "continuous-regression-result-semantics.v1",
     "continuous_regression",
     "continuous-regression-result.v1",
+)
+# Project Spec S0246: the exact forecasting discriminator triple, routed only
+# to the canonical runtime forecasting-result validator.
+_FORECASTING_EXPECTED = (
+    "univariate-forecasting-result-semantics.v1",
+    "univariate_forecasting",
+    "univariate-forecasting-result.v1",
 )
 
 
@@ -64,6 +72,9 @@ def validate_inference_result(
     elif discriminator == _CONTINUOUS_REGRESSION_EXPECTED:
         expected_result_discriminator = _CONTINUOUS_REGRESSION_EXPECTED[1:]
         validator = validate_continuous_regression_result
+    elif discriminator == _FORECASTING_EXPECTED:
+        expected_result_discriminator = _FORECASTING_EXPECTED[1:]
+        validator = validate_univariate_forecasting_result
     else:
         raise _result_validation_failure()
 

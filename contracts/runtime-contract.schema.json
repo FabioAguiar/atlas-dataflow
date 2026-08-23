@@ -1,35 +1,200 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Atlas DataFlow Runtime Contract",
-  "description": "Minimum runtime contract schema for Atlas DataFlow. Defines the accepted inference features, their types, domain constraints, and schema version for a published dataset release. This is the source of truth for payload validation and inference. It does not contain public-facing rendering hints, UI labels, display ordering, or input type hints — those belong exclusively to the public contract (M4-02).",
-  "type": "object",
-  "required": ["schema_version", "features"],
-  "additionalProperties": false,
-  "properties": {
-    "schema_version": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "description": "Schema version identifier in MAJOR.MINOR.PATCH semantic version format (e.g., \"1.0.0\"). Required. Stable and explicit — not a timestamp, file hash, or implicit value. Used by M4-03 structural validation to detect version incompatibilities. The first cycle uses \"1.0.0\"."
-    },
-    "features": {
-      "type": "array",
-      "minItems": 1,
-      "description": "Non-empty list of accepted inference features. Each feature declares its identifier, type, optional payload presence requirement, optional domain constraints, and optional description.",
-      "items": {
-        "$ref": "#/definitions/feature"
+  "description": "Runtime contract schema family for Atlas DataFlow. Defines the accepted inference payload shape, types, domain constraints, and schema version for a published dataset release. This is the source of truth for payload validation and inference. It does not contain public-facing rendering hints, UI labels, display ordering, or input type hints -- those belong exclusively to the public contract (M4-02). Project Spec S0246 refactors this schema into a closed family keyed by schema_version: '1.0.0' (unchanged in meaning -- scalar-feature runtime contract) and '2.0.0' (new, strict, univariate-forecasting history-series runtime contract). A document must validate against exactly one branch; a document mixing 1.0.0 and 2.0.0 fields, or declaring an unknown schema_version, validates against neither and is rejected.",
+  "oneOf": [
+    { "$ref": "#/definitions/runtime_contract_v1" },
+    { "$ref": "#/definitions/runtime_contract_v2" }
+  ],
+  "definitions": {
+    "runtime_contract_v1": {
+      "type": "object",
+      "required": ["schema_version", "features"],
+      "additionalProperties": false,
+      "description": "The existing scalar-feature runtime contract, unchanged in meaning. schema_version is restricted to the 1.x major line so a document cannot ambiguously satisfy both this branch and runtime_contract_v2.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$",
+          "description": "Schema version identifier in MAJOR.MINOR.PATCH semantic version format (e.g., \"1.0.0\"). Required. Stable and explicit -- not a timestamp, file hash, or implicit value. Used by M4-03 structural validation to detect version incompatibilities. The first cycle uses \"1.0.0\"."
+        },
+        "features": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Non-empty list of accepted inference features. Each feature declares its identifier, type, optional payload presence requirement, optional domain constraints, and optional description.",
+          "items": {
+            "$ref": "#/definitions/feature"
+          }
+        },
+        "_example_note": {
+          "type": "string",
+          "description": "Optional annotation for example or demonstration artifacts only. Not used during payload validation or inference. Omit in production runtime contracts."
+        }
       }
     },
-    "_example_note": {
-      "type": "string",
-      "description": "Optional annotation for example or demonstration artifacts only. Not used during payload validation or inference. Omit in production runtime contracts."
-    }
-  },
-  "definitions": {
+    "runtime_contract_v2": {
+      "type": "object",
+      "required": ["schema_version", "problem_type", "payload_shape", "history_series", "forecast"],
+      "additionalProperties": false,
+      "description": "Project Spec S0246: strict univariate-forecasting history-series runtime contract branch. The single caller-supplied request body shape is one JSON object with exactly one container -- history_series.container_key -- an ordered non-empty array of rows carrying exactly the governed time-index and target fields. No source exogenous predictor columns and no caller-supplied forecast horizon are ever accepted. The runtime contract -- not the UI, not the caller -- owns index value kind, frequency, chronology rules, minimum frozen-training coverage, forecast horizon, and the no-user-horizon policy.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "2.0.0",
+          "description": "Fixed schema version identifier for the univariate-forecasting runtime contract branch."
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "univariate_forecasting",
+          "description": "Closed problem-type discriminator. Only 'univariate_forecasting' is governed by runtime contract 2.0.0."
+        },
+        "payload_shape": {
+          "type": "string",
+          "const": "history_series",
+          "description": "Closed payload-shape discriminator for this branch."
+        },
+        "history_series": {
+          "$ref": "#/definitions/runtime_history_series_v2"
+        },
+        "forecast": {
+          "$ref": "#/definitions/runtime_forecast_policy_v2"
+        }
+      }
+    },
+    "runtime_history_series_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container_key",
+        "time_index_field_name",
+        "target_field_name",
+        "index_value_kind",
+        "frequency",
+        "source_exogenous_predictors",
+        "row_field_policy",
+        "minimum_observation_count",
+        "minimum_history_required_through",
+        "ordering",
+        "uniqueness_required",
+        "frequency_contiguous_required",
+        "missing_time_index_allowed",
+        "missing_target_allowed",
+        "target_value_kind"
+      ],
+      "description": "Project Spec S0246: strict, reduced, immutable forecasting history-series input policy. Never carries raw history rows, the full expanding-window fold schedule, holdout targets, training metrics, or model coefficients.",
+      "properties": {
+        "container_key": {
+          "type": "string",
+          "const": "history",
+          "description": "The single, fixed top-level request-body container key for the history array."
+        },
+        "time_index_field_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single, exact governed time-index row key, sourced from the execution/preparation identity, never caller-authored."
+        },
+        "target_field_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single, exact governed target row key, sourced from the execution/preparation identity, never caller-authored."
+        },
+        "index_value_kind": {
+          "type": "string",
+          "enum": ["calendar_period", "timestamp", "ordinal_time"],
+          "description": "Governed kind of the temporal index's values."
+        },
+        "frequency": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Non-empty, dataset-specific authored logical frequency identifier. Never a pandas/NumPy/statsmodels-specific alias vocabulary."
+        },
+        "source_exogenous_predictors": {
+          "type": "string",
+          "const": "forbidden",
+          "description": "Fixed: this univariate forecasting runtime contract never accepts source exogenous predictor columns."
+        },
+        "row_field_policy": {
+          "type": "string",
+          "const": "exact_time_index_and_target",
+          "description": "Fixed: every history row must carry exactly the governed time-index and target keys, no more, no fewer."
+        },
+        "minimum_observation_count": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Positive integer minimum observation count. May be one for the first frozen-model generation if no stronger generic requirement is governed upstream; never confused with the model's training row count."
+        },
+        "minimum_history_required_through": {
+          "type": ["string", "integer"],
+          "description": "The authenticated development-partition end boundary the supplied history must reach, sourced from candidate-preparation-recipe.v2.partitions.development.end, never caller-authored."
+        },
+        "ordering": {
+          "type": "string",
+          "const": "strictly_increasing",
+          "description": "Fixed: history rows must be supplied in strictly increasing time-index order. The runtime never sorts, fills, or repairs malformed history."
+        },
+        "uniqueness_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "frequency_contiguous_required": {
+          "type": "boolean",
+          "const": true
+        },
+        "missing_time_index_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "missing_target_allowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "target_value_kind": {
+          "type": "string",
+          "const": "continuous_numeric",
+          "description": "Every history target value must be validated as a finite numeric value, independent of whether the current frozen model's coefficients actually depend on those values."
+        }
+      }
+    },
+    "runtime_forecast_policy_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "forecast_horizon",
+        "horizon_source",
+        "caller_overridable",
+        "forecast_origin_source",
+        "future_index_policy"
+      ],
+      "description": "Project Spec S0246: strict forecasting horizon policy. There is no request-body horizon field -- the caller never supplies or overrides the forecast horizon.",
+      "properties": {
+        "forecast_horizon": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Positive integer forecast horizon, sourced from execution_contract.v2, never caller-authored."
+        },
+        "horizon_source": {
+          "type": "string",
+          "const": "execution_contract.v2"
+        },
+        "caller_overridable": {
+          "type": "boolean",
+          "const": false
+        },
+        "forecast_origin_source": {
+          "type": "string",
+          "const": "last_validated_history_index"
+        },
+        "future_index_policy": {
+          "type": "string",
+          "const": "advance_by_governed_frequency"
+        }
+      }
+    },
     "feature": {
       "type": "object",
       "required": ["name", "type"],
       "additionalProperties": false,
-      "description": "A single accepted inference feature. Required fields: name, type. Optional fields: required (payload presence, defaults to true if absent), domain_constraints (value bounds — shape depends on type), description.",
+      "description": "A single accepted inference feature. Required fields: name, type. Optional fields: required (payload presence, defaults to true if absent), domain_constraints (value bounds -- shape depends on type), description.",
       "properties": {
         "name": {
           "type": "string",

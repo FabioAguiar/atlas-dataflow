@@ -1,33 +1,153 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Atlas DataFlow Public Contract",
-  "description": "Minimum public contract schema for Atlas DataFlow. Defines the safe projection of the runtime contract for the web experience. Carries field identifiers and form rendering hints while excluding all domain bounds, internal validation rules, and inference-specific constraints. This schema is the source of truth for guided form rendering only — canonical payload validation always happens against the runtime contract.",
-  "type": "object",
-  "required": ["schema_version", "features"],
-  "additionalProperties": false,
-  "properties": {
-    "schema_version": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "title": "Public Contract Schema Version",
-      "description": "Semantic version of the public contract schema structure in MAJOR.MINOR.PATCH format (e.g., \"1.0.0\"). Required. Independent from the runtime contract schema_version — each contract type versions its own schema structure separately. Used by M4-03 structural validation to detect version incompatibilities. The first cycle uses \"1.0.0\"."
-    },
-    "features": {
-      "type": "array",
-      "minItems": 1,
-      "title": "Public Contract Features",
-      "description": "Non-empty list of public contract features. Each feature is a projection of a runtime contract feature and carries only what the web experience needs for guided form rendering: a field identifier, a display label, an input type hint, an optional indicator, a display order, and an optional description. Domain bounds are never included.",
-      "items": {
-        "$ref": "#/definitions/public_feature"
+  "description": "Public contract schema family for Atlas DataFlow. Defines the safe projection of the runtime contract for the web experience. Carries field identifiers and form rendering hints while excluding all domain bounds, internal validation rules, and inference-specific constraints. This schema is the source of truth for guided form rendering only -- canonical payload validation always happens against the runtime contract. Project Spec S0246 refactors this schema into a closed family keyed by schema_version: '1.0.0' (unchanged in meaning -- scalar-widget public contract) and '2.0.0' (new, strict, univariate-forecasting safe history-series presentation branch). A document must validate against exactly one branch; a document mixing 1.0.0 and 2.0.0 fields, or declaring an unknown schema_version, validates against neither and is rejected.",
+  "oneOf": [
+    { "$ref": "#/definitions/public_contract_v1" },
+    { "$ref": "#/definitions/public_contract_v2" }
+  ],
+  "definitions": {
+    "public_contract_v1": {
+      "type": "object",
+      "required": ["schema_version", "features"],
+      "additionalProperties": false,
+      "description": "The existing scalar-widget public contract, unchanged in meaning. schema_version is restricted to the 1.x major line so a document cannot ambiguously satisfy both this branch and public_contract_v2.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^1\\.\\d+\\.\\d+$",
+          "title": "Public Contract Schema Version",
+          "description": "Semantic version of the public contract schema structure in MAJOR.MINOR.PATCH format (e.g., \"1.0.0\"). Required. Independent from the runtime contract schema_version -- each contract type versions its own schema structure separately. Used by M4-03 structural validation to detect version incompatibilities. The first cycle uses \"1.0.0\"."
+        },
+        "features": {
+          "type": "array",
+          "minItems": 1,
+          "title": "Public Contract Features",
+          "description": "Non-empty list of public contract features. Each feature is a projection of a runtime contract feature and carries only what the web experience needs for guided form rendering: a field identifier, a display label, an input type hint, an optional indicator, a display order, and an optional description. Domain bounds are never included.",
+          "items": {
+            "$ref": "#/definitions/public_feature"
+          }
+        },
+        "_example_note": {
+          "type": "string",
+          "title": "Example Annotation",
+          "description": "Optional annotation for demonstration artifacts only. Must not appear in a production public contract. Marks the document as a non-authoritative example that does not represent a specific real dataset."
+        }
       }
     },
-    "_example_note": {
-      "type": "string",
-      "title": "Example Annotation",
-      "description": "Optional annotation for demonstration artifacts only. Must not appear in a production public contract. Marks the document as a non-authoritative example that does not represent a specific real dataset."
-    }
-  },
-  "definitions": {
+    "public_contract_v2": {
+      "type": "object",
+      "required": ["schema_version", "problem_type", "input_kind", "history_series", "forecast"],
+      "additionalProperties": false,
+      "description": "Project Spec S0246: strict, safe forecasting presentation-guidance branch. Carries only safe field/rendering identities and the governed non-editable forecast horizon guidance. Never exposes model path/hash, model coefficients, training/holdout artifacts, the fold schedule, internal validation implementation, external study paths, or the runtime loader strategy. The runtime contract remains payload-validation authority.",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "2.0.0",
+          "description": "Fixed schema version identifier for the univariate-forecasting public contract branch."
+        },
+        "problem_type": {
+          "type": "string",
+          "const": "univariate_forecasting"
+        },
+        "input_kind": {
+          "type": "string",
+          "const": "history_series"
+        },
+        "history_series": {
+          "$ref": "#/definitions/public_history_series_v2"
+        },
+        "forecast": {
+          "$ref": "#/definitions/public_forecast_v2"
+        }
+      }
+    },
+    "public_history_series_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time_index_field", "target_field", "frequency"],
+      "properties": {
+        "time_index_field": {
+          "$ref": "#/definitions/public_temporal_field_v2"
+        },
+        "target_field": {
+          "$ref": "#/definitions/public_target_field_v2"
+        },
+        "frequency": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Safe, human-facing projection of the governed logical frequency. Presentation guidance only -- the runtime contract remains payload-validation authority."
+        }
+      }
+    },
+    "public_temporal_field_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "label", "value_kind", "display_order"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Projection rule CARRIED: carried directly from the runtime contract's history_series.time_index_field_name unchanged."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Projection rule FRESH: independently authored human-readable display label."
+        },
+        "value_kind": {
+          "type": "string",
+          "enum": ["calendar_period", "timestamp", "ordinal_time"],
+          "description": "Projection rule CARRIED: carried directly from the runtime contract's history_series.index_value_kind unchanged."
+        },
+        "display_order": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "public_target_field_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "label", "value_kind", "display_order"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Projection rule CARRIED: carried directly from the runtime contract's history_series.target_field_name unchanged."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Projection rule FRESH: independently authored human-readable display label."
+        },
+        "value_kind": {
+          "type": "string",
+          "const": "number"
+        },
+        "display_order": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "public_forecast_v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forecast_horizon", "horizon_user_editable"],
+      "properties": {
+        "forecast_horizon": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Projection rule CARRIED: carried directly from the runtime contract's forecast.forecast_horizon unchanged. Presentation guidance only."
+        },
+        "horizon_user_editable": {
+          "type": "boolean",
+          "const": false,
+          "description": "Fixed: the forecast horizon is never user-editable."
+        }
+      }
+    },
     "public_feature": {
       "type": "object",
       "required": ["name", "label", "input_type", "optional", "display_order"],
@@ -45,34 +165,34 @@
           "type": "string",
           "minLength": 1,
           "title": "Display Label",
-          "description": "Projection rule FRESH: label has no runtime contract equivalent and must be independently authored when producing the public contract. Intended as the human-readable display name for the form field shown to the user. Must not be derived from the runtime contract description field — description is documentation text; label is a concise form field display name."
+          "description": "Projection rule FRESH: label has no runtime contract equivalent and must be independently authored when producing the public contract. Intended as the human-readable display name for the form field shown to the user. Must not be derived from the runtime contract description field -- description is documentation text; label is a concise form field display name."
         },
         "input_type": {
           "type": "string",
           "enum": ["number", "select", "checkbox"],
           "title": "Input Type Hint",
-          "description": "Projection rule DERIVED: input_type is derived from the runtime feature type using the mapping numeric → 'number', categorical → 'select', boolean → 'checkbox'. This field is a form input widget descriptor only — it describes the expected widget class for rendering. It does not encode domain bounds or accepted value ranges. For 'select': indicates a choice input widget; safe rendering options for the widget, when available, are carried separately in the sibling options field — options is rendering guidance only and is never authoritative for payload validation, which always happens against the runtime contract. The runtime contract type field is not included in the public contract feature."
+          "description": "Projection rule DERIVED: input_type is derived from the runtime feature type using the mapping numeric -> 'number', categorical -> 'select', boolean -> 'checkbox'. This field is a form input widget descriptor only -- it describes the expected widget class for rendering. It does not encode domain bounds or accepted value ranges. For 'select': indicates a choice input widget; safe rendering options for the widget, when available, are carried separately in the sibling options field -- options is rendering guidance only and is never authoritative for payload validation, which always happens against the runtime contract. The runtime contract type field is not included in the public contract feature."
         },
         "optional": {
           "type": "boolean",
           "title": "Optional Indicator",
-          "description": "Projection rule INVERTED: optional is the boolean negation of the runtime contract feature required field. When the runtime feature required is true or absent (default is true), optional is false — the field is required in the form. When the runtime feature required is false, optional is true — the field may be left empty. This inversion makes form rendering semantics immediately readable: the web experience checks optional to determine whether to render the field as required or optional."
+          "description": "Projection rule INVERTED: optional is the boolean negation of the runtime contract feature required field. When the runtime feature required is true or absent (default is true), optional is false -- the field is required in the form. When the runtime feature required is false, optional is true -- the field may be left empty. This inversion makes form rendering semantics immediately readable: the web experience checks optional to determine whether to render the field as required or optional."
         },
         "display_order": {
           "type": "integer",
           "minimum": 1,
           "title": "Display Order",
-          "description": "Projection rule FRESH: display_order has no runtime contract equivalent and must be independently authored when producing the public contract. Positive integer indicating the relative rendering position of this feature in the form. Lower values are rendered first. Values should be unique within a public contract — duplicate values create ambiguous ordering. Uniqueness is not enforced structurally by this schema in the first cycle."
+          "description": "Projection rule FRESH: display_order has no runtime contract equivalent and must be independently authored when producing the public contract. Positive integer indicating the relative rendering position of this feature in the form. Lower values are rendered first. Values should be unique within a public contract -- duplicate values create ambiguous ordering. Uniqueness is not enforced structurally by this schema in the first cycle."
         },
         "description": {
           "type": "string",
           "title": "Feature Description",
-          "description": "Projection rule OPTIONAL-CARRIED: description is carried from the runtime contract feature.description if present. It is safe to expose — carries no domain constraints or validation semantics. It is plain documentation text and may be displayed by the web experience as supplementary field context. May be omitted when the runtime contract feature has no description."
+          "description": "Projection rule OPTIONAL-CARRIED: description is carried from the runtime contract feature.description if present. It is safe to expose -- carries no domain constraints or validation semantics. It is plain documentation text and may be displayed by the web experience as supplementary field context. May be omitted when the runtime contract feature has no description."
         },
         "options": {
           "type": "array",
           "title": "Safe Option Projection",
-          "description": "Projection rule OPTIONAL-DERIVED: present only for a categorical runtime feature (input_type 'select') whose domain_constraints.values or known_values is a non-empty list. Each entry is a minimal safe rendering option — a value identifier and a display label — derived from the runtime domain, never the runtime domain_constraints object itself. Must be entirely absent (not an empty array) when the runtime feature has no domain_constraints or an empty values/known_values list, giving the web experience a deterministic signal to fall back to an unguided input. This field is rendering guidance only; it is never authoritative for payload validation, which always happens against the runtime contract. Project Spec S0156: for an 'ignore_and_report' categorical feature, options remain rendering guidance and must never be presented as the complete accepted runtime domain.",
+          "description": "Projection rule OPTIONAL-DERIVED: present only for a categorical runtime feature (input_type 'select') whose domain_constraints.values or known_values is a non-empty list. Each entry is a minimal safe rendering option -- a value identifier and a display label -- derived from the runtime domain, never the runtime domain_constraints object itself. Must be entirely absent (not an empty array) when the runtime feature has no domain_constraints or an empty values/known_values list, giving the web experience a deterministic signal to fall back to an unguided input. This field is rendering guidance only; it is never authoritative for payload validation, which always happens against the runtime contract. Project Spec S0156: for an 'ignore_and_report' categorical feature, options remain rendering guidance and must never be presented as the complete accepted runtime domain.",
           "minItems": 1,
           "items": {
             "$ref": "#/definitions/public_feature_option"

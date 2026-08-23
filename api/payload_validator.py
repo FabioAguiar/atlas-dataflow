@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,12 +31,38 @@ DOMAIN_VIOLATION = "DOMAIN_VIOLATION"
 # failure, not a single-field domain bound).
 CONDITIONAL_BLANK_REJECTED = "CONDITIONAL_BLANK_REJECTED"
 
+# Project Spec S0246: closed forecasting history-series payload error
+# vocabulary. Distinct from the scalar-feature codes above so a forecasting
+# validation failure is never confused with a scalar-feature one.
+FORECASTING_UNKNOWN_TOP_LEVEL_FIELD = "FORECASTING_UNKNOWN_TOP_LEVEL_FIELD"
+FORECASTING_INVALID_HISTORY_SHAPE = "FORECASTING_INVALID_HISTORY_SHAPE"
+FORECASTING_INVALID_HISTORY_ROW = "FORECASTING_INVALID_HISTORY_ROW"
+FORECASTING_INVALID_TIME_INDEX = "FORECASTING_INVALID_TIME_INDEX"
+FORECASTING_INVALID_TARGET_VALUE = "FORECASTING_INVALID_TARGET_VALUE"
+FORECASTING_MINIMUM_HISTORY_NOT_MET = "FORECASTING_MINIMUM_HISTORY_NOT_MET"
+
 _MESSAGES = {
     MISSING_REQUIRED_FIELD: "A required field is missing from the inference payload.",
     TYPE_MISMATCH: "The value provided for this field is not the expected type.",
     DOMAIN_VIOLATION: "The value provided for this field is outside the accepted domain.",
     CONDITIONAL_BLANK_REJECTED: (
         "A blank value for this field is only accepted when its declared condition holds."
+    ),
+    FORECASTING_UNKNOWN_TOP_LEVEL_FIELD: (
+        "The inference payload must contain exactly the configured history container key."
+    ),
+    FORECASTING_INVALID_HISTORY_SHAPE: (
+        "The history value must be a non-empty ordered list of rows."
+    ),
+    FORECASTING_INVALID_HISTORY_ROW: (
+        "Each history row must be an object with exactly the governed time-index and target keys."
+    ),
+    FORECASTING_INVALID_TIME_INDEX: (
+        "History time-index values must be valid, unique, strictly increasing, and frequency-contiguous."
+    ),
+    FORECASTING_INVALID_TARGET_VALUE: "History target values must be finite numeric values.",
+    FORECASTING_MINIMUM_HISTORY_NOT_MET: (
+        "The supplied history does not reach the required minimum historical coverage."
     ),
 }
 
@@ -44,6 +71,12 @@ _VIOLATIONS = {
     TYPE_MISMATCH: "type_mismatch",
     DOMAIN_VIOLATION: "domain_violation",
     CONDITIONAL_BLANK_REJECTED: "conditional_blank_rejected",
+    FORECASTING_UNKNOWN_TOP_LEVEL_FIELD: "forecasting_unknown_top_level_field",
+    FORECASTING_INVALID_HISTORY_SHAPE: "forecasting_invalid_history_shape",
+    FORECASTING_INVALID_HISTORY_ROW: "forecasting_invalid_history_row",
+    FORECASTING_INVALID_TIME_INDEX: "forecasting_invalid_time_index",
+    FORECASTING_INVALID_TARGET_VALUE: "forecasting_invalid_target_value",
+    FORECASTING_MINIMUM_HISTORY_NOT_MET: "forecasting_minimum_history_not_met",
 }
 
 # Project Spec S0156: the sole non-fatal input observation code. An
@@ -244,15 +277,292 @@ def _apply_conditional_blank_normalization(
     return normalized, failures
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0246: forecasting history-series payload validation. Dispatch
+# happens only when the validated runtime contract declares the exact
+# forecasting v2 identity -- never inferred from the payload itself. Never
+# sorts, fills, interpolates, deduplicates, coerces an invalid horizon, or
+# invents periods.
+# ---------------------------------------------------------------------------
+
+# Bounded, dataset-neutral logical-frequency -> pandas frequency alias table.
+# The persisted runtime contract's `frequency` value is never a pandas alias
+# itself; this internal adapter is the only place that vocabulary is
+# consulted, and only to interpret calendar_period/timestamp history values.
+# A declared frequency absent from this table fails closed rather than
+# silently substituting a default cadence.
+_LOGICAL_FREQUENCY_ALIASES = {
+    "daily": "D",
+    "weekly": "W",
+    "monthly": "M",
+    "quarterly": "Q",
+    "annual": "A",
+    "yearly": "A",
+    "hourly": "H",
+}
+
+
+def _resolve_pandas_frequency_alias(frequency: Any) -> str | None:
+    if not isinstance(frequency, str):
+        return None
+    return _LOGICAL_FREQUENCY_ALIASES.get(frequency.strip().lower())
+
+
+def _resolve_history_series_block(runtime_contract: dict[str, Any]) -> dict[str, Any] | None:
+    """Returns the forecasting history_series/forecast blocks only when the
+    runtime contract declares the exact forecasting v2 identity; otherwise
+    None (dispatch falls back to scalar-feature validation)."""
+    if not isinstance(runtime_contract, dict):
+        return None
+    if runtime_contract.get("schema_version") != "2.0.0":
+        return None
+    if runtime_contract.get("problem_type") != "univariate_forecasting":
+        return None
+    if runtime_contract.get("payload_shape") != "history_series":
+        return None
+    history_series = runtime_contract.get("history_series")
+    forecast = runtime_contract.get("forecast")
+    if not isinstance(history_series, dict) or not isinstance(forecast, dict):
+        return None
+    return {"history_series": history_series, "forecast": forecast}
+
+
+def _parse_and_normalize_index_value(
+    value: Any, index_kind: str | None, pandas_freq_alias: str | None
+) -> tuple[Any, Any, bool]:
+    """Strictly parse one caller-supplied history row's time-index value.
+
+    Returns (comparable_parsed_value, canonical_normalized_value, ok). Only
+    ever accepts the exact JSON type the governed index kind requires --
+    never a caller-supplied string masquerading as an ordinal integer.
+    """
+    if index_kind == "ordinal_time":
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None, None, False
+        return value, value, True
+
+    if index_kind == "calendar_period":
+        if not isinstance(value, str) or not value.strip() or pandas_freq_alias is None:
+            return None, None, False
+        try:
+            import pandas as pd
+
+            period = pd.Period(value, freq=pandas_freq_alias)
+        except (ValueError, TypeError):
+            return None, None, False
+        return period, str(period), True
+
+    if index_kind == "timestamp":
+        if not isinstance(value, str) or not value.strip() or pandas_freq_alias is None:
+            return None, None, False
+        try:
+            import pandas as pd
+
+            timestamp = pd.Timestamp(value)
+        except (ValueError, TypeError):
+            return None, None, False
+        return timestamp, timestamp.isoformat(), True
+
+    return None, None, False
+
+
+def _parse_governed_boundary_value(
+    value: Any, index_kind: str | None, pandas_freq_alias: str | None
+) -> tuple[Any, bool]:
+    """Parse the runtime contract's own governed
+    `minimum_history_required_through` boundary value. Distinct from
+    `_parse_and_normalize_index_value` because this value is always
+    materialized by the trusted derivation pipeline (Project Spec S0246
+    Section B) as a reduced string boundary label -- including for
+    ordinal_time, where it is a digit string rather than a JSON integer --
+    never caller-supplied payload data."""
+    if index_kind == "ordinal_time":
+        if isinstance(value, bool):
+            return None, False
+        if isinstance(value, int):
+            return value, True
+        if isinstance(value, str) and value.strip():
+            try:
+                return int(value.strip()), True
+            except ValueError:
+                return None, False
+        return None, False
+
+    if index_kind in ("calendar_period", "timestamp"):
+        if not isinstance(value, str) or not value.strip() or pandas_freq_alias is None:
+            return None, False
+        try:
+            import pandas as pd
+
+            if index_kind == "calendar_period":
+                return pd.Period(value, freq=pandas_freq_alias), True
+            return pd.Timestamp(value), True
+        except (ValueError, TypeError):
+            return None, False
+
+    return None, False
+
+
+def _index_value_is_contiguous_successor(
+    previous_value: Any, current_value: Any, index_kind: str | None, pandas_freq_alias: str | None
+) -> bool:
+    """A single check that simultaneously enforces strict increase,
+    uniqueness, and frequency-contiguous stepping -- any duplicate,
+    out-of-order, or gapped pair fails this check."""
+    if index_kind == "ordinal_time":
+        return current_value - previous_value == 1
+    if index_kind == "calendar_period":
+        return current_value == previous_value + 1
+    if index_kind == "timestamp":
+        try:
+            import pandas as pd
+
+            offset = pd.tseries.frequencies.to_offset(pandas_freq_alias)
+        except (ValueError, TypeError):
+            return False
+        return previous_value + offset == current_value
+    return False
+
+
+def _validate_and_normalize_forecasting_payload(
+    payload: Any,
+    history_series: dict[str, Any],
+    forecast: dict[str, Any],
+) -> ValidationReport:
+    container_key = history_series.get("container_key") or "history"
+
+    if not isinstance(payload, dict):
+        return ValidationReport(
+            failures=[_failure(TYPE_MISMATCH, "payload")], normalized_payload={}, observations=[]
+        )
+
+    unexpected_keys = sorted(key for key in payload.keys() if key != container_key)
+    if unexpected_keys:
+        return ValidationReport(
+            failures=[_failure(FORECASTING_UNKNOWN_TOP_LEVEL_FIELD, unexpected_keys[0])],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+
+    if container_key not in payload:
+        return ValidationReport(
+            failures=[_failure(MISSING_REQUIRED_FIELD, container_key)],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+
+    history = payload[container_key]
+    minimum_observation_count = history_series.get("minimum_observation_count")
+    if not isinstance(history, list) or len(history) == 0:
+        return ValidationReport(
+            failures=[_failure(FORECASTING_INVALID_HISTORY_SHAPE, container_key)],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+    if isinstance(minimum_observation_count, int) and len(history) < minimum_observation_count:
+        return ValidationReport(
+            failures=[_failure(FORECASTING_INVALID_HISTORY_SHAPE, container_key)],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+
+    time_field = history_series.get("time_index_field_name")
+    target_field = history_series.get("target_field_name")
+    index_kind = history_series.get("index_value_kind")
+    frequency = history_series.get("frequency")
+    expected_keys = {time_field, target_field}
+
+    pandas_freq_alias = (
+        _resolve_pandas_frequency_alias(frequency) if index_kind != "ordinal_time" else None
+    )
+    if index_kind in ("calendar_period", "timestamp") and pandas_freq_alias is None:
+        return ValidationReport(
+            failures=[_failure(FORECASTING_INVALID_TIME_INDEX, f"{container_key}.frequency")],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+
+    normalized_rows: list[dict[str, Any]] = []
+    parsed_index_values: list[Any] = []
+    for row_index, row in enumerate(history):
+        field_path = f"{container_key}[{row_index}]"
+        if not isinstance(row, dict) or set(row.keys()) != expected_keys:
+            return ValidationReport(
+                failures=[_failure(FORECASTING_INVALID_HISTORY_ROW, field_path)],
+                normalized_payload=dict(payload),
+                observations=[],
+            )
+
+        target_value = row[target_field]
+        if (
+            isinstance(target_value, bool)
+            or not isinstance(target_value, (int, float))
+            or not math.isfinite(target_value)
+        ):
+            return ValidationReport(
+                failures=[_failure(FORECASTING_INVALID_TARGET_VALUE, f"{field_path}.{target_field}")],
+                normalized_payload=dict(payload),
+                observations=[],
+            )
+
+        raw_time_value = row[time_field]
+        parsed_time_value, normalized_time_value, ok = _parse_and_normalize_index_value(
+            raw_time_value, index_kind, pandas_freq_alias
+        )
+        if not ok:
+            return ValidationReport(
+                failures=[_failure(FORECASTING_INVALID_TIME_INDEX, f"{field_path}.{time_field}")],
+                normalized_payload=dict(payload),
+                observations=[],
+            )
+
+        parsed_index_values.append(parsed_time_value)
+        normalized_rows.append({time_field: normalized_time_value, target_field: target_value})
+
+    for row_index in range(1, len(parsed_index_values)):
+        previous_value = parsed_index_values[row_index - 1]
+        current_value = parsed_index_values[row_index]
+        if not _index_value_is_contiguous_successor(previous_value, current_value, index_kind, pandas_freq_alias):
+            return ValidationReport(
+                failures=[_failure(FORECASTING_INVALID_TIME_INDEX, f"{container_key}[{row_index}].{time_field}")],
+                normalized_payload=dict(payload),
+                observations=[],
+            )
+
+    minimum_boundary_raw = history_series.get("minimum_history_required_through")
+    minimum_boundary_parsed, boundary_ok = _parse_governed_boundary_value(
+        minimum_boundary_raw, index_kind, pandas_freq_alias
+    )
+    last_parsed_value = parsed_index_values[-1]
+    if not boundary_ok or last_parsed_value < minimum_boundary_parsed:
+        return ValidationReport(
+            failures=[_failure(FORECASTING_MINIMUM_HISTORY_NOT_MET, container_key)],
+            normalized_payload=dict(payload),
+            observations=[],
+        )
+
+    return ValidationReport(
+        failures=[], normalized_payload={container_key: normalized_rows}, observations=[]
+    )
+
+
 def validate_and_normalize_payload(
     payload: dict[str, Any],
     runtime_contract: dict[str, Any],
 ) -> ValidationReport:
     """
     Validate and normalize an inference payload against the active-release
-    runtime contract (Project Spec S0156).
+    runtime contract (Project Spec S0156; Project Spec S0246 forecasting
+    dispatch).
 
-    Processing order:
+    Project Spec S0246: forecasting history-series validation is dispatched
+    first, only when the validated runtime contract declares the exact
+    forecasting v2 identity (`schema_version` "2.0.0",
+    `problem_type` "univariate_forecasting", `payload_shape` "history_series").
+    Every other runtime contract falls through unchanged to the historical
+    scalar-feature processing below.
+
+    Scalar-feature processing order:
       1. contract feature-map validation
       2. required-key presence
       3. conditional blank normalization for explicitly declared policies
@@ -263,6 +573,12 @@ def validate_and_normalize_payload(
 
     Never mutates `payload` -- `normalized_payload` is always a fresh dict.
     """
+    forecasting_blocks = _resolve_history_series_block(runtime_contract)
+    if forecasting_blocks is not None:
+        return _validate_and_normalize_forecasting_payload(
+            payload, forecasting_blocks["history_series"], forecasting_blocks["forecast"]
+        )
+
     features = _feature_map(runtime_contract)
 
     missing_required = [

@@ -46,6 +46,14 @@ _RELEASE_ROOT_KEYS = (
 # strategy's loading behavior.
 JOBLIB_SKLEARN_PREDICT_STRATEGY = "joblib_sklearn_predict"
 
+# Project Spec S0246 Section K: the single bounded forecasting loader-strategy
+# identity. The actual trusted deserializer reuses load_joblib_sklearn_model
+# below (below the serialization format remains joblib and the model is
+# Atlas-owned) -- api/main.py registers this identity against that same
+# function in its controlled loader allowlist. No dynamic module/class import
+# mechanism is introduced.
+JOBLIB_SKLEARN_FORECASTING_ADAPTER_STRATEGY = "joblib_sklearn_forecasting_adapter"
+
 # S0151/S0152: the closed runtime diagnostic vocabulary. Every diagnostic_code
 # ever attached to an InferenceRuntimeError (or left unset -- meaning
 # "unclassified, generic fallback") is one of these eight values. Callers
@@ -146,6 +154,35 @@ _MULTICLASS_CLASSIFICATION_RESULT_SCHEMA_PATH = (
 _CONTINUOUS_REGRESSION_RESULT_SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent / "contracts" / "continuous-regression-result.schema.json"
 )
+
+# Project Spec S0246: deterministic, repository-local resolution for the
+# persisted univariate-forecasting-result.v1 schema. Mirrors
+# _CONTINUOUS_REGRESSION_RESULT_SCHEMA_PATH.
+_UNIVARIATE_FORECASTING_RESULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parent.parent / "contracts" / "univariate-forecasting-result.schema.json"
+)
+
+# Project Spec S0246: the closed forecasting bundle/result identities. Never
+# dataset-specific, never an unconstrained string.
+_FORECASTING_MODEL_FAMILY = "deterministic_seasonal_trend_ols"
+_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION = "univariate-forecasting-result-semantics.v1"
+_FORECASTING_RESULT_SCHEMA_VERSION = "univariate-forecasting-result.v1"
+_FORECASTING_PROBLEM_TYPE = "univariate_forecasting"
+
+# Bounded, dataset-neutral logical-frequency -> pandas frequency alias table.
+# Mirrors api/payload_validator.py's identically-named table -- api/ and
+# runtime/ are separate architectural layers and each stays self-contained
+# rather than introducing a new cross-layer dependency for this small,
+# stable, bounded mapping.
+_FORECASTING_LOGICAL_FREQUENCY_ALIASES = {
+    "daily": "D",
+    "weekly": "W",
+    "monthly": "M",
+    "quarterly": "Q",
+    "annual": "A",
+    "yearly": "A",
+    "hourly": "H",
+}
 
 # In-memory JSON Schema for binary-classification-result.v1. Deliberately not
 # persisted as contracts/binary-classification-result.schema.json: that path
@@ -456,6 +493,7 @@ def execute_prediction(
     compatibility_status: Mapping[str, Any] | None = None,
     prediction_executor: PredictionExecutor | None = None,
     runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None = None,
+    runtime_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load the active release bundle and execute prediction.
 
@@ -486,6 +524,12 @@ def execute_prediction(
     be materialized as a missing sentinel (contractually optional) or must be
     classified as a runtime input-contract inconsistency. It has no effect on
     the legacy generic/``prediction_executor`` path.
+
+    Project Spec S0246: ``runtime_contract`` is the already-loaded, already
+    payload-validated-against runtime contract, threaded through only so the
+    forecasting execution path (``_execute_forecasting_prediction``) can
+    perform its required defense-in-depth bundle/runtime cross-checks before
+    prediction. Every other variant ignores it, unchanged.
     """
 
     adapter = load_runtime_bundle_adapter(
@@ -501,7 +545,7 @@ def execute_prediction(
     if loader_strategies is not None and prediction_executor is None:
         return {
             "result": _execute_governed_prediction(
-                adapter, validated_payload, runtime_feature_metadata
+                adapter, validated_payload, runtime_feature_metadata, runtime_contract
             )
         }
 
@@ -718,8 +762,10 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
             semantics = _validate_binary_result_semantics(declaration)
         elif variant == "multiclass":
             semantics = _validate_multiclass_result_semantics(declaration)
-        else:
+        elif variant == "continuous_regression":
             semantics = _validate_continuous_regression_result_semantics(declaration)
+        else:
+            semantics = _validate_forecasting_result_semantics(declaration)
     except BundleValidationError:
         return {"status": "unavailable", "reason": "binary_result_semantics_unavailable"}
 
@@ -757,6 +803,19 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
             },
         }
 
+    if variant == "continuous_regression":
+        return {
+            "status": "available",
+            "semantics": {
+                "schema_version": semantics["schema_version"],
+                "problem_type": semantics["problem_type"],
+                "result_schema_version": semantics["result_schema_version"],
+                "primary_output": semantics["primary_output"],
+                "output_value_kind": semantics["output_value_kind"],
+                "model_descriptor": dict(semantics["model_descriptor"]),
+            },
+        }
+
     return {
         "status": "available",
         "semantics": {
@@ -764,7 +823,9 @@ def project_result_contract(declaration: Mapping[str, Any]) -> dict[str, Any]:
             "problem_type": semantics["problem_type"],
             "result_schema_version": semantics["result_schema_version"],
             "primary_output": semantics["primary_output"],
-            "output_value_kind": semantics["output_value_kind"],
+            "output_structure": semantics["output_structure"],
+            "forecast_value_kind": semantics["forecast_value_kind"],
+            "forecast_count_source": semantics["forecast_count_source"],
             "model_descriptor": dict(semantics["model_descriptor"]),
         },
     }
@@ -1232,7 +1293,25 @@ def _validate_compatibility_reference(
         )
 
 
+def _forecasting_model_artifact_mapping(declaration: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Project Spec S0246 Section J: inference_bundle.v2 stores its model
+    artifact under frozen_model.model_artifact rather than the historical
+    top-level model_artifact. No fallback to the v1 location is ever
+    performed for a v2-declared bundle -- a malformed/missing frozen_model
+    block simply yields no artifact."""
+    frozen_model = declaration.get("frozen_model")
+    if not isinstance(frozen_model, Mapping):
+        return None
+    model_artifact = frozen_model.get("model_artifact")
+    return model_artifact if isinstance(model_artifact, Mapping) else None
+
+
 def _model_artifact_reference(declaration: Mapping[str, Any]) -> str | None:
+    if declaration.get("contract_version") == "inference_bundle.v2":
+        model_artifact = _forecasting_model_artifact_mapping(declaration)
+        if isinstance(model_artifact, Mapping):
+            return _first_string_value(model_artifact, _REFERENCE_KEYS)
+        return None
     model_artifact = declaration.get("model_artifact")
     if isinstance(model_artifact, Mapping):
         return _first_string_value(model_artifact, _REFERENCE_KEYS)
@@ -1254,7 +1333,10 @@ def _verify_model_artifact_hash(model_artifact_path: Path, declaration: Mapping[
 
 
 def _model_artifact_sha256(declaration: Mapping[str, Any]) -> str | None:
-    model_artifact = declaration.get("model_artifact")
+    if declaration.get("contract_version") == "inference_bundle.v2":
+        model_artifact = _forecasting_model_artifact_mapping(declaration)
+    else:
+        model_artifact = declaration.get("model_artifact")
     if not isinstance(model_artifact, Mapping):
         return None
     value = model_artifact.get("sha256")
@@ -1368,17 +1450,19 @@ def _is_string_sequence(value: Any) -> bool:
 
 
 def _resolve_result_semantics_variant(declaration: Mapping[str, Any]) -> str:
-    """Project Spec S0210/S0226: closed result-semantics dispatch resolver.
+    """Project Spec S0210/S0226/S0246: closed result-semantics dispatch resolver.
 
     Dispatches only from the governed discriminator pairs declared on
     ``result_semantics`` itself (``binary-result-semantics.v1`` +
     ``binary_classification``, ``multiclass-result-semantics.v1`` +
-    ``multiclass_classification``, or
-    ``continuous-regression-result-semantics.v1`` + ``continuous_regression``)
-    -- never from dataset slug, number of classes, model family alone,
-    output prediction type alone, or feature names. Unknown/malformed
-    semantics fail closed with ``BundleValidationError`` rather than
-    returning an unrecognized variant string.
+    ``multiclass_classification``,
+    ``continuous-regression-result-semantics.v1`` + ``continuous_regression``,
+    or ``univariate-forecasting-result-semantics.v1`` +
+    ``univariate_forecasting``) -- never from dataset slug, number of
+    classes, model family alone, output prediction type alone, or feature
+    names. Unknown/malformed/mixed semantics fail closed with
+    ``BundleValidationError`` rather than returning an unrecognized variant
+    string. There are exactly four governed families.
     """
 
     semantics = declaration.get("result_semantics")
@@ -1400,6 +1484,11 @@ def _resolve_result_semantics_variant(declaration: Mapping[str, Any]) -> str:
         and problem_type == "continuous_regression"
     ):
         return "continuous_regression"
+    if (
+        schema_version == _FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION
+        and problem_type == _FORECASTING_PROBLEM_TYPE
+    ):
+        return "forecasting"
 
     raise BundleValidationError(
         "unsupported_result_semantics_variant",
@@ -1412,13 +1501,16 @@ def _execute_governed_prediction(
     adapter: RuntimeBundleAdapter,
     validated_payload: Mapping[str, Any],
     runtime_feature_metadata: Mapping[str, Mapping[str, Any]] | None,
+    runtime_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Project Spec S0210/S0226: closed governed production execution dispatch.
+    """Project Spec S0210/S0226/S0246: closed governed production execution dispatch.
 
     binary semantics -> the existing, unchanged ``_execute_binary_prediction``.
     multiclass semantics -> ``_execute_multiclass_prediction``.
-    continuous_regression semantics -> the new
-    ``_execute_continuous_regression_prediction``.
+    continuous_regression semantics -> ``_execute_continuous_regression_prediction``.
+    forecasting semantics -> the new ``_execute_forecasting_prediction``, the
+    only variant that consults ``runtime_contract`` (for its defense-in-depth
+    bundle/runtime cross-checks) -- every other variant ignores it, unchanged.
     Unknown semantics fail closed via ``_resolve_result_semantics_variant``
     raising before any branch is reached; an explicit else still fails
     closed rather than falling through to an implicit family selector.
@@ -1433,6 +1525,8 @@ def _execute_governed_prediction(
         return _execute_continuous_regression_prediction(
             adapter, validated_payload, runtime_feature_metadata
         )
+    if variant == "forecasting":
+        return _execute_forecasting_prediction(adapter, validated_payload, runtime_contract)
 
     raise BundleValidationError(
         "unsupported_result_semantics_variant",
@@ -2411,6 +2505,768 @@ def _validate_probabilities(proba_row: Sequence[Any], *, expected_count: int) ->
         )
 
     return values
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0246: Atlas-native univariate forecasting execution. Mirrors
+# the S0244 deterministic_seasonal_trend_ols design-matrix construction
+# (pipeline/training.py's _deterministic_seasonal_trend_design_matrix)
+# without importing pipeline.training into the API/runtime layer -- the
+# runtime implementation stays self-contained and deterministic.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_forecasting_pandas_frequency_alias(frequency: Any) -> str | None:
+    if not isinstance(frequency, str):
+        return None
+    return _FORECASTING_LOGICAL_FREQUENCY_ALIASES.get(frequency.strip().lower())
+
+
+def _forecasting_parse_index_value(
+    value: Any, index_kind: str | None, pandas_freq_alias: str | None
+) -> tuple[Any, bool]:
+    """Parse an already-normalized (payload-validator-canonicalized) history
+    row time-index value, or a governed frozen_model.training_scope.end
+    boundary string, into a comparable representation. Distinct from
+    api/payload_validator.py's caller-facing strict JSON-type parser -- this
+    accepts the runtime-internal digit-string convention preparation/training
+    artifacts use for an ordinal_time boundary label."""
+    if index_kind == "ordinal_time":
+        if isinstance(value, bool):
+            return None, False
+        if isinstance(value, int):
+            return value, True
+        if isinstance(value, str) and value.strip():
+            try:
+                return int(value.strip()), True
+            except ValueError:
+                return None, False
+        return None, False
+
+    if index_kind in ("calendar_period", "timestamp"):
+        if not isinstance(value, str) or not value.strip() or pandas_freq_alias is None:
+            return None, False
+        try:
+            import pandas as pd
+
+            if index_kind == "calendar_period":
+                return pd.Period(value, freq=pandas_freq_alias), True
+            return pd.Timestamp(value), True
+        except (ValueError, TypeError):
+            return None, False
+
+    return None, False
+
+
+def _forecasting_advance_index_value(
+    parsed_value: Any, steps: int, index_kind: str | None, pandas_freq_alias: str | None
+) -> Any:
+    """Return the canonical serialized future index value ``steps`` governed
+    -frequency steps after ``parsed_value`` (a value already returned by
+    ``_forecasting_parse_index_value``)."""
+    if index_kind == "ordinal_time":
+        return parsed_value + steps
+    if index_kind == "calendar_period":
+        return str(parsed_value + steps)
+    if index_kind == "timestamp":
+        import pandas as pd
+
+        offset = pd.tseries.frequencies.to_offset(pandas_freq_alias)
+        result = parsed_value
+        for _ in range(steps):
+            result = result + offset
+        return result.isoformat()
+    raise ValueError("unsupported forecasting index kind")
+
+
+def _deterministic_seasonal_trend_design_row(
+    position: int, seasonal_period: int, reference_season_position: int
+) -> list[float]:
+    """Mirrors pipeline/training.py's
+    ``_deterministic_seasonal_trend_design_matrix`` row construction exactly:
+    intercept, linear observation-order trend, and additive seasonal
+    indicator columns for every season except reference_season_position.
+    ``position`` is the absolute 0-indexed row position from the frozen
+    development series' first observation (trend_origin=development_start)."""
+    row = [1.0, float(position)]
+    season = position % seasonal_period
+    for candidate_season in range(seasonal_period):
+        if candidate_season == reference_season_position:
+            continue
+        row.append(1.0 if season == candidate_season else 0.0)
+    return row
+
+
+def _validate_forecasting_result_semantics(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """Strictly validate the S0245 forecasting result_semantics/output_schema
+    blocks (declaration-only -- never loads the model, never requires a
+    runtime contract). Used by the read-only ``project_result_contract`` and
+    as the first stage of ``_validate_forecasting_bundle_for_execution``.
+    Never invents defaults."""
+
+    if declaration.get("contract_version") != "inference_bundle.v2":
+        raise BundleValidationError(
+            "invalid_bundle_contract_version",
+            "Forecasting result semantics require an inference_bundle.v2 declaration.",
+            field="contract_version",
+        )
+
+    semantics = declaration.get("result_semantics")
+    if not isinstance(semantics, Mapping):
+        raise BundleValidationError(
+            "missing_result_semantics",
+            "Inference bundle forecasting result semantics are not defined.",
+            field="result_semantics",
+        )
+    if semantics.get("schema_version") != _FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise BundleValidationError(
+            "invalid_result_semantics_schema_version",
+            "Inference bundle result semantics schema version is unsupported.",
+            field="result_semantics.schema_version",
+        )
+    if semantics.get("problem_type") != _FORECASTING_PROBLEM_TYPE:
+        raise BundleValidationError(
+            "invalid_result_semantics_problem_type",
+            "Inference bundle problem type is not univariate forecasting.",
+            field="result_semantics.problem_type",
+        )
+    if semantics.get("result_schema_version") != _FORECASTING_RESULT_SCHEMA_VERSION:
+        raise BundleValidationError(
+            "invalid_result_semantics_result_schema_version",
+            "Inference bundle result schema version is unsupported.",
+            field="result_semantics.result_schema_version",
+        )
+    if semantics.get("primary_output") != "forecast_series":
+        raise BundleValidationError(
+            "invalid_result_semantics_primary_output",
+            "Inference bundle primary output is not forecast_series.",
+            field="result_semantics.primary_output",
+        )
+    if semantics.get("output_structure") != "ordered_forecast_points":
+        raise BundleValidationError(
+            "invalid_result_semantics_output_structure",
+            "Inference bundle output structure is invalid.",
+            field="result_semantics.output_structure",
+        )
+    if semantics.get("forecast_value_kind") != "continuous_numeric":
+        raise BundleValidationError(
+            "invalid_result_semantics_forecast_value_kind",
+            "Inference bundle forecast value kind is invalid.",
+            field="result_semantics.forecast_value_kind",
+        )
+    if semantics.get("forecast_count_source") != "forecast_horizon":
+        raise BundleValidationError(
+            "invalid_result_semantics_forecast_count_source",
+            "Inference bundle forecast count source is invalid.",
+            field="result_semantics.forecast_count_source",
+        )
+
+    model_descriptor = semantics.get("model_descriptor")
+    if not isinstance(model_descriptor, Mapping) or model_descriptor.get("model_family") != _FORECASTING_MODEL_FAMILY:
+        raise BundleValidationError(
+            "invalid_model_family",
+            "Inference bundle model family is invalid.",
+            field="result_semantics.model_descriptor.model_family",
+        )
+    display_name = model_descriptor.get("display_name")
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise BundleValidationError(
+            "invalid_model_display_name",
+            "Inference bundle model display name is not defined.",
+            field="result_semantics.model_descriptor.display_name",
+        )
+
+    output_schema = declaration.get("output_schema")
+    if not isinstance(output_schema, Mapping):
+        raise BundleValidationError(
+            "missing_output_schema",
+            "Inference bundle output schema is not defined.",
+            field="output_schema",
+        )
+    if output_schema.get("result_schema_version") != _FORECASTING_RESULT_SCHEMA_VERSION:
+        raise BundleValidationError(
+            "invalid_output_schema_result_schema_version",
+            "Inference bundle output schema result schema version is invalid.",
+            field="output_schema.result_schema_version",
+        )
+    if output_schema.get("primary_output") != "forecast_series":
+        raise BundleValidationError(
+            "invalid_output_schema_primary_output",
+            "Inference bundle output schema primary output is invalid.",
+            field="output_schema.primary_output",
+        )
+    if output_schema.get("output_structure") != "ordered_forecast_points":
+        raise BundleValidationError(
+            "invalid_output_schema_output_structure",
+            "Inference bundle output schema output structure is invalid.",
+            field="output_schema.output_structure",
+        )
+    if output_schema.get("forecast_value_kind") != "continuous_numeric":
+        raise BundleValidationError(
+            "invalid_output_schema_forecast_value_kind",
+            "Inference bundle output schema forecast value kind is invalid.",
+            field="output_schema.forecast_value_kind",
+        )
+    if output_schema.get("forecast_count_source") != "frozen_model.temporal_identity.forecast_horizon":
+        raise BundleValidationError(
+            "invalid_output_schema_forecast_count_source",
+            "Inference bundle output schema forecast count source is invalid.",
+            field="output_schema.forecast_count_source",
+        )
+
+    return {
+        "schema_version": semantics["schema_version"],
+        "problem_type": semantics["problem_type"],
+        "result_schema_version": semantics["result_schema_version"],
+        "primary_output": semantics["primary_output"],
+        "output_structure": semantics["output_structure"],
+        "forecast_value_kind": semantics["forecast_value_kind"],
+        "forecast_count_source": semantics["forecast_count_source"],
+        "model_descriptor": {"model_family": _FORECASTING_MODEL_FAMILY, "display_name": display_name},
+    }
+
+
+def _validate_forecasting_bundle_for_execution(
+    declaration: Mapping[str, Any], runtime_contract: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """Project Spec S0246 Section M: strict forecasting bundle/runtime-
+    contract cross-artifact validation, required before any prediction is
+    executed. A mismatch fails before prediction. Never invents defaults."""
+
+    result_semantics = _validate_forecasting_result_semantics(declaration)
+
+    runtime_execution = declaration.get("runtime_execution")
+    if not isinstance(runtime_execution, Mapping):
+        raise BundleValidationError(
+            "missing_runtime_execution",
+            "Inference bundle runtime execution metadata is not defined.",
+            field="runtime_execution",
+        )
+    if runtime_execution.get("execution_strategy") != "in_process":
+        raise BundleValidationError(
+            "invalid_forecasting_execution_strategy",
+            "Forecasting runtime execution strategy must be in_process.",
+            field="runtime_execution.execution_strategy",
+        )
+    if runtime_execution.get("serialization_format") != "joblib":
+        raise BundleValidationError(
+            "invalid_forecasting_serialization_format",
+            "Forecasting serialization format must be joblib.",
+            field="runtime_execution.serialization_format",
+        )
+    if runtime_execution.get("loader_strategy") != JOBLIB_SKLEARN_FORECASTING_ADAPTER_STRATEGY:
+        raise BundleValidationError(
+            "invalid_forecasting_loader_strategy",
+            "Forecasting loader strategy is invalid.",
+            field="runtime_execution.loader_strategy",
+        )
+    if runtime_execution.get("prediction_interface") != "forecast_series":
+        raise BundleValidationError(
+            "invalid_forecasting_prediction_interface",
+            "Forecasting prediction interface must be forecast_series.",
+            field="runtime_execution.prediction_interface",
+        )
+    if runtime_execution.get("model_family") != _FORECASTING_MODEL_FAMILY:
+        raise BundleValidationError(
+            "invalid_forecasting_model_family",
+            "Forecasting runtime execution model family is invalid.",
+            field="runtime_execution.model_family",
+        )
+
+    frozen_model = declaration.get("frozen_model")
+    if not isinstance(frozen_model, Mapping):
+        raise BundleValidationError(
+            "missing_frozen_model",
+            "Inference bundle frozen model is not defined.",
+            field="frozen_model",
+        )
+    if frozen_model.get("state") != "frozen":
+        raise BundleValidationError(
+            "invalid_frozen_model_state",
+            "Inference bundle frozen model state must be frozen.",
+            field="frozen_model.state",
+        )
+    if frozen_model.get("model_family") != _FORECASTING_MODEL_FAMILY:
+        raise BundleValidationError(
+            "invalid_frozen_model_family",
+            "Inference bundle frozen model family is invalid.",
+            field="frozen_model.model_family",
+        )
+
+    fixed_model_configuration = frozen_model.get("fixed_model_configuration")
+    if not isinstance(fixed_model_configuration, Mapping):
+        raise BundleValidationError(
+            "missing_fixed_model_configuration",
+            "Inference bundle frozen model fixed configuration is not defined.",
+            field="frozen_model.fixed_model_configuration",
+        )
+    seasonal_period = fixed_model_configuration.get("seasonal_period")
+    reference_season_position = fixed_model_configuration.get("reference_season_position")
+    if (
+        not isinstance(seasonal_period, int)
+        or isinstance(seasonal_period, bool)
+        or seasonal_period <= 0
+        or not isinstance(reference_season_position, int)
+        or isinstance(reference_season_position, bool)
+        or reference_season_position < 0
+        or reference_season_position >= seasonal_period
+    ):
+        raise BundleValidationError(
+            "invalid_fixed_model_configuration",
+            "Inference bundle frozen model seasonal configuration is invalid.",
+            field="frozen_model.fixed_model_configuration",
+        )
+    if fixed_model_configuration.get("include_intercept") is not True:
+        raise BundleValidationError(
+            "invalid_fixed_model_configuration",
+            "Inference bundle frozen model must include an intercept.",
+            field="frozen_model.fixed_model_configuration.include_intercept",
+        )
+    if fixed_model_configuration.get("linear_time_trend") is not True:
+        raise BundleValidationError(
+            "invalid_fixed_model_configuration",
+            "Inference bundle frozen model must declare a linear time trend.",
+            field="frozen_model.fixed_model_configuration.linear_time_trend",
+        )
+    if fixed_model_configuration.get("seasonal_effects") != "additive_indicators":
+        raise BundleValidationError(
+            "invalid_fixed_model_configuration",
+            "Inference bundle frozen model seasonal effects are invalid.",
+            field="frozen_model.fixed_model_configuration.seasonal_effects",
+        )
+    if fixed_model_configuration.get("trend_origin") != "development_start":
+        raise BundleValidationError(
+            "invalid_fixed_model_configuration",
+            "Inference bundle frozen model trend origin is invalid.",
+            field="frozen_model.fixed_model_configuration.trend_origin",
+        )
+
+    temporal_identity = frozen_model.get("temporal_identity")
+    if not isinstance(temporal_identity, Mapping):
+        raise BundleValidationError(
+            "missing_temporal_identity",
+            "Inference bundle frozen model temporal identity is not defined.",
+            field="frozen_model.temporal_identity",
+        )
+    target_column = temporal_identity.get("target_column")
+    time_index_column = temporal_identity.get("time_index_column")
+    index_value_kind = temporal_identity.get("index_value_kind")
+    frequency = temporal_identity.get("frequency")
+    forecast_horizon = temporal_identity.get("forecast_horizon")
+    if (
+        not isinstance(target_column, str)
+        or not target_column
+        or not isinstance(time_index_column, str)
+        or not time_index_column
+        or index_value_kind not in ("calendar_period", "timestamp", "ordinal_time")
+        or not isinstance(frequency, str)
+        or not frequency
+        or not isinstance(forecast_horizon, int)
+        or isinstance(forecast_horizon, bool)
+        or forecast_horizon <= 0
+    ):
+        raise BundleValidationError(
+            "invalid_temporal_identity",
+            "Inference bundle frozen model temporal identity is invalid.",
+            field="frozen_model.temporal_identity",
+        )
+    if temporal_identity.get("source_exogenous_predictors") != "forbidden":
+        raise BundleValidationError(
+            "invalid_temporal_identity",
+            "Inference bundle source exogenous predictors must be forbidden.",
+            field="frozen_model.temporal_identity.source_exogenous_predictors",
+        )
+
+    training_scope = frozen_model.get("training_scope")
+    if not isinstance(training_scope, Mapping):
+        raise BundleValidationError(
+            "missing_training_scope",
+            "Inference bundle frozen model training scope is not defined.",
+            field="frozen_model.training_scope",
+        )
+    training_scope_end = training_scope.get("end")
+    observation_count = training_scope.get("observation_count")
+    if (
+        not isinstance(training_scope_end, str)
+        or not training_scope_end
+        or not isinstance(observation_count, int)
+        or isinstance(observation_count, bool)
+        or observation_count <= 0
+    ):
+        raise BundleValidationError(
+            "invalid_training_scope",
+            "Inference bundle frozen model training scope is invalid.",
+            field="frozen_model.training_scope",
+        )
+
+    finalization = frozen_model.get("finalization")
+    if not isinstance(finalization, Mapping) or finalization.get("model_selection_performed") is not False:
+        raise BundleValidationError(
+            "invalid_finalization",
+            "Inference bundle frozen model finalization is invalid.",
+            field="frozen_model.finalization",
+        )
+
+    if not isinstance(runtime_contract, Mapping):
+        raise BundleValidationError(
+            "missing_runtime_contract_for_forecasting",
+            "A validated forecasting runtime contract is required for this execution.",
+            field="runtime_contract",
+        )
+    if (
+        runtime_contract.get("schema_version") != "2.0.0"
+        or runtime_contract.get("problem_type") != _FORECASTING_PROBLEM_TYPE
+        or runtime_contract.get("payload_shape") != "history_series"
+    ):
+        raise BundleValidationError(
+            "invalid_runtime_contract_for_forecasting",
+            "The active runtime contract is not a forecasting v2 contract.",
+            field="runtime_contract",
+        )
+
+    history_series = runtime_contract.get("history_series")
+    forecast_policy = runtime_contract.get("forecast")
+    if not isinstance(history_series, Mapping) or not isinstance(forecast_policy, Mapping):
+        raise BundleValidationError(
+            "invalid_runtime_contract_for_forecasting",
+            "The active forecasting runtime contract is malformed.",
+            field="runtime_contract",
+        )
+
+    mismatches: list[str] = []
+    if history_series.get("time_index_field_name") != time_index_column:
+        mismatches.append("time_index_field_name")
+    if history_series.get("target_field_name") != target_column:
+        mismatches.append("target_field_name")
+    if history_series.get("index_value_kind") != index_value_kind:
+        mismatches.append("index_value_kind")
+    if history_series.get("frequency") != frequency:
+        mismatches.append("frequency")
+    if forecast_policy.get("forecast_horizon") != forecast_horizon:
+        mismatches.append("forecast_horizon")
+    if history_series.get("minimum_history_required_through") != training_scope_end:
+        mismatches.append("minimum_history_required_through")
+    if mismatches:
+        raise BundleValidationError(
+            "bundle_runtime_contract_identity_mismatch",
+            "Inference bundle and runtime contract forecasting identities do not agree.",
+            field=f"history_series.{mismatches[0]}",
+        )
+
+    return {
+        "container_key": history_series.get("container_key") or "history",
+        "time_index_field_name": time_index_column,
+        "target_field_name": target_column,
+        "index_value_kind": index_value_kind,
+        "frequency": frequency,
+        "forecast_horizon": forecast_horizon,
+        "fixed_model_configuration": dict(fixed_model_configuration),
+        "training_scope": dict(training_scope),
+        "result_semantics": result_semantics,
+    }
+
+
+def _execute_forecasting_prediction(
+    adapter: RuntimeBundleAdapter,
+    validated_payload: Mapping[str, Any],
+    runtime_contract: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Project Spec S0246 Section N: Atlas-native frozen forecasting
+    execution. Never refits the model, never reads training/preparation
+    artifacts, never uses history target values to update coefficients.
+    Requires the supplied history to contain the frozen training-end anchor,
+    continues future design positions from the frozen training observation
+    count plus any post-training history offset, and predicts the complete
+    horizon in one bounded ``model.predict`` call."""
+
+    validated = _validate_forecasting_bundle_for_execution(adapter.declaration, runtime_contract)
+
+    container_key = validated["container_key"]
+    time_field = validated["time_index_field_name"]
+    index_kind = validated["index_value_kind"]
+    frequency = validated["frequency"]
+    forecast_horizon = validated["forecast_horizon"]
+
+    history = validated_payload.get(container_key) if isinstance(validated_payload, Mapping) else None
+    if not isinstance(history, Sequence) or isinstance(history, (str, bytes)) or not history:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    pandas_freq_alias = (
+        _resolve_forecasting_pandas_frequency_alias(frequency) if index_kind != "ordinal_time" else None
+    )
+    if index_kind in ("calendar_period", "timestamp") and pandas_freq_alias is None:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    training_scope = validated["training_scope"]
+    training_scope_end_parsed, end_ok = _forecasting_parse_index_value(
+        training_scope["end"], index_kind, pandas_freq_alias
+    )
+    if not end_ok:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    end_row_index: int | None = None
+    last_parsed_value: Any = None
+    for row_index, row in enumerate(history):
+        if not isinstance(row, Mapping):
+            raise BundleExecutionError(
+                "Prediction execution failed.",
+                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+            )
+        parsed_value, ok = _forecasting_parse_index_value(row.get(time_field), index_kind, pandas_freq_alias)
+        if not ok:
+            raise BundleExecutionError(
+                "Prediction execution failed.",
+                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+            )
+        if parsed_value == training_scope_end_parsed:
+            end_row_index = row_index
+        last_parsed_value = parsed_value
+
+    if end_row_index is None:
+        # The runtime independently requires the supplied history to contain
+        # the frozen training-end anchor from the bundle.
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    observation_count = training_scope["observation_count"]
+    post_training_offset = (len(history) - 1) - end_row_index
+    last_history_position = (observation_count - 1) + post_training_offset
+
+    fixed_model_configuration = validated["fixed_model_configuration"]
+    seasonal_period = fixed_model_configuration["seasonal_period"]
+    reference_season_position = fixed_model_configuration["reference_season_position"]
+
+    future_positions = [last_history_position + step for step in range(1, forecast_horizon + 1)]
+    design_matrix = [
+        _deterministic_seasonal_trend_design_row(position, seasonal_period, reference_season_position)
+        for position in future_positions
+    ]
+
+    model = adapter.bundle
+    predict = getattr(model, "predict", None)
+    if not callable(predict):
+        raise BundleExecutionError(
+            "Inference model does not expose a forecasting prediction interface.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    try:
+        raw_predictions = predict(design_matrix)
+    except Exception as exc:  # pragma: no cover - message is intentionally generic
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        ) from exc
+
+    predicted_values = _as_flat_list(raw_predictions)
+    if len(predicted_values) != forecast_horizon:
+        raise BundleExecutionError(
+            "Prediction execution failed.",
+            diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+        )
+
+    forecast_values: list[float] = []
+    for raw_value in predicted_values:
+        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+            raise BundleExecutionError(
+                "Prediction execution failed.",
+                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+            )
+        numeric = float(raw_value)
+        if not math.isfinite(numeric):
+            raise BundleExecutionError(
+                "Prediction execution failed.",
+                diagnostic_code=DIAGNOSTIC_PREDICTION_EXECUTION_FAILED,
+            )
+        forecast_values.append(numeric)
+
+    forecast_points: list[dict[str, Any]] = []
+    for step, forecast_value in enumerate(forecast_values, start=1):
+        future_index_value = _forecasting_advance_index_value(
+            last_parsed_value, step, index_kind, pandas_freq_alias
+        )
+        forecast_points.append(
+            {
+                "horizon_step": step,
+                "future_time_index": future_index_value,
+                "forecast": forecast_value,
+            }
+        )
+
+    last_row = history[-1]
+    result: dict[str, Any] = {
+        "schema_version": _FORECASTING_RESULT_SCHEMA_VERSION,
+        "problem_type": _FORECASTING_PROBLEM_TYPE,
+        "forecast_origin": last_row[time_field],
+        "frequency": frequency,
+        "forecast_horizon": forecast_horizon,
+        "forecast_points": forecast_points,
+        "model_descriptor": dict(validated["result_semantics"]["model_descriptor"]),
+    }
+
+    validate_univariate_forecasting_result(result)
+    return result
+
+
+def _load_univariate_forecasting_result_schema() -> dict[str, Any]:
+    """Deterministic, repository-local schema load. Fails closed (sanitized)
+    on a missing, unreadable, or invalid schema file -- mirrors
+    ``_load_continuous_regression_result_schema``."""
+
+    try:
+        raw = _UNIVARIATE_FORECASTING_RESULT_SCHEMA_PATH.read_text(encoding="utf-8")
+        schema = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise BundleValidationError(
+            "univariate_forecasting_result_schema_unavailable",
+            "Univariate forecasting result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+
+    if not isinstance(schema, Mapping):
+        raise BundleValidationError(
+            "univariate_forecasting_result_schema_unavailable",
+            "Univariate forecasting result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        )
+
+    return schema
+
+
+def _forecasting_result_validation_failure() -> BundleValidationError:
+    return BundleValidationError(
+        "invalid_univariate_forecasting_result",
+        "Univariate forecasting result failed cross-field validation.",
+        field="result",
+        diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+    )
+
+
+def _forecasting_future_indices_progress_correctly(
+    forecast_origin: Any, future_values: list[Any], frequency: Any
+) -> bool:
+    if isinstance(forecast_origin, bool) or not isinstance(forecast_origin, (str, int)):
+        return False
+    if any(isinstance(value, bool) or not isinstance(value, (str, int)) for value in future_values):
+        return False
+
+    origin_is_int = isinstance(forecast_origin, int)
+    if any(isinstance(value, int) != origin_is_int for value in future_values):
+        return False
+
+    if origin_is_int:
+        expected = [forecast_origin + step for step in range(1, len(future_values) + 1)]
+        return future_values == expected
+
+    pandas_freq_alias = _resolve_forecasting_pandas_frequency_alias(frequency)
+    if pandas_freq_alias is None:
+        return False
+
+    try:
+        import pandas as pd
+
+        origin_period = pd.Period(forecast_origin, freq=pandas_freq_alias)
+        expected_periods = [str(origin_period + step) for step in range(1, len(future_values) + 1)]
+        if future_values == expected_periods:
+            return True
+    except (ValueError, TypeError):
+        pass
+
+    try:
+        import pandas as pd
+
+        origin_timestamp = pd.Timestamp(forecast_origin)
+        offset = pd.tseries.frequencies.to_offset(pandas_freq_alias)
+        expected_timestamps: list[str] = []
+        cursor = origin_timestamp
+        for _ in range(len(future_values)):
+            cursor = cursor + offset
+            expected_timestamps.append(cursor.isoformat())
+        return future_values == expected_timestamps
+    except (ValueError, TypeError):
+        return False
+
+
+def _validate_forecasting_result_cross_field_invariants(result: Mapping[str, Any]) -> None:
+    """Project Spec S0246 Section I: enforce the cross-field invariants JSON
+    Schema alone cannot express -- cardinality, horizon-step ordering,
+    finiteness, and deterministic frequency-contiguous future-index
+    progression from the forecast origin."""
+
+    forecast_horizon = result.get("forecast_horizon")
+    forecast_points = result.get("forecast_points")
+    if not isinstance(forecast_points, Sequence) or isinstance(forecast_points, (str, bytes)):
+        raise _forecasting_result_validation_failure()
+    if not isinstance(forecast_horizon, int) or isinstance(forecast_horizon, bool):
+        raise _forecasting_result_validation_failure()
+    if len(forecast_points) != forecast_horizon:
+        raise _forecasting_result_validation_failure()
+
+    expected_steps = list(range(1, forecast_horizon + 1))
+    actual_steps = [
+        point.get("horizon_step") if isinstance(point, Mapping) else None for point in forecast_points
+    ]
+    if actual_steps != expected_steps:
+        raise _forecasting_result_validation_failure()
+
+    for point in forecast_points:
+        forecast_value = point.get("forecast") if isinstance(point, Mapping) else None
+        if (
+            isinstance(forecast_value, bool)
+            or not isinstance(forecast_value, (int, float))
+            or not math.isfinite(forecast_value)
+        ):
+            raise _forecasting_result_validation_failure()
+
+    future_values = [
+        point.get("future_time_index") if isinstance(point, Mapping) else None for point in forecast_points
+    ]
+    if not _forecasting_future_indices_progress_correctly(
+        result.get("forecast_origin"), future_values, result.get("frequency")
+    ):
+        raise _forecasting_result_validation_failure()
+
+
+def validate_univariate_forecasting_result(result: Mapping[str, Any]) -> None:
+    """Strictly validate a serialized result against
+    univariate-forecasting-result.v1, then enforce the runtime-only
+    cross-field invariants JSON Schema cannot express. Exposed as a public
+    defense-in-depth validator, mirroring
+    ``validate_continuous_regression_result``. Fails closed on a missing or
+    invalid schema."""
+
+    schema = _load_univariate_forecasting_result_schema()
+    try:
+        jsonschema.validate(result, schema)
+    except jsonschema.ValidationError as exc:
+        raise BundleValidationError(
+            "invalid_univariate_forecasting_result",
+            "Univariate forecasting result failed schema validation.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+    except jsonschema.SchemaError as exc:
+        raise BundleValidationError(
+            "univariate_forecasting_result_schema_unavailable",
+            "Univariate forecasting result schema is unavailable.",
+            field="result",
+            diagnostic_code=DIAGNOSTIC_RESULT_VALIDATION_FAILED,
+        ) from exc
+
+    _validate_forecasting_result_cross_field_invariants(result)
 
 
 def _resolve_band(probability: float, bands: Sequence[Mapping[str, Any]]) -> str:

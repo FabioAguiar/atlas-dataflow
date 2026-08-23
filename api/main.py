@@ -42,6 +42,7 @@ from runtime.inference import (  # noqa: E402
     BundleUnavailableError,
     DIAGNOSTIC_RESULT_VALIDATION_FAILED,
     InferenceRuntimeError,
+    JOBLIB_SKLEARN_FORECASTING_ADAPTER_STRATEGY,
     JOBLIB_SKLEARN_PREDICT_STRATEGY,
     RUNTIME_DIAGNOSTIC_CODES,
     execute_prediction,
@@ -493,8 +494,14 @@ def _load_bundle(bundle_path: Path):
 # S0109: the only production loader strategy allowlist. Loader implementation
 # lives in runtime/inference.py; this is the single place the allowlist
 # selection is made, per the spec's "keep the public allowlist selection in
-# api/main.py, do not introduce a plugin registry" requirement.
-_INFERENCE_LOADER_STRATEGIES = {JOBLIB_SKLEARN_PREDICT_STRATEGY: load_joblib_sklearn_model}
+# api/main.py, do not introduce a plugin registry" requirement. Project Spec
+# S0246: the forecasting loader strategy reuses the same controlled joblib
+# loading primitive -- the serialization format remains joblib and the model
+# is Atlas-owned -- so no second loader function is introduced.
+_INFERENCE_LOADER_STRATEGIES = {
+    JOBLIB_SKLEARN_PREDICT_STRATEGY: load_joblib_sklearn_model,
+    JOBLIB_SKLEARN_FORECASTING_ADAPTER_STRATEGY: load_joblib_sklearn_model,
+}
 _INFERENCE_SUPPORTED_SERIALIZATION_FORMATS = ("joblib",)
 
 
@@ -910,6 +917,7 @@ def _execute_governed_inference(
             loader_strategies=_INFERENCE_LOADER_STRATEGIES,
             supported_serialization_formats=_INFERENCE_SUPPORTED_SERIALIZATION_FORMATS,
             runtime_feature_metadata=_runtime_feature_metadata(runtime_contract),
+            runtime_contract=runtime_contract,
         )
     except InferenceRuntimeError as exc:
         return _inference_failure_response(

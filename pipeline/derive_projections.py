@@ -53,13 +53,36 @@ from pipeline.contract_derivation import (
     _RUNTIME_ONLY_KEYS,  # noqa: F401 — re-exported for downstream consumers
     _check_safety,
     _derive_public_contract,
-    _fresh_label,  # noqa: F401 — re-exported for downstream consumers
+    _fresh_label,
     conditional_policy_errors,
     unresolved_select_features,
 )
 
 RUNTIME_CONTRACT_SCHEMA_VERSION = "1.0.0"
 PROJECTION_EVIDENCE_SCHEMA_VERSION = "1.0.0"
+
+# Project Spec S0246: fixed identities for the univariate-forecasting
+# runtime/public contract branch. Never dataset-specific.
+FORECASTING_RUNTIME_CONTRACT_SCHEMA_VERSION = "2.0.0"
+FORECASTING_PUBLIC_CONTRACT_SCHEMA_VERSION = "2.0.0"
+FORECASTING_PROBLEM_TYPE = "univariate_forecasting"
+FORECASTING_EXECUTION_CONTRACT_VERSION = "execution_contract.v2"
+FORECASTING_PREPARATION_RECIPE_VERSION = "candidate-preparation-recipe.v2"
+_FORECASTING_TEMPORAL_INTEGRITY_KEYS = (
+    "strictly_increasing_index",
+    "unique_index",
+    "frequency_contiguous",
+    "target_missing_values_absent",
+    "target_values_finite",
+)
+_FORECASTING_LEAKAGE_CONTROL_KEYS = (
+    "random_shuffle_performed",
+    "future_targets_used_for_fold_fit",
+    "final_holdout_used_for_backtesting",
+    "final_holdout_used_for_model_selection",
+    "validation_targets_fed_back_within_fold",
+    "preprocessing_fit_on_validation_or_future",
+)
 
 
 class DerivationFailed(Exception):
@@ -92,6 +115,7 @@ def derive(
     output_dir: Path,
     *,
     repo_root: Path | None = None,
+    preparation_recipe_path: Path | None = None,
 ) -> None:
     """
     Derive runtime-contract.json and public-contract.json from a promoted execution contract.
@@ -99,6 +123,11 @@ def derive(
     Returns None on success.
     Raises DerivationFailed with a list of error messages on any failure.
     Neither the contract nor any existing file is modified.
+
+    Project Spec S0246: `preparation_recipe_path` is required only when the
+    execution contract declares `contract_version: execution_contract.v2`
+    (univariate forecasting). Historical execution_contract.v1 callers must
+    not be forced to pass one -- see `_derive_forecasting_projection`.
     """
     if repo_root is None:
         repo_root = _find_repo_root(contract_path.parent)
@@ -120,6 +149,23 @@ def derive(
     if schema_errors:
         first = schema_errors[0].message
         raise DerivationFailed([f"execution contract schema validation failed: {first}"])
+
+    # Project Spec S0246: explicit contract-version dispatch. Historical
+    # execution_contract.v1 (or a legacy document with no contract_version at
+    # all) falls through unchanged to the existing scalar-feature derivation
+    # below. execution_contract.v2 is routed to the dedicated forecasting
+    # projection, which owns its own preparation-recipe requirement and never
+    # reuses the tabular feature_columns/feature_definitions assumptions.
+    if contract.get("contract_version") == "execution_contract.v2":
+        _derive_forecasting_projection(
+            contract,
+            output_dir,
+            repo_root=repo_root,
+            runtime_schema_path=runtime_schema_path,
+            public_schema_path=public_schema_path,
+            preparation_recipe_path=preparation_recipe_path,
+        )
+        return
 
     # Step 2 — runtime check: every feature_columns entry must have a feature_definitions entry (decision-06).
     feature_columns: list[str] = contract["feature_columns"]
@@ -245,6 +291,205 @@ def derive(
     evidence_out.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
 
 
+def _derive_forecasting_projection(
+    contract: dict[str, Any],
+    output_dir: Path,
+    *,
+    repo_root: Path,
+    runtime_schema_path: Path,
+    public_schema_path: Path,
+    preparation_recipe_path: Path | None,
+) -> None:
+    """Project Spec S0246: derive runtime contract 2.0.0 / public contract
+    2.0.0 from an execution_contract.v2 (univariate forecasting) document and
+    its governing candidate-preparation-recipe.v2.
+
+    Never copies the full fold schedule, raw history rows, target values,
+    predictions, or model metadata into the projection or its evidence.
+    """
+    if preparation_recipe_path is None:
+        raise DerivationFailed(
+            ["forecasting projection requires an explicit preparation recipe (--preparation-recipe)"]
+        )
+
+    preparation_recipe_schema_path = repo_root / "pipeline" / "candidate-preparation-recipe.schema.json"
+    if not preparation_recipe_schema_path.exists():
+        raise DerivationFailed([f"schema not found: {preparation_recipe_schema_path}"])
+
+    preparation_schema = _load_json(preparation_recipe_schema_path)
+    recipe = _load_json(preparation_recipe_path)
+
+    recipe_validator = jsonschema.Draft202012Validator(preparation_schema)
+    recipe_errors = sorted(recipe_validator.iter_errors(recipe), key=lambda e: list(e.path))
+    if recipe_errors:
+        msgs = [e.message for e in recipe_errors]
+        raise DerivationFailed([f"preparation recipe schema validation failed: {m}" for m in msgs])
+
+    if recipe.get("schema_version") != FORECASTING_PREPARATION_RECIPE_VERSION:
+        raise DerivationFailed(
+            [f"preparation recipe schema_version must be {FORECASTING_PREPARATION_RECIPE_VERSION!r}"]
+        )
+    if recipe.get("problem_type") != FORECASTING_PROBLEM_TYPE:
+        raise DerivationFailed([f"preparation recipe problem_type must be {FORECASTING_PROBLEM_TYPE!r}"])
+
+    identity_errors: list[str] = []
+    mirror = recipe.get("semantic_identity_mirror")
+    mirror = mirror if isinstance(mirror, dict) else {}
+    if contract.get("target_column") != mirror.get("target_field_name"):
+        identity_errors.append(
+            "execution contract target_column does not match preparation recipe "
+            "semantic_identity_mirror.target_field_name"
+        )
+    if contract.get("time_index_column") != mirror.get("time_index_field_name"):
+        identity_errors.append(
+            "execution contract time_index_column does not match preparation recipe "
+            "semantic_identity_mirror.time_index_field_name"
+        )
+    if contract.get("index_value_kind") != mirror.get("index_value_kind"):
+        identity_errors.append(
+            "execution contract index_value_kind does not match preparation recipe "
+            "semantic_identity_mirror.index_value_kind"
+        )
+    if contract.get("frequency") != mirror.get("frequency"):
+        identity_errors.append(
+            "execution contract frequency does not match preparation recipe "
+            "semantic_identity_mirror.frequency"
+        )
+    if contract.get("forecast_horizon") != recipe.get("forecast_horizon"):
+        identity_errors.append(
+            "execution contract forecast_horizon does not match preparation recipe forecast_horizon"
+        )
+    if identity_errors:
+        raise DerivationFailed(identity_errors)
+
+    temporal_integrity = recipe.get("temporal_integrity")
+    temporal_integrity = temporal_integrity if isinstance(temporal_integrity, dict) else {}
+    if not all(temporal_integrity.get(key) is True for key in _FORECASTING_TEMPORAL_INTEGRITY_KEYS):
+        raise DerivationFailed(["preparation recipe temporal_integrity confirmations must all be true"])
+
+    leakage_controls = recipe.get("leakage_controls")
+    leakage_controls = leakage_controls if isinstance(leakage_controls, dict) else {}
+    if not all(leakage_controls.get(key) is False for key in _FORECASTING_LEAKAGE_CONTROL_KEYS):
+        raise DerivationFailed(["preparation recipe leakage_controls must all be false"])
+
+    partitions = recipe.get("partitions")
+    partitions = partitions if isinstance(partitions, dict) else {}
+    development = partitions.get("development")
+    development = development if isinstance(development, dict) else {}
+    development_end = development.get("end_index_value")
+    if not isinstance(development_end, str) or not development_end:
+        raise DerivationFailed(
+            ["preparation recipe partitions.development.end_index_value must be a non-empty string"]
+        )
+
+    time_index_field_name = contract["time_index_column"]
+    target_field_name = contract["target_column"]
+    index_value_kind = contract["index_value_kind"]
+    frequency = contract["frequency"]
+    forecast_horizon = contract["forecast_horizon"]
+
+    runtime_contract: dict[str, Any] = {
+        "schema_version": FORECASTING_RUNTIME_CONTRACT_SCHEMA_VERSION,
+        "problem_type": FORECASTING_PROBLEM_TYPE,
+        "payload_shape": "history_series",
+        "history_series": {
+            "container_key": "history",
+            "time_index_field_name": time_index_field_name,
+            "target_field_name": target_field_name,
+            "index_value_kind": index_value_kind,
+            "frequency": frequency,
+            "source_exogenous_predictors": "forbidden",
+            "row_field_policy": "exact_time_index_and_target",
+            "minimum_observation_count": 1,
+            "minimum_history_required_through": development_end,
+            "ordering": "strictly_increasing",
+            "uniqueness_required": True,
+            "frequency_contiguous_required": True,
+            "missing_time_index_allowed": False,
+            "missing_target_allowed": False,
+            "target_value_kind": "continuous_numeric",
+        },
+        "forecast": {
+            "forecast_horizon": forecast_horizon,
+            "horizon_source": FORECASTING_EXECUTION_CONTRACT_VERSION,
+            "caller_overridable": False,
+            "forecast_origin_source": "last_validated_history_index",
+            "future_index_policy": "advance_by_governed_frequency",
+        },
+    }
+
+    runtime_schema = _load_json(runtime_schema_path)
+    runtime_validator = jsonschema.Draft7Validator(runtime_schema)
+    runtime_errors = sorted(runtime_validator.iter_errors(runtime_contract), key=lambda e: list(e.path))
+    if runtime_errors:
+        msgs = [e.message for e in runtime_errors]
+        raise DerivationFailed(
+            [f"derived forecasting runtime contract failed schema validation: {m}" for m in msgs]
+        )
+
+    public_contract: dict[str, Any] = {
+        "schema_version": FORECASTING_PUBLIC_CONTRACT_SCHEMA_VERSION,
+        "problem_type": FORECASTING_PROBLEM_TYPE,
+        "input_kind": "history_series",
+        "history_series": {
+            "time_index_field": {
+                "name": time_index_field_name,
+                "label": _fresh_label(time_index_field_name),
+                "value_kind": index_value_kind,
+                "display_order": 1,
+            },
+            "target_field": {
+                "name": target_field_name,
+                "label": _fresh_label(target_field_name),
+                "value_kind": "number",
+                "display_order": 2,
+            },
+            "frequency": frequency,
+        },
+        "forecast": {
+            "forecast_horizon": forecast_horizon,
+            "horizon_user_editable": False,
+        },
+    }
+
+    public_schema = _load_json(public_schema_path)
+    public_validator = jsonschema.Draft7Validator(public_schema)
+    public_errors = sorted(public_validator.iter_errors(public_contract), key=lambda e: list(e.path))
+    if public_errors:
+        msgs = [e.message for e in public_errors]
+        raise DerivationFailed(
+            [f"derived forecasting public contract failed schema validation (pipeline bug): {m}" for m in msgs]
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    runtime_out = output_dir / "runtime-contract.json"
+    public_out = output_dir / "public-contract.json"
+    evidence_out = output_dir / "projection-evidence.json"
+
+    runtime_out.write_text(json.dumps(runtime_contract, indent=2), encoding="utf-8")
+    public_out.write_text(json.dumps(public_contract, indent=2), encoding="utf-8")
+
+    # Project Spec S0246 Desired Change F: reduced projection evidence only —
+    # never history rows, fold schedule, target values, predictions, or
+    # model metadata.
+    evidence = {
+        "schema_version": PROJECTION_EVIDENCE_SCHEMA_VERSION,
+        "execution_contract_version": FORECASTING_EXECUTION_CONTRACT_VERSION,
+        "preparation_recipe_version": FORECASTING_PREPARATION_RECIPE_VERSION,
+        "runtime_contract_schema_version": FORECASTING_RUNTIME_CONTRACT_SCHEMA_VERSION,
+        "public_contract_schema_version": FORECASTING_PUBLIC_CONTRACT_SCHEMA_VERSION,
+        "problem_type": FORECASTING_PROBLEM_TYPE,
+        "time_index_field_name": time_index_field_name,
+        "target_field_name": target_field_name,
+        "index_value_kind": index_value_kind,
+        "frequency": frequency,
+        "forecast_horizon": forecast_horizon,
+        "minimum_history_required_through": development_end,
+        "source_exogenous_predictors": "forbidden",
+    }
+    evidence_out.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Derive runtime and public contract projections from a promoted execution contract."
@@ -261,14 +506,23 @@ def main(argv: list[str] | None = None) -> int:
         "--repo-root",
         help="Repository root directory. Defaults to auto-detected from contract path.",
     )
+    parser.add_argument(
+        "--preparation-recipe",
+        help=(
+            "Project Spec S0246: path to the governing candidate-preparation-recipe.v2 JSON "
+            "file. Required only when --contract declares execution_contract.v2 (univariate "
+            "forecasting); ignored for execution_contract.v1."
+        ),
+    )
     args = parser.parse_args(argv)
 
     contract_path = Path(args.contract)
     output_dir = Path(args.output_dir)
     repo_root = Path(args.repo_root) if args.repo_root else None
+    preparation_recipe_path = Path(args.preparation_recipe) if args.preparation_recipe else None
 
     try:
-        derive(contract_path, output_dir, repo_root=repo_root)
+        derive(contract_path, output_dir, repo_root=repo_root, preparation_recipe_path=preparation_recipe_path)
     except DerivationFailed as exc:
         print("DERIVATION FAILED", file=sys.stderr)
         for err in exc.errors:

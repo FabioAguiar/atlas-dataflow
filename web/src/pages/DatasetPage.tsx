@@ -7,6 +7,7 @@ import DatasetDetailSurface, {
 import DatasetDocumentation from "../components/DatasetDetail/DatasetDocumentation";
 import ConfusionMatrix from "../components/DatasetDetail/ConfusionMatrix";
 import FeatureImportance from "../components/DatasetDetail/FeatureImportance";
+import ForecastingDiagnostics from "../components/DatasetDetail/ForecastingDiagnostics";
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import RegressionDiagnostics from "../components/DatasetDetail/RegressionDiagnostics";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
@@ -15,6 +16,7 @@ import {
   availableResultProblemType,
   isAvailableBinaryResultContract,
   isAvailableContinuousRegressionResultContract,
+  isAvailableForecastingResultContract,
   type ResultContract,
   type ResultPresentation,
 } from "../components/ResultCard/types";
@@ -513,7 +515,14 @@ export default function DatasetPage() {
     </>
   );
 
-  const targetDistributionContent = (
+  // Project Spec S0248: gated on the same release-bound result contract
+  // authority as Performance Summary/RegressionDiagnostics below -- a
+  // forecasting release omits Target Distribution/Feature Importance
+  // entirely (never a placeholder empty state) rather than rendering charts
+  // a v4 visualizations payload never carries.
+  const isForecastingRelease = isAvailableForecastingResultContract(resultContract);
+
+  const targetDistributionContent = isForecastingRelease ? null : (
     <>
       {visualizationsState.status === "loading" && <LoadingState />}
       {visualizationsState.status !== "loading" && (
@@ -524,7 +533,7 @@ export default function DatasetPage() {
     </>
   );
 
-  const featureImportanceContent = (
+  const featureImportanceContent = isForecastingRelease ? null : (
     <>
       {visualizationsState.status === "loading" && <LoadingState />}
       {visualizationsState.status !== "loading" && (
@@ -537,8 +546,8 @@ export default function DatasetPage() {
 
   // Project Spec S0215: ConfusionMatrix renders nothing on its own whenever
   // the visualizations payload carries no valid confusion_matrix (every
-  // binary release), so no additional problem-type gating is needed here --
-  // Dataset Detail stays visually unchanged for binary releases.
+  // binary/forecasting release), so no additional problem-type gating is
+  // needed here -- Dataset Detail stays visually unchanged for those releases.
   const confusionMatrixContent =
     visualizationsState.status === "ready" ? (
       <ConfusionMatrix visualizations={visualizationsState.data} />
@@ -548,10 +557,18 @@ export default function DatasetPage() {
   // continuous-regression release, gated on the same release-bound result
   // contract authority as Performance Summary above -- never a second
   // /visualizations request, and never rendered alongside binary/multiclass
-  // Confusion Matrix content.
+  // Confusion Matrix content or a forecasting release.
   const regressionDiagnosticsContent =
     visualizationsState.status === "ready" && isAvailableContinuousRegressionResultContract(resultContract) ? (
       <RegressionDiagnostics visualizations={visualizationsState.data} />
+    ) : null;
+
+  // Project Spec S0248: ForecastingDiagnostics renders only for an available
+  // univariate-forecasting release, gated on the same release-bound result
+  // contract authority above -- never a second /visualizations request.
+  const forecastingDiagnosticsContent =
+    visualizationsState.status === "ready" && isForecastingRelease ? (
+      <ForecastingDiagnostics visualizations={visualizationsState.data} />
     ) : null;
 
   // Project Spec S0196: the public Documentation tab renders only the
@@ -580,6 +597,7 @@ export default function DatasetPage() {
           datasetTitle={datasetTitle}
           documentationContent={documentationContent}
           featureImportanceContent={featureImportanceContent}
+          forecastingDiagnosticsContent={forecastingDiagnosticsContent}
           inferenceContent={inferenceContent}
           metadata={metadataItems}
           modelDisplayName={modelDisplayName}

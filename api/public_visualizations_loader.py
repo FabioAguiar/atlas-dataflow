@@ -47,6 +47,12 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2 = "analytical-visualizatio
 # residual_distribution) and an explicit continuous target-distribution
 # discriminator -- never a confusion_matrix.
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3 = "analytical-visualizations.v3"
+# Project Spec S0248: the internal (Atlas-native) univariate-forecasting
+# fixed-configuration visualizations profile. Unlike v1/v2/v3, it carries no
+# `charts`/`target_distribution_method`/`feature_importance_method` at all --
+# it is handled by its own early branch in load_public_visualizations below,
+# never through _canonical_public_charts.
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V4 = "analytical-visualizations.v4"
 _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSION,
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION,
@@ -54,6 +60,9 @@ _ACCEPTED_ANALYTICAL_VISUALIZATIONS_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V3,
 )
+_MAX_FORECASTING_SEASONAL_POINTS = 64
+_MAX_FORECASTING_FOLD_POINTS = 64
+_MAX_FORECASTING_HORIZON_POINTS = 64
 _CONFUSION_MATRIX_SCHEMA_VERSIONS = (
     _ANALYTICAL_VISUALIZATIONS_EXTERNAL_SCHEMA_VERSION_V2,
     _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V2,
@@ -414,6 +423,177 @@ def _bounded_regression_diagnostics(visualizations: dict[str, Any]) -> dict[str,
     }
 
 
+def _forecasting_dataset_statistics(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0248: bounded public dataset_statistics.instance_count
+    projection for a valid analytical-visualizations.v4 artifact -- the same
+    reduced shape v1/v2/v3 project via _dataset_statistics above, sourced
+    here from the v4 artifact's own already-validated dataset_statistics
+    block instead of a Target Distribution chart total."""
+    data = visualizations.get("dataset_statistics")
+    if not isinstance(data, dict):
+        return None
+    instance_count = data.get("instance_count")
+    if not _is_positive_integer(instance_count):
+        return None
+    return {"instance_count": instance_count}
+
+
+def _bounded_forecasting_seasonal_profile(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0248: bounded public seasonal_profile projection.
+    Re-validates shape and bounds defensively (never trusting the
+    materializer's own validation alone) and returns only
+    seasonal_period/points -- no population_kind or other internal fields."""
+    data = visualizations.get("seasonal_profile")
+    if not isinstance(data, dict) or data.get("population_kind") != "full_development":
+        return None
+    seasonal_period = data.get("seasonal_period")
+    if not _is_positive_integer(seasonal_period) or seasonal_period < 2:
+        return None
+    points = data.get("points")
+    if not isinstance(points, list) or not points or len(points) > _MAX_FORECASTING_SEASONAL_POINTS:
+        return None
+
+    bounded_points: list[dict[str, Any]] = []
+    seen_positions: set[int] = set()
+    for point in points:
+        if not isinstance(point, dict):
+            return None
+        season_position = point.get("season_position")
+        mean_target = point.get("mean_target")
+        observation_count = point.get("observation_count")
+        if (
+            not isinstance(season_position, int)
+            or isinstance(season_position, bool)
+            or season_position < 0
+            or season_position >= seasonal_period
+            or season_position in seen_positions
+        ):
+            return None
+        seen_positions.add(season_position)
+        if not _is_finite_number(mean_target):
+            return None
+        if not _is_positive_integer(observation_count):
+            return None
+        bounded_points.append({
+            "season_position": season_position,
+            "mean_target": float(mean_target),
+            "observation_count": observation_count,
+        })
+
+    bounded_points.sort(key=lambda entry: entry["season_position"])
+    return {"seasonal_period": seasonal_period, "points": bounded_points}
+
+
+def _bounded_forecasting_backtesting_fold_metric(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0248: bounded public backtesting_fold_metric
+    projection. Re-validates shape and bounds defensively and returns only
+    metric_id/direction/points -- no fold_count or other internal fields."""
+    data = visualizations.get("backtesting_fold_metric")
+    if not isinstance(data, dict) or data.get("direction") != "lower_is_better":
+        return None
+    metric_id = data.get("metric_id")
+    if not isinstance(metric_id, str) or not metric_id:
+        return None
+    points = data.get("points")
+    if not isinstance(points, list) or not points or len(points) > _MAX_FORECASTING_FOLD_POINTS:
+        return None
+
+    bounded_points: list[dict[str, Any]] = []
+    seen_fold_indices: set[int] = set()
+    for point in points:
+        if not isinstance(point, dict):
+            return None
+        fold_index = point.get("fold_index")
+        forecast_origin = point.get("forecast_origin")
+        value = point.get("value")
+        if (
+            not isinstance(fold_index, int)
+            or isinstance(fold_index, bool)
+            or fold_index < 0
+            or fold_index in seen_fold_indices
+        ):
+            return None
+        seen_fold_indices.add(fold_index)
+        if not isinstance(forecast_origin, str) or not forecast_origin:
+            return None
+        if not _is_finite_number(value):
+            return None
+        bounded_points.append({
+            "fold_index": fold_index,
+            "forecast_origin": forecast_origin,
+            "value": float(value),
+        })
+
+    bounded_points.sort(key=lambda entry: entry["fold_index"])
+    return {"metric_id": metric_id, "direction": "lower_is_better", "points": bounded_points}
+
+
+def _bounded_forecasting_horizon_mae(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0248: bounded public horizon_mae projection. Never
+    recomputes MAE -- only re-validates the already-computed, already-bounded
+    per-horizon-step values."""
+    data = visualizations.get("horizon_mae")
+    if not isinstance(data, dict):
+        return None
+    points = data.get("points")
+    if not isinstance(points, list) or not points or len(points) > _MAX_FORECASTING_HORIZON_POINTS:
+        return None
+
+    bounded_points: list[dict[str, Any]] = []
+    seen_steps: set[int] = set()
+    for point in points:
+        if not isinstance(point, dict):
+            return None
+        horizon_step = point.get("horizon_step")
+        mae = point.get("mae")
+        if (
+            not isinstance(horizon_step, int)
+            or isinstance(horizon_step, bool)
+            or horizon_step < 1
+            or horizon_step in seen_steps
+        ):
+            return None
+        seen_steps.add(horizon_step)
+        if not _is_finite_non_negative_number(mae):
+            return None
+        bounded_points.append({"horizon_step": horizon_step, "mae": mae})
+
+    bounded_points.sort(key=lambda entry: entry["horizon_step"])
+    return {"points": bounded_points}
+
+
+def _bounded_forecasting_diagnostics(visualizations: dict[str, Any]) -> dict[str, Any] | None:
+    """Project Spec S0248: bounded public forecasting_diagnostics projection
+    for a valid analytical-visualizations.v4 artifact. Returns None (never a
+    partially projected, unverified result) unless every sub-projection
+    independently re-validates."""
+    forecasting_evidence = visualizations.get("forecasting_evidence")
+    if not isinstance(forecasting_evidence, dict):
+        return None
+    if forecasting_evidence.get("problem_type") != "univariate_forecasting":
+        return None
+    forecast_horizon = forecasting_evidence.get("forecast_horizon")
+    if not _is_positive_integer(forecast_horizon):
+        return None
+    frequency = forecasting_evidence.get("frequency")
+    if not isinstance(frequency, str) or not frequency:
+        return None
+
+    seasonal_profile = _bounded_forecasting_seasonal_profile(visualizations)
+    backtesting_fold_metric = _bounded_forecasting_backtesting_fold_metric(visualizations)
+    horizon_mae = _bounded_forecasting_horizon_mae(visualizations)
+    if seasonal_profile is None or backtesting_fold_metric is None or horizon_mae is None:
+        return None
+
+    return {
+        "forecast_horizon": forecast_horizon,
+        "frequency": frequency,
+        "seasonal_profile": seasonal_profile,
+        "backtesting_fold_metric": backtesting_fold_metric,
+        "horizon_mae": horizon_mae,
+    }
+
+
 def _safe_projection(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -466,6 +646,41 @@ def load_public_visualizations(
         raise PublicVisualizationsUnavailableError(
             "Visualizations are not available for this release."
         )
+
+    # Project Spec S0248: a v4 native forecasting artifact carries no
+    # charts/target_distribution_method/feature_importance_method at all, so
+    # it is handled by its own early branch here rather than through
+    # _canonical_public_charts below. A structurally invalid v4 document
+    # degrades to the same bounded unavailable response as a missing one.
+    if (
+        isinstance(visualizations, dict)
+        and visualizations.get("schema_version") == _ANALYTICAL_VISUALIZATIONS_INTERNAL_SCHEMA_VERSION_V4
+    ):
+        if visualizations.get("artifact_kind") != _ANALYTICAL_VISUALIZATIONS_ARTIFACT_KIND:
+            raise PublicVisualizationsUnavailableError(
+                "Visualizations are not available for this release."
+            )
+        dataset_statistics = _forecasting_dataset_statistics(visualizations)
+        forecasting_diagnostics = _bounded_forecasting_diagnostics(visualizations)
+        if dataset_statistics is None or forecasting_diagnostics is None:
+            raise PublicVisualizationsUnavailableError(
+                "Visualizations are not available for this release."
+            )
+        # `charts: []` keeps this payload compatible with the frontend's
+        # `toVisualizationsPayload` guard (web/src/lib/livePreviewProjection.ts,
+        # out of this spec's edit scope), which only accepts a payload that
+        # carries a `charts` key -- it never exposes any chart content.
+        payload: dict[str, Any] = {
+            "charts": [],
+            "dataset_statistics": dataset_statistics,
+            "forecasting_diagnostics": forecasting_diagnostics,
+        }
+        projection = _safe_projection(payload)
+        if not isinstance(projection, dict):
+            raise PublicVisualizationsUnavailableError(
+                "Visualizations are not available for this release."
+            )
+        return projection
 
     # Project Spec S0128: require the canonical artifact identity and a
     # bounded, well-formed chart structure before any projection is

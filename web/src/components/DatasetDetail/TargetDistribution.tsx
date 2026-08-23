@@ -59,6 +59,30 @@ export type VisualizationsPayload = {
       bins?: Array<{ label?: string; count?: number }>;
     };
   };
+  // Project Spec S0248: bounded forecasting diagnostics the public
+  // visualizations projection may carry instead of charts/
+  // regression_diagnostics/confusion_matrix, present only for a valid
+  // native univariate-forecasting (v4) release. TargetDistribution/
+  // FeatureImportance never read this themselves -- it lives on the shared
+  // payload type so ForecastingDiagnostics.tsx, DatasetPage.tsx,
+  // DatasetAdminPage.tsx, and livePreviewProjection.ts can all consume it
+  // without a competing type.
+  forecasting_diagnostics?: {
+    forecast_horizon?: number;
+    frequency?: string;
+    seasonal_profile?: {
+      seasonal_period?: number;
+      points?: Array<{ season_position?: number; mean_target?: number; observation_count?: number }>;
+    };
+    backtesting_fold_metric?: {
+      metric_id?: string;
+      direction?: string;
+      points?: Array<{ fold_index?: number; forecast_origin?: string; value?: number }>;
+    };
+    horizon_mae?: {
+      points?: Array<{ horizon_step?: number; mae?: number }>;
+    };
+  };
 };
 
 type TargetDistributionProps = {

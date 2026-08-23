@@ -4300,6 +4300,123 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0248: Dataset Detail Live Preview gates ForecastingDiagnostics
+  // from the same private, dataset-bound result-contract authority as
+  // Performance Summary, and reuses the exact same shared renderer/already-
+  // loaded visualizations payload the public route consumes -- no
+  // synthesized diagnostics from draft form data, and no additional request.
+  describe("Dataset Detail Live Preview univariate-forecasting diagnostics (Project Spec S0248)", () => {
+    const forecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+      },
+    };
+
+    const forecastingVisualizations = {
+      charts: [],
+      dataset_statistics: { instance_count: 24 },
+      forecasting_diagnostics: {
+        forecast_horizon: 4,
+        frequency: "synthetic-step",
+        seasonal_profile: {
+          seasonal_period: 4,
+          points: [
+            { season_position: 0, mean_target: 10.0, observation_count: 5 },
+            { season_position: 1, mean_target: 12.0, observation_count: 5 },
+            { season_position: 2, mean_target: 9.0, observation_count: 5 },
+            { season_position: 3, mean_target: 13.0, observation_count: 5 },
+          ],
+        },
+        backtesting_fold_metric: {
+          metric_id: "mae",
+          direction: "lower_is_better",
+          points: [
+            { fold_index: 1, forecast_origin: "11", value: 1.2 },
+            { fold_index: 2, forecast_origin: "15", value: 0.9 },
+          ],
+        },
+        horizon_mae: {
+          points: [
+            { horizon_step: 1, mae: 0.5 },
+            { horizon_step: 2, mae: 0.8 },
+            { horizon_step: 3, mae: 1.1 },
+            { horizon_step: 4, mae: 1.4 },
+          ],
+        },
+      },
+    };
+
+    it("renders Seasonal Profile, Backtesting by Origin, and Horizon MAE for a forecasting release", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: forecastingVisualizations,
+      });
+      const { container } = renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      expect(await screen.findByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+
+      const overviewPanel = container.querySelector(".dataset-detail-tabs__panel:not([hidden])")!;
+      expect(overviewPanel.querySelector(".dataset-detail-overview__forecasting-diagnostics")).toBeInTheDocument();
+    });
+
+    it("omits Target Distribution and Feature Importance for a forecasting release in Live Preview", async () => {
+      installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: forecastingVisualizations,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Seasonal Profile" });
+      expect(screen.queryByRole("heading", { name: "Target Distribution" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Feature Importance" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Confusion Matrix" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Actual vs Predicted" })).not.toBeInTheDocument();
+    });
+
+    it("renders no forecasting diagnostics for the default binary release", async () => {
+      installFetchMock();
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Target Distribution" });
+      expect(screen.queryByRole("heading", { name: "Seasonal Profile" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Backtesting by Origin" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Horizon MAE" })).not.toBeInTheDocument();
+    });
+
+    it("does not issue an additional request for Live Preview forecasting diagnostics", async () => {
+      const fetchMock = installFetchMock({
+        resultContractOverride: forecastingResultContract,
+        visualizationsOverride: forecastingVisualizations,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      await screen.findByRole("heading", { name: "Seasonal Profile" });
+
+      const authoringContextCalls = fetchMock.mock.calls.filter((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/authoring-context`),
+      );
+      expect(authoringContextCalls.length).toBe(1);
+    });
+  });
+
   // Project Spec S0229: continuous-regression Result Card authoring --
   // release-derived family (never operator-selectable), read-only technical
   // summary, editable fields limited to predicted-value label/decimal

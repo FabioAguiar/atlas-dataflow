@@ -2,11 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://atlas-dataflow.local/schemas/pipeline/analytical-visualizations.schema.json",
   "title": "Atlas DataFlow Analytical Visual Evidence",
-  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; internal_v2 (Project Spec S0216) is the Atlas-native multiclass fixed-configuration training profile; continuous_regression_v3 (Project Spec S0228) is the Atlas-native continuous-regression fixed-configuration training profile; governed_v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation; external_fitted_model_v1/v2 are the validated-external-fitted-model profiles.",
+  "description": "Versioned analytical visual evidence contract. The legacy v1 predictive-classification artifact remains accepted unchanged; internal_v2 (Project Spec S0216) is the Atlas-native multiclass fixed-configuration training profile; continuous_regression_v3 (Project Spec S0228) is the Atlas-native continuous-regression fixed-configuration training profile; native_univariate_forecasting_v4 (Project Spec S0248) is the Atlas-native univariate-forecasting fixed-configuration training profile; governed_v2 governs capability-aware, integrity-bound visual collections without authorizing publication or release activation; external_fitted_model_v1/v2 are the validated-external-fitted-model profiles.",
   "oneOf": [
     { "$ref": "#/$defs/legacy_v1" },
     { "$ref": "#/$defs/internal_v2" },
     { "$ref": "#/$defs/continuous_regression_v3" },
+    { "$ref": "#/$defs/native_univariate_forecasting_v4" },
     { "$ref": "#/$defs/governed_v2" },
     { "$ref": "#/$defs/external_fitted_model_v1" },
     { "$ref": "#/$defs/external_fitted_model_v2" }
@@ -362,6 +363,129 @@
             }
           }
         }
+      }
+    },
+    "native_univariate_forecasting_v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "artifact_kind", "created_at", "training_run_identity", "forecasting_evidence", "dataset_statistics", "seasonal_profile", "backtesting_fold_metric", "horizon_mae", "evidence_policy"],
+      "description": "Project Spec S0248: Atlas-native fixed-configuration univariate-forecasting visual evidence, emitted alongside training-parameter-record.v4/training-metrics.v4. Never contains classification_evidence, regression_evidence, confusion_matrix, charts, target_distribution_method, or feature_importance_method -- forecasting Dataset Detail renders no Target Distribution/Feature Importance. Bounded aggregate diagnostics only: a full-development seasonal profile, a per-fold backtesting primary-metric diagnostic, and a per-horizon-step MAE diagnostic, all sourced from the already-computed S0244 backtesting/holdout evidence. Never a raw history vector or raw holdout actual/predicted pair.",
+      "properties": {
+        "schema_version": { "const": "analytical-visualizations.v4" },
+        "artifact_kind": { "const": "analytical_visualizations" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "training_run_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dataset_slug", "run_id", "output_directory"],
+          "properties": {
+            "dataset_slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+            "run_id": { "type": "string", "pattern": "^train-[0-9]{8}T[0-9]{6}Z$" },
+            "output_directory": { "type": "string", "pattern": "^pipeline/training-runs/[a-z0-9]+(?:-[a-z0-9]+)*/train-[0-9]{8}T[0-9]{6}Z/$" }
+          }
+        },
+        "forecasting_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["problem_type", "result_semantics_schema_version", "training_metrics_schema_version", "forecast_horizon", "frequency", "seasonal_period"],
+          "properties": {
+            "problem_type": { "const": "univariate_forecasting" },
+            "result_semantics_schema_version": { "const": "univariate-forecasting-result-semantics.v1" },
+            "training_metrics_schema_version": { "const": "training-metrics.v4" },
+            "forecast_horizon": { "type": "integer", "minimum": 1 },
+            "frequency": { "type": "string", "minLength": 1 },
+            "seasonal_period": { "type": "integer", "minimum": 2 }
+          }
+        },
+        "dataset_statistics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["instance_count", "development_observations", "final_holdout_observations"],
+          "properties": {
+            "instance_count": { "type": "integer", "minimum": 1 },
+            "development_observations": { "type": "integer", "minimum": 1 },
+            "final_holdout_observations": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "seasonal_profile": { "$ref": "#/$defs/forecasting_seasonal_profile" },
+        "backtesting_fold_metric": { "$ref": "#/$defs/forecasting_backtesting_fold_metric" },
+        "horizon_mae": { "$ref": "#/$defs/forecasting_horizon_mae" },
+        "evidence_policy": { "$ref": "#/$defs/legacy_evidence_policy" }
+      }
+    },
+    "forecasting_seasonal_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["population_kind", "seasonal_period", "points"],
+      "description": "Project Spec S0248: deterministic full-development-only seasonal means. Cross-field invariants (positions unique and cover exactly 0..seasonal_period-1, observation_count sums to development_observations) are enforced by the producing/consuming code, not by this structural schema -- mirroring the existing normalized_confusion_matrix row-sum convention in this same file.",
+      "properties": {
+        "population_kind": { "const": "full_development" },
+        "seasonal_period": { "type": "integer", "minimum": 2 },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/forecasting_seasonal_profile_point" }
+        }
+      }
+    },
+    "forecasting_seasonal_profile_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["season_position", "mean_target", "observation_count"],
+      "properties": {
+        "season_position": { "type": "integer", "minimum": 0 },
+        "mean_target": { "type": "number" },
+        "observation_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "forecasting_backtesting_fold_metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id", "direction", "fold_count", "points"],
+      "description": "Project Spec S0248: the configured primary evaluation metric, one point per already-computed S0244 backtesting fold, ordered by fold_index by producing/consuming code convention.",
+      "properties": {
+        "metric_id": { "type": "string", "minLength": 1 },
+        "direction": { "const": "lower_is_better" },
+        "fold_count": { "type": "integer", "minimum": 1 },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/forecasting_backtesting_fold_metric_point" }
+        }
+      }
+    },
+    "forecasting_backtesting_fold_metric_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fold_index", "forecast_origin", "value", "validation_observations"],
+      "properties": {
+        "fold_index": { "type": "integer", "minimum": 0 },
+        "forecast_origin": { "type": "string", "minLength": 1 },
+        "value": { "type": "number" },
+        "validation_observations": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "forecasting_horizon_mae": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["points"],
+      "description": "Project Spec S0248: per-horizon-step MAE consumed directly from training-metrics.v4.backtesting_evaluation.horizon_mae -- never recomputed. Steps 1..forecast_horizon with no duplicates/gaps for the current complete-fold backtesting protocol is enforced by producing/consuming code.",
+      "properties": {
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/forecasting_horizon_mae_point" }
+        }
+      }
+    },
+    "forecasting_horizon_mae_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["horizon_step", "mae", "observation_count"],
+      "properties": {
+        "horizon_step": { "type": "integer", "minimum": 1 },
+        "mae": { "type": "number", "minimum": 0 },
+        "observation_count": { "type": "integer", "minimum": 1 }
       }
     },
     "external_fitted_model_v1": {

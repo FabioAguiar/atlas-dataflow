@@ -2820,3 +2820,146 @@ describe("DatasetPage continuous-regression diagnostics (Project Spec S0228)", (
     expect(visualizationsCalls).toHaveLength(1);
   });
 });
+
+// Project Spec S0248: the public page gates ForecastingDiagnostics from the
+// same release-bound result contract authority as Performance Summary, and
+// omits Target Distribution/Feature Importance/Confusion Matrix/Regression
+// Diagnostics entirely for a forecasting release.
+describe("DatasetPage univariate-forecasting diagnostics (Project Spec S0248)", () => {
+  const forecastingResultContractAvailable = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1" as const,
+      problem_type: "univariate_forecasting" as const,
+      result_schema_version: "univariate-forecasting-result.v1" as const,
+      primary_output: "forecast_series" as const,
+      output_structure: "ordered_forecast_points" as const,
+      forecast_value_kind: "continuous_numeric" as const,
+      forecast_count_source: "forecast_horizon" as const,
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+    },
+  };
+
+  const forecastingVisualizationsPayload = {
+    charts: [],
+    dataset_statistics: { instance_count: 24 },
+    forecasting_diagnostics: {
+      forecast_horizon: 4,
+      frequency: "synthetic-step",
+      seasonal_profile: {
+        seasonal_period: 4,
+        points: [
+          { season_position: 0, mean_target: 10.0, observation_count: 5 },
+          { season_position: 1, mean_target: 12.0, observation_count: 5 },
+          { season_position: 2, mean_target: 9.0, observation_count: 5 },
+          { season_position: 3, mean_target: 13.0, observation_count: 5 },
+        ],
+      },
+      backtesting_fold_metric: {
+        metric_id: "mae",
+        direction: "lower_is_better",
+        points: [
+          { fold_index: 1, forecast_origin: "11", value: 1.2 },
+          { fold_index: 2, forecast_origin: "15", value: 0.9 },
+        ],
+      },
+      horizon_mae: {
+        points: [
+          { horizon_step: 1, mae: 0.5 },
+          { horizon_step: 2, mae: 0.8 },
+          { horizon_step: 3, mae: 1.1 },
+          { horizon_step: 4, mae: 1.4 },
+        ],
+      },
+    },
+  };
+
+  function installForecastingFetchMock() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: contextPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: metricsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({ dataset_slug: slug, visualizations: forecastingVisualizationsPayload });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: contractPayload,
+          result_contract: forecastingResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+      return jsonResponse({}, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("renders Seasonal Profile, Backtesting by Origin, and Horizon MAE below the primary analytics grid for a forecasting release", async () => {
+    installForecastingFetchMock();
+    const { container } = renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    expect(await screen.findByRole("heading", { name: "Seasonal Profile" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Backtesting by Origin" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Horizon MAE" })).toBeInTheDocument();
+
+    const forecastingSection = container.querySelector(".dataset-detail-overview__forecasting-diagnostics");
+    expect(forecastingSection).toBeInTheDocument();
+    expect(forecastingSection?.querySelector(".dataset-detail-visualization--seasonal-profile")).toBeInTheDocument();
+    expect(
+      forecastingSection?.querySelector(".dataset-detail-visualization--backtesting-fold-metric"),
+    ).toBeInTheDocument();
+    expect(forecastingSection?.querySelector(".dataset-detail-visualization--horizon-mae")).toBeInTheDocument();
+  });
+
+  it("omits Target Distribution and Feature Importance for a forecasting release", async () => {
+    installForecastingFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByRole("heading", { name: "Seasonal Profile" });
+    expect(screen.queryByRole("heading", { name: "Target Distribution" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Feature Importance" })).not.toBeInTheDocument();
+  });
+
+  it("omits Confusion Matrix and Regression Diagnostics for a forecasting release", async () => {
+    installForecastingFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByRole("heading", { name: "Seasonal Profile" });
+    expect(screen.queryByRole("heading", { name: "Confusion Matrix" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Actual vs Predicted" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Residual Distribution" })).not.toBeInTheDocument();
+  });
+
+  it("does not send an additional visualizations request for the forecasting diagnostics section", async () => {
+    const fetchMock = installForecastingFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Seasonal Profile" });
+    const visualizationsCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).endsWith(`/datasets/${slug}/visualizations`),
+    );
+    expect(visualizationsCalls).toHaveLength(1);
+  });
+
+  it("renders no forecasting diagnostics for a binary release", async () => {
+    installDatasetPageFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    await screen.findByText("Binary Classification");
+    expect(screen.queryByRole("heading", { name: "Seasonal Profile" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Backtesting by Origin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Horizon MAE" })).not.toBeInTheDocument();
+  });
+});

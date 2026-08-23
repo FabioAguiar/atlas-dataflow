@@ -2022,15 +2022,12 @@ def _internal_native_forecasting_visualizations_compatibility(
     predictive_bundle_data: dict | None,
     metrics_data: dict | None = None,
 ) -> list[dict]:
-    """Require a native forecasting candidate's visualizations artifact to
-    declare the reserved analytical-visualizations.v4 schema_version.
-
-    S0247 does not define v4 visualization content validation -- once a
-    future spec defines that schema, it will add the full cross-artifact
-    compatibility check here (mirroring the continuous-regression diagnostic
-    population cross-check above). `metrics_data` is accepted for interface
-    symmetry with that future check and is unused today.
-    """
+    """Project Spec S0248: full fail-closed compatibility check for a native
+    forecasting candidate's analytical-visualizations.v4 artifact against its
+    predictive bundle and (when present) training-metrics.v4 artifact.
+    Mirrors the internal native continuous-regression visualizations
+    compatibility discipline above. Never recomputes visual evidence -- only
+    cross-checks the already-governed declarations for agreement."""
     if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
         return []
     if visualizations_data.get("schema_version") != _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4:
@@ -2041,6 +2038,156 @@ def _internal_native_forecasting_visualizations_compatibility(
             "visualizations",
             "native_forecasting_visualizations_version_mismatch",
         )]
+
+    forecasting_evidence = visualizations_data.get("forecasting_evidence")
+    if (
+        not isinstance(forecasting_evidence, dict)
+        or forecasting_evidence.get("problem_type") != "univariate_forecasting"
+        or forecasting_evidence.get("result_semantics_schema_version")
+        != _INTERNAL_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION
+        or forecasting_evidence.get("training_metrics_schema_version") != _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native forecasting visualizations artifact forecasting_evidence does not agree "
+            "with the required univariate-forecasting evidence contract.",
+            "visualizations",
+            "native_forecasting_visualizations_evidence_mismatch",
+        )]
+
+    visualizations_horizon = forecasting_evidence.get("forecast_horizon")
+    bundle_horizon = None
+    frozen_model = predictive_bundle_data.get("frozen_model")
+    if isinstance(frozen_model, dict):
+        temporal_identity = frozen_model.get("temporal_identity")
+        if isinstance(temporal_identity, dict):
+            bundle_horizon = temporal_identity.get("forecast_horizon")
+    if (
+        not isinstance(visualizations_horizon, int)
+        or isinstance(visualizations_horizon, bool)
+        or visualizations_horizon <= 0
+        or (bundle_horizon is not None and visualizations_horizon != bundle_horizon)
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting visualizations forecasting_evidence.forecast_horizon does not "
+            "match the predictive bundle's governed forecast horizon.",
+            "visualizations",
+            "native_forecasting_visualizations_horizon_mismatch",
+        )]
+
+    dataset_statistics = visualizations_data.get("dataset_statistics")
+    development_observations = (
+        dataset_statistics.get("development_observations") if isinstance(dataset_statistics, dict) else None
+    )
+    final_holdout_observations = (
+        dataset_statistics.get("final_holdout_observations") if isinstance(dataset_statistics, dict) else None
+    )
+    instance_count = dataset_statistics.get("instance_count") if isinstance(dataset_statistics, dict) else None
+    if (
+        not isinstance(development_observations, int) or isinstance(development_observations, bool)
+        or not isinstance(final_holdout_observations, int) or isinstance(final_holdout_observations, bool)
+        or not isinstance(instance_count, int) or isinstance(instance_count, bool)
+        or instance_count != development_observations + final_holdout_observations
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting visualizations dataset_statistics counts are not internally "
+            "coherent.",
+            "visualizations",
+            "native_forecasting_visualizations_dataset_statistics_incoherent",
+        )]
+
+    if not isinstance(metrics_data, dict) or metrics_data.get("schema_version") != _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION:
+        return []
+
+    metrics_final_holdout = metrics_data.get("final_holdout_evaluation")
+    metrics_final_holdout_count = (
+        metrics_final_holdout.get("observation_count") if isinstance(metrics_final_holdout, dict) else None
+    )
+    if (
+        isinstance(metrics_final_holdout_count, int)
+        and not isinstance(metrics_final_holdout_count, bool)
+        and final_holdout_observations != metrics_final_holdout_count
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting visualizations dataset_statistics.final_holdout_observations "
+            "does not match the metrics artifact's final_holdout_evaluation.observation_count.",
+            "visualizations",
+            "native_forecasting_visualizations_final_holdout_mismatch",
+        )]
+
+    backtesting_evaluation = metrics_data.get("backtesting_evaluation")
+    backtesting_fold_metric = visualizations_data.get("backtesting_fold_metric")
+    metrics_fold_count = (
+        backtesting_evaluation.get("fold_count") if isinstance(backtesting_evaluation, dict) else None
+    )
+    visualizations_fold_count = (
+        backtesting_fold_metric.get("fold_count") if isinstance(backtesting_fold_metric, dict) else None
+    )
+    if (
+        isinstance(metrics_fold_count, int)
+        and not isinstance(metrics_fold_count, bool)
+        and visualizations_fold_count != metrics_fold_count
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting visualizations backtesting_fold_metric.fold_count does not "
+            "match the metrics artifact's backtesting_evaluation.fold_count.",
+            "visualizations",
+            "native_forecasting_visualizations_fold_count_mismatch",
+        )]
+
+    evaluation_policy = metrics_data.get("evaluation_policy")
+    primary_metric = evaluation_policy.get("primary_metric") if isinstance(evaluation_policy, dict) else None
+    metrics_primary_metric_id = primary_metric.get("metric_id") if isinstance(primary_metric, dict) else None
+    visualizations_metric_id = (
+        backtesting_fold_metric.get("metric_id") if isinstance(backtesting_fold_metric, dict) else None
+    )
+    if (
+        isinstance(metrics_primary_metric_id, str)
+        and metrics_primary_metric_id
+        and visualizations_metric_id != metrics_primary_metric_id
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting visualizations backtesting_fold_metric.metric_id does not "
+            "match the metrics artifact's evaluation_policy.primary_metric.metric_id.",
+            "visualizations",
+            "native_forecasting_visualizations_primary_metric_mismatch",
+        )]
+
+    metrics_horizon_mae = (
+        backtesting_evaluation.get("horizon_mae") if isinstance(backtesting_evaluation, dict) else None
+    )
+    visualizations_horizon_mae = visualizations_data.get("horizon_mae")
+    visualizations_horizon_points = (
+        visualizations_horizon_mae.get("points") if isinstance(visualizations_horizon_mae, dict) else None
+    )
+    if isinstance(metrics_horizon_mae, list) and isinstance(visualizations_horizon_points, list):
+        metrics_by_step = {
+            entry.get("horizon_step"): entry for entry in metrics_horizon_mae if isinstance(entry, dict)
+        }
+        visualizations_by_step = {
+            entry.get("horizon_step"): entry
+            for entry in visualizations_horizon_points
+            if isinstance(entry, dict)
+        }
+        horizon_mae_agrees = metrics_by_step.keys() == visualizations_by_step.keys() and all(
+            metrics_entry.get("mae") == visualizations_by_step[step].get("mae")
+            and metrics_entry.get("observation_count") == visualizations_by_step[step].get("observation_count")
+            for step, metrics_entry in metrics_by_step.items()
+        )
+        if not horizon_mae_agrees:
+            return [_safe_rejection_reason(
+                "contradictory_candidate_artifact",
+                "Native forecasting visualizations horizon_mae does not match the metrics "
+                "artifact's backtesting_evaluation.horizon_mae.",
+                "visualizations",
+                "native_forecasting_visualizations_horizon_mae_mismatch",
+            )]
+
     return []
 
 

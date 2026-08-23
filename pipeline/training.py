@@ -115,6 +115,14 @@ NATIVE_UNIVARIATE_FORECASTING_MODEL_FAMILY = "deterministic_seasonal_trend_ols"
 NATIVE_UNIVARIATE_FORECASTING_METRIC_NAMES = ("mae", "rmse", "seasonal_mase")
 NATIVE_UNIVARIATE_FORECASTING_BACKTESTING_MODE = "expanding_window"
 
+# Project Spec S0248: the strict native univariate-forecasting analytical
+# visualizations profile -- a bounded seasonal profile, per-fold backtesting
+# primary-metric diagnostic, and per-horizon-step MAE diagnostic, all sourced
+# from the S0244 backtesting/holdout evidence already computed above. Never a
+# raw history vector or raw holdout actual/predicted pair.
+NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION = "analytical-visualizations.v4"
+NATIVE_UNIVARIATE_FORECASTING_SEASONAL_POPULATION_KIND = "full_development"
+
 # Project Spec S0244: closed list of execution_contract.v2 fields the
 # forecasting training entrypoint may consume. Deliberately excludes every
 # v1 tabular-only field (feature_columns, split_policy, modeling_constraints,
@@ -5524,6 +5532,127 @@ def _compute_fold_forecast_metrics(
     return values, scales
 
 
+def _native_forecasting_seasonal_profile(
+    final_development_history: list[float], seasonal_period: int
+) -> list[dict[str, Any]]:
+    """Project Spec S0248: deterministic full-development seasonal means,
+    grouped only by absolute row position modulo seasonal_period -- the same
+    season mapping `_deterministic_seasonal_trend_design_matrix` already uses
+    for the frozen model's own seasonal indicator columns. Never a raw
+    per-row value, timestamp, or calendar label."""
+    buckets: dict[int, list[float]] = {position: [] for position in range(seasonal_period)}
+    for position, value in enumerate(final_development_history):
+        buckets[position % seasonal_period].append(value)
+
+    points: list[dict[str, Any]] = []
+    for season_position in range(seasonal_period):
+        values = buckets[season_position]
+        if not values:
+            raise TrainingInputError(
+                "insufficient_development_observations",
+                "development partition does not contain at least one observation for every "
+                "seasonal position.",
+                field="preparation_recipe_path",
+            )
+        points.append({
+            "season_position": season_position,
+            "mean_target": _finite_metric_value("mean_target", sum(values) / len(values)),
+            "observation_count": len(values),
+        })
+    return points
+
+
+def _build_native_univariate_forecasting_analytical_visualizations_artifact(
+    *,
+    final_development_history: list[float],
+    seasonal_period: int,
+    forecast_horizon: int,
+    frequency: str,
+    development_observation_count: int,
+    final_holdout_observation_count: int,
+    fold_summaries: list[dict[str, Any]],
+    horizon_mae: list[dict[str, Any]],
+    primary_metric_id: str,
+    output_directory: Path,
+    training_timestamp: str,
+) -> dict[str, Any]:
+    """Project Spec S0248: builds the strict analytical-visualizations.v4
+    artifact from evidence the S0244 backtest/final-fit above already
+    computed in memory -- never a second fold prediction pass, a second
+    final-holdout prediction pass, or another model fit."""
+    seasonal_points = _native_forecasting_seasonal_profile(final_development_history, seasonal_period)
+
+    fold_points: list[dict[str, Any]] = []
+    for summary in fold_summaries:
+        metric_value = next(
+            (entry["value"] for entry in summary["metrics"] if entry["name"] == primary_metric_id),
+            None,
+        )
+        if metric_value is None:
+            raise TrainingInputError(
+                "missing_primary_metric",
+                "a backtesting fold summary is missing the configured primary metric required "
+                "for the backtesting fold diagnostic.",
+                field="evaluation_policy.primary_metric",
+            )
+        fold_points.append({
+            "fold_index": summary["fold_index"],
+            "forecast_origin": summary["forecast_origin"],
+            "value": metric_value,
+            "validation_observations": summary["validation_observations"],
+        })
+
+    return {
+        "schema_version": NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION,
+        "artifact_kind": "analytical_visualizations",
+        "created_at": training_timestamp,
+        "training_run_identity": {
+            "dataset_slug": output_directory.parent.name,
+            "run_id": output_directory.name,
+            "output_directory": f"{_repo_relative_path(output_directory)}/",
+        },
+        "forecasting_evidence": {
+            "problem_type": NATIVE_UNIVARIATE_FORECASTING_PROBLEM_TYPE,
+            "result_semantics_schema_version": NATIVE_UNIVARIATE_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION,
+            "training_metrics_schema_version": NATIVE_UNIVARIATE_FORECASTING_TRAINING_METRICS_VERSION,
+            "forecast_horizon": forecast_horizon,
+            "frequency": frequency,
+            "seasonal_period": seasonal_period,
+        },
+        "dataset_statistics": {
+            "instance_count": development_observation_count + final_holdout_observation_count,
+            "development_observations": development_observation_count,
+            "final_holdout_observations": final_holdout_observation_count,
+        },
+        "seasonal_profile": {
+            "population_kind": NATIVE_UNIVARIATE_FORECASTING_SEASONAL_POPULATION_KIND,
+            "seasonal_period": seasonal_period,
+            "points": seasonal_points,
+        },
+        "backtesting_fold_metric": {
+            "metric_id": primary_metric_id,
+            "direction": "lower_is_better",
+            "fold_count": len(fold_summaries),
+            "points": fold_points,
+        },
+        "horizon_mae": {
+            "points": [dict(entry) for entry in horizon_mae],
+        },
+        "evidence_policy": {
+            "raw_logs_prohibited": True,
+            "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True,
+            "secrets_prohibited": True,
+            "raw_dataset_embedded": False,
+            "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False,
+            "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False,
+            "reduced_and_sanitized": True,
+        },
+    }
+
+
 def _train_native_univariate_forecasting_fixed_configuration(
     *,
     full_contract: dict[str, Any],
@@ -5769,6 +5898,24 @@ def _train_native_univariate_forecasting_fixed_configuration(
     }
     metrics_sha256 = _write_reduced_json_artifact(metrics_path, metrics_artifact)
 
+    analytical_visualizations_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
+    analytical_visualizations_artifact = _build_native_univariate_forecasting_analytical_visualizations_artifact(
+        final_development_history=final_development_history,
+        seasonal_period=seasonal_period,
+        forecast_horizon=forecast_horizon,
+        frequency=str(contract["frequency"]),
+        development_observation_count=development_observation_count,
+        final_holdout_observation_count=len(y_true_holdout),
+        fold_summaries=fold_summaries,
+        horizon_mae=horizon_mae,
+        primary_metric_id=contract["evaluation_policy"]["primary_metric"]["metric_id"],
+        output_directory=output_directory,
+        training_timestamp=training_timestamp,
+    )
+    analytical_visualizations_sha256 = _write_reduced_json_artifact(
+        analytical_visualizations_path, analytical_visualizations_artifact,
+    )
+
     training_parameter_record = {
         "schema_version": NATIVE_UNIVARIATE_FORECASTING_TRAINING_PARAMETER_RECORD_VERSION,
         "record_kind": "training_parameter_record",
@@ -5877,7 +6024,7 @@ def _train_native_univariate_forecasting_fixed_configuration(
         model_selection_evidence_path=None,
         model_card_input_path=None,
         model_card_path=None,
-        analytical_visualizations_path=None,
+        analytical_visualizations_path=_repo_relative_path(analytical_visualizations_path),
         serializer_name=SERIALIZER_NAME,
         serializer_version=serializer_version,
         serialization_format_version=f"{SERIALIZER_NAME}-{serializer_version}",
@@ -5892,7 +6039,7 @@ def _train_native_univariate_forecasting_fixed_configuration(
             "model_card_input_sha256": None,
             "model_card_sha256": None,
             "model_selection_evidence_sha256": None,
-            "analytical_visualizations_sha256": None,
+            "analytical_visualizations_sha256": analytical_visualizations_sha256,
         },
         metrics=holdout_metric_values,
         model_selection_evidence_produced=False,

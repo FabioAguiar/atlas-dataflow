@@ -19,6 +19,7 @@ import TargetDistribution from "../../components/DatasetDetail/TargetDistributio
 import FeatureImportance from "../../components/DatasetDetail/FeatureImportance";
 import ConfusionMatrix from "../../components/DatasetDetail/ConfusionMatrix";
 import RegressionDiagnostics from "../../components/DatasetDetail/RegressionDiagnostics";
+import ForecastingDiagnostics from "../../components/DatasetDetail/ForecastingDiagnostics";
 import BinaryClassificationResult from "../../components/ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../../components/ResultCard/MulticlassClassificationResult";
 import ContinuousRegressionResult from "../../components/ResultCard/ContinuousRegressionResult";
@@ -4489,8 +4490,18 @@ function DatasetDetailLivePreview({
       problemType={availableResultProblemType(readOnlyData.resultContract)}
     />
   );
-  const targetDistributionContent = <TargetDistribution visualizations={visualizations} />;
-  const featureImportanceContent = <FeatureImportance visualizations={visualizations} />;
+  // Project Spec S0248: gated on the same private dataset-bound result-
+  // contract authority as RegressionDiagnostics/ForecastingDiagnostics below
+  // -- a forecasting release omits Target Distribution/Feature Importance
+  // entirely (never a placeholder empty state) rather than rendering charts
+  // a v4 visualizations payload never carries. Never inferred from dataset
+  // slug, draft copy, performance focus, or metric names alone.
+  const isForecastingPreview =
+    readOnlyData.resultContract.status === "available" &&
+    readOnlyData.resultContract.semantics.problem_type === "univariate_forecasting";
+
+  const targetDistributionContent = isForecastingPreview ? null : <TargetDistribution visualizations={visualizations} />;
+  const featureImportanceContent = isForecastingPreview ? null : <FeatureImportance visualizations={visualizations} />;
   // Project Spec S0215: Admin Live Preview reuses the exact same shared
   // ConfusionMatrix renderer, fed by the same already-loaded visualizations
   // payload above -- it never synthesizes or edits matrix data itself.
@@ -4505,6 +4516,13 @@ function DatasetDetailLivePreview({
     readOnlyData.resultContract.status === "available" && readOnlyData.resultContract.semantics.problem_type === "continuous_regression" ? (
       <RegressionDiagnostics visualizations={visualizations} />
     ) : null;
+  // Project Spec S0248: Admin Live Preview reuses the exact same shared
+  // ForecastingDiagnostics renderer, fed by the same already-loaded
+  // visualizations payload above, gated on the same private dataset-bound
+  // result-contract authority -- it never issues a second request.
+  const forecastingDiagnosticsContent = isForecastingPreview ? (
+    <ForecastingDiagnostics visualizations={visualizations} />
+  ) : null;
 
   // Project Spec S0143: the Dataset Detail Live Preview Inference tab now
   // owns one real, executable InferenceForm lifecycle -- the same
@@ -4562,6 +4580,7 @@ function DatasetDetailLivePreview({
       datasetTitle={preview.datasetTitle}
       documentationContent={documentationContent}
       featureImportanceContent={featureImportanceContent}
+      forecastingDiagnosticsContent={forecastingDiagnosticsContent}
       inferenceContent={inferenceContent}
       metadata={preview.metadata}
       modelDisplayName={preview.modelDisplayName}

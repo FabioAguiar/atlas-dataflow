@@ -23,9 +23,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pipeline.training as training
 from pipeline.training import (
+    ANALYTICAL_VISUALIZATIONS_FILENAME,
     METRICS_ARTIFACT_FILENAME,
     MODEL_ARTIFACT_FILENAME,
     MODEL_SELECTION_EVIDENCE_FILENAME,
+    NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION,
     NATIVE_UNIVARIATE_FORECASTING_TRAINING_METRICS_VERSION,
     NATIVE_UNIVARIATE_FORECASTING_TRAINING_PARAMETER_RECORD_VERSION,
     TRAINING_PARAMETER_RECORD_FILENAME,
@@ -47,6 +49,7 @@ except ImportError:  # pragma: no cover
 REPO_ROOT = Path(__file__).parent.parent
 TRAINING_PARAMETER_RECORD_SCHEMA_PATH = REPO_ROOT / "pipeline" / "training-parameter-record.schema.json"
 TRAINING_METRICS_SCHEMA_PATH = REPO_ROOT / "pipeline" / "training-metrics.schema.json"
+ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH = REPO_ROOT / "pipeline" / "analytical-visualizations.schema.json"
 
 SEASONAL_PERIOD = 4
 DEV_OBSERVATIONS = 20
@@ -665,16 +668,185 @@ def test_no_model_selection_evidence_written(
     assert not (output_directory / MODEL_SELECTION_EVIDENCE_FILENAME).exists()
 
 
-def test_no_analytical_visualizations_written(
+def test_no_model_card_written(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    # Project Spec S0248: forecasting still never produces a model-card
+    # artifact -- only analytical-visualizations.json is new here.
+    result, output_directory = _run(fixed_training_environment, tmp_path)
+    assert result.model_card_path is None
+    assert result.model_card_input_path is None
+    assert not (output_directory / "model-card.json").exists()
+    assert not (output_directory / "model-card-input.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# analytical-visualizations.v4 (Project Spec S0248)
+# ---------------------------------------------------------------------------
+
+
+def _load_visualizations(output_directory: Path) -> dict:
+    return json.loads((output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text())
+
+
+def test_v4_visualization_artifact_emitted_with_real_path_and_hash(
     fixed_training_environment: Path, tmp_path: Path,
 ) -> None:
     result, output_directory = _run(fixed_training_environment, tmp_path)
-    assert result.analytical_visualizations_path is None
-    assert result.model_card_path is None
-    assert result.model_card_input_path is None
-    assert not (output_directory / "analytical-visualizations.json").exists()
-    assert not (output_directory / "model-card.json").exists()
-    assert not (output_directory / "model-card-input.json").exists()
+    assert result.analytical_visualizations_path == (
+        f"{result.output_directory}{ANALYTICAL_VISUALIZATIONS_FILENAME}"
+    )
+    assert result.hashes["analytical_visualizations_sha256"]
+    artifact_path = output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME
+    assert artifact_path.exists()
+    import hashlib
+
+    assert (
+        hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        == result.hashes["analytical_visualizations_sha256"]
+    )
+
+
+def test_v4_visualization_artifact_validates_against_canonical_schema(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    if jsonschema is None:
+        pytest.skip("jsonschema not installed")
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    assert visualizations_doc["schema_version"] == NATIVE_UNIVARIATE_FORECASTING_ANALYTICAL_VISUALIZATIONS_VERSION
+    schema = json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text())
+    validator_cls = jsonschema.validators.validator_for(schema, default=jsonschema.Draft202012Validator)
+    validator_cls(schema).validate(visualizations_doc)
+
+
+def test_v4_seasonal_profile_is_deterministic_and_development_only(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    seasonal_profile = visualizations_doc["seasonal_profile"]
+    assert seasonal_profile["population_kind"] == "full_development"
+    assert seasonal_profile["seasonal_period"] == SEASONAL_PERIOD
+    positions = [point["season_position"] for point in seasonal_profile["points"]]
+    assert sorted(positions) == list(range(SEASONAL_PERIOD))
+    # Independently re-derive each season's expected mean directly from the
+    # same synthetic development series the fixture wrote -- never a
+    # fabricated or hand-derived closed-form value.
+    development_values = [_series_value(i) for i in range(DEV_OBSERVATIONS)]
+    for point in seasonal_profile["points"]:
+        matching = [
+            value for i, value in enumerate(development_values) if i % SEASONAL_PERIOD == point["season_position"]
+        ]
+        assert point["observation_count"] == len(matching)
+        assert point["mean_target"] == pytest.approx(sum(matching) / len(matching), abs=1e-6)
+
+
+def test_v4_seasonal_profile_counts_sum_to_development_observations(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    seasonal_profile = _load_visualizations(output_directory)["seasonal_profile"]
+    total = sum(point["observation_count"] for point in seasonal_profile["points"])
+    assert total == DEV_OBSERVATIONS
+
+
+def test_v4_fold_diagnostic_values_equal_metrics_fold_summaries(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+
+    fold_metric = visualizations_doc["backtesting_fold_metric"]
+    primary_metric_id = metrics_doc["evaluation_policy"]["primary_metric"]["metric_id"]
+    assert fold_metric["metric_id"] == primary_metric_id
+    assert fold_metric["direction"] == "lower_is_better"
+    fold_summaries = metrics_doc["backtesting_evaluation"]["fold_summaries"]
+    assert fold_metric["fold_count"] == len(fold_summaries)
+
+    points_by_fold = {point["fold_index"]: point for point in fold_metric["points"]}
+    assert [point["fold_index"] for point in fold_metric["points"]] == sorted(points_by_fold)
+    for summary in fold_summaries:
+        point = points_by_fold[summary["fold_index"]]
+        expected_value = next(
+            entry["value"] for entry in summary["metrics"] if entry["name"] == primary_metric_id
+        )
+        assert point["value"] == pytest.approx(expected_value)
+        assert point["forecast_origin"] == summary["forecast_origin"]
+        assert point["validation_observations"] == summary["validation_observations"]
+
+
+def test_v4_horizon_mae_equals_metrics_v4_horizon_mae(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_doc = _load_visualizations(output_directory)
+    metrics_doc = json.loads((output_directory / METRICS_ARTIFACT_FILENAME).read_text())
+    assert visualizations_doc["horizon_mae"]["points"] == metrics_doc["backtesting_evaluation"]["horizon_mae"]
+
+
+def test_v4_instance_count_arithmetic_is_correct(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    dataset_statistics = _load_visualizations(output_directory)["dataset_statistics"]
+    assert dataset_statistics["development_observations"] == DEV_OBSERVATIONS
+    assert dataset_statistics["final_holdout_observations"] == HOLDOUT_OBSERVATIONS
+    assert dataset_statistics["instance_count"] == DEV_OBSERVATIONS + HOLDOUT_OBSERVATIONS
+
+
+def test_v4_never_persists_raw_history_or_holdout_arrays(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    visualizations_text = (output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).read_text()
+    for forbidden_key in ("y_true", "y_pred", "y_true_holdout", "y_pred_holdout", "raw_history", "raw_values"):
+        assert forbidden_key not in visualizations_text
+
+
+def test_v4_generation_introduces_no_additional_model_fit(
+    fixed_training_environment: Path, tmp_path: Path, monkeypatch,
+) -> None:
+    from sklearn.linear_model import LinearRegression
+
+    fit_call_count = {"n": 0}
+    original_fit = LinearRegression.fit
+
+    def _counting_fit(self, X, y):
+        fit_call_count["n"] += 1
+        return original_fit(self, X, y)
+
+    monkeypatch.setattr(LinearRegression, "fit", _counting_fit)
+    _result, output_directory = _run(fixed_training_environment, tmp_path)
+    assert (output_directory / ANALYTICAL_VISUALIZATIONS_FILENAME).exists()
+    # 2 folds + 1 final development fit = 3 fit calls total -- building the
+    # v4 visualization artifact never triggers a fourth.
+    assert fit_call_count["n"] == 3
+
+
+def test_v4_repeat_runs_produce_identical_analytical_content(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    _result_a, output_a = _run(fixed_training_environment, tmp_path, run_id="train-20260101T000000Z")
+    _result_b, output_b = _run(fixed_training_environment, tmp_path, run_id="train-20260101T000001Z")
+    doc_a = _load_visualizations(output_a)
+    doc_b = _load_visualizations(output_b)
+    for key in ("created_at", "training_run_identity"):
+        del doc_a[key]
+        del doc_b[key]
+    assert doc_a == doc_b
+
+
+def test_v4_missing_seasonal_position_fails_closed(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    # A development partition shorter than the seasonal period cannot cover
+    # every seasonal position exactly once -- this must fail closed rather
+    # than silently omit or fabricate a seasonal profile point.
+    with pytest.raises(TrainingInputError) as excinfo:
+        training._native_forecasting_seasonal_profile([10.0, 11.0], seasonal_period=4)
+    assert excinfo.value.code == "insufficient_development_observations"
 
 
 def test_no_external_study_access(fixed_training_environment: Path, tmp_path: Path) -> None:

@@ -406,16 +406,14 @@ def test_schema_reserves_analytical_visualizations_v4_vocabulary_only():
     ]
 
 
-def test_no_real_v4_visualization_schema_content_is_fabricated():
-    # S0247 must not define analytical-visualizations.v4 content -- the real
-    # pipeline/analytical-visualizations.schema.json file must remain
-    # unmodified by this spec, so a v4-declared document still fails real
-    # schema validation (proven end to end by
-    # test_forecasting_candidate_remains_blocked_pending_visualizations_v4_schema
-    # below).
+def test_real_v4_visualization_schema_content_is_now_defined():
+    # Project Spec S0248 defines the real analytical-visualizations.v4
+    # content -- a fully-formed synthetic instance now validates, while the
+    # old S0247-era bare placeholder still fails (missing required fields).
     jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads(ANALYTICAL_VISUALIZATIONS_SCHEMA_PATH.read_text())
     validator_cls = jsonschema.validators.validator_for(schema, default=jsonschema.Draft202012Validator)
+    validator_cls(schema).validate(_valid_v4_visualizations_document())
     with pytest.raises(jsonschema.ValidationError):
         validator_cls(schema).validate({"schema_version": "analytical-visualizations.v4"})
 
@@ -654,6 +652,30 @@ def _forecasting_predictive_bundle_overrides(
     return overrides
 
 
+def _default_horizon_mae_points(forecast_horizon: int = 6) -> list[dict]:
+    return [
+        {"horizon_step": step, "mae": round(2.0 + 0.4 * step, 2), "observation_count": 2}
+        for step in range(1, forecast_horizon + 1)
+    ]
+
+
+def _default_fold_summaries(metric_id: str = "mae") -> list[dict]:
+    return [
+        {
+            "fold_index": 1,
+            "forecast_origin": "11",
+            "validation_observations": 6,
+            "metrics": [{"name": metric_id, "value": 3.0}],
+        },
+        {
+            "fold_index": 2,
+            "forecast_origin": "17",
+            "validation_observations": 6,
+            "metrics": [{"name": metric_id, "value": 3.8}],
+        },
+    ]
+
+
 def _forecasting_metrics_overrides(
     *,
     schema_version: str = "training-metrics.v4",
@@ -661,6 +683,8 @@ def _forecasting_metrics_overrides(
     final_holdout_metrics: list | None = None,
     final_holdout_overrides: dict | None = None,
     forecast_horizon: int = 6,
+    evaluation_policy_overrides: dict | None = None,
+    backtesting_evaluation_overrides: dict | None = None,
 ) -> dict:
     forecasting_evidence = {
         "problem_type": "univariate_forecasting",
@@ -680,11 +704,121 @@ def _forecasting_metrics_overrides(
         "used_for_model_selection": False,
     }
     final_holdout.update(final_holdout_overrides or {})
+    evaluation_policy = {
+        "primary_metric": {"metric_id": "mae", "direction": "lower_is_better"},
+        "secondary_metrics": [],
+    }
+    evaluation_policy.update(evaluation_policy_overrides or {})
+    fold_summaries = _default_fold_summaries(evaluation_policy["primary_metric"]["metric_id"])
+    backtesting_evaluation = {
+        "fold_count": len(fold_summaries),
+        "forecast_count": sum(entry["validation_observations"] for entry in fold_summaries),
+        "pooled_metrics": [{"name": "mae", "value": 3.4}],
+        "fold_summaries": fold_summaries,
+        "horizon_mae": _default_horizon_mae_points(forecast_horizon),
+    }
+    backtesting_evaluation.update(backtesting_evaluation_overrides or {})
     return {
         "schema_version": schema_version,
         "forecasting_evidence": forecasting_evidence,
+        "evaluation_policy": evaluation_policy,
+        "backtesting_evaluation": backtesting_evaluation,
         "final_holdout_evaluation": final_holdout,
     }
+
+
+def _valid_v4_visualizations_document(
+    *,
+    forecast_horizon: int = 6,
+    seasonal_period: int = 4,
+    development_observations: int = 20,
+    # Matches _forecasting_metrics_overrides()'s default
+    # final_holdout_evaluation.observation_count so the two fixtures
+    # cross-check cleanly by default.
+    final_holdout_observations: int = 12,
+    metric_id: str = "mae",
+    fold_points: list[dict] | None = None,
+    horizon_points: list[dict] | None = None,
+    forecasting_evidence_overrides: dict | None = None,
+    dataset_statistics_overrides: dict | None = None,
+    overrides: dict | None = None,
+) -> dict:
+    """Project Spec S0248: a fully valid, schema-conformant
+    analytical-visualizations.v4 document that also cross-checks cleanly
+    against `_forecasting_predictive_bundle_overrides()` and
+    `_forecasting_metrics_overrides()`'s own defaults -- used to replace the
+    S0247-era bare `{"schema_version": "analytical-visualizations.v4"}`
+    placeholder fixture."""
+    if fold_points is None:
+        fold_points = [
+            {"fold_index": summary["fold_index"], "forecast_origin": summary["forecast_origin"],
+             "value": next(entry["value"] for entry in summary["metrics"] if entry["name"] == metric_id),
+             "validation_observations": summary["validation_observations"]}
+            for summary in _default_fold_summaries(metric_id)
+        ]
+    if horizon_points is None:
+        horizon_points = _default_horizon_mae_points(forecast_horizon)
+
+    forecasting_evidence = {
+        "problem_type": "univariate_forecasting",
+        "result_semantics_schema_version": "univariate-forecasting-result-semantics.v1",
+        "training_metrics_schema_version": "training-metrics.v4",
+        "forecast_horizon": forecast_horizon,
+        "frequency": "synthetic-step",
+        "seasonal_period": seasonal_period,
+    }
+    forecasting_evidence.update(forecasting_evidence_overrides or {})
+
+    dataset_statistics = {
+        "instance_count": development_observations + final_holdout_observations,
+        "development_observations": development_observations,
+        "final_holdout_observations": final_holdout_observations,
+    }
+    dataset_statistics.update(dataset_statistics_overrides or {})
+
+    per_position = development_observations // seasonal_period
+    remainder = development_observations - per_position * seasonal_period
+    document = {
+        "schema_version": "analytical-visualizations.v4",
+        "artifact_kind": "analytical_visualizations",
+        "created_at": "2026-08-23T00:00:00Z",
+        "training_run_identity": {
+            "dataset_slug": DATASET_SLUG,
+            "run_id": "train-20260823T000000Z",
+            "output_directory": f"pipeline/training-runs/{DATASET_SLUG}/train-20260823T000000Z/",
+        },
+        "forecasting_evidence": forecasting_evidence,
+        "dataset_statistics": dataset_statistics,
+        "seasonal_profile": {
+            "population_kind": "full_development",
+            "seasonal_period": seasonal_period,
+            "points": [
+                {
+                    "season_position": position,
+                    "mean_target": 10.0 + position,
+                    "observation_count": per_position + (1 if position < remainder else 0),
+                }
+                for position in range(seasonal_period)
+            ],
+        },
+        "backtesting_fold_metric": {
+            "metric_id": metric_id,
+            "direction": "lower_is_better",
+            "fold_count": len(fold_points),
+            "points": fold_points,
+        },
+        "horizon_mae": {"points": horizon_points},
+        "evidence_policy": {
+            "raw_logs_prohibited": True, "raw_runtime_prohibited": True,
+            "raw_api_payloads_prohibited": True, "secrets_prohibited": True,
+            "raw_dataset_embedded": False, "model_bytes_embedded": False,
+            "serialized_estimator_state_embedded": False, "raw_transformed_matrices_embedded": False,
+            "notebook_state_embedded": False, "reduced_and_sanitized": True,
+        },
+    }
+    if overrides:
+        document.update(overrides)
+    return document
 
 
 def _safe_details(reasons: list[dict]) -> set:
@@ -864,12 +998,26 @@ def test_native_forecasting_metrics_non_finite_or_boolean_metric_rejects(bad_val
     assert "native_forecasting_metrics_no_public_metric" in _safe_details(reasons)
 
 
-def test_native_forecasting_visualizations_accepts_reserved_v4_schema_version():
+def test_native_forecasting_visualizations_accepts_full_coherent_v4_document():
+    # Project Spec S0248: replaces the S0247-era bare
+    # {"schema_version": "analytical-visualizations.v4"} placeholder fixture
+    # with a real, fully cross-consistent synthetic v4 artifact.
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        _valid_v4_visualizations_document(),
+        _forecasting_predictive_bundle_overrides(),
+        _forecasting_metrics_overrides(),
+    )
+    assert reasons == []
+
+
+def test_native_forecasting_visualizations_bare_placeholder_now_rejects():
+    # The old S0247 placeholder no longer satisfies the now-real
+    # forecasting_evidence/dataset_statistics/etc. requirements.
     reasons = validate._internal_native_forecasting_visualizations_compatibility(
         {"schema_version": "analytical-visualizations.v4"},
         _forecasting_predictive_bundle_overrides(),
     )
-    assert reasons == []
+    assert "native_forecasting_visualizations_evidence_mismatch" in _safe_details(reasons)
 
 
 @pytest.mark.parametrize(
@@ -882,6 +1030,83 @@ def test_native_forecasting_visualizations_rejects_v1_v2_v3_substitution(visuali
         _forecasting_predictive_bundle_overrides(),
     )
     assert "native_forecasting_visualizations_version_mismatch" in _safe_details(reasons)
+
+
+@pytest.mark.parametrize(
+    "forecasting_evidence_overrides",
+    [
+        {"problem_type": "continuous_regression"},
+        {"result_semantics_schema_version": "univariate-forecasting-result-semantics.v0"},
+        {"training_metrics_schema_version": "training-metrics.v3"},
+    ],
+)
+def test_native_forecasting_visualizations_wrong_forecasting_evidence_rejects(forecasting_evidence_overrides):
+    document = _valid_v4_visualizations_document(forecasting_evidence_overrides=forecasting_evidence_overrides)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(),
+    )
+    assert "native_forecasting_visualizations_evidence_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_visualizations_horizon_mismatch_vs_bundle_rejects():
+    document = _valid_v4_visualizations_document(forecast_horizon=6)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(forecast_horizon=12),
+    )
+    assert "native_forecasting_visualizations_horizon_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_visualizations_holdout_count_mismatch_vs_metrics_rejects():
+    document = _valid_v4_visualizations_document(final_holdout_observations=6)
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document,
+        _forecasting_predictive_bundle_overrides(),
+        _forecasting_metrics_overrides(final_holdout_overrides={"observation_count": 12}),
+    )
+    assert "native_forecasting_visualizations_final_holdout_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_visualizations_fold_count_mismatch_vs_metrics_rejects():
+    document = _valid_v4_visualizations_document(
+        overrides={"backtesting_fold_metric": {
+            "metric_id": "mae", "direction": "lower_is_better", "fold_count": 1,
+            "points": [{"fold_index": 1, "forecast_origin": "11", "value": 3.0, "validation_observations": 6}],
+        }},
+    )
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _forecasting_metrics_overrides(),
+    )
+    assert "native_forecasting_visualizations_fold_count_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_visualizations_primary_metric_mismatch_vs_metrics_rejects():
+    document = _valid_v4_visualizations_document(metric_id="rmse")
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _forecasting_metrics_overrides(),
+    )
+    assert "native_forecasting_visualizations_primary_metric_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_visualizations_horizon_mae_mismatch_vs_metrics_rejects():
+    document = _valid_v4_visualizations_document(
+        horizon_points=[
+            {"horizon_step": step, "mae": 99.0, "observation_count": 2} for step in range(1, 7)
+        ],
+    )
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(), _forecasting_metrics_overrides(),
+    )
+    assert "native_forecasting_visualizations_horizon_mae_mismatch" in _safe_details(reasons)
+
+
+def test_native_forecasting_visualizations_dataset_statistics_incoherent_rejects():
+    document = _valid_v4_visualizations_document(
+        dataset_statistics_overrides={"instance_count": 999},
+    )
+    reasons = validate._internal_native_forecasting_visualizations_compatibility(
+        document, _forecasting_predictive_bundle_overrides(),
+    )
+    assert "native_forecasting_visualizations_dataset_statistics_incoherent" in _safe_details(reasons)
 
 
 def test_native_forecasting_never_confused_with_external_or_other_native_provenance_checks():
@@ -1007,7 +1232,11 @@ def _write_forecasting_candidate(
     return candidate_dir
 
 
-def test_forecasting_candidate_remains_blocked_pending_visualizations_v4_schema(tmp_path):
+def test_forecasting_candidate_remains_blocked_with_malformed_v4_visualizations(tmp_path):
+    # Project Spec S0248 defines real analytical-visualizations.v4 content,
+    # so the old S0247-era bare placeholder no longer merely "isn't
+    # recognized yet" -- it now fails real schema validation for missing
+    # required fields, and the candidate still blocks.
     candidate_dir = _write_forecasting_candidate(
         tmp_path,
         predictive_bundle=_forecasting_predictive_bundle_overrides(),
@@ -1020,12 +1249,34 @@ def test_forecasting_candidate_remains_blocked_pending_visualizations_v4_schema(
     assert result["valid"] is False
     assert result["schema_compatibility"]["visualizations"]["compatible"] is False
     # The bundle/metrics compatibility checks themselves pass -- only the
-    # real (unmodified) analytical-visualizations schema blocks release.
+    # real analytical-visualizations schema (now fully defined) blocks
+    # release for this malformed visualizations artifact.
     safe_details = _safe_details(result["rejection_reasons"])
     assert "native_forecasting_result_semantics_missing" not in safe_details
     assert "native_forecasting_non_forecasting_semantics_present" not in safe_details
     assert "native_forecasting_metrics_schema_version_missing" not in safe_details
-    assert "native_forecasting_metrics_no_public_metric" not in safe_details
+
+
+def test_forecasting_candidate_reaches_valid_true_with_complete_coherent_artifacts(tmp_path):
+    # Project Spec S0248: once bundle, metrics, and a real, fully
+    # cross-consistent v4 visualizations artifact are all coherent, a native
+    # forecasting candidate can now reach valid: True at the structural
+    # publisher-validation layer exercised here. This candidate carries no
+    # capability_binding, so the separate, still-unflipped
+    # support_status=requires_future_contract_evolution production release
+    # gate (Section C/D above) is not exercised by this test.
+    visualizations = _valid_v4_visualizations_document(final_holdout_observations=12)
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=_forecasting_predictive_bundle_overrides(),
+        metrics=_forecasting_metrics_overrides(),
+        visualizations=visualizations,
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True, result["rejection_reasons"]
+    assert result["schema_compatibility"]["visualizations"]["compatible"] is True
 
 
 # ===========================================================================

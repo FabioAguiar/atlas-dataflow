@@ -30,6 +30,15 @@ export type DatasetDetailSurfaceProps = {
   // Detail layouts, including S0221's full-width Confusion Matrix, visually
   // unchanged.
   regressionDiagnosticsContent?: ReactNode;
+  // Project Spec S0248: an optional, bounded univariate-forecasting
+  // diagnostics section (Seasonal Profile + Backtesting by Origin + Horizon
+  // MAE), rendered below the primary analytics grid for a forecasting
+  // release -- omitted entirely (never a placeholder) keeps classification/
+  // regression Dataset Detail layouts visually unchanged. A forecasting
+  // release never renders regressionDiagnosticsContent/confusionMatrixContent
+  // alongside this, and its own targetDistributionContent/
+  // featureImportanceContent are omitted by the caller.
+  forecastingDiagnosticsContent?: ReactNode;
   inferenceContent: ReactNode;
   documentationContent?: ReactNode;
 };
@@ -53,6 +62,7 @@ export default function DatasetDetailSurface({
   featureImportanceContent,
   confusionMatrixContent,
   regressionDiagnosticsContent,
+  forecastingDiagnosticsContent,
   inferenceContent,
   documentationContent,
 }: DatasetDetailSurfaceProps) {
@@ -76,6 +86,10 @@ export default function DatasetDetailSurface({
 
       {regressionDiagnosticsContent && (
         <div className="dataset-detail-overview__regression-diagnostics">{regressionDiagnosticsContent}</div>
+      )}
+
+      {forecastingDiagnosticsContent && (
+        <div className="dataset-detail-overview__forecasting-diagnostics">{forecastingDiagnosticsContent}</div>
       )}
     </div>
   );

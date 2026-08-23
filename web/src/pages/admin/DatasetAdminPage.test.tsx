@@ -3677,6 +3677,146 @@ describe("DatasetAdminPage", () => {
     });
   });
 
+  // Project Spec S0247: univariate-forecasting Performance focus authoring
+  // must never default to or offer a classification/regression focus, must
+  // auto-rebind an incompatible persisted/draft focus to
+  // forecasting_performance, must filter the selectable score catalog to
+  // MAE/RMSE/Seasonal MASE only, and must converge centrally (without ever
+  // visiting Metadata & Card) exactly like the S0237/S0240 continuous-
+  // regression behavior above. No forecasting Result Card, forecast-series
+  // UI, or forecast rendering is exercised here -- only Performance focus
+  // authoring.
+  describe("univariate-forecasting Performance focus authoring (Project Spec S0247)", () => {
+    const forecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend Model" },
+      },
+    };
+
+    it("auto-rebinds an incompatible positive_class_detection draft to forecasting_performance for a forecasting release", async () => {
+      installFetchMock({ resultContractOverride: forecastingResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("forecasting_performance"));
+    });
+
+    it("offers only Forecasting performance in the selector for a forecasting release", async () => {
+      installFetchMock({ resultContractOverride: forecastingResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      const select = await screen.findByLabelText("Performance focus");
+      await waitFor(() => expect(select).toHaveValue("forecasting_performance"));
+      const optionLabels = within(select)
+        .getAllByRole("option")
+        .map((option) => option.textContent);
+      expect(optionLabels).toEqual(["Forecasting performance"]);
+    });
+
+    it("renders only MAE, RMSE, and Seasonal MASE authoring rows, never classification/regression-only scores", async () => {
+      installFetchMock({ resultContractOverride: forecastingResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("forecasting_performance"));
+      expect(screen.getByLabelText("Show MAE")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show RMSE")).toBeInTheDocument();
+      expect(screen.getByLabelText("Show Seasonal MASE")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Show R²")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Recall")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Show Precision")).not.toBeInTheDocument();
+    });
+
+    it("highlights MAE by default and lets the operator enter ordinary manual values for MAE/RMSE/Seasonal MASE", async () => {
+      installFetchMock({ resultContractOverride: forecastingResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("forecasting_performance"));
+      expect(screen.getByLabelText("Highlighted score")).toHaveValue("mae");
+      expect(screen.getByLabelText("Show MAE")).toBeChecked();
+      expect(screen.getByLabelText("Show RMSE")).toBeChecked();
+      expect(screen.getByLabelText("Show Seasonal MASE")).toBeChecked();
+
+      fireEvent.change(screen.getByLabelText("MAE value"), { target: { value: "3.10" } });
+      fireEvent.change(screen.getByLabelText("RMSE value"), { target: { value: "4.25" } });
+      fireEvent.change(screen.getByLabelText("Seasonal MASE value"), { target: { value: "0.87" } });
+
+      expect(screen.getByLabelText("MAE value")).toHaveValue("3.10");
+      expect(screen.getByLabelText("RMSE value")).toHaveValue("4.25");
+      expect(screen.getByLabelText("Seasonal MASE value")).toHaveValue("0.87");
+    });
+
+    it("carries forecasting_performance and mae/rmse/seasonal_mase in the Publish changes payload", async () => {
+      const fetchMock = installFetchMock({ resultContractOverride: forecastingResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+      fireEvent.click(screen.getByRole("tab", { name: "Metadata & Card" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Performance focus")).toHaveValue("forecasting_performance"));
+
+      fireEvent.change(screen.getByLabelText("MAE value"), { target: { value: "3.10" } });
+      fireEvent.change(screen.getByLabelText("RMSE value"), { target: { value: "4.25" } });
+      fireEvent.change(screen.getByLabelText("Seasonal MASE value"), { target: { value: "0.87" } });
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      await waitFor(() => expect(within(toolbar).getByRole("button", { name: "Publish changes" })).toBeEnabled());
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            (call) =>
+              String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+              (call[1] as RequestInit | undefined)?.method === "PUT",
+          ),
+        ).toBe(true),
+      );
+      const publishCall = fetchMock.mock.calls.find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+      const body = JSON.parse(String((publishCall?.[1] as RequestInit).body)) as {
+        performance_focus?: {
+          focus_id?: string;
+          highlighted_score_id?: string;
+          visible_scores?: Array<{ score_id: string; value: string }>;
+        };
+      };
+      expect(body.performance_focus?.focus_id).toBe("forecasting_performance");
+      expect(body.performance_focus?.highlighted_score_id).toBe("mae");
+      const visibleScoreIds = body.performance_focus?.visible_scores?.map((score) => score.score_id);
+      expect(visibleScoreIds).toEqual(["mae", "rmse", "seasonal_mase"]);
+    });
+
+    it("centrally rebinds to forecasting_performance without ever visiting Metadata & Card (Project Spec S0240 rebind)", async () => {
+      installFetchMock({ resultContractOverride: forecastingResultContract });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Home Card" }));
+
+      const homeCardPanel = await screen.findByRole("article", { name: "Home Card preview" });
+      await waitFor(() => expect(within(homeCardPanel).getByText("Forecasting performance")).toBeInTheDocument());
+      expect(screen.queryByRole("tab", { name: "Metadata & Card", selected: true })).not.toBeInTheDocument();
+    });
+  });
+
   // Project Spec S0240: the Performance focus rebind is owned by
   // DatasetAdminPage itself, independent of which Admin tab is mounted --
   // it must already have converged before Metadata & Card is ever opened,

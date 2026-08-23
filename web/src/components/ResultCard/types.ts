@@ -135,10 +135,30 @@ export type ContinuousRegressionResultSemantics = {
 };
 export type AvailableContinuousRegressionResultContract = { status: "available"; semantics: ContinuousRegressionResultSemantics };
 
+/**
+ * Matches GET /datasets/{slug}/contract's result_contract.semantics for
+ * univariate_forecasting (S0245/S0247). Mirrors the S0245 governed
+ * inference_bundle.v2 result-semantics shape. This is a strict availability/
+ * identity guard only -- no Result Card rendering component or forecasting
+ * presentation contract is defined here.
+ */
+export type ForecastingResultSemantics = {
+  schema_version: "univariate-forecasting-result-semantics.v1";
+  problem_type: "univariate_forecasting";
+  result_schema_version: "univariate-forecasting-result.v1";
+  primary_output: "forecast_series";
+  output_structure: "ordered_forecast_points";
+  forecast_value_kind: "continuous_numeric";
+  forecast_count_source: "forecast_horizon";
+  model_descriptor: BinaryModelDescriptor;
+};
+export type AvailableForecastingResultContract = { status: "available"; semantics: ForecastingResultSemantics };
+
 export type ResultContract =
   | AvailableBinaryResultContract
   | AvailableMulticlassResultContract
   | AvailableContinuousRegressionResultContract
+  | AvailableForecastingResultContract
   | UnavailableBinaryResultContract;
 
 /** Bounded guard for the executable public binary result-contract capability. */
@@ -184,12 +204,26 @@ export function isAvailableContinuousRegressionResultContract(value: unknown): v
   return isModelDescriptor(semantics.model_descriptor);
 }
 
+export function isAvailableForecastingResultContract(value: unknown): value is AvailableForecastingResultContract {
+  if (!isRecord(value) || value.status !== "available" || !isRecord(value.semantics)) return false;
+  const semantics = value.semantics;
+  if (semantics.schema_version !== "univariate-forecasting-result-semantics.v1") return false;
+  if (semantics.problem_type !== "univariate_forecasting") return false;
+  if (semantics.result_schema_version !== "univariate-forecasting-result.v1") return false;
+  if (semantics.primary_output !== "forecast_series") return false;
+  if (semantics.output_structure !== "ordered_forecast_points") return false;
+  if (semantics.forecast_value_kind !== "continuous_numeric") return false;
+  if (semantics.forecast_count_source !== "forecast_horizon") return false;
+  return isModelDescriptor(semantics.model_descriptor);
+}
+
 export function availableResultProblemType(
   value: unknown,
-): "binary_classification" | "multiclass_classification" | "continuous_regression" | null {
+): "binary_classification" | "multiclass_classification" | "continuous_regression" | "univariate_forecasting" | null {
   if (isAvailableBinaryResultContract(value)) return "binary_classification";
   if (isAvailableMulticlassResultContract(value)) return "multiclass_classification";
   if (isAvailableContinuousRegressionResultContract(value)) return "continuous_regression";
+  if (isAvailableForecastingResultContract(value)) return "univariate_forecasting";
   return null;
 }
 

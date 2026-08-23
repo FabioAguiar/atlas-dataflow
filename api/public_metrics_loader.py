@@ -57,6 +57,10 @@ _METRIC_ALIASES: dict[str, str] = {
     "r2": "r2",
     "mae": "mae",
     "rmse": "rmse",
+    # Project Spec S0247: bounded explicit univariate-forecasting metric id,
+    # projected 1:1 -- shares the mae/rmse identity above (never a duplicate
+    # alias with different semantics).
+    "seasonal_mase": "seasonal_mase",
 }
 
 # Project Spec S0191: schema_version discriminator for the external
@@ -72,6 +76,9 @@ _INTERNAL_MULTICLASS_METRICS_SCHEMA_VERSION_V2 = "training-metrics.v2"
 # Project Spec S0227: the internal (Atlas-native) continuous-regression
 # fixed-configuration training-metrics profile, dispatched on explicitly.
 _INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION_V3 = "training-metrics.v3"
+# Project Spec S0247: the internal (Atlas-native) univariate-forecasting
+# fixed-configuration training-metrics profile, dispatched on explicitly.
+_INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION_V4 = "training-metrics.v4"
 
 # Top-level keys that are never themselves metric declarations, used only
 # by the bounded flat top-level fallback (case 3 below) to avoid mistaking
@@ -534,6 +541,64 @@ def _project_internal_continuous_regression_metrics_v3(payload: dict) -> dict:
     }
 
 
+def _project_internal_forecasting_metrics_v4(payload: dict) -> dict:
+    """Project Spec S0247: public projector for training-metrics.v4 (internal
+    Atlas-native univariate forecasting training). Selects only the sealed
+    final_holdout_evaluation -- pooled backtesting metrics are never
+    projected. split_name is the deterministic literal "final_holdout";
+    sample_size comes from final_holdout_evaluation.observation_count.
+    primary_metric_id/metric_order are derived from the governed
+    evaluation_policy ordering (primary metric, then declared secondaries in
+    order), dropping any metric absent from the projected final-holdout
+    metrics -- never derived from dict/declaration order. No
+    seasonal_period, backtesting/fold/horizon evidence,
+    training_run_identity, path/hash references, or raw arrays are ever
+    projected."""
+    final_holdout = payload.get("final_holdout_evaluation")
+    sample_size = None
+    entries: list[tuple[Any, Any, bool]] = []
+    if isinstance(final_holdout, dict):
+        sample_size = _optional_int(final_holdout.get("observation_count"))
+        raw_metrics = final_holdout.get("metrics")
+        if isinstance(raw_metrics, list):
+            entries = [
+                (item.get("name"), item.get("value"), False)
+                for item in raw_metrics
+                if isinstance(item, dict)
+            ]
+
+    metrics, _first_seen_order = _project_metric_entries(entries)
+
+    evaluation_policy = payload.get("evaluation_policy")
+    metric_order: list[str] = []
+    primary_metric_id = None
+    if isinstance(evaluation_policy, dict):
+        primary = evaluation_policy.get("primary_metric")
+        if isinstance(primary, dict):
+            candidate_id = _normalize_public_metric_id(primary.get("metric_id"))
+            if candidate_id is not None and candidate_id in metrics:
+                primary_metric_id = candidate_id
+                metric_order.append(candidate_id)
+        secondaries = evaluation_policy.get("secondary_metrics")
+        if isinstance(secondaries, list):
+            for item in secondaries:
+                if not isinstance(item, dict):
+                    continue
+                candidate_id = _normalize_public_metric_id(item.get("metric_id"))
+                if candidate_id is not None and candidate_id in metrics and candidate_id not in metric_order:
+                    metric_order.append(candidate_id)
+
+    return {
+        "evaluation": {
+            "split_name": "final_holdout",
+            "sample_size": sample_size,
+            "primary_metric_id": primary_metric_id,
+            "metrics": metrics,
+            "metric_order": metric_order,
+        }
+    }
+
+
 def _project_public_metrics(payload: dict) -> dict:
     if payload.get("schema_version") == _EXTERNAL_FITTED_MODEL_METRICS_SCHEMA_VERSION:
         return _project_external_fitted_model_metrics(payload)
@@ -543,6 +608,8 @@ def _project_public_metrics(payload: dict) -> dict:
         return _project_internal_multiclass_metrics_v2(payload)
     if payload.get("schema_version") == _INTERNAL_CONTINUOUS_REGRESSION_METRICS_SCHEMA_VERSION_V3:
         return _project_internal_continuous_regression_metrics_v3(payload)
+    if payload.get("schema_version") == _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION_V4:
+        return _project_internal_forecasting_metrics_v4(payload)
     metrics_block = payload.get("metrics")
     if isinstance(metrics_block, dict) and isinstance(metrics_block.get("primary_metric"), dict):
         return _project_training_metrics_v1(payload)

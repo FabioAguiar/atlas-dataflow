@@ -30,12 +30,14 @@ import {
   availableResultProblemType,
   isAvailableBinaryResultContract,
   isAvailableContinuousRegressionResultContract,
+  isAvailableForecastingResultContract,
   isAvailableMulticlassResultContract,
   isBinaryClassificationResult,
   type BinaryResultContract,
   type BinaryResultSemantics,
   type ContinuousRegressionResult as ContinuousRegressionResultData,
   type ContinuousRegressionResultSemantics,
+  type ForecastingResultSemantics,
   type MulticlassClassificationResult as MulticlassResultData,
   type MulticlassResultSemantics,
   type ResultContract,
@@ -273,6 +275,7 @@ const PROBLEM_TYPE_DEFAULT_FOCUS: Readonly<Record<ProblemType, PerformanceFocusI
   binary_classification: "positive_class_detection",
   multiclass_classification: "balanced_classification",
   continuous_regression: "regression_performance",
+  univariate_forecasting: "forecasting_performance",
 };
 
 function catalogPerformanceScores(focus_id: PerformanceFocusId): PerformanceScoreDraft[] {
@@ -285,12 +288,17 @@ function defaultPerformanceFocus(
   focus_id: PerformanceFocusId = "positive_class_detection",
   problemType?: ProblemType,
 ): PerformanceFocusDraft {
-  // Project Spec S0215/S0237: for a governed multiclass or continuous-
-  // regression release, the first three problem-type-applicable catalog
-  // scores (not the raw first three catalog rows, which may include ids
-  // inapplicable to this problem type) become the default visible set --
-  // binary callers (problemType omitted) are unaffected.
-  if (problemType === "multiclass_classification" || problemType === "continuous_regression") {
+  // Project Spec S0215/S0237/S0247: for a governed multiclass, continuous-
+  // regression, or univariate-forecasting release, the first three problem-
+  // type-applicable catalog scores (not the raw first three catalog rows,
+  // which may include ids inapplicable to this problem type) become the
+  // default visible set -- binary callers (problemType omitted) are
+  // unaffected.
+  if (
+    problemType === "multiclass_classification"
+    || problemType === "continuous_regression"
+    || problemType === "univariate_forecasting"
+  ) {
     const applicableIds = catalogPerformanceScores(focus_id)
       .filter((score) => isPerformanceScoreApplicable(score.score_id, problemType))
       .map((score) => score.score_id);
@@ -501,7 +509,10 @@ type ContractEnvelope = {
 
 type ResultContractState =
   | { status: "idle" | "loading" }
-  | { status: "available"; semantics: BinaryResultSemantics | MulticlassResultSemantics | ContinuousRegressionResultSemantics }
+  | {
+      status: "available";
+      semantics: BinaryResultSemantics | MulticlassResultSemantics | ContinuousRegressionResultSemantics | ForecastingResultSemantics;
+    }
   | { status: "unavailable"; message: string }
   | { status: "transport_failure"; message: string }
   | { status: "incompatible"; message: string };
@@ -2035,6 +2046,9 @@ function classifyResultContract(envelope: ContractEnvelope): ResultContractState
   if (isAvailableContinuousRegressionResultContract(value)) {
     return { status: "available", semantics: value.semantics };
   }
+  if (isAvailableForecastingResultContract(value)) {
+    return { status: "available", semantics: value.semantics };
+  }
   if (!isAvailableBinaryResultContract(value)) {
     return { status: "incompatible", message: "The active release result contract is missing or incompatible." };
   }
@@ -2568,7 +2582,7 @@ function MetadataCardTab({
               <h2>Problem type</h2>
             </div>
             <div aria-label="Problem type display" className="dataset-admin-problem-type-options">
-              <strong>{problemType === "binary_classification" ? "Binary Classification" : problemType === "multiclass_classification" ? "Multiclass Classification" : problemType === "continuous_regression" ? "Continuous Regression" : "Unavailable"}</strong>
+              <strong>{problemType === "binary_classification" ? "Binary Classification" : problemType === "multiclass_classification" ? "Multiclass Classification" : problemType === "continuous_regression" ? "Continuous Regression" : problemType === "univariate_forecasting" ? "Univariate Forecasting" : "Unavailable"}</strong>
               <small>Release-governed</small>
             </div>
           </Card>

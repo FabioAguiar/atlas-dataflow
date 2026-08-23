@@ -483,11 +483,20 @@ _SUPPORTED_CAPABILITY_IDENTITIES = frozenset({
     # membership -- only a synthetic support_status: current_supported
     # profile clone (test-only) reaches acceptance.
     "continuous-predictive-regression",
+    # Project Spec S0247: recognized capability identity only. The real
+    # committed univariate-predictive-forecasting.v1 profile still declares
+    # support_status: requires_future_contract_evolution, so
+    # _verify_capability_binding's own support_status check below still
+    # rejects a real forecasting candidate regardless of this set's
+    # membership -- only a synthetic support_status: current_supported
+    # profile clone (test-only) reaches acceptance.
+    "univariate-predictive-forecasting",
 })
 _CAPABILITY_EXPECTED_RESULT_PROBLEM_TYPE = {
     "binary-predictive-classification": "binary_classification",
     "multiclass-predictive-classification": "multiclass_classification",
     "continuous-predictive-regression": "continuous_regression",
+    "univariate-predictive-forecasting": "univariate_forecasting",
 }
 
 
@@ -1027,6 +1036,25 @@ def validate_candidate(
             # mirroring the native multiclass dispatch above.
             rejection_reasons.extend(
                 _internal_native_continuous_regression_visualizations_compatibility(
+                    json_artifacts.get("visualizations"),
+                    _native_predictive_bundle_data,
+                    json_artifacts.get("metrics"),
+                )
+            )
+        elif (
+            isinstance(_native_result_semantics, dict)
+            and _native_result_semantics.get("problem_type") == "univariate_forecasting"
+        ):
+            rejection_reasons.extend(
+                _internal_native_forecasting_predictive_bundle_compatibility(_native_predictive_bundle_data)
+            )
+            rejection_reasons.extend(
+                _internal_native_forecasting_metrics_public_projection_check(
+                    json_artifacts.get("metrics"), _native_predictive_bundle_data
+                )
+            )
+            rejection_reasons.extend(
+                _internal_native_forecasting_visualizations_compatibility(
                     json_artifacts.get("visualizations"),
                     _native_predictive_bundle_data,
                     json_artifacts.get("metrics"),
@@ -1755,6 +1783,264 @@ def _internal_native_continuous_regression_visualizations_compatibility(
             "native_regression_model_family_mismatch",
         )]
 
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Native univariate-forecasting public-release compatibility (Project Spec
+# S0247). Gated on the candidate's own predictive bundle declaring forecasting
+# result_semantics while NOT being a validated_external_fitted_model
+# candidate -- historical/internal candidates never reach these functions, so
+# their acceptance behavior is unchanged. There is deliberately no external
+# fitted-model forecasting branch. S0247 does not define
+# analytical-visualizations.v4 content validation -- the visualizations
+# compatibility check below only requires the reserved schema_version, so a
+# real forecasting candidate remains blocked until a future spec defines that
+# artifact and its full cross-artifact compatibility check.
+# ---------------------------------------------------------------------------
+
+_INTERNAL_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION = "univariate-forecasting-result-semantics.v1"
+_INTERNAL_FORECASTING_RESULT_SCHEMA_VERSION = "univariate-forecasting-result.v1"
+_INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION = "training-metrics.v4"
+_INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4 = "analytical-visualizations.v4"
+# Project Spec S0247 Desired Change E: the exact, bounded classification/
+# regression-only result_semantics keys that must never appear on a
+# forecasting bundle -- their presence (regardless of value) is rejected.
+# "decision" is included whole (not just decision.threshold/strategy)
+# because the real univariate-forecasting result_semantics schema
+# (additionalProperties: false) never carries a decision object at all.
+_FORECASTING_FORBIDDEN_RESULT_SEMANTICS_KEYS = (
+    "positive_class",
+    "negative_class",
+    "classes",
+    "class_probabilities",
+    "decision",
+    "predicted_value",
+    "probability_output",
+)
+_PUBLIC_PROJECTABLE_FORECASTING_METRIC_IDS = frozenset({"mae", "rmse", "seasonal_mase"})
+
+
+def _forecasting_bundle_has_non_forecasting_semantics(
+    predictive_bundle_data: dict, result_semantics: dict, output_schema: dict | None
+) -> bool:
+    for key in _FORECASTING_FORBIDDEN_RESULT_SEMANTICS_KEYS:
+        if key in result_semantics:
+            return True
+    if "educational_threshold" in predictive_bundle_data or "operational_threshold" in predictive_bundle_data:
+        return True
+    if "external_model_evidence" in predictive_bundle_data:
+        return True
+    if isinstance(output_schema, dict) and (
+        output_schema.get("probability_output") is True
+        or "class_labels" in output_schema
+        or output_schema.get("prediction_type") is not None
+    ):
+        return True
+    return False
+
+
+def _internal_native_forecasting_predictive_bundle_compatibility(
+    predictive_bundle_data: dict | None,
+) -> list[dict]:
+    if not isinstance(predictive_bundle_data, dict):
+        return []
+    result_semantics = predictive_bundle_data.get("result_semantics")
+    output_schema = predictive_bundle_data.get("output_schema")
+    runtime_execution = predictive_bundle_data.get("runtime_execution")
+
+    if (
+        not isinstance(result_semantics, dict)
+        or result_semantics.get("schema_version") != _INTERNAL_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION
+        or result_semantics.get("problem_type") != "univariate_forecasting"
+        or result_semantics.get("result_schema_version") != _INTERNAL_FORECASTING_RESULT_SCHEMA_VERSION
+        or result_semantics.get("primary_output") != "forecast_series"
+        or result_semantics.get("output_structure") != "ordered_forecast_points"
+        or result_semantics.get("forecast_value_kind") != "continuous_numeric"
+        or result_semantics.get("forecast_count_source") != "forecast_horizon"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native forecasting predictive bundle is missing compatible univariate-forecasting "
+            "result_semantics required for public release compatibility.",
+            "predictive_bundle",
+            "native_forecasting_result_semantics_missing",
+        )]
+
+    if _forecasting_bundle_has_non_forecasting_semantics(predictive_bundle_data, result_semantics, output_schema):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting predictive bundle must not carry classification or regression "
+            "semantics (class/probability/threshold/decision/predicted_value fields).",
+            "predictive_bundle",
+            "native_forecasting_non_forecasting_semantics_present",
+        )]
+
+    if (
+        not isinstance(runtime_execution, dict)
+        or runtime_execution.get("execution_strategy") != "in_process"
+        or runtime_execution.get("loader_strategy") != "joblib_sklearn_forecasting_adapter"
+        or runtime_execution.get("prediction_interface") != "forecast_series"
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting predictive bundle runtime_execution does not declare the "
+            "governed in-process forecasting adapter/prediction interface.",
+            "predictive_bundle",
+            "native_forecasting_runtime_execution_mismatch",
+        )]
+
+    if predictive_bundle_data.get("model_provenance_origin") != "atlas_internal_training":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting predictive bundle must declare "
+            "model_provenance_origin=atlas_internal_training.",
+            "predictive_bundle",
+            "native_forecasting_provenance_mismatch",
+        )]
+
+    forecast_horizon = None
+    frozen_model = predictive_bundle_data.get("frozen_model")
+    if isinstance(frozen_model, dict):
+        temporal_identity = frozen_model.get("temporal_identity")
+        if isinstance(temporal_identity, dict):
+            forecast_horizon = temporal_identity.get("forecast_horizon")
+    if not isinstance(forecast_horizon, int) or isinstance(forecast_horizon, bool) or forecast_horizon <= 0:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native forecasting predictive bundle frozen_model.temporal_identity.forecast_horizon "
+            "must be a positive integer.",
+            "predictive_bundle",
+            "native_forecasting_horizon_missing",
+        )]
+
+    return []
+
+
+def _internal_native_forecasting_metrics_public_projection_check(
+    metrics_data: dict | None, predictive_bundle_data: dict | None = None
+) -> list[dict]:
+    """Require a native forecasting candidate's metrics artifact to declare
+    training-metrics.v4, agree on forecasting_evidence, agree with the
+    predictive bundle's own governed forecast horizon (when known), satisfy
+    the sealed final-holdout policy (opened exactly once, frozen before
+    open, never used for adjustment/retuning/model selection), and contain
+    at least one finite, non-boolean, projectable forecasting metric (mae,
+    rmse, seasonal_mase) in final_holdout_evaluation -- pooled backtesting
+    metrics are never selected as a public evaluation source."""
+    if not isinstance(metrics_data, dict):
+        return []
+    if metrics_data.get("schema_version") != _INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            f"Native forecasting candidate metrics artifact does not declare "
+            f"{_INTERNAL_FORECASTING_METRICS_SCHEMA_VERSION!r}.",
+            "metrics",
+            "native_forecasting_metrics_schema_version_missing",
+        )]
+
+    forecasting_evidence = metrics_data.get("forecasting_evidence")
+    if (
+        not isinstance(forecasting_evidence, dict)
+        or forecasting_evidence.get("problem_type") != "univariate_forecasting"
+        or forecasting_evidence.get("result_semantics_schema_version")
+        != _INTERNAL_FORECASTING_RESULT_SEMANTICS_SCHEMA_VERSION
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native forecasting candidate metrics artifact forecasting_evidence does not agree "
+            "with the required univariate-forecasting evidence contract.",
+            "metrics",
+            "native_forecasting_metrics_evidence_mismatch",
+        )]
+
+    bundle_horizon = None
+    if isinstance(predictive_bundle_data, dict):
+        frozen_model = predictive_bundle_data.get("frozen_model")
+        if isinstance(frozen_model, dict):
+            temporal_identity = frozen_model.get("temporal_identity")
+            if isinstance(temporal_identity, dict):
+                bundle_horizon = temporal_identity.get("forecast_horizon")
+    metrics_horizon = forecasting_evidence.get("forecast_horizon")
+    if bundle_horizon is not None and metrics_horizon != bundle_horizon:
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native forecasting candidate metrics forecasting_evidence.forecast_horizon does not "
+            "match the predictive bundle's governed forecast horizon.",
+            "metrics",
+            "native_forecasting_horizon_mismatch",
+        )]
+
+    final_holdout = metrics_data.get("final_holdout_evaluation")
+    if (
+        not isinstance(final_holdout, dict)
+        or final_holdout.get("evaluation_count") != 1
+        or final_holdout.get("model_frozen_before_open") is not True
+        or final_holdout.get("used_for_adjustment") is not False
+        or final_holdout.get("used_for_retuning") is not False
+        or final_holdout.get("used_for_model_selection") is not False
+        or not isinstance(final_holdout.get("observation_count"), int)
+        or isinstance(final_holdout.get("observation_count"), bool)
+        or final_holdout.get("observation_count") <= 0
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native forecasting candidate metrics final_holdout_evaluation does not satisfy the "
+            "required frozen, non-adjustment, non-retuning, non-selection final-holdout policy.",
+            "metrics",
+            "native_forecasting_final_holdout_policy_violation",
+        )]
+
+    raw_metrics = final_holdout.get("metrics")
+    has_projectable_metric = False
+    if isinstance(raw_metrics, list):
+        for item in raw_metrics:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if (
+                isinstance(name, str)
+                and name.strip().lower() in _PUBLIC_PROJECTABLE_FORECASTING_METRIC_IDS
+                and _is_finite_numeric(item.get("value"))
+            ):
+                has_projectable_metric = True
+                break
+
+    if not has_projectable_metric:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native forecasting candidate metrics final_holdout_evaluation yields no supported "
+            "public metric.",
+            "metrics",
+            "native_forecasting_metrics_no_public_metric",
+        )]
+    return []
+
+
+def _internal_native_forecasting_visualizations_compatibility(
+    visualizations_data: dict | None,
+    predictive_bundle_data: dict | None,
+    metrics_data: dict | None = None,
+) -> list[dict]:
+    """Require a native forecasting candidate's visualizations artifact to
+    declare the reserved analytical-visualizations.v4 schema_version.
+
+    S0247 does not define v4 visualization content validation -- once a
+    future spec defines that schema, it will add the full cross-artifact
+    compatibility check here (mirroring the continuous-regression diagnostic
+    population cross-check above). `metrics_data` is accepted for interface
+    symmetry with that future check and is unused today.
+    """
+    if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
+        return []
+    if visualizations_data.get("schema_version") != _INTERNAL_FORECASTING_VISUALIZATIONS_SCHEMA_VERSION_V4:
+        return [_safe_rejection_reason(
+            "visualizations_provenance_mismatch",
+            "Native forecasting visualizations schema profile does not match the predictive "
+            "bundle's problem type.",
+            "visualizations",
+            "native_forecasting_visualizations_version_mismatch",
+        )]
     return []
 
 

@@ -84,6 +84,15 @@ export const PERFORMANCE_FOCUS_CATALOG = {
     ["rmse", "RMSE"],
     ["r2", "R²"],
   ],
+  // Project Spec S0247: forecasting_performance is a first-class Admin
+  // Performance focus, scoped to univariate_forecasting (see
+  // FOCUS_PROBLEM_TYPES below). mae/rmse share the same catalog identity as
+  // regression_performance's own entries; seasonal_mase is forecasting-only.
+  forecasting_performance: [
+    ["mae", "MAE"],
+    ["rmse", "RMSE"],
+    ["seasonal_mase", "Seasonal MASE"],
+  ],
 } as const;
 
 export type PerformanceFocusId = keyof typeof PERFORMANCE_FOCUS_CATALOG;
@@ -99,6 +108,7 @@ const PERFORMANCE_FOCUS_LABELS: Readonly<Record<PerformanceFocusId, string>> = {
   probability_quality: "Probability quality",
   operational_decision: "Operational decision",
   regression_performance: "Regression performance",
+  forecasting_performance: "Forecasting performance",
 };
 
 /**
@@ -158,6 +168,8 @@ const LOWER_IS_BETTER_IDS: readonly string[] = [
   // Project Spec S0237: MAE and RMSE are lower-is-better regression scores.
   "mae",
   "rmse",
+  // Project Spec S0247: Seasonal MASE is a lower-is-better forecasting score.
+  "seasonal_mase",
 ];
 
 // Target-based metrics never derive direction from the current value and
@@ -227,7 +239,11 @@ export function getPerformanceMetricMetadata(scoreId: string): PerformanceMetric
 // to continuous_regression and is never selectable for either classification
 // problem type.
 
-export type ProblemType = "binary_classification" | "multiclass_classification" | "continuous_regression";
+export type ProblemType =
+  | "binary_classification"
+  | "multiclass_classification"
+  | "continuous_regression"
+  | "univariate_forecasting";
 
 const FOCUS_PROBLEM_TYPES: Readonly<Record<PerformanceFocusId, readonly ProblemType[]>> = {
   overall_discrimination: ["binary_classification"],
@@ -236,6 +252,7 @@ const FOCUS_PROBLEM_TYPES: Readonly<Record<PerformanceFocusId, readonly ProblemT
   probability_quality: ["binary_classification", "multiclass_classification"],
   operational_decision: ["binary_classification"],
   regression_performance: ["continuous_regression"],
+  forecasting_performance: ["univariate_forecasting"],
 };
 
 // Project Spec S0215: the bounded set of score ids compatible with a
@@ -260,6 +277,12 @@ const MULTICLASS_COMPATIBLE_SCORE_IDS: ReadonlySet<string> = new Set([
 // continuous_regression. Never shared with a classification focus/score id.
 const REGRESSION_COMPATIBLE_SCORE_IDS: ReadonlySet<string> = new Set(["r2", "mae", "rmse"]);
 
+// Project Spec S0247: the bounded set of score ids compatible with
+// univariate_forecasting. mae/rmse share the same deterministic identity as
+// REGRESSION_COMPATIBLE_SCORE_IDS above; seasonal_mase is never
+// continuous-regression-compatible.
+const FORECASTING_COMPATIBLE_SCORE_IDS: ReadonlySet<string> = new Set(["mae", "rmse", "seasonal_mase"]);
+
 /** Whether a Performance focus applies to the given problem type. */
 export function isPerformanceFocusApplicable(focusId: string, problemType: ProblemType): boolean {
   const applicable = (FOCUS_PROBLEM_TYPES as Record<string, readonly ProblemType[]>)[focusId];
@@ -276,7 +299,10 @@ export function isPerformanceScoreApplicable(scoreId: string, problemType: Probl
   if (problemType === "continuous_regression") {
     return REGRESSION_COMPATIBLE_SCORE_IDS.has(scoreId);
   }
-  if (REGRESSION_COMPATIBLE_SCORE_IDS.has(scoreId)) {
+  if (problemType === "univariate_forecasting") {
+    return FORECASTING_COMPATIBLE_SCORE_IDS.has(scoreId);
+  }
+  if (REGRESSION_COMPATIBLE_SCORE_IDS.has(scoreId) || FORECASTING_COMPATIBLE_SCORE_IDS.has(scoreId)) {
     return false;
   }
   if (problemType === "binary_classification") {

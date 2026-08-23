@@ -516,6 +516,22 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V2 = "analytical-visualizations.v2"
 _TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V3 = "training-parameter-record.v3"
 _TRAINING_METRICS_INTERNAL_VERSION_V3 = "training-metrics.v3"
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V3 = "analytical-visualizations.v3"
+# Project Spec S0247: the v4 (native univariate forecasting) INTERNAL
+# Atlas-native fixed-configuration training-record profile -- mirrors the v2
+# (multiclass) and v3 (continuous-regression) recognition above exactly:
+# still an internal M24 candidate (never coerced to manual_governed_input),
+# never falls through to the legacy v1 governance constants, and requires
+# its own real declared training-metrics.v4 to be carried forward verbatim
+# rather than any other metrics version. The governed visualization role for
+# a v4 candidate is reserved as analytical-visualizations.v4 -- a real v4
+# visualization artifact/schema is not implemented by this spec, so a v4
+# provenance candidate can only ever be built once that future artifact
+# exists; a caller that instead points the visualizations role at a
+# v1/v2/v3 classification/regression visualization is rejected as a
+# mismatch (fails closed), never silently substituted.
+_TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V4 = "training-parameter-record.v4"
+_TRAINING_METRICS_INTERNAL_VERSION_V4 = "training-metrics.v4"
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4 = "analytical-visualizations.v4"
 _EXTERNAL_MODEL_SOURCE_STAGE = "manual_governed_input"
 
 
@@ -620,6 +636,24 @@ def _resolve_training_provenance(
             raise ValueError(
                 "visualizations contract_version does not agree with training_parameter_record "
                 f"provenance: expected {_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V3!r}, got "
+                f"{visualizations_version!r}"
+            )
+        return "M24", False, record_version, metrics_version, visualizations_version
+
+    if record_version == _TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V4:
+        training_metrics_path = repo_root / artifact_references["training_metrics"]
+        metrics_version = _read_declared_contract_version(training_metrics_path)
+        if metrics_version != _TRAINING_METRICS_INTERNAL_VERSION_V4:
+            raise ValueError(
+                "training_metrics contract_version does not agree with training_parameter_record "
+                f"provenance: expected {_TRAINING_METRICS_INTERNAL_VERSION_V4!r}, got {metrics_version!r}"
+            )
+        visualizations_path = repo_root / artifact_references["visualizations"]
+        visualizations_version = _read_declared_contract_version(visualizations_path)
+        if visualizations_version != _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4:
+            raise ValueError(
+                "visualizations contract_version does not agree with training_parameter_record "
+                f"provenance: expected {_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4!r}, got "
                 f"{visualizations_version!r}"
             )
         return "M24", False, record_version, metrics_version, visualizations_version
@@ -858,6 +892,16 @@ RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS = frozenset({
     # acceptance, exactly as for multiclass before its own support_status
     # was later flipped.
     "continuous-predictive-regression",
+    # Project Spec S0247: recognized architecture-level identity only. The
+    # real committed univariate-predictive-forecasting.v1 capability profile
+    # still declares support_status: requires_future_contract_evolution, so
+    # real release-layer acceptance for this capability remains rejected by
+    # resolve_capability_release_policy's support_status check below
+    # regardless of this set's membership -- only a synthetic
+    # support_status: current_supported profile clone (test-only) reaches
+    # acceptance, exactly as for multiclass/continuous-regression before
+    # their own support_status was later flipped.
+    "univariate-predictive-forecasting",
 })
 
 CAPABILITY_REJECTION_PHASE_PROFILE_MISMATCH = "capability_profile_identity_mismatch"

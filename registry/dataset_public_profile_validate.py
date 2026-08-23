@@ -35,6 +35,7 @@ PERFORMANCE_FOCUS_LABELS = {
     "probability_quality": "Probability quality",
     "operational_decision": "Operational decision",
     "regression_performance": "Regression performance",
+    "forecasting_performance": "Forecasting performance",
 }
 
 PERFORMANCE_SCORE_CATALOG = {
@@ -80,6 +81,14 @@ PERFORMANCE_SCORE_CATALOG = {
     "regression_performance": {
         "r2": "R²", "mae": "MAE", "rmse": "RMSE",
     },
+    # Project Spec S0247: the bounded canonical univariate-forecasting score
+    # catalog. Never applicable to binary/multiclass/continuous_regression,
+    # and never extended with classification-only scores. mae/rmse share the
+    # same identity as regression_performance's own catalog entries above;
+    # seasonal_mase is forecasting-only.
+    "forecasting_performance": {
+        "mae": "MAE", "rmse": "RMSE", "seasonal_mase": "Seasonal MASE",
+    },
 }
 
 # Project Spec S0240: the closed backend focus/problem-type applicability
@@ -94,6 +103,7 @@ PERFORMANCE_FOCUS_PROBLEM_TYPES = {
     "probability_quality": {"binary_classification", "multiclass_classification"},
     "operational_decision": {"binary_classification"},
     "regression_performance": {"continuous_regression"},
+    "forecasting_performance": {"univariate_forecasting"},
 }
 
 BINARY_RESULT_PRESENTATION_SCHEMA_VERSION = "binary-result-presentation.v1"

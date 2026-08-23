@@ -139,7 +139,7 @@ describe("getPerformanceFocusLabel (Project Spec S0204)", () => {
     for (const focusId of catalogFocusIds) {
       expect(getPerformanceFocusLabel(focusId)).toBeDefined();
     }
-    expect(catalogFocusIds).toHaveLength(6);
+    expect(catalogFocusIds).toHaveLength(7);
   });
 });
 
@@ -164,7 +164,7 @@ describe("problem-type applicability (Project Spec S0215)", () => {
 
   it("every binary-classification score id remains applicable, unchanged", () => {
     for (const [focusId, entries] of Object.entries(PERFORMANCE_FOCUS_CATALOG)) {
-      if (focusId === "regression_performance") {
+      if (focusId === "regression_performance" || focusId === "forecasting_performance") {
         continue;
       }
       for (const [scoreId] of entries) {
@@ -247,8 +247,8 @@ describe("continuous-regression performance focus (Project Spec S0237)", () => {
     ]);
   });
 
-  it("six total focus ids now exist", () => {
-    expect(Object.keys(PERFORMANCE_FOCUS_CATALOG)).toHaveLength(6);
+  it("six total focus ids existed as of this spec (Project Spec S0247 later adds a seventh, forecasting_performance)", () => {
+    expect(Object.keys(PERFORMANCE_FOCUS_CATALOG)).toHaveLength(7);
   });
 
   it("gives regression_performance a deterministic label", () => {
@@ -310,6 +310,97 @@ describe("continuous-regression performance focus (Project Spec S0237)", () => {
       "balanced_classification",
       "probability_quality",
       "operational_decision",
+    ]) {
+      expect(applicable).not.toContain(focusId);
+    }
+  });
+});
+
+describe("univariate-forecasting performance focus (Project Spec S0247)", () => {
+  it("adds forecasting_performance to the catalog with mae, rmse, seasonal_mase in that order", () => {
+    expect(PERFORMANCE_FOCUS_CATALOG.forecasting_performance).toEqual([
+      ["mae", "MAE"],
+      ["rmse", "RMSE"],
+      ["seasonal_mase", "Seasonal MASE"],
+    ]);
+  });
+
+  it("seven total focus ids now exist", () => {
+    expect(Object.keys(PERFORMANCE_FOCUS_CATALOG)).toHaveLength(7);
+  });
+
+  it("gives forecasting_performance a deterministic label", () => {
+    expect(getPerformanceFocusLabel("forecasting_performance")).toBe("Forecasting performance");
+  });
+
+  it("makes MAE and RMSE catalog-authorable and lower_is_better, sharing identity with regression_performance", () => {
+    expect(PERFORMANCE_FOCUS_CATALOG.forecasting_performance.some(([scoreId]) => scoreId === "mae")).toBe(true);
+    expect(PERFORMANCE_FOCUS_CATALOG.forecasting_performance.some(([scoreId]) => scoreId === "rmse")).toBe(true);
+    expect(getPerformanceMetricMetadata("mae")).toEqual({
+      score_id: "mae",
+      display_label: "MAE",
+      optimization: { kind: "lower_is_better" },
+    });
+    expect(getPerformanceMetricMetadata("rmse")).toEqual({
+      score_id: "rmse",
+      display_label: "RMSE",
+      optimization: { kind: "lower_is_better" },
+    });
+  });
+
+  it("makes Seasonal MASE catalog-authorable and lower_is_better", () => {
+    expect(PERFORMANCE_FOCUS_CATALOG.forecasting_performance.some(([scoreId]) => scoreId === "seasonal_mase")).toBe(true);
+    expect(getPerformanceMetricMetadata("seasonal_mase")).toEqual({
+      score_id: "seasonal_mase",
+      display_label: "Seasonal MASE",
+      optimization: { kind: "lower_is_better" },
+    });
+  });
+
+  it("marks forecasting_performance applicable only to univariate_forecasting", () => {
+    expect(isPerformanceFocusApplicable("forecasting_performance", "univariate_forecasting")).toBe(true);
+    expect(isPerformanceFocusApplicable("forecasting_performance", "binary_classification")).toBe(false);
+    expect(isPerformanceFocusApplicable("forecasting_performance", "multiclass_classification")).toBe(false);
+    expect(isPerformanceFocusApplicable("forecasting_performance", "continuous_regression")).toBe(false);
+  });
+
+  it("marks regression_performance inapplicable to univariate_forecasting, and vice versa", () => {
+    expect(isPerformanceFocusApplicable("regression_performance", "univariate_forecasting")).toBe(false);
+    expect(isPerformanceFocusApplicable("forecasting_performance", "continuous_regression")).toBe(false);
+  });
+
+  it("getApplicablePerformanceFocusIds returns exactly [forecasting_performance] for univariate_forecasting", () => {
+    expect(getApplicablePerformanceFocusIds("univariate_forecasting")).toEqual(["forecasting_performance"]);
+  });
+
+  it("getApplicableScoresForFocus returns mae, rmse, seasonal_mase in catalog order for univariate_forecasting", () => {
+    const scores = getApplicableScoresForFocus("forecasting_performance", "univariate_forecasting");
+    expect(scores.map(([scoreId]) => scoreId)).toEqual(["mae", "rmse", "seasonal_mase"]);
+  });
+
+  it("never marks seasonal_mase applicable to continuous_regression, and never marks forecasting scores classification-applicable", () => {
+    expect(isPerformanceScoreApplicable("seasonal_mase", "continuous_regression")).toBe(false);
+    for (const scoreId of ["mae", "rmse", "seasonal_mase"]) {
+      expect(isPerformanceScoreApplicable(scoreId, "binary_classification")).toBe(false);
+      expect(isPerformanceScoreApplicable(scoreId, "multiclass_classification")).toBe(false);
+      expect(isPerformanceScoreApplicable(scoreId, "univariate_forecasting")).toBe(true);
+    }
+  });
+
+  it("mae and rmse remain applicable to continuous_regression, unaffected by the forecasting addition", () => {
+    expect(isPerformanceScoreApplicable("mae", "continuous_regression")).toBe(true);
+    expect(isPerformanceScoreApplicable("rmse", "continuous_regression")).toBe(true);
+  });
+
+  it("does not include classification/regression-only foci as applicable to univariate_forecasting", () => {
+    const applicable = getApplicablePerformanceFocusIds("univariate_forecasting");
+    for (const focusId of [
+      "overall_discrimination",
+      "positive_class_detection",
+      "balanced_classification",
+      "probability_quality",
+      "operational_decision",
+      "regression_performance",
     ]) {
       expect(applicable).not.toContain(focusId);
     }

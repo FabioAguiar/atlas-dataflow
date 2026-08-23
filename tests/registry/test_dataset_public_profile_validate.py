@@ -561,6 +561,145 @@ def test_unknown_focus_still_reports_unknown_not_mismatch_when_problem_type_supp
     assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" not in _codes(result)
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0247: univariate-forecasting Performance focus vocabulary and
+# applicability. Mirrors the continuous-regression coverage above.
+# ---------------------------------------------------------------------------
+
+
+def test_forecasting_performance_focus_passes():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="forecasting_performance",
+            highlighted_score_id="mae",
+            visible_scores=[
+                {"score_id": "mae", "display_label": "MAE", "value": "3.10", "value_source": "canonical", "order": 0},
+                {"score_id": "rmse", "display_label": "RMSE", "value": "4.25", "value_source": "canonical", "order": 1},
+                {"score_id": "seasonal_mase", "display_label": "Seasonal MASE", "value": "0.87", "value_source": "canonical", "order": 2},
+            ],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result == {"valid": True, "errors": []}
+
+
+def test_classification_focus_rejects_forecasting_score():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="positive_class_detection",
+            highlighted_score_id="seasonal_mase",
+            visible_scores=[{"score_id": "seasonal_mase", "display_label": "Seasonal MASE", "value": "0.87", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS" in _codes(result)
+
+
+def test_regression_focus_rejects_seasonal_mase_score():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="seasonal_mase",
+            visible_scores=[{"score_id": "seasonal_mase", "display_label": "Seasonal MASE", "value": "0.87", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS" in _codes(result)
+
+
+def test_forecasting_focus_rejects_r2_score():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="forecasting_performance",
+            highlighted_score_id="r2",
+            visible_scores=[{"score_id": "r2", "display_label": "R²", "value": "0.87", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_SCORE_NOT_SUPPORTED_FOR_FOCUS" in _codes(result)
+
+
+def test_univariate_forecasting_problem_type_accepts_forecasting_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="forecasting_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.10", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "univariate_forecasting",
+    )
+    assert result == {"valid": True, "errors": []}
+
+
+def test_univariate_forecasting_problem_type_rejects_regression_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="regression_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.10", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "univariate_forecasting",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_continuous_regression_problem_type_rejects_forecasting_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="forecasting_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.10", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "continuous_regression",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_binary_classification_problem_type_rejects_forecasting_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="forecasting_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.10", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "binary_classification",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+def test_multiclass_classification_problem_type_rejects_forecasting_performance_focus():
+    result = validate_profile_references(
+        _profile(performance_focus=_performance_focus(
+            focus_id="forecasting_performance",
+            highlighted_score_id="mae",
+            visible_scores=[{"score_id": "mae", "display_label": "MAE", "value": "3.10", "value_source": "canonical", "order": 0}],
+        )),
+        _MOCK_PREDICT_VIEWS_REGISTRY,
+        _MOCK_RELEASE_METRICS,
+        "multiclass_classification",
+    )
+    assert result["valid"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
 if __name__ == "__main__":
     tests = [
         test_profile_with_no_references_passes,

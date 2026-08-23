@@ -1294,6 +1294,103 @@ def test_public_presentation_overlay_expected_binary_problem_type_ignores_contin
         assert overlay["result_card"]["schema_version"] == "binary-result-presentation.v1"
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0249: univariate-forecasting result_card normalization
+# dispatch through resolve_public_presentation_overlay's expected_problem_type
+# parameter, exercising the real (non-monkeypatched) chain into
+# registry.dataset_public_profile_validate.normalize_result_presentation.
+# ---------------------------------------------------------------------------
+
+
+def test_public_presentation_overlay_defaults_univariate_forecasting_card_when_no_snapshot():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        overlay = resolve_public_presentation_overlay(
+            _TARGET_SLUG, repo_root=fake_repo, expected_problem_type="univariate_forecasting"
+        )
+        assert overlay["result_card"] == {
+            "schema_version": "univariate-forecasting-result-presentation.v1",
+            "forecast_series_label": "Forecast",
+            "future_time_index_label": "Period",
+            "forecast_value_label": "Forecast",
+            "model_section_label": "Model",
+            "decimal_places": 2,
+        }
+
+
+def test_public_presentation_overlay_preserves_published_univariate_forecasting_card():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        snapshots_dir = fake_repo / "registry" / "profile-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        (snapshots_dir / f"{_TARGET_SLUG}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "dataset_slug": _TARGET_SLUG,
+                    "published_at": "2026-07-01T00:00:00Z",
+                    "active_release_at_publish_time": "release-20260101-001",
+                    "profile": {
+                        "result_card": {
+                            "schema_version": "univariate-forecasting-result-presentation.v1",
+                            "forecast_series_label": "Monthly demand forecast",
+                            "future_time_index_label": "Month",
+                            "forecast_value_label": "Forecasted demand",
+                            "model_section_label": "Model",
+                            "decimal_places": 1,
+                            "value_unit_label": "units",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        overlay = resolve_public_presentation_overlay(
+            _TARGET_SLUG, repo_root=fake_repo, expected_problem_type="univariate_forecasting"
+        )
+        assert overlay["result_card"] == {
+            "schema_version": "univariate-forecasting-result-presentation.v1",
+            "forecast_series_label": "Monthly demand forecast",
+            "future_time_index_label": "Month",
+            "forecast_value_label": "Forecasted demand",
+            "model_section_label": "Model",
+            "decimal_places": 1,
+            "value_unit_label": "units",
+        }
+
+
+def test_public_presentation_overlay_expected_non_forecasting_problem_type_ignores_forecasting_source():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        snapshots_dir = fake_repo / "registry" / "profile-snapshots"
+        snapshots_dir.mkdir(parents=True)
+        (snapshots_dir / f"{_TARGET_SLUG}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "dataset_slug": _TARGET_SLUG,
+                    "published_at": "2026-07-01T00:00:00Z",
+                    "active_release_at_publish_time": "release-20260101-001",
+                    "profile": {
+                        "result_card": {
+                            "schema_version": "univariate-forecasting-result-presentation.v1",
+                            "forecast_series_label": "Monthly demand forecast",
+                            "future_time_index_label": "Month",
+                            "forecast_value_label": "Forecasted demand",
+                            "model_section_label": "Model",
+                            "decimal_places": 1,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        overlay = resolve_public_presentation_overlay(
+            _TARGET_SLUG, repo_root=fake_repo, expected_problem_type="binary_classification"
+        )
+        assert overlay["result_card"]["schema_version"] == "binary-result-presentation.v1"
+
+
 def test_public_presentation_overlay_never_reads_private_draft_documentation():
     """
     A private, unpublished draft's documentation must never leak through

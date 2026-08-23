@@ -79,7 +79,24 @@ export type ContinuousRegressionResult = {
   model_descriptor: BinaryModelDescriptor;
 };
 
-export type ResultData = BinaryClassificationResult | MulticlassClassificationResult | ContinuousRegressionResult;
+export type UnivariateForecastPoint = {
+  horizon_step: number;
+  future_time_index: string | number;
+  forecast: number;
+};
+
+/** Matches runtime/inference.py's univariate-forecasting-result.v1 exactly (S0246). */
+export type UnivariateForecastingResult = {
+  schema_version: "univariate-forecasting-result.v1";
+  problem_type: "univariate_forecasting";
+  forecast_origin: string | number;
+  frequency: string;
+  forecast_horizon: number;
+  forecast_points: UnivariateForecastPoint[];
+  model_descriptor: BinaryModelDescriptor;
+};
+
+export type ResultData = BinaryClassificationResult | MulticlassClassificationResult | ContinuousRegressionResult | UnivariateForecastingResult;
 
 /** Matches GET /datasets/{slug}/contract's result_contract.semantics (no band_id selection yet). */
 export type BinaryResultSemantics = {
@@ -260,7 +277,18 @@ export type ContinuousRegressionResultPresentation = {
   value_unit_label?: string;
 };
 
-export type ResultPresentation = BinaryResultPresentation | MulticlassResultPresentation | ContinuousRegressionResultPresentation;
+/** Matches GET /datasets/{slug}/context's result_card (univariate-forecasting-result-presentation.v1). */
+export type UnivariateForecastingResultPresentation = {
+  schema_version: "univariate-forecasting-result-presentation.v1";
+  forecast_series_label: string;
+  future_time_index_label: string;
+  forecast_value_label: string;
+  model_section_label: string;
+  decimal_places: number;
+  value_unit_label?: string;
+};
+
+export type ResultPresentation = BinaryResultPresentation | MulticlassResultPresentation | ContinuousRegressionResultPresentation | UnivariateForecastingResultPresentation;
 
 export const GENERIC_MULTICLASS_RESULT_PRESENTATION: MulticlassResultPresentation = {
   schema_version: "multiclass-result-presentation.v1",
@@ -272,6 +300,15 @@ export const GENERIC_MULTICLASS_RESULT_PRESENTATION: MulticlassResultPresentatio
 export const GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION: ContinuousRegressionResultPresentation = {
   schema_version: "continuous-regression-result-presentation.v1",
   predicted_value_label: "Predicted value",
+  model_section_label: "Model",
+  decimal_places: 2,
+};
+
+export const GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION: UnivariateForecastingResultPresentation = {
+  schema_version: "univariate-forecasting-result-presentation.v1",
+  forecast_series_label: "Forecast",
+  future_time_index_label: "Period",
+  forecast_value_label: "Forecast",
   model_section_label: "Model",
   decimal_places: 2,
 };
@@ -502,12 +539,57 @@ export function isContinuousRegressionResult(value: unknown): value is Continuou
   return true;
 }
 
+function isStringOrIntegerIdentity(value: unknown): value is string | number {
+  if (typeof value === "string") return true;
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+function isUnivariateForecastPoint(value: unknown, expectedHorizonStep: number): value is UnivariateForecastPoint {
+  if (!isRecord(value) || !hasExactKeys(value, ["horizon_step", "future_time_index", "forecast"])) return false;
+  if (value.horizon_step !== expectedHorizonStep) return false;
+  if (!isStringOrIntegerIdentity(value.future_time_index)) return false;
+  return isFiniteNumber(value.forecast);
+}
+
+/**
+ * Bounded runtime transport guard for a successful /inference response's
+ * `result` field when the active problem type is univariate_forecasting.
+ * Rejects extra/unknown keys, the wrong schema version/problem type, a
+ * boolean/invalid forecast_origin, a blank frequency, a non-positive/boolean
+ * horizon, a forecast_points cardinality mismatch, a non-sequential
+ * horizon_step, a boolean/invalid future_time_index, a non-finite forecast
+ * value, and a malformed model descriptor. Never recomputes the backend's
+ * logical-frequency progression algorithm.
+ */
+export function isUnivariateForecastingResult(value: unknown): value is UnivariateForecastingResult {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    "schema_version", "problem_type", "forecast_origin", "frequency", "forecast_horizon", "forecast_points", "model_descriptor",
+  ])) return false;
+  if (value.schema_version !== "univariate-forecasting-result.v1") return false;
+  if (value.problem_type !== "univariate_forecasting") return false;
+  if (!isStringOrIntegerIdentity(value.forecast_origin)) return false;
+  if (!isNonEmptyString(value.frequency)) return false;
+  if (typeof value.forecast_horizon !== "number" || !Number.isInteger(value.forecast_horizon) || value.forecast_horizon <= 0) return false;
+  if (!Array.isArray(value.forecast_points) || value.forecast_points.length !== value.forecast_horizon) return false;
+  if (!value.forecast_points.every((point, index) => isUnivariateForecastPoint(point, index + 1))) return false;
+  if (!isRecord(value.model_descriptor) || !hasExactKeys(value.model_descriptor, ["model_family", "display_name"]) || !isModelDescriptor(value.model_descriptor)) return false;
+  return true;
+}
+
 export function resultForContract(resultContract: unknown, result: unknown): ResultData | null {
   if (isAvailableBinaryResultContract(resultContract)) {
     return isBinaryClassificationResult(result) ? result : null;
   }
   if (isAvailableContinuousRegressionResultContract(resultContract)) {
     if (!isContinuousRegressionResult(result)) return null;
+    const expectedModel = resultContract.semantics.model_descriptor;
+    return expectedModel.model_family === result.model_descriptor.model_family
+      && expectedModel.display_name === result.model_descriptor.display_name
+      ? result
+      : null;
+  }
+  if (isAvailableForecastingResultContract(resultContract)) {
+    if (!isUnivariateForecastingResult(result)) return null;
     const expectedModel = resultContract.semantics.model_descriptor;
     return expectedModel.model_family === result.model_descriptor.model_family
       && expectedModel.display_name === result.model_descriptor.display_name

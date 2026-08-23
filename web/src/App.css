@@ -2145,6 +2145,74 @@ h1 {
   }
 }
 
+.univariate-forecasting-result {
+  display: grid;
+  gap: var(--atlas-space-5);
+}
+
+.univariate-forecasting-result__series,
+.univariate-forecasting-result__model {
+  display: grid;
+  gap: var(--atlas-space-2);
+}
+
+.univariate-forecasting-result__label {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.univariate-forecasting-result__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.univariate-forecasting-result__table th,
+.univariate-forecasting-result__table td {
+  padding: var(--atlas-space-2) var(--atlas-space-3);
+  border-bottom: 1px solid var(--atlas-color-border);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.univariate-forecasting-result__table th {
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.univariate-forecasting-result__table td {
+  color: var(--atlas-color-text);
+}
+
+.univariate-forecasting-result__value {
+  font-weight: 600;
+}
+
+.univariate-forecasting-result__unit {
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-sm);
+  font-weight: 600;
+}
+
+.univariate-forecasting-result__model-value {
+  margin: 0;
+  color: var(--atlas-color-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .univariate-forecasting-result__table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
 @media (max-width: 767px) {
   .dataset-detail-header__metadata {
     display: block;

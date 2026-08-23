@@ -109,6 +109,7 @@ PERFORMANCE_FOCUS_PROBLEM_TYPES = {
 BINARY_RESULT_PRESENTATION_SCHEMA_VERSION = "binary-result-presentation.v1"
 MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION = "multiclass-result-presentation.v1"
 CONTINUOUS_REGRESSION_RESULT_PRESENTATION_SCHEMA_VERSION = "continuous-regression-result-presentation.v1"
+UNIVARIATE_FORECASTING_RESULT_PRESENTATION_SCHEMA_VERSION = "univariate-forecasting-result-presentation.v1"
 _RESULT_CARD_FALLBACKS = {
     "positive_class_probability_label": "Positive class probability",
     "predicted_outcome_label": "Predicted outcome",
@@ -129,6 +130,13 @@ _CONTINUOUS_REGRESSION_RESULT_CARD_FALLBACKS = {
     "model_section_label": "Model",
 }
 _CONTINUOUS_REGRESSION_DECIMAL_PLACES_FALLBACK = 2
+_UNIVARIATE_FORECASTING_RESULT_CARD_FALLBACKS = {
+    "forecast_series_label": "Forecast",
+    "future_time_index_label": "Period",
+    "forecast_value_label": "Forecast",
+    "model_section_label": "Model",
+}
+_UNIVARIATE_FORECASTING_DECIMAL_PLACES_FALLBACK = 2
 
 
 def normalize_binary_result_presentation(result_card: object) -> dict:
@@ -233,18 +241,55 @@ def normalize_continuous_regression_result_presentation(result_card: object) -> 
     return normalized
 
 
+def normalize_univariate_forecasting_result_presentation(result_card: object) -> dict:
+    """Return canonical copy-only univariate-forecasting presentation deterministically.
+
+    decimal_places is bounded 0..6, defaulting when absent/invalid. The
+    optional value_unit_label is presentation copy only and is included only
+    when it is a non-empty string; it never carries a fallback of its own.
+    Mirrors normalize_continuous_regression_result_presentation's
+    deterministic/idempotent normalization discipline exactly.
+    """
+    source = result_card if isinstance(result_card, dict) else {}
+
+    def copy(key: str) -> str:
+        value = source.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else _UNIVARIATE_FORECASTING_RESULT_CARD_FALLBACKS[key]
+
+    decimal_places = source.get("decimal_places")
+    if not isinstance(decimal_places, int) or isinstance(decimal_places, bool) or not (0 <= decimal_places <= 6):
+        decimal_places = _UNIVARIATE_FORECASTING_DECIMAL_PLACES_FALLBACK
+
+    # Project Spec S0239-style discipline (extended by S0249): model_section_label
+    # is fixed to "Model" regardless of incoming presentation copy.
+    normalized = {
+        "schema_version": UNIVARIATE_FORECASTING_RESULT_PRESENTATION_SCHEMA_VERSION,
+        **{key: copy(key) for key in _UNIVARIATE_FORECASTING_RESULT_CARD_FALLBACKS if key != "model_section_label"},
+        "model_section_label": _UNIVARIATE_FORECASTING_RESULT_CARD_FALLBACKS["model_section_label"],
+        "decimal_places": decimal_places,
+    }
+    value_unit_label = source.get("value_unit_label")
+    if isinstance(value_unit_label, str) and value_unit_label.strip():
+        normalized["value_unit_label"] = value_unit_label.strip()
+    return normalized
+
+
 def normalize_result_presentation(result_card: object, expected_problem_type: str | None = None) -> dict:
     """Dispatch only from trusted problem type or the governed schema version."""
     if expected_problem_type == "multiclass_classification":
         return normalize_multiclass_result_presentation(result_card)
     if expected_problem_type == "continuous_regression":
         return normalize_continuous_regression_result_presentation(result_card)
+    if expected_problem_type == "univariate_forecasting":
+        return normalize_univariate_forecasting_result_presentation(result_card)
     if expected_problem_type == "binary_classification":
         return normalize_binary_result_presentation(result_card)
     if isinstance(result_card, dict) and result_card.get("schema_version") == MULTICLASS_RESULT_PRESENTATION_SCHEMA_VERSION:
         return normalize_multiclass_result_presentation(result_card)
     if isinstance(result_card, dict) and result_card.get("schema_version") == CONTINUOUS_REGRESSION_RESULT_PRESENTATION_SCHEMA_VERSION:
         return normalize_continuous_regression_result_presentation(result_card)
+    if isinstance(result_card, dict) and result_card.get("schema_version") == UNIVARIATE_FORECASTING_RESULT_PRESENTATION_SCHEMA_VERSION:
+        return normalize_univariate_forecasting_result_presentation(result_card)
     return normalize_binary_result_presentation(result_card)
 
 
@@ -274,9 +319,10 @@ def validate_profile_references(
     release's metrics.json before invoking this function; this validator does
     not select a release itself.
 
-    expected_problem_type (Project Spec S0240) is a bounded, optional trusted
-    input -- one of "binary_classification", "multiclass_classification", or
-    "continuous_regression" -- supplied by a caller that has already resolved
+    expected_problem_type (Project Spec S0240, extended by S0249) is a
+    bounded, optional trusted input -- one of "binary_classification",
+    "multiclass_classification", "continuous_regression", or
+    "univariate_forecasting" -- supplied by a caller that has already resolved
     it from a trusted source (e.g. an active release's governed result
     semantics). When omitted (the existing private draft validation call
     site), performance_focus applicability is not checked against a problem

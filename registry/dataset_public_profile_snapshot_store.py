@@ -81,6 +81,7 @@ SNAPSHOT_SCHEMA_VERSION = "1.0.0"
 # (absent, malformed, or an unsupported value) fails publication closed.
 _SUPPORTED_RELEASE_PROBLEM_TYPES = frozenset({
     "binary_classification", "multiclass_classification", "continuous_regression",
+    "univariate_forecasting",
 })
 
 _PROFILE_FIELDS = (
@@ -254,11 +255,16 @@ def _build_snapshot_candidate(
     draft: dict,
     dataset_slug: str,
     active_release: str,
+    release_problem_type: str | None,
     published_at: str,
     release_date_label: str,
 ) -> dict:
     profile = {field: draft[field] for field in _PROFILE_FIELDS if field in draft}
-    profile["result_card"] = normalize_result_presentation(profile.get("result_card"))
+    # Project Spec S0249: the release-bound problem type is resolved by the
+    # caller from the active release's own governed result semantics -- never
+    # inferred here from the result card's own schema_version -- so the wrong
+    # presentation schema family is never persisted for a coherent release.
+    profile["result_card"] = normalize_result_presentation(profile.get("result_card"), release_problem_type)
     display = profile.get("display")
     if isinstance(display, dict):
         display = dict(display)
@@ -282,7 +288,7 @@ def _build_snapshot_candidate(
     return candidate
 
 
-def _validate_snapshot_candidate(candidate: dict, repo_root: Path) -> list:
+def _validate_snapshot_candidate(candidate: dict, repo_root: Path, release_problem_type: str | None) -> list:
     errors: list[dict] = []
 
     try:
@@ -316,11 +322,9 @@ def _validate_snapshot_candidate(candidate: dict, repo_root: Path) -> list:
     # Project Spec S0240: the trusted problem type for the publication guard
     # is resolved only from the active release's own governed result
     # semantics -- never inferred from the profile, result card, or focus.
-    release_problem_type = (
-        _resolve_release_problem_type(active_release, repo_root_resolved)
-        if isinstance(active_release, str)
-        else None
-    )
+    # Project Spec S0249: the caller now resolves release_problem_type once,
+    # before candidate construction, so it can also drive result-card
+    # normalization; this validator only reports its unavailability here.
     if isinstance(active_release, str) and release_problem_type is None:
         errors.append(_err(
             "ACTIVE_RELEASE_PROBLEM_TYPE_UNAVAILABLE",
@@ -424,6 +428,14 @@ def _publish_profile(
             )],
         }
 
+    # Project Spec S0249: resolve the release-bound problem type before
+    # building the candidate so result-card normalization can be keyed off it
+    # directly. When it cannot be resolved, the candidate still builds (using
+    # the pre-S0249 schema-version/binary-default dispatch) so schema
+    # validation still surfaces its own errors; the publish is rejected below
+    # via ACTIVE_RELEASE_PROBLEM_TYPE_UNAVAILABLE either way.
+    release_problem_type = _resolve_release_problem_type(active_release, repo_root)
+
     published_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     timestamp_derivation = derive_dataset_detail_timestamp_for_date(
         dataset_slug,
@@ -444,11 +456,12 @@ def _publish_profile(
         sanitized_profile,
         dataset_slug,
         active_release,
+        release_problem_type,
         published_at,
         timestamp_derivation["local_calendar_date"],
     )
 
-    errors = _validate_snapshot_candidate(candidate, repo_root)
+    errors = _validate_snapshot_candidate(candidate, repo_root, release_problem_type)
     if errors:
         return {"published": False, "path": None, "snapshot": None, "errors": errors}
 

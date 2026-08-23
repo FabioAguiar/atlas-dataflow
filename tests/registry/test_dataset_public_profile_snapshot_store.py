@@ -210,6 +210,7 @@ def test_publish_canonicalizes_legacy_result_card_and_omits_legacy_keys(fake_rep
 
 
 def test_publish_preserves_multiclass_result_presentation(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "multiclass_classification")
     profile = _profile(result_card={
         "schema_version": "multiclass-result-presentation.v1",
         "predicted_class_label": "Predicted class",
@@ -222,6 +223,7 @@ def test_publish_preserves_multiclass_result_presentation(fake_repo):
 
 
 def test_publish_preserves_continuous_regression_result_presentation(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
     profile = _profile(result_card={
         "schema_version": "continuous-regression-result-presentation.v1",
         "predicted_value_label": "Predicted compressive strength",
@@ -253,6 +255,7 @@ def test_publish_binary_result_card_canonicalizes_custom_model_section_label(fak
 
 
 def test_publish_multiclass_result_card_canonicalizes_custom_model_section_label(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "multiclass_classification")
     profile = _profile(result_card={
         "schema_version": "multiclass-result-presentation.v1",
         "predicted_class_label": "Predicted class",
@@ -265,6 +268,7 @@ def test_publish_multiclass_result_card_canonicalizes_custom_model_section_label
 
 
 def test_publish_continuous_regression_result_card_canonicalizes_custom_model_section_label(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
     profile = _profile(result_card={
         "schema_version": "continuous-regression-result-presentation.v1",
         "predicted_value_label": "Predicted compressive strength",
@@ -278,6 +282,7 @@ def test_publish_continuous_regression_result_card_canonicalizes_custom_model_se
 
 
 def test_publish_bounds_continuous_regression_decimal_places(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
     profile = _profile(result_card={
         "schema_version": "continuous-regression-result-presentation.v1",
         "predicted_value_label": "Predicted value",
@@ -988,3 +993,148 @@ def test_publish_focus_guard_ignores_result_card_schema_hint_and_dataset_slug(fa
     assert result["published"] is True
     assert result["snapshot"]["profile"]["performance_focus"]["focus_id"] == "regression_performance"
     assert "_example_note" not in result["snapshot"]["profile"]
+    # Project Spec S0249: the persisted result_card must be normalized from
+    # the release's own governed problem type (continuous_regression), never
+    # from the submitted result_card's own multiclass schema_version hint.
+    assert result["snapshot"]["profile"]["result_card"]["schema_version"] == "continuous-regression-result-presentation.v1"
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0249: univariate-forecasting release-bound publication
+# coherence. release_problem_type is resolved only from
+# releases/<active_release>/predictions/bundle.json's own
+# result_semantics.problem_type -- never inferred from dataset_slug or
+# result_card presentation copy/schema_version -- exactly like the existing
+# S0240 classification/regression guard above.
+# ---------------------------------------------------------------------------
+
+
+def test_publish_accepts_univariate_forecasting_active_release_problem_type(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+
+    result = publish_snapshot_from_payload("telco-customer-churn", _profile(), repo_root=fake_repo)
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"]["schema_version"] == "univariate-forecasting-result-presentation.v1"
+
+
+def test_publish_missing_result_card_under_forecasting_release_publishes_forecasting_defaults(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(display={"title": "No result card"}), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"] == {
+        "schema_version": "univariate-forecasting-result-presentation.v1",
+        "forecast_series_label": "Forecast",
+        "future_time_index_label": "Period",
+        "forecast_value_label": "Forecast",
+        "model_section_label": "Model",
+        "decimal_places": 2,
+    }
+
+
+def test_publish_preserves_explicit_univariate_forecasting_result_presentation(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+    profile = _profile(result_card={
+        "schema_version": "univariate-forecasting-result-presentation.v1",
+        "forecast_series_label": "Monthly demand forecast",
+        "future_time_index_label": "Month",
+        "forecast_value_label": "Forecasted demand",
+        "model_section_label": "Model",
+        "decimal_places": 1,
+        "value_unit_label": "units",
+    })
+
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"] == profile["result_card"]
+
+
+def test_publish_forecasting_result_card_canonicalizes_custom_model_section_label(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+    profile = _profile(result_card={
+        "schema_version": "univariate-forecasting-result-presentation.v1",
+        "forecast_series_label": "Forecast",
+        "future_time_index_label": "Period",
+        "forecast_value_label": "Forecast",
+        "model_section_label": "Scoring model",
+        "decimal_places": 2,
+    })
+
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"]["model_section_label"] == "Model"
+
+
+def test_publish_bounds_forecasting_decimal_places(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+    profile = _profile(result_card={
+        "schema_version": "univariate-forecasting-result-presentation.v1",
+        "forecast_series_label": "Forecast",
+        "future_time_index_label": "Period",
+        "forecast_value_label": "Forecast",
+        "model_section_label": "Model",
+        "decimal_places": 9,
+    })
+
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+
+    assert result["published"] is False
+    assert "SCHEMA_VALIDATION_ERROR" in _codes(result)
+
+
+def test_publish_wrong_result_card_schema_hint_cannot_override_active_release_forecasting_type(fake_repo):
+    # A binary-schema result_card must never make a forecasting release
+    # publish a binary presentation -- the release's own governed problem
+    # type is the only trusted selector.
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+    profile = _profile(result_card={
+        "schema_version": "binary-result-presentation.v1",
+        "positive_class_probability_label": "Positive class probability",
+        "predicted_outcome_label": "Predicted outcome",
+        "positive_outcome_copy": "Positive outcome",
+        "negative_outcome_copy": "Negative outcome",
+        "model_section_label": "Model",
+        "interpretation": {"preset": "risk", "labels": {"high": "High", "medium": "Medium", "low": "Low"}},
+    })
+
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"]["schema_version"] == "univariate-forecasting-result-presentation.v1"
+
+
+def test_publish_forecasting_result_card_hint_cannot_override_active_release_continuous_regression_type(fake_repo):
+    # The inverse direction of the guard above: a forecasting-schema
+    # result_card must never make a continuous_regression release publish a
+    # forecasting presentation.
+    _write_release_bundle(fake_repo, "release-20260101-001", "continuous_regression")
+    profile = _profile(result_card={
+        "schema_version": "univariate-forecasting-result-presentation.v1",
+        "forecast_series_label": "Forecast",
+        "future_time_index_label": "Period",
+        "forecast_value_label": "Forecast",
+        "model_section_label": "Model",
+        "decimal_places": 2,
+    })
+
+    result = publish_snapshot_from_payload("telco-customer-churn", profile, repo_root=fake_repo)
+
+    assert result["published"] is True
+    assert result["snapshot"]["profile"]["result_card"]["schema_version"] == "continuous-regression-result-presentation.v1"
+
+
+def test_publish_rejects_regression_performance_focus_under_univariate_forecasting_active_release(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=_regression_focus()), repo_root=fake_repo
+    )
+
+    assert result["published"] is False
+    assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)

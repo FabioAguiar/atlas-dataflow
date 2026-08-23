@@ -276,6 +276,7 @@
         {"$ref": "#/definitions/canonical_result_card"},
         {"$ref": "#/definitions/multiclass_result_card"},
         {"$ref": "#/definitions/continuous_regression_result_card"},
+        {"$ref": "#/definitions/univariate_forecasting_result_card"},
         {"$ref": "#/definitions/legacy_result_card"}
       ]
     },
@@ -311,6 +312,20 @@
       "properties": {
         "schema_version": {"const": "continuous-regression-result-presentation.v1"},
         "predicted_value_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "model_section_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "decimal_places": {"type": "integer", "minimum": 0, "maximum": 6},
+        "value_unit_label": {"$ref": "#/definitions/result_card_short_copy"}
+      }
+    },
+    "univariate_forecasting_result_card": {
+      "type": "object",
+      "required": ["schema_version", "forecast_series_label", "future_time_index_label", "forecast_value_label", "model_section_label", "decimal_places"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {"const": "univariate-forecasting-result-presentation.v1"},
+        "forecast_series_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "future_time_index_label": {"$ref": "#/definitions/result_card_short_copy"},
+        "forecast_value_label": {"$ref": "#/definitions/result_card_short_copy"},
         "model_section_label": {"$ref": "#/definitions/result_card_short_copy"},
         "decimal_places": {"type": "integer", "minimum": 0, "maximum": 6},
         "value_unit_label": {"$ref": "#/definitions/result_card_short_copy"}

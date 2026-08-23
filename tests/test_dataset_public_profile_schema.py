@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -242,3 +243,148 @@ def test_documentation_does_not_bypass_technical_field_rejection():
 
     errors = list(jsonschema.Draft7Validator(schema).iter_errors(profile))
     assert errors
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0249: univariate-forecasting-result-presentation.v1 Result
+# Card union branch on both the draft profile and published snapshot schemas.
+# ---------------------------------------------------------------------------
+
+
+def _forecasting_result_card(**overrides) -> dict:
+    base = {
+        "schema_version": "univariate-forecasting-result-presentation.v1",
+        "forecast_series_label": "Forecast",
+        "future_time_index_label": "Period",
+        "forecast_value_label": "Forecast",
+        "model_section_label": "Model",
+        "decimal_places": 2,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_valid_forecasting_result_card_accepted_in_draft_and_snapshot():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    result_card = _forecasting_result_card(value_unit_label="units")
+
+    jsonschema.validate(_base_profile(result_card=result_card), schema)
+    jsonschema.validate(_base_snapshot({"result_card": result_card}), snapshot_schema)
+
+
+def test_forecasting_result_card_value_unit_label_is_optional():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    result_card = _forecasting_result_card()
+
+    jsonschema.validate(_base_profile(result_card=result_card), schema)
+    jsonschema.validate(_base_snapshot({"result_card": result_card}), snapshot_schema)
+
+
+@pytest.mark.parametrize("decimal_places", [0, 6])
+def test_forecasting_result_card_accepts_decimal_places_bounds(decimal_places):
+    schema = _load_json(SCHEMA_PATH)
+    result_card = _forecasting_result_card(decimal_places=decimal_places)
+
+    jsonschema.validate(_base_profile(result_card=result_card), schema)
+
+
+@pytest.mark.parametrize("decimal_places", [-1, 7])
+def test_forecasting_result_card_rejects_decimal_places_outside_bounds(decimal_places):
+    schema = _load_json(SCHEMA_PATH)
+    result_card = _forecasting_result_card(decimal_places=decimal_places)
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(result_card=result_card)))
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["forecast_series_label", "future_time_index_label", "forecast_value_label", "model_section_label", "decimal_places"],
+)
+def test_forecasting_result_card_rejects_missing_required_copy_fields(missing_field):
+    schema = _load_json(SCHEMA_PATH)
+    result_card = _forecasting_result_card()
+    del result_card[missing_field]
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(result_card=result_card)))
+
+
+def test_forecasting_result_card_rejects_unknown_fields():
+    schema = _load_json(SCHEMA_PATH)
+    result_card = _forecasting_result_card(unexpected_field="not allowed")
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(result_card=result_card)))
+
+
+def test_forecasting_result_card_rejects_forecast_technical_fields():
+    schema = _load_json(SCHEMA_PATH)
+    result_card = _forecasting_result_card(
+        forecast_points=[{"horizon_step": 1, "future_time_index": "2026-08", "forecast": 42.0}]
+    )
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(result_card=result_card)))
+
+
+def test_forecasting_result_card_rejects_forecast_origin_frequency_and_horizon():
+    schema = _load_json(SCHEMA_PATH)
+    for technical_field, value in (
+        ("forecast_origin", "2026-07"),
+        ("frequency", "monthly"),
+        ("forecast_horizon", 12),
+    ):
+        result_card = _forecasting_result_card(**{technical_field: value})
+        errors = list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(result_card=result_card)))
+        assert errors, f"expected {technical_field} to be rejected"
+
+
+def test_forecasting_result_card_rejects_model_descriptor():
+    schema = _load_json(SCHEMA_PATH)
+    result_card = _forecasting_result_card(
+        model_descriptor={"model_family": "deterministic_seasonal_trend_ols", "display_name": "Seasonal Trend"}
+    )
+
+    assert list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(result_card=result_card)))
+
+
+def test_forecasting_result_card_rejects_interval_and_history_fields():
+    schema = _load_json(SCHEMA_PATH)
+    for technical_field, value in (
+        ("intervals", {"lower": 1.0, "upper": 2.0}),
+        ("threshold", 0.5),
+        ("classes", [{"class_id": "forbidden"}]),
+        ("history_rows", []),
+        ("metrics", {"mae": 1.0}),
+    ):
+        result_card = _forecasting_result_card(**{technical_field: value})
+        errors = list(jsonschema.Draft7Validator(schema).iter_errors(_base_profile(result_card=result_card)))
+        assert errors, f"expected {technical_field} to be rejected"
+
+
+def test_forecasting_result_card_does_not_disturb_historical_result_card_schema_tests():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    binary_card = {
+        "schema_version": "binary-result-presentation.v1",
+        "positive_class_probability_label": "Positive class probability",
+        "predicted_outcome_label": "Predicted outcome",
+        "positive_outcome_copy": "Positive outcome",
+        "negative_outcome_copy": "Negative outcome",
+        "model_section_label": "Model",
+        "interpretation": {"preset": "risk", "labels": {"high": "High", "medium": "Medium", "low": "Low"}},
+    }
+    multiclass_card = {
+        "schema_version": "multiclass-result-presentation.v1",
+        "predicted_class_label": "Predicted class",
+        "class_probability_distribution_label": "Class probability distribution",
+        "model_section_label": "Model",
+    }
+    regression_card = {
+        "schema_version": "continuous-regression-result-presentation.v1",
+        "predicted_value_label": "Predicted value",
+        "model_section_label": "Model",
+        "decimal_places": 2,
+    }
+    for card in (binary_card, multiclass_card, regression_card):
+        jsonschema.validate(_base_profile(result_card=card), schema)
+        jsonschema.validate(_base_snapshot({"result_card": card}), snapshot_schema)

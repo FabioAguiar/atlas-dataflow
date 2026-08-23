@@ -1,5 +1,5 @@
 """
-Project Spec S0251: static structural proof for
+Project Spec S0251/S0252: static structural proof for
 notebooks/datasets/nottem/dataset_integration.ipynb.
 
 Mirrors tests/test_concrete_compressive_strength_dataset_integration.py's
@@ -12,8 +12,10 @@ at runtime, never downloads data, never loads an external model, never
 fits a model directly, calls the governed native forecasting training
 entrypoint with an explicit preparation_recipe_path, encodes the frozen
 Nottingham deterministic_seasonal_trend_ols configuration, introduces no
-dataset-slug branch into generic production modules, creates no Predict
-View, and stops before real registry/release activation.
+dataset-slug branch into generic production modules, declares exactly one
+native Nottingham Predict View (S0252) with no Predict View registry
+materialization/customization seeding, and stops before real
+registry/release activation.
 """
 
 import ast
@@ -109,6 +111,7 @@ def test_notebook_declares_orchestration_boundary_with_no_model_fitting():
         "manifest_generation_when_structurally_permitted",
     ):
         assert allowed in code
+    assert "predict_view_declaration" in code
     for forbidden in (
         "external_scientific_project_read_at_runtime",
         "external_model_load",
@@ -123,10 +126,12 @@ def test_notebook_declares_orchestration_boundary_with_no_model_fitting():
         "target_transformation",
         "publisher_promotion",
         "registry_active_release_mutation",
+        "predict_view_registry_materialization",
+        "predict_view_customization_seeding",
         "public_visibility_or_profile_activation",
-        "predict_view_creation",
     ):
         assert forbidden in code
+    assert "predict_view_creation" not in code
     assert "stops_before_promotion_registry_activation_and_public_prediction" in code
     assert 'assert ORCHESTRATION_BOUNDARY["durable_absolute_external_path"] is False' in code
 
@@ -348,10 +353,53 @@ def test_notebook_projects_runtime_public_contracts_through_generic_forecasting_
     assert 'assert public_contract["forecast"]["horizon_user_editable"] is False' in code
 
 
-def test_notebook_dataset_context_declares_no_predict_view():
+def test_notebook_dataset_context_declares_exactly_one_nottingham_predict_view():
     code = _source("code")
-    assert '"predict_views": [],' in code
-    assert 'assert dataset_context["predict_views"] == []' in code
+    assert '"predict_views": [nottingham_predict_view],' in code
+    assert '"view_id": "nottem-temperature-forecast",' in code
+    assert '"dataset_slug": dataset_slug,' in code
+    assert '"title": "Nottingham Temperature Forecast",' in code
+    assert (
+        '"summary": "Forecast future Nottingham monthly average air '
+        'temperatures from the governed history series.",'
+    ) in code
+    assert '"tags": ["nottem", "forecasting", "univariate"],' in code
+    assert (
+        '"prediction_goal": "Forecast future Nottingham monthly average air '
+        'temperature from the canonical history-series dataset contract '
+        'inputs.",'
+    ) in code
+    view_start = code.index("nottingham_predict_view = {")
+    view_end = code.index("dataset_context = {", view_start)
+    view_source = code[view_start:view_end]
+    assert '"mode": "active",' in view_source
+    assert "release_id" not in view_source
+    assert (
+        '"canonical_contracts_are_source_of_truth": True,\n'
+        '            "view_metadata_defines_runtime_validation": False,\n'
+        '            "view_metadata_duplicates_contract": False,'
+    ) in view_source
+    for forbidden in (
+        "time_index_field",
+        "target_field",
+        '"frequency"',
+        "forecast_horizon",
+        "minimum_observation",
+        "seasonal_period",
+        "deterministic_seasonal_trend_ols",
+        '"mae"',
+        '"rmse"',
+        "seasonal_mase",
+        "runtime_contract",
+        "public_contract",
+        "forecast_series",
+    ):
+        assert forbidden not in view_source
+    assert '"dataset_context_predict_views_count_invalid"' in code
+    assert '"dataset_context_predict_view_id_invalid"' in code
+    assert '"dataset_context_predict_view_binding_dataset_slug_invalid"' in code
+    assert '"dataset_context_predict_view_binding_release_mode_invalid"' in code
+    assert '"dataset_context_predict_view_contract_precedence_invalid"' in code
 
 
 def test_notebook_training_readiness_does_not_reuse_v1_only_generic_bridge():
@@ -527,10 +575,11 @@ def test_notebook_has_no_promotion_or_registry_activation_calls():
         assert forbidden not in code
 
 
-def test_notebook_declares_no_predict_view_created_and_declares_no_activation_performed():
+def test_notebook_declares_predict_view_declared_true_and_no_activation_performed():
     code = _source("code")
-    assert '"predict_view_declared": False,' in code
+    assert '"predict_view_declared": True,' in code
     assert '"predict_view_registry_materialized": False,' in code
+    assert '"predict_view_customization_seeded": False,' in code
     assert '"promotion_performed": False,' in code
     assert '"registry_activation_performed": False,' in code
     assert '"public_visibility_or_profile_activation_performed": False,' in code

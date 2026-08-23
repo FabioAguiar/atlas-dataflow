@@ -10207,6 +10207,305 @@ describe("Concrete native Predict View authoring and Inference Form bootstrap (P
   });
 });
 
+// -----------------------------------------------------------------------------
+// Project Spec S0252: proves the real Nottingham native Predict View
+// (`nottem-temperature-forecast`, declared by the notebook per Project Spec
+// S0252) repairs a stale bound_predict_view_id via the existing generic
+// single-eligible-view rebinding (Project Spec S0098/S0100), bootstraps the
+// forecasting ready_base builder (Project Spec S0250) from the real
+// public-contract v2 history-series shape with no stored customization, and
+// that the shared HistorySeriesInput renders the bound Nottingham contract's
+// guidance in Live Preview. Mirrors the Concrete S0234 block's self-contained
+// fixture style, adapted to forecasting's history-series shape. No
+// Nottingham-specific production frontend branch is added or exercised: this
+// describe block introduces no change to DatasetAdminPage.tsx,
+// InferenceForm.tsx, or HistorySeriesInput.tsx.
+// -----------------------------------------------------------------------------
+describe("Nottingham native Predict View auto-bind and forecasting ready_base bootstrap (Project Spec S0252)", () => {
+  const nottemSlug = "nottem";
+  const nottemViewId = "nottem-temperature-forecast";
+  const nottemActiveRelease = "release-20260823-001";
+
+  const nottemContractPayload = {
+    schema_version: "2.0.0",
+    problem_type: "univariate_forecasting",
+    input_kind: "history_series",
+    history_series: {
+      time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+      target_field: { name: "temperature", label: "Temperature", value_kind: "number", display_order: 2 },
+      frequency: "monthly",
+    },
+    forecast: { forecast_horizon: 12, horizon_user_editable: false },
+  };
+
+  const nottemResultContract = {
+    status: "available",
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1",
+      problem_type: "univariate_forecasting",
+      result_schema_version: "univariate-forecasting-result.v1",
+      primary_output: "forecast_series",
+      output_structure: "ordered_forecast_points",
+      forecast_value_kind: "continuous_numeric",
+      forecast_count_source: "forecast_horizon",
+      model_descriptor: {
+        model_family: "deterministic_seasonal_trend_ols",
+        display_name: "Deterministic Seasonal-Trend OLS",
+      },
+    },
+  };
+
+  const validNottemForecastResult = {
+    schema_version: "univariate-forecasting-result.v1",
+    problem_type: "univariate_forecasting",
+    forecast_origin: "1939-12",
+    frequency: "monthly",
+    forecast_horizon: 12,
+    // isUnivariateForecastingResult requires forecast_points.length to
+    // exactly equal forecast_horizon, with sequential horizon_step values.
+    forecast_points: Array.from({ length: 12 }, (_, index) => ({
+      horizon_step: index + 1,
+      future_time_index: `1940-${String(index + 1).padStart(2, "0")}`,
+      forecast: 38.4 + index * 0.1,
+    })),
+    model_descriptor: {
+      model_family: "deterministic_seasonal_trend_ols",
+      display_name: "Deterministic Seasonal-Trend OLS",
+    },
+  };
+
+  beforeEach(() => {
+    Element.prototype.setPointerCapture = vi.fn();
+    document.elementFromPoint = vi.fn(() => null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function installNottemFetchMock() {
+    function authoringContextEnvelope(): Record<string, unknown> {
+      return {
+        dataset_slug: nottemSlug,
+        active_release: nottemActiveRelease,
+        dataset: {
+          status: "ready",
+          data: {
+            dataset_slug: nottemSlug,
+            title: "Nottingham Monthly Temperatures",
+            display_title: null,
+            summary: "Forecast Nottingham Castle monthly average air temperature twelve months ahead.",
+            domain: "climate",
+            tags: ["nottem", "forecasting", "univariate"],
+            active_release: nottemActiveRelease,
+            publication_status: "ready",
+          },
+        },
+        context: {
+          status: "ready",
+          data: {
+            title: "Nottingham Temperature Forecast",
+            summary: "Forecast future Nottingham monthly average air temperatures from the governed history series.",
+            domain: "climate",
+            tags: ["nottem", "forecasting", "univariate"],
+            problem_type: "univariate_forecasting",
+            prediction_target_description: "Nottingham monthly average air temperature",
+          },
+        },
+        contract: {
+          status: "ready",
+          data: { contract: nottemContractPayload, result_contract: nottemResultContract },
+        },
+        inference_guidance: { status: "ready", data: [] },
+        metrics: { status: "ready", data: { evaluation: { metrics: { mae: 1.526584, rmse: 1.859967 } } } },
+        visualizations: { status: "ready", data: {} },
+        views: {
+          status: "ready",
+          data: [
+            {
+              view_id: nottemViewId,
+              dataset_slug: nottemSlug,
+              display: { title: "Nottingham Temperature Forecast" },
+              binding: { dataset_slug: nottemSlug, release: { mode: "active" } },
+            },
+          ],
+        },
+      };
+    }
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url.endsWith("/admin/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: nottemSlug,
+              title: "Nottingham Monthly Temperatures",
+              display_title: null,
+              summary: "Forecast Nottingham Castle monthly average air temperature twelve months ahead.",
+              domain: "climate",
+              tags: ["nottem", "forecasting", "univariate"],
+              active_release: nottemActiveRelease,
+              publication_status: "ready",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/datasets")) {
+        return jsonResponse({
+          datasets: [
+            {
+              dataset_slug: nottemSlug,
+              title: "Nottingham Monthly Temperatures",
+              summary: "Forecast Nottingham Castle monthly average air temperature twelve months ahead.",
+              domain: "climate",
+              visibility: "public",
+              tags: ["nottem", "forecasting", "univariate"],
+              problem_type: "univariate_forecasting",
+            },
+          ],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${nottemSlug}/authoring-context`)) {
+        return jsonResponse(authoringContextEnvelope());
+      }
+      if (url.endsWith(`/admin/datasets/${nottemSlug}/publication-state`)) {
+        return jsonResponse({
+          dataset_slug: nottemSlug,
+          active_release: nottemActiveRelease,
+          visibility: {
+            configured_visible: true,
+            source: "explicit_record",
+            record_status: "valid",
+            updated_at: "2026-08-23T00:00:00Z",
+            effective_visible: true,
+          },
+          review: { status: "ready", approval_allowed: false, approval_blockers: [] },
+          snapshot: { status: "no_snapshot", exists: false },
+          public_access: { reachable: true, blockers: [], observations: [] },
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${nottemSlug}/profile-draft`)) {
+        // Project Spec S0252 Section F: the draft carries a stale
+        // bound_predict_view_id (left behind by an earlier rename/rebind or
+        // another dataset entirely) -- proving the existing generic
+        // single-eligible-view rebinding (S0098/S0100) repairs it to the
+        // real sole eligible Nottingham view, never leaving it stale and
+        // never showing a manual selector.
+        return jsonResponse({
+          draft_exists: true,
+          profile: {
+            schema_version: "0.1.0",
+            dataset_slug: nottemSlug,
+            display: { title: "Nottingham Temperature Forecast" },
+            inference_presentation: { bound_predict_view_id: "some-other-datasets-view" },
+          },
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${nottemSlug}/views/${nottemViewId}/customization`)) {
+        // Project Spec S0252 Section E/G: no customization is seeded by the
+        // notebook -- ready_base derives the builder from the public
+        // contract alone.
+        return jsonResponse({
+          customization_exists: false,
+          compatibility_status: "absent",
+          customization: null,
+          errors: [],
+        });
+      }
+      if (url.endsWith(`/admin/datasets/${nottemSlug}/inference`) && init?.method === "POST") {
+        return jsonResponse({ dataset_slug: nottemSlug, result: validNottemForecastResult });
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock };
+  }
+
+  it("repairs a stale bound_predict_view_id to the sole eligible Nottingham view and bootstraps forecasting ready_base with Period/Temperature, no scalar authoring affordances", async () => {
+    const { fetchMock } = installNottemFetchMock();
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+
+    // Project Spec S0100/S0104: a single eligible view is silently
+    // auto-bound (and a stale id silently repaired) -- the manual
+    // "Bound predict view" select never renders, and no "No predict view
+    // bound" empty state appears.
+    expect(await screen.findByLabelText("History-series field customization")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Bound predict view")).not.toBeInTheDocument();
+    expect(screen.queryByText("No predict view bound")).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        String(call[0]).endsWith(`/admin/datasets/${nottemSlug}/views/${nottemViewId}/customization`),
+      ),
+    ).toBe(true);
+
+    // ready_base: both governed history-series fields render, and no
+    // scalar field-bank/group/hide affordances exist for a forecasting view.
+    expect(screen.getByText("Period")).toBeInTheDocument();
+    expect(screen.getByText("Temperature")).toBeInTheDocument();
+    expect(screen.getByLabelText("Period display label")).toBeInTheDocument();
+    expect(screen.getByLabelText("Temperature display label")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Field bank")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add subgroup" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Drag field/ })).not.toBeInTheDocument();
+
+    // The forecasting Result Card variant is bound, never a
+    // binary/regression fallback.
+    fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+    expect(screen.getByText("univariate_forecasting")).toBeInTheDocument();
+    expect(screen.getByLabelText("Forecast series label")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Positive-class probability label")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Predicted value label")).not.toBeInTheDocument();
+  });
+
+  it("Live Preview renders the shared HistorySeriesInput with Nottingham history-series guidance and executes one private inference request with the governed history payload shape", async () => {
+    const { fetchMock } = installNottemFetchMock();
+    renderAdminPage();
+
+    await loadDraftOnly();
+    fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    fireEvent.click(
+      within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+        name: "Inference",
+      }),
+    );
+
+    // Section H: the shared generic HistorySeriesInput renders Nottingham
+    // contract guidance -- no Nottingham-specific frontend branch involved.
+    expect(await screen.findByLabelText("Historical observations")).toBeInTheDocument();
+    expect(screen.getByLabelText("Period")).toBeInTheDocument();
+    expect(screen.getByLabelText("Temperature")).toBeInTheDocument();
+    expect(screen.getByText("monthly")).toBeInTheDocument();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.getByText(/fixed, not editable/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add row" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Period"), { target: { value: "1939-12" } });
+    fireEvent.change(screen.getByLabelText("Temperature"), { target: { value: "38.1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("1940-01")).toBeInTheDocument();
+
+    const inferenceCalls = fetchMock.mock.calls.filter(
+      (call) =>
+        String(call[0]).endsWith(`/admin/datasets/${nottemSlug}/inference`) &&
+        (call[1] as RequestInit | undefined)?.method === "POST",
+    );
+    expect(inferenceCalls).toHaveLength(1);
+    expect(JSON.parse(String((inferenceCalls[0][1] as RequestInit).body))).toEqual({
+      history: [{ period: "1939-12", temperature: 38.1 }],
+    });
+  });
+});
+
 describe("Dataset-switch-safe Predict View rebinding and inference form bootstrap (Project Spec S0220)", () => {
   const dryBeanSlug = "dry-bean";
   const dryBeanViewId = "dry-bean-classification";

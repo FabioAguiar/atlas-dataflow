@@ -1,8 +1,8 @@
 """
-Project Spec S0251: end-to-end Publisher Run materialization -> validated
-terminal handoff -> Admin run listing visibility regression for the first
-real Atlas-native univariate-forecasting dataset, `nottem` (Nottingham
-Monthly Temperatures).
+Project Spec S0251/S0252: end-to-end Publisher Run materialization ->
+validated terminal handoff -> Admin run listing visibility regression for
+the first real Atlas-native univariate-forecasting dataset, `nottem`
+(Nottingham Monthly Temperatures).
 
 Mirrors tests/test_concrete_compressive_strength_publisher_run_materialization.py's
 architecture (Project Spec S0233), but builds a temporary Atlas repository
@@ -76,6 +76,37 @@ FIXED_MODEL_CONFIGURATION = {
     "seasonal_period": SEASONAL_PERIOD,
     "reference_season_position": 0,
     "trend_origin": "development_start",
+}
+
+# Project Spec S0252: the single native Nottingham Predict View declaration,
+# matching the shape the real notebook now authors in
+# notebooks/datasets/nottem/dataset_integration.ipynb Stage 9 --
+# presentation/intent metadata only, no history-series/forecast validation
+# semantics.
+NOTTINGHAM_PREDICT_VIEW = {
+    "schema_version": "1.0.0",
+    "view_id": "nottem-temperature-forecast",
+    "dataset_slug": DATASET_SLUG,
+    "display": {
+        "title": "Nottingham Temperature Forecast",
+        "summary": "Forecast future Nottingham monthly average air temperatures from the governed history series.",
+        "description": "A univariate forecasting experience using the governed Nottingham Monthly Temperatures history-series input contract.",
+        "tags": ["nottem", "forecasting", "univariate"],
+    },
+    "intent": {
+        "prediction_goal": "Forecast future Nottingham monthly average air temperature from the canonical history-series dataset contract inputs.",
+        "audience": "Users exploring Nottingham Monthly Temperatures univariate forecasting.",
+        "usage_notes": "Use the canonical dataset contracts for history-series structure, temporal validation, fixed forecast horizon, and runtime validation.",
+    },
+    "binding": {
+        "dataset_slug": DATASET_SLUG,
+        "release": {"mode": "active"},
+    },
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "view_metadata_defines_runtime_validation": False,
+        "view_metadata_duplicates_contract": False,
+    },
 }
 
 
@@ -378,9 +409,11 @@ def _artifact_payload(role: str) -> dict:
     }
     if role == "public_context":
         payload["public_projection"] = {"safe_for_public": True}
-        # Project Spec S0251: Nottingham declares no Predict View -- S0252
-        # remains responsible for that after a promoted release exists.
-        payload["predict_views"] = []
+        # Project Spec S0252: the candidate/public-context fixture preserves
+        # exactly the Nottingham Predict View declaration authored by the
+        # real notebook, mirroring the dataset_context.predict_views shape
+        # written by Stage 9.
+        payload["predict_views"] = [NOTTINGHAM_PREDICT_VIEW]
     return payload
 
 
@@ -478,13 +511,12 @@ def test_nottingham_publisher_run_materialization_is_visible_in_admin_listing(tm
     candidate_dir = _write_native_forecasting_candidate(tmp_repo)
     inference_bundle_relative_path = _write_inference_bundle(tmp_repo)
 
-    # Project Spec S0251: the candidate/public-context fixture declares no
-    # Predict View -- S0252 remains responsible for that after a promoted
-    # release exists.
+    # Project Spec S0252: the candidate/public-context fixture preserves
+    # exactly the one Nottingham Predict View declaration unchanged.
     public_context_payload = json.loads(
         (candidate_dir / _role_path("public_context")).read_text(encoding="utf-8")
     )
-    assert public_context_payload["predict_views"] == []
+    assert public_context_payload["predict_views"] == [NOTTINGHAM_PREDICT_VIEW]
 
     # Generic Publisher Run materializer only, dispatched by explicit
     # candidate identity -- never materialize_telco_validation_run, never a

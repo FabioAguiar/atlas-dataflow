@@ -12,9 +12,11 @@ the real repository `releases/candidates/` or `publisher/runs/` trees):
   * `pipeline/release-candidate-input.schema.json`'s additive vocabulary
     extension (v4 admitted, v1/v2/v3/external vocabulary untouched);
   * `univariate-predictive-forecasting` recognition by the candidate
-    release-layer policy and by publisher capability verification, while the
-    real committed capability profile stays `requires_future_contract_evolution`
-    and therefore still blocked (never flipped by this spec);
+    release-layer policy and by publisher capability verification; Project
+    Spec S0250 flips the real committed capability profile to
+    `current_supported`, so the real profile is now accepted end to end
+    (never a synthetic clone only) while a synthetic non-`current_supported`
+    profile still fails closed;
   * `publisher/validate.py`'s new native forecasting predictive-bundle,
     `training-metrics.v4`, and `analytical-visualizations.v4`-reservation
     compatibility checks;
@@ -420,10 +422,10 @@ def test_real_v4_visualization_schema_content_is_now_defined():
 
 # ===========================================================================
 # Section C: univariate-predictive-forecasting recognized by candidate
-# release-layer identity set, while the real committed profile remains
-# blocked (support_status stays requires_future_contract_evolution -- never
-# flipped by this spec, unlike multiclass/continuous-regression in later
-# specs).
+# release-layer identity set. Project Spec S0250 flips the real committed
+# profile's support_status to current_supported, so the real profile itself
+# now reaches release-policy acceptance -- a synthetic non-current_supported
+# override still fails closed, preserving negative-path coverage.
 # ===========================================================================
 
 
@@ -431,10 +433,10 @@ def _load_real_forecasting_profile() -> dict:
     return json.loads(CAPABILITY_PROFILE_PATH.read_text(encoding="utf-8"))
 
 
-def test_real_forecasting_capability_profile_support_status_remains_requires_future_contract_evolution():
+def test_real_forecasting_capability_profile_support_status_is_current_supported():
     profile = _load_real_forecasting_profile()
     assert profile["capability_profile_id"] == "univariate-predictive-forecasting"
-    assert profile["support_status"] == "requires_future_contract_evolution"
+    assert profile["support_status"] == "current_supported"
 
 
 def test_forecasting_capability_identity_is_a_recognized_release_layer_identity():
@@ -444,7 +446,7 @@ def test_forecasting_capability_identity_is_a_recognized_release_layer_identity(
     )
 
 
-def test_real_forecasting_profile_still_rejected_by_release_policy():
+def test_real_forecasting_profile_now_accepted_by_release_policy():
     profile = _load_real_forecasting_profile()
     capability_binding = {
         "capability_profile_id": profile["capability_profile_id"],
@@ -454,8 +456,8 @@ def test_real_forecasting_profile_still_rejected_by_release_policy():
 
     result = assemble_candidate.resolve_capability_release_policy(capability_binding, profile)
 
-    assert result.status == "rejected"
-    assert result.rejection_phase == assemble_candidate.CAPABILITY_REJECTION_PHASE_UNSUPPORTED
+    assert result.status == "accepted"
+    assert result.capability_profile_id == "univariate-predictive-forecasting"
 
 
 def test_synthetic_current_supported_forecasting_profile_accepted_by_release_policy():
@@ -471,6 +473,21 @@ def test_synthetic_current_supported_forecasting_profile_accepted_by_release_pol
 
     assert result.status == "accepted"
     assert result.capability_profile_id == "univariate-predictive-forecasting"
+
+
+def test_synthetic_non_current_supported_forecasting_profile_rejected_by_release_policy():
+    profile = dict(_load_real_forecasting_profile())
+    profile["support_status"] = "requires_future_contract_evolution"
+    capability_binding = {
+        "capability_profile_id": profile["capability_profile_id"],
+        "capability_profile_version": profile["capability_profile_version"],
+        "resolved_role_policy": [],
+    }
+
+    result = assemble_candidate.resolve_capability_release_policy(capability_binding, profile)
+
+    assert result.status == "rejected"
+    assert result.rejection_phase == assemble_candidate.CAPABILITY_REJECTION_PHASE_UNSUPPORTED
 
 
 # ===========================================================================
@@ -519,11 +536,26 @@ def test_verify_capability_binding_accepts_synthetic_current_supported_forecasti
     assert reasons == []
 
 
-def test_verify_capability_binding_rejects_real_unsupported_status(tmp_path):
-    # The real, unmodified profile still declares
-    # requires_future_contract_evolution, so a matching problem type still
-    # produces an unsupported-status rejection reason (never accepted).
+def test_verify_capability_binding_accepts_real_current_supported_forecasting_profile(tmp_path):
+    # Project Spec S0250: the real, unmodified profile now declares
+    # current_supported, so a matching problem type is accepted end to end
+    # -- never only a synthetic clone.
     profile = _load_real_forecasting_profile()
+    capability_binding = _write_capability_profile_and_binding(tmp_path, profile)
+    candidate = {"capability_binding": capability_binding}
+    predictive_bundle_data = {"result_semantics": {"problem_type": "univariate_forecasting"}}
+
+    reasons = validate._verify_capability_binding(candidate, tmp_path, predictive_bundle_data)
+
+    assert reasons == []
+
+
+def test_verify_capability_binding_rejects_synthetic_non_current_supported_status(tmp_path):
+    # A synthetic non-current_supported override still produces an
+    # unsupported-status rejection reason -- the negative path stays covered
+    # even though the real profile itself now passes.
+    profile = dict(_load_real_forecasting_profile())
+    profile["support_status"] = "requires_future_contract_evolution"
     capability_binding = _write_capability_profile_and_binding(tmp_path, profile)
     candidate = {"capability_binding": capability_binding}
     predictive_bundle_data = {"result_semantics": {"problem_type": "univariate_forecasting"}}
@@ -1262,9 +1294,9 @@ def test_forecasting_candidate_reaches_valid_true_with_complete_coherent_artifac
     # cross-consistent v4 visualizations artifact are all coherent, a native
     # forecasting candidate can now reach valid: True at the structural
     # publisher-validation layer exercised here. This candidate carries no
-    # capability_binding, so the separate, still-unflipped
-    # support_status=requires_future_contract_evolution production release
-    # gate (Section C/D above) is not exercised by this test.
+    # capability_binding, so the separate capability release-policy/
+    # publisher-verification gate (Section C/D above, now accepting the real
+    # current_supported profile since S0250) is not exercised by this test.
     visualizations = _valid_v4_visualizations_document(final_holdout_observations=12)
     candidate_dir = _write_forecasting_candidate(
         tmp_path,

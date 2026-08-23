@@ -337,6 +337,18 @@ function installFetchMock(
     // ({}, which carries no dataset_statistics and no charts) -- used only
     // by the Dataset Detail Live Preview Instances metadata contract below.
     visualizationsOverride?: Record<string, unknown>;
+    // Project Spec S0250: overrides the authoring-context contract
+    // resource's own `contract` field (normally the shared scalar
+    // tenure/MonthlyCharges fixture) entirely -- used to feed a real
+    // public-contract v2 univariate-forecasting history-series shape,
+    // independent of resultContractOverride (which only ever overrides the
+    // separate result_contract sibling field).
+    contractOverride?: Record<string, unknown>;
+    // Project Spec S0250: overrides the profile-draft GET response's
+    // result_card field entirely -- used to prove Result Card field
+    // hydration for a persisted forecasting presentation record, without
+    // affecting every other test's shared publicProfile.result_card fixture.
+    resultCardProfileOverride?: Record<string, unknown>;
   } = {},
 ) {
   let savedProfileDraft: typeof publicProfile | null = null;
@@ -407,7 +419,7 @@ function installFetchMock(
         : {
             status: "ready",
             data: {
-              contract: {
+              contract: options.contractOverride ?? {
                 schema_version: "1.0.0",
                 features: [
                   {
@@ -744,7 +756,7 @@ function installFetchMock(
         return jsonResponse({ draft_exists: false, profile: null });
       }
       const profile =
-        publishedProfile ?? {
+        publishedProfile ?? ({
           ...publicProfile,
           display: {
             ...publicProfile.display,
@@ -755,7 +767,13 @@ function installFetchMock(
           ...(options.boundPredictViewIdOverride !== undefined
             ? { inference_presentation: { bound_predict_view_id: options.boundPredictViewIdOverride } }
             : {}),
-        };
+          // Project Spec S0250: cast is required because
+          // resultCardProfileOverride's shape (a different presentation
+          // family) intentionally diverges from publicProfile's own fixed
+          // binary result_card shape -- this is test-fixture JSON, never
+          // structurally validated against ProfileDraft at runtime.
+          ...(options.resultCardProfileOverride ? { result_card: options.resultCardProfileOverride } : {}),
+        } as typeof publicProfile);
       if (options.trackProfileDraftSaves) {
         savedProfileDraft = profile;
       }
@@ -4414,6 +4432,444 @@ describe("DatasetAdminPage", () => {
         String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/authoring-context`),
       );
       expect(authoringContextCalls.length).toBe(1);
+    });
+  });
+
+  // Project Spec S0250: the real public-contract v2 univariate-forecasting
+  // history-series form -- Admin contract-family-aware field projection, a
+  // bounded (no field-bank/no-group/no-hide) Inference Form customization
+  // editor, forecasting Result Card authoring/round-trip, real Live Preview
+  // execution, and forecasting validation lifecycle/audit rendering.
+  describe("Dataset Admin univariate-forecasting inference form authoring and Live Preview (Project Spec S0250)", () => {
+    const forecastingContractPayload = {
+      schema_version: "2.0.0",
+      problem_type: "univariate_forecasting",
+      input_kind: "history_series",
+      history_series: {
+        time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+        target_field: { name: "passengers", label: "Passengers", value_kind: "number", display_order: 2 },
+        frequency: "Monthly",
+      },
+      forecast: { forecast_horizon: 3, horizon_user_editable: false },
+    };
+
+    const forecastingResultContract = {
+      status: "available",
+      semantics: {
+        schema_version: "univariate-forecasting-result-semantics.v1",
+        problem_type: "univariate_forecasting",
+        result_schema_version: "univariate-forecasting-result.v1",
+        primary_output: "forecast_series",
+        output_structure: "ordered_forecast_points",
+        forecast_value_kind: "continuous_numeric",
+        forecast_count_source: "forecast_horizon",
+        model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+      },
+    };
+
+    const validForecastResult = {
+      schema_version: "univariate-forecasting-result.v1",
+      problem_type: "univariate_forecasting",
+      forecast_origin: "2026-01",
+      frequency: "Monthly",
+      forecast_horizon: 3,
+      forecast_points: [
+        { horizon_step: 1, future_time_index: "2026-02", forecast: 120.4 },
+        { horizon_step: 2, future_time_index: "2026-03", forecast: 121.1 },
+        { horizon_step: 3, future_time_index: "2026-04", forecast: 119.8 },
+      ],
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+    };
+
+    function openLivePreviewInferenceTab() {
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+          name: "Inference",
+        }),
+      );
+    }
+
+    it("loads a real public-contract v2 release and bootstraps a compatible history-series customization draft with two required fields, no field bank, no subgroup, no hide controls", async () => {
+      installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+        customizationAbsent: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+      expect(await screen.findByLabelText("History-series field customization")).toBeInTheDocument();
+
+      // Both governed fields are present, always required/visible.
+      expect(screen.getByText("Period")).toBeInTheDocument();
+      expect(screen.getByText("Passengers")).toBeInTheDocument();
+      expect(screen.getByLabelText("Period display label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Passengers display label")).toBeInTheDocument();
+
+      // No scalar field-bank/group/hide affordances exist for a forecasting view.
+      expect(screen.queryByLabelText("Field bank")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Add subgroup" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Drag field/ })).not.toBeInTheDocument();
+      expect(screen.queryByText("Required field still in the bank", { exact: false })).not.toBeInTheDocument();
+    });
+
+    it("allows reordering the two fields via up/down controls", async () => {
+      installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+        customizationAbsent: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+      await screen.findByLabelText("History-series field customization");
+
+      expect(screen.getByRole("button", { name: "Move Period up" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Move Passengers down" })).toBeDisabled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Move Passengers up" }));
+
+      // After the swap, Passengers is first -- its "up" control is now disabled.
+      expect(screen.getByRole("button", { name: "Move Passengers up" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Move Period down" })).toBeDisabled();
+    });
+
+    it("edits field label/copy and saves a customization payload compatible with predict-view customization, forcing groups=[] and hidden=false", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+        customizationAbsent: true,
+        trackCustomizationSaves: true,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Inference Form" }));
+      await screen.findByLabelText("History-series field customization");
+
+      fireEvent.change(screen.getByLabelText("Period display label"), { target: { value: "Month" } });
+      fireEvent.change(screen.getByLabelText("Period explanatory copy"), { target: { value: "Calendar month of the observation." } });
+      fireEvent.change(screen.getByLabelText("Passengers display label"), { target: { value: "Ridership" } });
+
+      const toolbar = screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" });
+      fireEvent.click(within(toolbar).getByRole("button", { name: "Publish changes" }));
+      await waitFor(() => expect(within(toolbar).getByText("Changes saved.")).toBeInTheDocument());
+
+      const saveCall = fetchMock.mock.calls.find(
+        (call: unknown[]) =>
+          String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/views/${viewId}/customization`) &&
+          (call[1] as RequestInit | undefined)?.method === "PUT",
+      );
+      expect(saveCall).toBeDefined();
+      const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+        field_hints: Array<{ field_name: string; display_label?: string; explanatory_copy?: string; group?: string; hidden?: boolean; display_order_hint: number }>;
+        groups: unknown[];
+      };
+      expect(body.groups).toEqual([]);
+      const periodHint = body.field_hints.find((hint) => hint.field_name === "period");
+      const passengersHint = body.field_hints.find((hint) => hint.field_name === "passengers");
+      expect(periodHint?.display_label).toBe("Month");
+      expect(periodHint?.explanatory_copy).toBe("Calendar month of the observation.");
+      expect(periodHint?.group).toBeUndefined();
+      expect(periodHint?.hidden).toBeUndefined();
+      expect(passengersHint?.display_label).toBe("Ridership");
+      expect(passengersHint?.group).toBeUndefined();
+      expect(passengersHint?.hidden).toBeUndefined();
+    });
+
+    it("rebinds the Result Card configuration to forecasting fields, never a binary fallback", async () => {
+      installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+
+      expect(screen.getByText("univariate_forecasting")).toBeInTheDocument();
+      expect(screen.getByLabelText("Forecast series label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Future time index label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Forecast value label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Decimal places")).toBeInTheDocument();
+      expect(screen.getByLabelText("Optional unit label")).toBeInTheDocument();
+
+      // Never the binary fallback fields.
+      expect(screen.queryByLabelText("Positive-class probability label")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Predicted outcome label")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Predicted class label")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Predicted value label")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Badge preset")).not.toBeInTheDocument();
+    });
+
+    it("hydrates forecasting Result Card fields from a persisted profile", async () => {
+      installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+        resultCardProfileOverride: {
+          schema_version: "univariate-forecasting-result-presentation.v1",
+          forecast_series_label: "Passenger forecast",
+          future_time_index_label: "Month",
+          forecast_value_label: "Passengers",
+          model_section_label: "Model",
+          decimal_places: 1,
+          value_unit_label: "riders",
+        },
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+
+      expect(screen.getByLabelText("Forecast series label")).toHaveValue("Passenger forecast");
+      expect(screen.getByLabelText("Future time index label")).toHaveValue("Month");
+      expect(screen.getByLabelText("Decimal places")).toHaveValue("1");
+      expect(screen.getByLabelText("Optional unit label")).toHaveValue("riders");
+    });
+
+    it("never fabricates a technical forecast in the standalone Result Card copy preview", async () => {
+      installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+
+      expect(screen.getByLabelText("Forecast Result Card copy skeleton")).toBeInTheDocument();
+      // No fabricated forecast values, future timestamps, or forecast horizon.
+      expect(screen.queryByText("2026-02")).not.toBeInTheDocument();
+      expect(screen.queryByText("120.4")).not.toBeInTheDocument();
+      expect(screen.queryByText(/forecast_origin/i)).not.toBeInTheDocument();
+    });
+
+    it("round-trips exactly the forecasting presentation on Publish changes, with no hybrid keys", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Result Card" }));
+      fireEvent.change(screen.getByLabelText("Forecast series label"), { target: { value: "Passenger forecast" } });
+      fireEvent.change(screen.getByLabelText("Future time index label"), { target: { value: "Month" } });
+      fireEvent.change(screen.getByLabelText("Forecast value label"), { target: { value: "Riders" } });
+      fireEvent.change(screen.getByLabelText("Decimal places"), { target: { value: "1" } });
+      fireEvent.change(screen.getByLabelText("Optional unit label"), { target: { value: "riders" } });
+
+      const callsBeforeSave = fetchMock.mock.calls.length;
+      fireEvent.click(
+        within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+          name: "Publish changes",
+        }),
+      );
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("toolbar", { name: "Dataset Detail workspace toolbar" })).getByRole("button", {
+            name: "Publish changes",
+          }),
+        ).toBeDisabled(),
+      );
+
+      const saveCall = fetchMock.mock.calls
+        .slice(callsBeforeSave)
+        .find(
+          (call: unknown[]) =>
+            String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/publish`) &&
+            (call[1] as RequestInit | undefined)?.method === "PUT",
+        );
+      expect(saveCall).toBeDefined();
+      const body = JSON.parse(String((saveCall?.[1] as RequestInit).body)) as {
+        result_card?: Record<string, unknown>;
+      };
+      expect(body.result_card).toEqual({
+        schema_version: "univariate-forecasting-result-presentation.v1",
+        forecast_series_label: "Passenger forecast",
+        future_time_index_label: "Month",
+        forecast_value_label: "Riders",
+        model_section_label: "Model",
+        decimal_places: 1,
+        value_unit_label: "riders",
+      });
+    });
+
+    it("Live Preview renders the real history-series form, accepts row entry, and executes exactly one private inference request with the exact governed history payload shape", async () => {
+      const fetchMock = installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+        customizationAbsent: true,
+        adminInferenceResult: validForecastResult,
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openLivePreviewInferenceTab();
+      expect(await screen.findByLabelText("Period")).toBeInTheDocument();
+      expect(screen.getByLabelText("Passengers")).toBeInTheDocument();
+      expect(screen.getByText("3")).toBeInTheDocument();
+      expect(screen.getByText(/not editable/i)).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("Period"), { target: { value: "2026-01" } });
+      fireEvent.change(screen.getByLabelText("Passengers"), { target: { value: "100" } });
+      // The shared publicProfile fixture's legacy result_card.submit_button_label
+      // ("Run prediction") migrates into the auto-bootstrapped customization
+      // draft even though no customization record itself exists yet.
+      fireEvent.click(screen.getByRole("button", { name: "Run prediction" }));
+
+      // The default (unedited) decimal_places field is 2, so the rendered
+      // forecast value is "120.40", not the raw "120.4".
+      expect(await screen.findByText("2026-02")).toBeInTheDocument();
+      expect(screen.getByText("120.40")).toBeInTheDocument();
+
+      const inferenceCalls = fetchMock.mock.calls.filter(
+        (call) => String(call[0]).endsWith(`/admin/datasets/${datasetSlug}/inference`) && (call[1] as RequestInit | undefined)?.method === "POST",
+      );
+      expect(inferenceCalls).toHaveLength(1);
+      expect(JSON.parse(String((inferenceCalls[0][1] as RequestInit).body))).toEqual({
+        history: [{ period: "2026-01", passengers: 100 }],
+      });
+    });
+
+    it("resets in-flight forecasting Live Preview state on dataset switch", async () => {
+      const otherSlug = "energy-consumption-forecast";
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        // Checked before the generic "/datasets" endsWith check below, since
+        // "/admin/datasets" also satisfies url.endsWith("/datasets").
+        if (url.endsWith("/admin/datasets")) {
+          return jsonResponse({
+            datasets: [
+              { dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", tags: [], active_release: "release-1", publication_status: "ready", last_updated: null },
+              { dataset_slug: otherSlug, title: "Energy Forecast", summary: "s", domain: "energy", tags: [], active_release: "release-1", publication_status: "ready", last_updated: null },
+            ],
+          });
+        }
+        // The public /datasets listing seeds the initial selectedSlug.
+        if (url.endsWith("/datasets")) {
+          return jsonResponse({
+            datasets: [
+              { dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", visibility: "public", tags: [] },
+              { dataset_slug: otherSlug, title: "Energy Forecast", summary: "s", domain: "energy", visibility: "public", tags: [] },
+            ],
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/authoring-context`)) {
+          return jsonResponse({
+            dataset_slug: datasetSlug,
+            active_release: "release-1",
+            dataset: { status: "ready", data: { dataset_slug: datasetSlug, title: "Telco Customer Churn", summary: "s", domain: "telecom", tags: [], active_release: "release-1", publication_status: "ready" } },
+            context: { status: "ready", data: { title: "t", summary: "s", domain: "telecom", tags: [], problem_type: "univariate_forecasting" } },
+            contract: { status: "ready", data: { contract: forecastingContractPayload, result_contract: forecastingResultContract } },
+            inference_guidance: { status: "ready", data: [] },
+            metrics: { status: "ready", data: { evaluation: { metrics: {} } } },
+            visualizations: { status: "ready", data: {} },
+            views: { status: "ready", data: [{ view_id: viewId, display: { title: "View" } }] },
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${otherSlug}/authoring-context`)) {
+          return jsonResponse({
+            dataset_slug: otherSlug,
+            active_release: "release-1",
+            dataset: { status: "ready", data: { dataset_slug: otherSlug, title: "Energy Forecast", summary: "s", domain: "energy", tags: [], active_release: "release-1", publication_status: "ready" } },
+            context: { status: "ready", data: { title: "t", summary: "s", domain: "energy", tags: [], problem_type: "binary_classification" } },
+            contract: { status: "ready", data: { contract: { schema_version: "1.0.0", features: [{ name: "load", label: "Load", input_type: "number", optional: true, display_order: 1 }] }, result_contract: { status: "unavailable", reason: "no_release" } } },
+            inference_guidance: { status: "ready", data: [] },
+            metrics: { status: "ready", data: { evaluation: { metrics: {} } } },
+            visualizations: { status: "ready", data: {} },
+            views: { status: "ready", data: [] },
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/profile-draft`) || url.endsWith(`/admin/datasets/${otherSlug}/profile-draft`)) {
+          return jsonResponse({ draft_exists: false, profile: null });
+        }
+        if (url.includes("/customization")) {
+          return jsonResponse({ customization_exists: false, compatibility_status: "absent", customization: null, errors: [] });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/publication-state`) || url.endsWith(`/admin/datasets/${otherSlug}/publication-state`)) {
+          return jsonResponse({
+            dataset_slug: datasetSlug,
+            active_release: "release-1",
+            visibility: { configured_visible: true, source: "explicit_record", record_status: "valid", updated_at: null, effective_visible: true },
+            review: { status: "ready", approval_allowed: false, approval_blockers: [] },
+            snapshot: { status: "missing", exists: false, published_at: null, active_release_at_publish_time: null, matches_active_release: null },
+            public_access: { reachable: false, blockers: [], observations: [] },
+          });
+        }
+        if (url.endsWith(`/admin/datasets/${datasetSlug}/inference`) && init?.method === "POST") {
+          return new Promise<MockResponse>(() => {
+            // Never resolves within this test -- proves the switch discards it.
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderAdminPage();
+      await screen.findByTestId("dataset-admin-draft-ready");
+
+      openLivePreviewInferenceTab();
+      fireEvent.change(await screen.findByLabelText("Period"), { target: { value: "2026-01" } });
+      fireEvent.change(screen.getByLabelText("Passengers"), { target: { value: "100" } });
+      fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+      const selector = await screen.findByRole("button", { name: "Dataset" });
+      fireEvent.click(selector);
+      fireEvent.click(screen.getByRole("option", { name: "Energy Forecast" }));
+      await waitFor(() => expect(screen.getByRole("heading", { name: "Dataset — Energy Forecast" })).toBeInTheDocument());
+
+      await screen.findByTestId("dataset-admin-draft-ready");
+      fireEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+      fireEvent.click(
+        within(screen.getByRole("tablist", { name: "Dataset detail sections" })).getByRole("tab", {
+          name: "Inference",
+        }),
+      );
+      // The other dataset's own scalar contract renders instead -- the
+      // stale forecasting submission never resolves into this identity's
+      // Result Card.
+      expect(await screen.findByLabelText("Load")).toBeInTheDocument();
+      expect(screen.queryByText("120.4")).not.toBeInTheDocument();
+    });
+
+    it("renders forecasting validation issues with resolved field labels in the Publishing console, with no raw submitted history value or backend message", async () => {
+      installFetchMock({
+        contractOverride: forecastingContractPayload,
+        resultContractOverride: forecastingResultContract,
+        customizationAbsent: true,
+        adminInferenceErrorCode: "INVALID_PAYLOAD",
+        adminInferenceErrors: [
+          {
+            error_code: "FORECASTING_INVALID_TIME_INDEX",
+            field: "history[0].period",
+            violation: "forecasting_invalid_time_index",
+            message: "raw backend message naming submitted value 2026-99",
+          },
+        ],
+      });
+      renderAdminPage();
+      await loadDraftOnly();
+
+      openLivePreviewInferenceTab();
+      fireEvent.change(await screen.findByLabelText("Period"), { target: { value: "2026-99" } });
+      fireEvent.change(screen.getByLabelText("Passengers"), { target: { value: "10" } });
+      fireEvent.click(screen.getByRole("button", { name: "Run prediction" }));
+      await screen.findByRole("alert");
+
+      fireEvent.click(screen.getByRole("tab", { name: "Publishing" }));
+      const panel = screen.getByRole("tabpanel");
+      const consoleEl = within(panel).getByRole("log", { name: "Dataset publication operational status" });
+      const lineTexts = Array.from(consoleEl.querySelectorAll(".dataset-admin-console-line")).map(
+        (el) => el.textContent ?? "",
+      );
+
+      expect(lineTexts).toContain("[ERROR] Period: the submitted time-index value is invalid.");
+      expect(lineTexts.some((text) => text.includes("2026-99"))).toBe(false);
+      expect(lineTexts.some((text) => text.includes("raw backend message"))).toBe(false);
     });
   });
 

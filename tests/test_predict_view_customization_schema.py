@@ -124,3 +124,32 @@ def test_view_copy_heading_description_usage_guidance_remain_valid_alongside_sub
 def test_example_customization_uses_submit_button_label():
     example = _load_json(VALID_EXAMPLE_PATH)
     assert example["view_copy"]["submit_button_label"]
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0250: the schema's field_hints/groups structure is
+# unchanged -- it is generic "public input field" presentation metadata that
+# validates identically whether the referenced field names come from a
+# scalar v1 public contract or a v2 univariate-forecasting history-series
+# public contract. Field-name/contract-family resolution is owned by
+# registry/predict_view_customization_validate.py, not this schema.
+# ---------------------------------------------------------------------------
+
+
+def test_history_series_style_field_hints_pass_schema_validation():
+    schema = _load_json(SCHEMA_PATH)
+    instance = {
+        "schema_version": "1.0.0",
+        "view_id": "forecast-overview",
+        "field_hints": [
+            {"field_name": "period", "display_label": "Month", "display_order_hint": 1},
+            {"field_name": "value", "display_label": "Sales", "display_order_hint": 2},
+        ],
+        "groups": [],
+        "contract_precedence": {
+            "canonical_contracts_are_source_of_truth": True,
+            "customization_defines_runtime_validation": False,
+            "customization_duplicates_contract": False,
+        },
+    }
+    jsonschema.validate(instance, schema)

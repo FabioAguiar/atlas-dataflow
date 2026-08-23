@@ -256,6 +256,146 @@ def test_hidden_required_field_produces_required_field_hidden_explicit():
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0250: public-contract v2 (univariate-forecasting
+# history-series) compatibility -- strict discriminants, no groups, both
+# fields always required.
+# ---------------------------------------------------------------------------
+
+_MOCK_PUBLIC_CONTRACT_V2 = {
+    "schema_version": "2.0.0",
+    "problem_type": "univariate_forecasting",
+    "input_kind": "history_series",
+    "history_series": {
+        "time_index_field": {"name": "period", "label": "Period", "value_kind": "calendar_period", "display_order": 1},
+        "target_field": {"name": "value", "label": "Value", "value_kind": "number", "display_order": 2},
+        "frequency": "Monthly",
+    },
+    "forecast": {"forecast_horizon": 12, "horizon_user_editable": False},
+}
+
+_VALID_HISTORY_CUSTOMIZATION = {
+    "schema_version": "1.0.0",
+    "view_id": "forecast-overview",
+    "field_hints": [
+        {"field_name": "period", "display_order_hint": 1},
+        {"field_name": "value", "display_order_hint": 2},
+    ],
+    "groups": [],
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "customization_defines_runtime_validation": False,
+        "customization_duplicates_contract": False,
+    },
+}
+
+
+def test_v2_time_index_field_hint_accepted():
+    result = validate_customization(_VALID_HISTORY_CUSTOMIZATION, _MOCK_PUBLIC_CONTRACT_V2)
+    assert result["valid"] is True, result["errors"]
+
+
+def test_v2_target_field_hint_accepted():
+    result = validate_customization(
+        {**_VALID_HISTORY_CUSTOMIZATION, "field_hints": [{"field_name": "value", "display_order_hint": 1}]},
+        _MOCK_PUBLIC_CONTRACT_V2,
+    )
+    # Missing "period" hint is fine -- not every field requires an explicit
+    # hint, only hints that ARE present must reference known fields.
+    assert result["valid"] is True, result["errors"]
+
+
+def test_v2_unknown_field_rejected():
+    result = validate_customization(
+        {**_VALID_HISTORY_CUSTOMIZATION, "field_hints": [{"field_name": "not_a_real_field"}]},
+        _MOCK_PUBLIC_CONTRACT_V2,
+    )
+    assert result["valid"] is False
+    assert "UNKNOWN_FIELD_REFERENCE" in _codes(result)
+
+
+def test_v2_duplicate_field_rejected():
+    result = validate_customization(
+        {
+            **_VALID_HISTORY_CUSTOMIZATION,
+            "field_hints": [{"field_name": "period"}, {"field_name": "period"}],
+        },
+        _MOCK_PUBLIC_CONTRACT_V2,
+    )
+    assert result["valid"] is False
+    assert "DUPLICATE_FIELD_REFERENCE" in _codes(result)
+
+
+def test_v2_hidden_required_field_rejected():
+    result = validate_customization(
+        {**_VALID_HISTORY_CUSTOMIZATION, "field_hints": [{"field_name": "period", "hidden": True}]},
+        _MOCK_PUBLIC_CONTRACT_V2,
+    )
+    assert result["valid"] is False
+    assert "REQUIRED_FIELD_HIDDEN" in _codes(result)
+
+
+def test_v2_non_empty_groups_rejected():
+    result = validate_customization(
+        {**_VALID_HISTORY_CUSTOMIZATION, "groups": [{"group_id": "g1", "label": "Group 1"}]},
+        _MOCK_PUBLIC_CONTRACT_V2,
+    )
+    assert result["valid"] is False
+    assert "HISTORY_SERIES_GROUPS_NOT_ALLOWED" in _codes(result)
+
+
+def test_v2_field_group_reference_rejected():
+    result = validate_customization(
+        {
+            **_VALID_HISTORY_CUSTOMIZATION,
+            "groups": [{"group_id": "g1", "label": "Group 1"}],
+            "field_hints": [{"field_name": "period", "group": "g1"}],
+        },
+        _MOCK_PUBLIC_CONTRACT_V2,
+    )
+    assert result["valid"] is False
+    assert "HISTORY_SERIES_FIELD_GROUP_NOT_ALLOWED" in _codes(result)
+
+
+def test_v1_scalar_group_customization_behavior_unchanged_alongside_v2_support():
+    result = validate_customization(
+        {
+            "schema_version": "1.0.0",
+            "view_id": "churn-risk-overview",
+            "field_hints": [{"field_name": "tenure", "group": "account-history"}],
+            "groups": [{"group_id": "account-history", "label": "Account History"}],
+            "contract_precedence": {
+                "canonical_contracts_are_source_of_truth": True,
+                "customization_defines_runtime_validation": False,
+                "customization_duplicates_contract": False,
+            },
+        },
+        _MOCK_PUBLIC_CONTRACT,
+    )
+    assert result["valid"] is True, result["errors"]
+
+
+def test_unresolvable_public_contract_shape_fails_closed():
+    # Neither v1 "features" nor the exact v2 discriminants -- must not be
+    # guessed; every field_hints reference becomes UNKNOWN_FIELD_REFERENCE.
+    result = validate_customization(
+        _VALID_HISTORY_CUSTOMIZATION,
+        {"schema_version": "3.0.0", "something_else": True},
+    )
+    assert result["valid"] is False
+    assert "UNKNOWN_FIELD_REFERENCE" in _codes(result)
+
+
+def test_classify_compatible_v2_history_series_customization():
+    result = classify_customization_compatibility(
+        "forecast-overview",
+        "example-forecasting-dataset",
+        {**_VALID_HISTORY_CUSTOMIZATION, "dataset_slug": "example-forecasting-dataset"},
+        _MOCK_PUBLIC_CONTRACT_V2,
+    )
+    assert result == {"status": "compatible", "errors": []}
+
+
+# ---------------------------------------------------------------------------
 # classify_customization_compatibility (Project Spec S0098)
 # ---------------------------------------------------------------------------
 
@@ -340,6 +480,16 @@ if __name__ == "__main__":
         test_error_messages_contain_no_filesystem_paths,
         test_hidden_optional_field_passes_validate_customization,
         test_hidden_required_field_produces_required_field_hidden_explicit,
+        test_v2_time_index_field_hint_accepted,
+        test_v2_target_field_hint_accepted,
+        test_v2_unknown_field_rejected,
+        test_v2_duplicate_field_rejected,
+        test_v2_hidden_required_field_rejected,
+        test_v2_non_empty_groups_rejected,
+        test_v2_field_group_reference_rejected,
+        test_v1_scalar_group_customization_behavior_unchanged_alongside_v2_support,
+        test_unresolvable_public_contract_shape_fails_closed,
+        test_classify_compatible_v2_history_series_customization,
         test_classify_compatible_customization,
         test_classify_incompatible_when_field_reference_unknown,
         test_classify_incompatible_when_view_id_identity_mismatches,

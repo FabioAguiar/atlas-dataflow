@@ -318,6 +318,188 @@ def test_save_rejects_unknown_field_reference_without_saving():
         assert any(error["code"] == "UNKNOWN_FIELD_REFERENCE" for error in result["errors"])
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0250: public-contract v2 (univariate-forecasting
+# history-series) customization compatibility through the same admin
+# read/save service functions.
+# ---------------------------------------------------------------------------
+
+_PUBLIC_CONTRACT_V2 = {
+    "schema_version": "2.0.0",
+    "problem_type": "univariate_forecasting",
+    "input_kind": "history_series",
+    "history_series": {
+        "time_index_field": {"name": "period", "label": "Period", "value_kind": "calendar_period", "display_order": 1},
+        "target_field": {"name": "value", "label": "Value", "value_kind": "number", "display_order": 2},
+        "frequency": "Monthly",
+    },
+    "forecast": {"forecast_horizon": 12, "horizon_user_editable": False},
+}
+
+_VALID_HISTORY_CUSTOMIZATION = {
+    "schema_version": "1.0.0",
+    "view_id": "forecast-overview",
+    "dataset_slug": "example-forecasting-dataset",
+    "contract_precedence": {
+        "canonical_contracts_are_source_of_truth": True,
+        "customization_defines_runtime_validation": False,
+        "customization_duplicates_contract": False,
+    },
+    "field_hints": [
+        {"field_name": "period", "display_label": "Month", "display_order_hint": 1},
+        {"field_name": "value", "display_label": "Sales", "display_order_hint": 2},
+    ],
+    "groups": [],
+}
+
+
+def test_save_accepts_compatible_v2_history_series_customization():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.load_public_contract = lambda active_release: _PUBLIC_CONTRACT_V2
+            result = admin_predict_view_customizations.save_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview", dict(_VALID_HISTORY_CUSTOMIZATION)
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["saved"] is True
+        assert result["customization"] == _VALID_HISTORY_CUSTOMIZATION
+        assert result["errors"] == []
+
+
+def test_read_classifies_compatible_v2_history_series_customization():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.load_public_contract = lambda active_release: _PUBLIC_CONTRACT_V2
+            admin_predict_view_customizations.save_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview", dict(_VALID_HISTORY_CUSTOMIZATION)
+            )
+            result = admin_predict_view_customizations.read_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview"
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["customization_exists"] is True
+        assert result["compatibility_status"] == "compatible"
+        assert result["customization"] == _VALID_HISTORY_CUSTOMIZATION
+        assert result["errors"] == []
+
+
+def test_save_rejects_hidden_required_v2_history_series_field():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.load_public_contract = lambda active_release: _PUBLIC_CONTRACT_V2
+            invalid = dict(
+                _VALID_HISTORY_CUSTOMIZATION,
+                field_hints=[
+                    {"field_name": "period", "hidden": True},
+                    {"field_name": "value"},
+                ],
+            )
+            result = admin_predict_view_customizations.save_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview", invalid
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["saved"] is False
+        assert any(error["code"] == "REQUIRED_FIELD_HIDDEN" for error in result["errors"])
+
+
+def test_save_rejects_grouped_v2_history_series_field():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.load_public_contract = lambda active_release: _PUBLIC_CONTRACT_V2
+            invalid = dict(
+                _VALID_HISTORY_CUSTOMIZATION,
+                groups=[{"group_id": "g1", "label": "Group 1"}],
+                field_hints=[
+                    {"field_name": "period", "group": "g1"},
+                    {"field_name": "value"},
+                ],
+            )
+            result = admin_predict_view_customizations.save_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview", invalid
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["saved"] is False
+        codes = {error["code"] for error in result["errors"]}
+        assert "HISTORY_SERIES_GROUPS_NOT_ALLOWED" in codes
+        assert "HISTORY_SERIES_FIELD_GROUP_NOT_ALLOWED" in codes
+
+
+def test_read_incompatible_v2_history_series_customization_preserved_not_deleted():
+    # Simulates the active release public contract renaming the target
+    # history-series field after the customization was saved -- the stored
+    # record still references the old name, which no longer resolves.
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.load_public_contract = lambda active_release: _PUBLIC_CONTRACT_V2
+            admin_predict_view_customizations.save_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview", dict(_VALID_HISTORY_CUSTOMIZATION)
+            )
+            renamed_contract = json.loads(json.dumps(_PUBLIC_CONTRACT_V2))
+            renamed_contract["history_series"]["target_field"]["name"] = "renamed_value"
+            admin_predict_view_customizations.load_public_contract = lambda active_release: renamed_contract
+            result = admin_predict_view_customizations.read_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview"
+            )
+            registry_file = fake_repo / "registry" / "predict-view-customizations.json"
+            stored = json.loads(registry_file.read_text())
+        finally:
+            _restore_store(originals)
+
+        assert result["compatibility_status"] == "incompatible"
+        assert result["customization"] is None
+        assert any(error["code"] == "UNKNOWN_FIELD_REFERENCE" for error in result["errors"])
+        assert stored["predict_view_customizations"][0]["field_hints"][1]["field_name"] == "value"
+
+
+def test_read_incompatible_when_v2_public_contract_unavailable():
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_repo = Path(tmp)
+        (fake_repo / "registry").mkdir()
+        originals = _install_isolated_store(fake_repo)
+        try:
+            admin_predict_view_customizations.load_public_contract = lambda active_release: _PUBLIC_CONTRACT_V2
+            admin_predict_view_customizations.save_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview", dict(_VALID_HISTORY_CUSTOMIZATION)
+            )
+
+            def _raise(active_release):
+                raise admin_predict_view_customizations.PublicContractUnavailableError("unavailable")
+
+            admin_predict_view_customizations.load_public_contract = _raise
+            result = admin_predict_view_customizations.read_predict_view_customization(
+                "example-forecasting-dataset", "forecast-overview"
+            )
+        finally:
+            _restore_store(originals)
+
+        assert result["compatibility_status"] == "incompatible"
+        assert result["customization"] is None
+        assert any(error["code"] == "PUBLIC_CONTRACT_UNAVAILABLE" for error in result["errors"])
+
+
 def test_read_and_save_raise_value_error_for_invalid_identifiers():
     with tempfile.TemporaryDirectory() as tmp:
         fake_repo = Path(tmp)

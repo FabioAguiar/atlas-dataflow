@@ -6,13 +6,27 @@ The public contract is injected by the caller; this module does not import
 from api/ or load the public contract internally.
 
 Validates:
-  - All field_hints[].field_name values reference a feature in the public contract.
+  - All field_hints[].field_name values reference a public input field
+    resolved from the public contract (scalar v1 feature, or v2
+    univariate-forecasting history-series time-index/target field).
   - No field_name appears more than once in field_hints.
   - No group_id appears more than once in the groups array.
   - All field_hints[].group values reference a group_id defined in groups.
-  - Required fields (optional: false in the public contract) assigned to
-    non-existent groups produce a REQUIRED_FIELD_HIDDEN rejection.
+  - Required fields (optional: false for v1; both history-series fields for
+    v2) assigned to non-existent groups produce a REQUIRED_FIELD_HIDDEN
+    rejection.
   - contract_precedence declares the correct boundary values.
+
+Project Spec S0250: the public contract may be either the scalar v1 branch
+(a "features" list) or the strict univariate-forecasting v2 branch
+(schema_version "2.0.0" / problem_type "univariate_forecasting" /
+input_kind "history_series"). The governed input field set is resolved
+strictly by exact discriminants -- an unknown or malformed public contract
+shape is never guessed, and resolves to no known fields (fails closed).
+For the v2 branch, both history-series fields are always required, and
+groups/per-field grouping are never permitted (see
+HISTORY_SERIES_GROUPS_NOT_ALLOWED / HISTORY_SERIES_FIELD_GROUP_NOT_ALLOWED).
+This validator never reads runtime contracts or external study files.
 
 Validation is deterministic: identical inputs always produce identical output.
 Error messages are sanitized: field path and error code only — no filesystem
@@ -25,6 +39,54 @@ from pathlib import Path
 
 def _err(code: str, field: str | None, message: str) -> dict:
     return {"code": code, "field": field, "message": message}
+
+
+def _resolve_public_input_fields(public_contract: dict) -> tuple[set[str], set[str], str | None]:
+    """Resolve the governed public input field set for a public contract.
+
+    Returns (known_field_names, required_field_names, contract_family).
+    contract_family is "history_series_v2" for the strict univariate-
+    forecasting branch, "scalar_v1" for the legacy features-list branch, or
+    None when the shape is unknown/malformed (known/required both empty --
+    fails closed rather than guessing).
+    """
+    if not isinstance(public_contract, dict):
+        return set(), set(), None
+
+    if (
+        public_contract.get("schema_version") == "2.0.0"
+        and public_contract.get("problem_type") == "univariate_forecasting"
+        and public_contract.get("input_kind") == "history_series"
+    ):
+        history_series = public_contract.get("history_series")
+        if not isinstance(history_series, dict):
+            return set(), set(), None
+        time_index_field = history_series.get("time_index_field")
+        target_field = history_series.get("target_field")
+        time_name = time_index_field.get("name") if isinstance(time_index_field, dict) else None
+        target_name = target_field.get("name") if isinstance(target_field, dict) else None
+        if not isinstance(time_name, str) or not time_name:
+            return set(), set(), None
+        if not isinstance(target_name, str) or not target_name:
+            return set(), set(), None
+        fields = {time_name, target_name}
+        return fields, fields, "history_series_v2"
+
+    features = public_contract.get("features")
+    if isinstance(features, list):
+        known: set[str] = set()
+        required: set[str] = set()
+        for feature in features:
+            if not isinstance(feature, dict):
+                continue
+            name = feature.get("name")
+            if isinstance(name, str) and name:
+                known.add(name)
+                if feature.get("optional") is False:
+                    required.add(name)
+        return known, required, "scalar_v1"
+
+    return set(), set(), None
 
 
 def validate_customization(customization: dict, public_contract: dict) -> dict:
@@ -50,27 +112,24 @@ def validate_customization(customization: dict, public_contract: dict) -> dict:
         ))
         return {"valid": False, "errors": errors}
 
-    features = public_contract.get("features") if isinstance(public_contract, dict) else []
-    if not isinstance(features, list):
-        features = []
-    known_field_names: set[str] = set()
-    required_field_names: set[str] = set()
-    for feature in features:
-        if not isinstance(feature, dict):
-            continue
-        name = feature.get("name")
-        if isinstance(name, str) and name:
-            known_field_names.add(name)
-            if feature.get("optional") is False:
-                required_field_names.add(name)
+    known_field_names, required_field_names, contract_family = _resolve_public_input_fields(
+        public_contract if isinstance(public_contract, dict) else {}
+    )
+    is_history_series = contract_family == "history_series_v2"
 
     field_hints = customization.get("field_hints")
     groups = customization.get("groups")
     contract_precedence = customization.get("contract_precedence")
 
-    # groups: duplicate group_id check
+    # groups: duplicate group_id check, plus S0250 history-series ban
     known_group_ids: set[str] = set()
     if isinstance(groups, list):
+        if is_history_series and len(groups) > 0:
+            errors.append(_err(
+                "HISTORY_SERIES_GROUPS_NOT_ALLOWED",
+                "groups",
+                "groups must be empty for a univariate-forecasting history-series view.",
+            ))
         for i, group in enumerate(groups):
             if not isinstance(group, dict):
                 continue
@@ -114,7 +173,14 @@ def validate_customization(customization: dict, public_contract: dict) -> dict:
                 seen_field_names.add(field_name)
 
             group_ref = hint.get("group")
-            if isinstance(group_ref, str) and group_ref:
+            if is_history_series:
+                if isinstance(group_ref, str) and group_ref:
+                    errors.append(_err(
+                        "HISTORY_SERIES_FIELD_GROUP_NOT_ALLOWED",
+                        f"field_hints[{i}].group",
+                        f"field_hints[{i}].group is not allowed for a univariate-forecasting history-series view.",
+                    ))
+            elif isinstance(group_ref, str) and group_ref:
                 if group_ref not in known_group_ids:
                     if field_name in required_field_names:
                         errors.append(_err(

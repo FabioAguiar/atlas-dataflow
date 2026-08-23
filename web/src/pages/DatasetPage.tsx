@@ -11,7 +11,11 @@ import ForecastingDiagnostics from "../components/DatasetDetail/ForecastingDiagn
 import PerformanceSummary, { type PerformanceFocus } from "../components/DatasetDetail/PerformanceSummary";
 import RegressionDiagnostics from "../components/DatasetDetail/RegressionDiagnostics";
 import TargetDistribution, { type VisualizationsPayload } from "../components/DatasetDetail/TargetDistribution";
-import InferenceForm, { ContractPayload, PredictViewCustomization } from "../components/InferenceForm/InferenceForm";
+import InferenceForm, {
+  ContractPayload,
+  isForecastingContractPayload,
+  PredictViewCustomization,
+} from "../components/InferenceForm/InferenceForm";
 import {
   availableResultProblemType,
   isAvailableBinaryResultContract,
@@ -119,6 +123,19 @@ function extractInstanceCount(visualizations: VisualizationsPayload | null): str
     return count.toLocaleString();
   }
   return null;
+}
+
+/**
+ * Project Spec S0250: source predictive/exogenous feature count for the
+ * "Features" metadata item. A scalar v1 contract reports its existing
+ * features.length unchanged. A univariate-forecasting v2 contract always
+ * reports 0 -- the capability forbids source exogenous predictors, and the
+ * two governed history-series row fields (time index, target) are never
+ * counted as predictive features.
+ */
+function resolveFeatureCount(contract: ContractPayload | null): string | null {
+  if (!contract) return null;
+  return isForecastingContractPayload(contract) ? "0" : String(contract.features.length);
 }
 
 /** "binary_classification" -> "Binary Classification"; never exposes the raw technical identifier. */
@@ -441,7 +458,7 @@ export default function DatasetPage() {
     },
     {
       label: "Features",
-      value: contractState.status === "ready" ? String(contractState.data.contract.features.length) : null,
+      value: contractState.status === "ready" ? resolveFeatureCount(contractState.data.contract) : null,
     },
     {
       label: "Target",

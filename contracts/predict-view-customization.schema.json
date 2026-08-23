@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Atlas DataFlow Predict View Customization",
-  "description": "Companion contract defining the safe customization metadata surface for predict views. Governs presentation-only fields: view-level copy, field-level display hints, and group definitions. Does not carry validation rules, inference behavior, domain constraints, or model configuration. Canonical runtime validation and input semantics remain owned by canonical dataset contracts.",
+  "description": "Companion contract defining the safe customization metadata surface for predict views. Governs presentation-only fields: view-level copy, field-level display hints, and group definitions. Does not carry validation rules, inference behavior, domain constraints, or model configuration. Canonical runtime validation and input semantics remain owned by canonical dataset contracts. Project Spec S0250: field_hints entries reference a public input field -- a scalar public-contract v1 feature name, or a public-contract v2 univariate-forecasting history-series field name (time-index or target). The governed input field set for a given bound view is resolved externally by the compatibility validator (registry/predict_view_customization_validate.py), never by this schema.",
   "type": "object",
   "required": [
     "schema_version",
@@ -45,14 +45,14 @@
     },
     "field_hints": {
       "type": "array",
-      "description": "Optional array of per-field presentation hints. Each hint references a field by its public contract feature name and provides presentation-only metadata. Field names must correspond to public contract features for the bound dataset. No domain bounds or validation rules may be included.",
+      "description": "Optional array of per-field presentation hints. Each hint references a field by its public input field name (a scalar public-contract v1 feature name, or a public-contract v2 history-series time-index/target field name) and provides presentation-only metadata. Field names must correspond to a public input field for the bound dataset. No domain bounds or validation rules may be included. For a public-contract v2 univariate-forecasting view, neither history-series field may be hidden or grouped -- both are always required and ungrouped.",
       "items": {
         "$ref": "#/definitions/field_hint"
       }
     },
     "groups": {
       "type": "array",
-      "description": "Optional array of section or group definitions for organizing fields in the prediction experience. Groups are presentation metadata only and must not control validation, inference order, or model behavior.",
+      "description": "Optional array of section or group definitions for organizing fields in the prediction experience. Groups are presentation metadata only and must not control validation, inference order, or model behavior. For a public-contract v2 univariate-forecasting view, this array must be empty or absent -- history-series customization never introduces groups.",
       "items": {
         "$ref": "#/definitions/group_definition"
       }
@@ -98,12 +98,12 @@
       "type": "object",
       "required": ["field_name"],
       "additionalProperties": false,
-      "description": "Presentation hint for a single public contract field. field_name must reference a feature name from the public contract projection for the bound dataset. No domain bounds, accepted value lists, or validation rules may be included.",
+      "description": "Presentation hint for a single public input field. field_name must reference a field name from the public contract projection for the bound dataset -- a scalar v1 feature name, or a v2 history-series time-index/target field name. No domain bounds, accepted value lists, or validation rules may be included.",
       "properties": {
         "field_name": {
           "type": "string",
           "minLength": 1,
-          "description": "Name of the public contract field this hint applies to. Must match a feature name in the public contract projection for the bound dataset."
+          "description": "Name of the public input field this hint applies to. Must match a feature name (v1) or history-series time-index/target field name (v2) in the public contract projection for the bound dataset."
         },
         "display_label": {
           "type": "string",

@@ -28,6 +28,7 @@ import {
   GENERIC_RESULT_PRESENTATION,
   GENERIC_MULTICLASS_RESULT_PRESENTATION,
   GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION,
+  GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION,
   availableResultProblemType,
   isAvailableBinaryResultContract,
   isAvailableContinuousRegressionResultContract,
@@ -45,13 +46,16 @@ import {
   type ResultPresentation,
 } from "../../components/ResultCard/types";
 import InferenceForm, {
+  isForecastingContractPayload,
   normalizeAdminInferenceGuidance,
   normalizeInferenceRuntimeDiagnostic,
   normalizeInferenceValidationIssues,
+  type ContractPayload,
   type FieldHint,
   type GroupDef,
   type InferenceExecutionResult,
   type InferenceExecutor,
+  type InferenceExecutorPayload,
   type InferenceLifecycleEvent,
   type InferenceLifecycleValidationIssue,
   type InferenceRuntimeDiagnosticCode,
@@ -209,7 +213,8 @@ type ProfileDraft = {
     schema_version?:
       | "binary-result-presentation.v1"
       | "multiclass-result-presentation.v1"
-      | "continuous-regression-result-presentation.v1";
+      | "continuous-regression-result-presentation.v1"
+      | "univariate-forecasting-result-presentation.v1";
     positive_class_probability_label?: string;
     predicted_outcome_label?: string;
     positive_outcome_copy?: string;
@@ -225,6 +230,12 @@ type ProfileDraft = {
     predicted_value_label?: string;
     decimal_places?: number;
     value_unit_label?: string;
+    // Project Spec S0250: univariate-forecasting Result Card presentation
+    // copy. decimal_places/value_unit_label above are shared with
+    // continuous-regression.
+    forecast_series_label?: string;
+    future_time_index_label?: string;
+    forecast_value_label?: string;
     // Bounded read-only migration input. Never serialized by profileFromForm.
     submit_button_label?: string;
   };
@@ -353,13 +364,20 @@ type DraftForm = {
   result_presentation_schema_version:
     | "binary-result-presentation.v1"
     | "multiclass-result-presentation.v1"
-    | "continuous-regression-result-presentation.v1";
+    | "continuous-regression-result-presentation.v1"
+    | "univariate-forecasting-result-presentation.v1";
   predicted_class_label: string;
   class_probability_distribution_label: string;
   // Project Spec S0229: continuous-regression Result Card presentation copy.
   predicted_value_label: string;
   decimal_places: number;
   value_unit_label: string;
+  // Project Spec S0250: univariate-forecasting Result Card presentation
+  // copy. decimal_places/value_unit_label above are shared with
+  // continuous-regression.
+  forecast_series_label: string;
+  future_time_index_label: string;
+  forecast_value_label: string;
   // Project Spec S0110: read-only migration context only -- the Result Card
   // tab no longer renders or edits this field, and profileFromForm never
   // writes it back. Populated by formFromProfile purely so the Inference
@@ -487,7 +505,11 @@ type MetricsPayload = {
 
 // Matches GET /datasets/{slug}/contract's real response shape -- the same
 // shape web/src/components/InferenceForm/InferenceForm.tsx's ContractPayload
-// requires -- not a speculative {fields|inputs|input_schema} guess.
+// (imported above) requires -- not a speculative {fields|inputs|input_schema}
+// guess. Project Spec S0250: options[].value widened to string | number to
+// stay structurally assignable from InferenceForm's own Feature[] (the
+// scalar branch of the shared ContractPayload union) -- contractFields()
+// below also produces this same shape for the forecasting branch.
 type ContractField = {
   name: string;
   label: string;
@@ -495,12 +517,7 @@ type ContractField = {
   optional: boolean;
   display_order: number;
   description?: string;
-  options?: { value: string; label: string }[];
-};
-
-type ContractPayload = {
-  schema_version: string;
-  features: ContractField[];
+  options?: { value: string | number; label: string }[];
 };
 
 type ContractEnvelope = {
@@ -1637,6 +1654,9 @@ function emptyDraftForm(datasetSlug = ""): DraftForm {
     predicted_value_label: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.predicted_value_label,
     decimal_places: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.decimal_places,
     value_unit_label: "",
+    forecast_series_label: GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.forecast_series_label,
+    future_time_index_label: GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.future_time_index_label,
+    forecast_value_label: GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.forecast_value_label,
     legacy_submit_button_label: "",
     interpretation_preset: "risk",
     interpretation_high: GENERIC_RESULT_PRESENTATION.interpretation.labels.high,
@@ -1685,6 +1705,9 @@ function formFromProfile(profile: ProfileDraft | null, datasetSlug: string): Dra
     predicted_value_label: profile.result_card?.predicted_value_label ?? form.predicted_value_label,
     decimal_places: profile.result_card?.decimal_places ?? form.decimal_places,
     value_unit_label: profile.result_card?.value_unit_label ?? "",
+    forecast_series_label: profile.result_card?.forecast_series_label ?? form.forecast_series_label,
+    future_time_index_label: profile.result_card?.future_time_index_label ?? form.future_time_index_label,
+    forecast_value_label: profile.result_card?.forecast_value_label ?? form.forecast_value_label,
     legacy_submit_button_label: profile.result_card?.submit_button_label ?? "",
     interpretation_preset: "risk",
     interpretation_high: profile.result_card?.interpretation?.labels?.high ?? form.interpretation_high,
@@ -1776,6 +1799,14 @@ function profileFromForm(form: DraftForm, datasetSlug: string): ProfileDraft {
     model_section_label: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.model_section_label,
     decimal_places: form.decimal_places,
     value_unit_label: textValue(form.value_unit_label),
+  } : form.result_presentation_schema_version === "univariate-forecasting-result-presentation.v1" ? {
+    schema_version: "univariate-forecasting-result-presentation.v1",
+    forecast_series_label: textValue(form.forecast_series_label),
+    future_time_index_label: textValue(form.future_time_index_label),
+    forecast_value_label: textValue(form.forecast_value_label),
+    model_section_label: GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.model_section_label,
+    decimal_places: form.decimal_places,
+    value_unit_label: textValue(form.value_unit_label),
   } : {
     schema_version: "binary-result-presentation.v1",
     positive_class_probability_label: textValue(form.positive_class_probability_label),
@@ -1859,6 +1890,9 @@ type WorkspacePublishFields = Pick<
   | "predicted_value_label"
   | "decimal_places"
   | "value_unit_label"
+  | "forecast_series_label"
+  | "future_time_index_label"
+  | "forecast_value_label"
   | "interpretation_preset"
   | "interpretation_high"
   | "interpretation_medium"
@@ -1895,6 +1929,9 @@ function workspacePublishFields(form: DraftForm): WorkspacePublishFields {
     predicted_value_label: form.predicted_value_label,
     decimal_places: form.decimal_places,
     value_unit_label: form.value_unit_label,
+    forecast_series_label: form.forecast_series_label,
+    future_time_index_label: form.future_time_index_label,
+    forecast_value_label: form.forecast_value_label,
     interpretation_preset: form.interpretation_preset,
     interpretation_high: form.interpretation_high,
     interpretation_medium: form.interpretation_medium,
@@ -2031,8 +2068,33 @@ function metricKeys(metrics: MetricsPayload | null): string[] {
   return values && typeof values === "object" ? Object.keys(values) : [];
 }
 
+// Project Spec S0250: scalar v1 -> the existing feature list, unchanged.
+// Forecasting v2 -> exactly the two governed history-series fields (time
+// index, target), both always required, projected into the same
+// Admin-presentation-only ContractField shape -- never a fabricated scalar
+// public contract.
 function contractFields(contract: ContractPayload | null): ContractField[] {
-  return contract?.features ?? [];
+  if (!contract) return [];
+  if (isForecastingContractPayload(contract)) {
+    const { time_index_field, target_field } = contract.history_series;
+    return [
+      {
+        name: time_index_field.name,
+        label: time_index_field.label,
+        input_type: time_index_field.value_kind === "ordinal_time" ? "number" : "select",
+        optional: false,
+        display_order: time_index_field.display_order,
+      },
+      {
+        name: target_field.name,
+        label: target_field.label,
+        input_type: "number",
+        optional: false,
+        display_order: target_field.display_order,
+      },
+    ];
+  }
+  return contract.features;
 }
 
 function classifyResultContract(envelope: ContractEnvelope): ResultContractState {
@@ -2076,6 +2138,12 @@ function toInferenceResultContract(state: ResultContractState): ResultContract {
   if (state.status === "available" && state.semantics.problem_type === "continuous_regression") {
     return { status: "available", semantics: state.semantics };
   }
+  // Project Spec S0250: preserve an available forecasting result contract --
+  // required for the Live Preview InferenceForm to enable real forecasting
+  // submission.
+  if (state.status === "available" && state.semantics.problem_type === "univariate_forecasting") {
+    return { status: "available", semantics: state.semantics };
+  }
   return {
     status: "unavailable",
     reason: "message" in state ? state.message : state.status,
@@ -2089,7 +2157,7 @@ function toInferenceResultContract(state: ResultContractState): ResultContract {
 // caller-supplied URL.
 async function executeAdminInference(
   slug: string,
-  payload: Record<string, string | number | boolean>,
+  payload: InferenceExecutorPayload,
 ): Promise<InferenceExecutionResult> {
   try {
     const res = await fetch(`${apiBaseUrl}/admin/datasets/${encodeURIComponent(slug)}/inference`, {
@@ -2144,6 +2212,21 @@ function presentationFromForm(form: DraftForm): ResultPresentation {
       schema_version: "continuous-regression-result-presentation.v1",
       predicted_value_label: form.predicted_value_label.trim() || GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.predicted_value_label,
       model_section_label: GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION.model_section_label,
+      decimal_places: decimalPlaces,
+      ...(unitLabel ? { value_unit_label: unitLabel } : {}),
+    };
+  }
+  if (form.result_presentation_schema_version === "univariate-forecasting-result-presentation.v1") {
+    const decimalPlaces = Number.isInteger(form.decimal_places) && form.decimal_places >= 0 && form.decimal_places <= 6
+      ? form.decimal_places
+      : GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.decimal_places;
+    const unitLabel = form.value_unit_label.trim();
+    return {
+      schema_version: "univariate-forecasting-result-presentation.v1",
+      forecast_series_label: form.forecast_series_label.trim() || GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.forecast_series_label,
+      future_time_index_label: form.future_time_index_label.trim() || GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.future_time_index_label,
+      forecast_value_label: form.forecast_value_label.trim() || GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.forecast_value_label,
+      model_section_label: GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION.model_section_label,
       decimal_places: decimalPlaces,
       ...(unitLabel ? { value_unit_label: unitLabel } : {}),
     };
@@ -3434,6 +3517,96 @@ function CustomizationEditor({
   );
 }
 
+// Project Spec S0250 Section S: a bounded, presentation-only editor for a
+// univariate-forecasting history-series view -- deliberately NOT
+// CustomizationEditor's field-bank/group/drag-and-drop model. Exposes only
+// display label, explanatory copy, and display order for the two governed
+// history fields. Reuses the same CustomizationEditorDraft/
+// customizationDraftToRecord/persistCustomizationDraft primitives
+// unchanged -- both fields always stay required/visible/ungrouped because
+// this editor never renders a hide control, a group control, or a way to
+// add/remove a field, and emptyCustomizationDraft/customizationDraftFromRecord
+// already default both governed fields to hidden: false, group: "".
+function ForecastingCustomizationEditor({
+  contractFieldsByName,
+  draft,
+  onUpdateDraft,
+}: {
+  contractFieldsByName: Map<string, ContractField>;
+  draft: CustomizationEditorDraft;
+  onUpdateDraft: (updater: (draft: CustomizationEditorDraft) => CustomizationEditorDraft) => void;
+}) {
+  function updateField(fieldName: string, patch: Partial<Pick<FieldHintDraft, "display_label" | "explanatory_copy">>) {
+    onUpdateDraft((current) => ({
+      ...current,
+      fieldHints: current.fieldHints.map((field) => (field.field_name === fieldName ? { ...field, ...patch } : field)),
+    }));
+  }
+
+  function moveField(index: number, direction: -1 | 1) {
+    onUpdateDraft((current) => ({
+      ...current,
+      fieldHints: reflowFieldHints(moveItem(current.fieldHints, index, direction), current.groups),
+    }));
+  }
+
+  return (
+    <div aria-label="History-series field customization" className="dataset-admin-forecasting-customization-editor">
+      <p style={mutedTextStyle}>
+        Edit the label, explanatory copy, and display order for the two governed history fields. Both fields are
+        always required and visible for a forecasting view — hiding, grouping, and adding or removing fields are not
+        available here.
+      </p>
+      <ol className="dataset-admin-forecasting-customization-editor__list">
+        {draft.fieldHints.map((field, index) => {
+          const contractField = contractFieldsByName.get(field.field_name);
+          const fieldLabel = contractField?.label ?? field.field_name;
+          return (
+            <li
+              className="dataset-admin-forecasting-customization-editor__item"
+              data-field-name={field.field_name}
+              key={field.field_name}
+            >
+              <div className="dataset-admin-forecasting-customization-editor__item-header">
+                <strong>{fieldLabel}</strong>
+                <span className="dataset-admin-forecasting-customization-editor__order-controls">
+                  <button
+                    aria-label={`Move ${fieldLabel} up`}
+                    disabled={index === 0}
+                    onClick={() => moveField(index, -1)}
+                    type="button"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    aria-label={`Move ${fieldLabel} down`}
+                    disabled={index === draft.fieldHints.length - 1}
+                    onClick={() => moveField(index, 1)}
+                    type="button"
+                  >
+                    ↓
+                  </button>
+                </span>
+              </div>
+              <TextField
+                label={`${fieldLabel} display label`}
+                onChange={(value) => updateField(field.field_name, { display_label: value })}
+                value={field.display_label}
+              />
+              <TextField
+                label={`${fieldLabel} explanatory copy`}
+                multiline
+                onChange={(value) => updateField(field.field_name, { explanatory_copy: value })}
+                value={field.explanatory_copy}
+              />
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 function InferenceFormTab({
   form,
   setField,
@@ -3453,9 +3626,11 @@ function InferenceFormTab({
 }) {
   const viewsState = readOnlyData.views;
   const draft = customizationDraftOf(customizationEditorState);
+  const rawContract = stateValue(readOnlyData.contract);
+  const isForecastingView = rawContract !== null && isForecastingContractPayload(rawContract);
   const contractFieldsByName = useMemo(
-    () => new Map(contractFields(stateValue(readOnlyData.contract)).map((field) => [field.name, field])),
-    [readOnlyData.contract],
+    () => new Map(contractFields(rawContract).map((field) => [field.name, field])),
+    [rawContract],
   );
 
   // Project Spec S0121: semantic availability must be classified from
@@ -3546,7 +3721,12 @@ function InferenceFormTab({
         }
         value={draft?.viewCopy.submit_button_label ?? ""}
       />
-      {draft && <CustomizationEditor contractFieldsByName={contractFieldsByName} draft={draft} onUpdateDraft={onUpdateDraft} />}
+      {draft && isForecastingView && (
+        <ForecastingCustomizationEditor contractFieldsByName={contractFieldsByName} draft={draft} onUpdateDraft={onUpdateDraft} />
+      )}
+      {draft && !isForecastingView && (
+        <CustomizationEditor contractFieldsByName={contractFieldsByName} draft={draft} onUpdateDraft={onUpdateDraft} />
+      )}
     </div>
   );
 }
@@ -3567,6 +3747,7 @@ function ResultCardTab({
   const binarySemantics = semantics?.problem_type === "binary_classification" ? semantics : null;
   const multiclassSemantics = semantics?.problem_type === "multiclass_classification" ? semantics : null;
   const regressionSemantics = semantics?.problem_type === "continuous_regression" ? semantics : null;
+  const forecastingSemantics = semantics?.problem_type === "univariate_forecasting" ? semantics : null;
   return (
     <TabWorkspace eyebrow="Result Card" helper="Edit public presentation labels only; model behavior remains read-only Atlas state.">
       <Card className="dataset-admin-technical-summary">
@@ -3588,6 +3769,7 @@ function ResultCardTab({
           {multiclassSemantics ? <ReadOnlyField label="Probability output" value={multiclassSemantics.probability_output} /> : null}
           {multiclassSemantics ? <ReadOnlyField label="Decision strategy" value={multiclassSemantics.decision.strategy} /> : null}
           {regressionSemantics ? <ReadOnlyField label="Output value kind" value={regressionSemantics.output_value_kind} /> : null}
+          {forecastingSemantics ? <ReadOnlyField label="Output structure" value={forecastingSemantics.output_structure} /> : null}
           <ReadOnlyField label="Model descriptor" value={semantics ? `${semantics.model_descriptor.display_name} (${semantics.model_descriptor.model_family})` : "Unavailable"} />
         </div>
         {binarySemantics ? (
@@ -3607,6 +3789,23 @@ function ResultCardTab({
             <TextField label="Class probability distribution label" onChange={(value) => setField("class_probability_distribution_label", value)} value={form.class_probability_distribution_label} />
           </div> : regressionSemantics ? <div className="dataset-admin-form-grid">
             <TextField label="Predicted value label" onChange={(value) => setField("predicted_value_label", value)} value={form.predicted_value_label} />
+            <label className="dataset-admin-native-select">
+              <span style={labelStyle}>Decimal places</span>
+              <select
+                onChange={(event) => setField("decimal_places", Number(event.target.value))}
+                style={inputStyle}
+                value={String(form.decimal_places)}
+              >
+                {[0, 1, 2, 3, 4, 5, 6].map((places) => (
+                  <option key={places} value={places}>{places}</option>
+                ))}
+              </select>
+            </label>
+            <TextField label="Optional unit label" onChange={(value) => setField("value_unit_label", value)} value={form.value_unit_label} />
+          </div> : forecastingSemantics ? <div className="dataset-admin-form-grid">
+            <TextField label="Forecast series label" onChange={(value) => setField("forecast_series_label", value)} value={form.forecast_series_label} />
+            <TextField label="Future time index label" onChange={(value) => setField("future_time_index_label", value)} value={form.future_time_index_label} />
+            <TextField label="Forecast value label" onChange={(value) => setField("forecast_value_label", value)} value={form.forecast_value_label} />
             <label className="dataset-admin-native-select">
               <span style={labelStyle}>Decimal places</span>
               <select
@@ -3687,6 +3886,8 @@ function ResultCardTab({
             <MulticlassResultCardLivePreview form={form} semantics={multiclassSemantics} />
           ) : regressionSemantics ? (
             <ContinuousRegressionResultCardLivePreview form={form} semantics={regressionSemantics} />
+          ) : forecastingSemantics ? (
+            <ForecastingResultCardCopyPreview form={form} />
           ) : (
             <ResultCardLivePreview form={form} resultContract={resultContract} resetKey={selectedSlug} />
           )}
@@ -4039,6 +4240,12 @@ const VALIDATION_VIOLATION_LINE_COPY: Record<InferenceValidationViolation, strin
   missing_required_field: "a required value was not submitted.",
   type_mismatch: "the submitted value has the wrong type.",
   domain_violation: "the submitted value is outside the accepted domain.",
+  forecasting_unknown_top_level_field: "the submitted payload does not match the expected history shape.",
+  forecasting_invalid_history_shape: "the submitted history must be a non-empty ordered list of rows.",
+  forecasting_invalid_history_row: "a history row is missing one of the required fields.",
+  forecasting_invalid_time_index: "the submitted time-index value is invalid.",
+  forecasting_invalid_target_value: "the submitted target value is invalid.",
+  forecasting_minimum_history_not_met: "the submitted history does not reach the required minimum coverage.",
 };
 
 // Project Spec S0151/S0152: the bounded, frontend-owned copy for each
@@ -4461,8 +4668,12 @@ function DatasetDetailLivePreview({
   // livePreviewProjection.ts's projectDatasetDetailPreview expects its own
   // locally-declared {fields?} shape (out of this issue's edit scope); adapt
   // the real {features} contract shape into that shape here rather than
-  // modifying livePreviewProjection.ts.
-  const previewContract = contract ? { fields: contract.features } : null;
+  // modifying livePreviewProjection.ts. Project Spec S0250: a forecasting
+  // v2 contract has no scalar features list at all -- preview contract
+  // adaptation never reads contract.features for it, so it adapts to null
+  // (the same "fields unavailable" shape this projection already handles)
+  // rather than fabricating a scalar feature count.
+  const previewContract = contract && !isForecastingContractPayload(contract) ? { fields: contract.features } : null;
   // Project Spec S0154: feeds the currently loaded, dataset-bound private
   // result-contract state into the shared Target projection -- no
   // additional request, and never a public-endpoint read for this preview.
@@ -4543,7 +4754,9 @@ function DatasetDetailLivePreview({
   const inferenceContent = contract ? (
     <InferenceForm
       adminInferenceGuidance={
-        readOnlyData.inferenceGuidance.status === "ready"
+        // Project Spec S0250 Section W: the scalar Admin numeric-domain
+        // guidance projection is never invoked for a forecasting contract.
+        readOnlyData.inferenceGuidance.status === "ready" && !isForecastingContractPayload(contract)
           ? normalizeAdminInferenceGuidance(readOnlyData.inferenceGuidance.data, contract.features)
           : undefined
       }
@@ -4691,6 +4904,46 @@ function ContinuousRegressionResultCardLivePreview({
       <ResultCardShell state="initial">
         <ContinuousRegressionResult result={result} presentation={presentation} />
       </ResultCardShell>
+    </div>
+  );
+}
+
+// Project Spec S0250 Section V: the standalone Result Card copy-preview tab
+// must never fabricate a technical forecast -- no invented future
+// timestamps, forecast origin, forecast horizon, or a fake
+// univariate-forecasting-result.v1. Renders a bounded presentation-only
+// skeleton (the configured copy, with placeholder cells) instead of a real
+// forecast series; the actual Dataset Detail Live Preview inference path
+// (executable, real POST) is the sole authority for rendering a real
+// forecast-series result.
+function ForecastingResultCardCopyPreview({ form }: { form: DraftForm }) {
+  const projected = presentationFromForm(form);
+  const presentation = projected.schema_version === "univariate-forecasting-result-presentation.v1"
+    ? projected : GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION;
+  return (
+    <div className="dataset-admin-result-preview">
+      <p style={mutedTextStyle}>
+        Copy preview only — no forecast series is generated or fabricated here. Use the Live Preview tab's
+        executable history-series form to see a real forecast-series result.
+      </p>
+      <div aria-label="Forecast Result Card copy skeleton" className="dataset-admin-forecast-copy-skeleton">
+        <p className="dataset-admin-forecast-copy-skeleton__label">{presentation.forecast_series_label}</p>
+        <table className="dataset-admin-forecast-copy-skeleton__table">
+          <thead>
+            <tr>
+              <th scope="col">{presentation.future_time_index_label}</th>
+              <th scope="col">{presentation.forecast_value_label}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>—</td>
+              <td>—{presentation.value_unit_label ? ` ${presentation.value_unit_label}` : ""}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="dataset-admin-forecast-copy-skeleton__model-label">{presentation.model_section_label}</p>
+      </div>
     </div>
   );
 }
@@ -5425,7 +5678,11 @@ export default function DatasetAdminPage() {
       ? "multiclass-result-presentation.v1"
       : readOnlyData.resultContract.semantics.problem_type === "continuous_regression"
         ? "continuous-regression-result-presentation.v1"
-        : "binary-result-presentation.v1";
+        // Project Spec S0250: univariate_forecasting rebinds to the
+        // forecasting Result Card presentation schema, never binary.
+        : readOnlyData.resultContract.semantics.problem_type === "univariate_forecasting"
+          ? "univariate-forecasting-result-presentation.v1"
+          : "binary-result-presentation.v1";
     setDraftForm((current) => current.result_presentation_schema_version === schemaVersion
       ? current
       : { ...current, result_presentation_schema_version: schemaVersion });
@@ -6183,7 +6440,7 @@ export default function DatasetAdminPage() {
   // already renders.
   async function liveInferenceExecutor(
     slug: string,
-    payload: Record<string, string | number | boolean>,
+    payload: InferenceExecutorPayload,
   ): Promise<InferenceExecutionResult> {
     const outcome = await executeAdminInference(slug, payload);
     pendingLiveInferenceSuccessSummaryRef.current =

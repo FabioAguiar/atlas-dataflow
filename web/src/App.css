@@ -1849,6 +1849,155 @@ h1 {
   cursor: not-allowed;
 }
 
+/*
+ * Project Spec S0250: generic univariate-forecasting history-series input.
+ * Dataset-neutral -- no Nottingham-specific class name or value.
+ */
+.history-series-input {
+  display: grid;
+  gap: var(--atlas-space-3);
+}
+
+.history-series-input__guidance {
+  display: grid;
+  gap: var(--atlas-space-1);
+}
+
+.history-series-input__guidance-item {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-sm);
+}
+
+.history-series-input__guidance-label {
+  font-weight: 600;
+  color: var(--atlas-color-text-muted);
+}
+
+.history-series-input__guidance-label::after {
+  content: ": ";
+}
+
+.history-series-input__guidance-value {
+  font-weight: 600;
+}
+
+.history-series-input__guidance-note {
+  color: var(--atlas-color-text-subtle);
+}
+
+.history-series-input__copy {
+  display: grid;
+  gap: var(--atlas-space-1);
+}
+
+.history-series-input__helper {
+  margin: 0;
+  color: var(--atlas-color-text-subtle);
+  font-size: var(--atlas-text-xs);
+  overflow-wrap: anywhere;
+}
+
+.history-series-input__table-scroll {
+  overflow-x: auto;
+}
+
+.history-series-input__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.history-series-input__column-header {
+  padding: var(--atlas-space-2) var(--atlas-space-2);
+  text-align: left;
+  color: var(--atlas-color-text-muted);
+  font-size: var(--atlas-text-sm);
+  font-weight: 600;
+  border-bottom: 1px solid var(--atlas-color-border);
+  white-space: nowrap;
+}
+
+.history-series-input__column-header--actions {
+  width: 1%;
+}
+
+.history-series-input__row {
+  border-bottom: 1px solid var(--atlas-color-border);
+}
+
+.history-series-input__cell {
+  padding: var(--atlas-space-2);
+  min-width: 8rem;
+}
+
+.history-series-input__sr-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.history-series-input__control {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0 var(--atlas-space-2);
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-surface);
+  color: var(--atlas-color-text);
+  font: inherit;
+}
+
+.history-series-input__row-actions {
+  padding: var(--atlas-space-2);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.history-series-input__remove-row {
+  border: 1px solid var(--atlas-color-border);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-surface);
+  color: var(--atlas-color-text-muted);
+  padding: var(--atlas-space-1) var(--atlas-space-2);
+  font-size: var(--atlas-text-sm);
+  cursor: pointer;
+}
+
+.history-series-input__remove-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.history-series-input__add-row {
+  justify-self: start;
+  border: 1px solid var(--atlas-color-border-strong);
+  border-radius: var(--atlas-radius-md);
+  background: var(--atlas-color-accent-muted);
+  color: var(--atlas-color-accent-strong);
+  padding: var(--atlas-space-2) var(--atlas-space-3);
+  font-size: var(--atlas-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/*
+ * Narrow-screen layout: the table already scrolls horizontally within
+ * .history-series-input__table-scroll, so no separate breakpoint override
+ * is needed beyond a slightly tighter cell minimum width.
+ */
+@media (max-width: 640px) {
+  .history-series-input__cell {
+    min-width: 6.5rem;
+  }
+}
+
 .result-panel {
   min-width: 0;
   border: 1px solid var(--atlas-color-border);

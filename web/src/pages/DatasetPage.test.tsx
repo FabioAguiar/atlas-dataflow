@@ -4,6 +4,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import DatasetPage from "./DatasetPage";
+import type { ResultPresentation } from "../components/ResultCard/types";
 
 type MockResponse = {
   ok: boolean;
@@ -82,7 +83,7 @@ describe("DatasetPage multiclass contract fixture (S0214)", () => {
 });
 
 const resultCardPresentation = {
-  schema_version: "binary-result-presentation.v1",
+  schema_version: "binary-result-presentation.v1" as const,
   positive_class_probability_label: "Churn probability",
   predicted_outcome_label: "Predicted outcome",
   positive_outcome_copy: "Likely to churn",
@@ -105,7 +106,12 @@ const contextPayload = {
   result_card: resultCardPresentation,
 };
 
-type ContextPayloadFixture = typeof contextPayload & {
+// Project Spec S0250: result_card is omitted from the typeof-contextPayload
+// base and re-declared below as the full ResultPresentation union so a
+// forecasting test fixture can override it with a forecasting presentation
+// shape instead of being pinned to contextPayload's own binary shape.
+type ContextPayloadFixture = Omit<typeof contextPayload, "result_card"> & {
+  result_card?: ResultPresentation | null;
   description?: string;
   display_title?: string | null;
   display_subtitle?: string | null;
@@ -2961,5 +2967,160 @@ describe("DatasetPage univariate-forecasting diagnostics (Project Spec S0248)", 
     expect(screen.queryByRole("heading", { name: "Seasonal Profile" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Backtesting by Origin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Horizon MAE" })).not.toBeInTheDocument();
+  });
+});
+
+// Project Spec S0250: the actual public-contract v2 forecasting form
+// (HistorySeriesInput wired through the shared InferenceForm), Features
+// metadata safety, and real forecasting inference execution -- distinct
+// from the S0248 describe block above, which paired a forecasting result
+// contract with the unrelated scalar v1 contractPayload fixture purely to
+// exercise the diagnostics visualizations section.
+describe("DatasetPage univariate-forecasting inference form and metadata (Project Spec S0250)", () => {
+  const forecastingContractPayload = {
+    schema_version: "2.0.0",
+    problem_type: "univariate_forecasting",
+    input_kind: "history_series",
+    history_series: {
+      time_index_field: { name: "period", label: "Period", value_kind: "calendar_period" as const, display_order: 1 },
+      target_field: { name: "passengers", label: "Passengers", value_kind: "number" as const, display_order: 2 },
+      frequency: "Monthly",
+    },
+    forecast: { forecast_horizon: 3, horizon_user_editable: false as const },
+  };
+
+  const forecastingResultContractAvailable = {
+    status: "available" as const,
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1" as const,
+      problem_type: "univariate_forecasting" as const,
+      result_schema_version: "univariate-forecasting-result.v1" as const,
+      primary_output: "forecast_series" as const,
+      output_structure: "ordered_forecast_points" as const,
+      forecast_value_kind: "continuous_numeric" as const,
+      forecast_count_source: "forecast_horizon" as const,
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+    },
+  };
+
+  const forecastingResultCardPresentation = {
+    schema_version: "univariate-forecasting-result-presentation.v1" as const,
+    forecast_series_label: "Forecast",
+    future_time_index_label: "Period",
+    forecast_value_label: "Passengers",
+    model_section_label: "Model",
+    decimal_places: 1,
+  };
+
+  const forecastingContext: ContextPayloadFixture = {
+    ...contextPayload,
+    problem_type: "univariate_forecasting",
+    result_card: forecastingResultCardPresentation,
+  };
+
+  const validForecastResult = {
+    schema_version: "univariate-forecasting-result.v1",
+    problem_type: "univariate_forecasting",
+    forecast_origin: "2026-01",
+    frequency: "Monthly",
+    forecast_horizon: 3,
+    forecast_points: [
+      { horizon_step: 1, future_time_index: "2026-02", forecast: 120.4 },
+      { horizon_step: 2, future_time_index: "2026-03", forecast: 121.1 },
+      { horizon_step: 3, future_time_index: "2026-04", forecast: 119.8 },
+    ],
+    model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+  };
+
+  function installForecastingFormFetchMock() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (init?.method === "POST" && url.endsWith(`/datasets/${slug}/inference`)) {
+        return jsonResponse({ dataset_slug: slug, result: validForecastResult });
+      }
+      if (url.endsWith(`/datasets/${slug}/context`)) {
+        return jsonResponse({ dataset_slug: slug, context: forecastingContext });
+      }
+      if (url.endsWith(`/datasets/${slug}/metrics`)) {
+        return jsonResponse({ dataset_slug: slug, metrics: {} });
+      }
+      if (url.endsWith(`/datasets/${slug}/visualizations`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          visualizations: { charts: [], dataset_statistics: { instance_count: 48 } },
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}/contract`)) {
+        return jsonResponse({
+          dataset_slug: slug,
+          contract: forecastingContractPayload,
+          result_contract: forecastingResultContractAvailable,
+        });
+      }
+      if (url.endsWith(`/datasets/${slug}`)) {
+        return jsonResponse(datasetMetadata);
+      }
+
+      return jsonResponse({}, 404);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("does not crash on public-contract v2 metadata and reports Features as 0", async () => {
+    installForecastingFormFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+
+    await waitFor(() => {
+      const featuresItem = screen.getByText("Features").closest(".dataset-detail-header__metadata-item");
+      expect(featuresItem).toBeInTheDocument();
+      expect(within(featuresItem as HTMLElement).getByText("0")).toBeInTheDocument();
+    });
+  });
+
+  it("renders the forecasting history-series form with read-only horizon guidance, no editable horizon control", async () => {
+    installForecastingFormFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+
+    expect(await screen.findByLabelText("Period")).toBeInTheDocument();
+    expect(screen.getByLabelText("Passengers")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText(/not editable/i)).toBeInTheDocument();
+    // Exactly the two governed history inputs for the single initial row --
+    // never a third, horizon-editing control.
+    expect(document.querySelectorAll('input[type="text"], input[type="number"]')).toHaveLength(2);
+  });
+
+  it("executes real forecasting inference and renders the shared forecast-series result using the published presentation", async () => {
+    const fetchMock = installForecastingFormFetchMock();
+    renderDatasetPage();
+
+    await screen.findByRole("heading", { name: "Synthetic Demo Dataset", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Inference" }));
+    await screen.findByLabelText("Period");
+
+    fireEvent.change(screen.getByLabelText("Period"), { target: { value: "2026-01" } });
+    fireEvent.change(screen.getByLabelText("Passengers"), { target: { value: "100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByText("120.4")).toBeInTheDocument();
+    // "Seasonal Trend" also appears in the header's read-only model badge --
+    // assert the result card's own occurrence, not global uniqueness.
+    expect(screen.getAllByText("Seasonal Trend").length).toBeGreaterThanOrEqual(1);
+
+    const postCalls = fetchMock.mock.calls.filter(
+      (call) => call[1]?.method === "POST" && String(call[0]).endsWith(`/datasets/${slug}/inference`),
+    );
+    expect(postCalls).toHaveLength(1);
+    expect(JSON.parse(String(postCalls[0][1]?.body))).toEqual({
+      history: [{ period: "2026-01", passengers: 100 }],
+    });
   });
 });

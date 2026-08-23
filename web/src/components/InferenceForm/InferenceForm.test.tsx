@@ -7,10 +7,17 @@ import InferenceForm, {
   normalizeInferenceRuntimeDiagnostic,
   normalizeInferenceValidationIssues,
   type ContractPayload,
+  type ForecastingContractPayload,
   type InferenceExecutionResult,
+  type InferenceExecutorPayload,
   type InferenceLifecycleEvent,
 } from "./InferenceForm";
-import type { BinaryResultContract, BinaryResultPresentation, ResultContract } from "../ResultCard/types";
+import type {
+  BinaryResultContract,
+  BinaryResultPresentation,
+  ResultContract,
+  UnivariateForecastingResultPresentation,
+} from "../ResultCard/types";
 
 type MockResponse = {
   ok: boolean;
@@ -24,6 +31,14 @@ function jsonResponse(body: unknown, status = 200): MockResponse {
     status,
     json: async () => body,
   };
+}
+
+// Test-only narrowing helper: these tests exercise a scalar contract, so the
+// executor payload is always the scalar shape at runtime -- this cast only
+// avoids re-declaring InferenceExecutorPayload's full union at each mock
+// call-args assertion site.
+function asScalarPayload(payload: InferenceExecutorPayload): Record<string, unknown> {
+  return payload as Record<string, unknown>;
 }
 
 const slug = "synthetic-demo-dataset";
@@ -781,7 +796,7 @@ describe("InferenceForm select field label copy (Project Spec S0203)", () => {
     const executeInference = vi.fn(
       async (
         _slug: string,
-        _payload: Record<string, string | number | boolean>,
+        _payload: InferenceExecutorPayload,
       ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
     );
 
@@ -905,7 +920,7 @@ describe("InferenceForm boolean checkbox false-state submission (Project Spec S0
     const executeInference = vi.fn(
       async (
         _slug: string,
-        _payload: Record<string, string | number | boolean>,
+        _payload: InferenceExecutorPayload,
       ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
     );
     const events: InferenceLifecycleEvent[] = [];
@@ -926,7 +941,7 @@ describe("InferenceForm boolean checkbox false-state submission (Project Spec S0
 
     await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
     expect(executeInference).toHaveBeenCalledWith(slug, { consent: false });
-    expect(typeof executeInference.mock.calls[0][1].consent).toBe("boolean");
+    expect(typeof asScalarPayload(executeInference.mock.calls[0][1]).consent).toBe("boolean");
     expect(events[0]).toEqual({ type: "started" });
   });
 
@@ -934,7 +949,7 @@ describe("InferenceForm boolean checkbox false-state submission (Project Spec S0
     const executeInference = vi.fn(
       async (
         _slug: string,
-        _payload: Record<string, string | number | boolean>,
+        _payload: InferenceExecutorPayload,
       ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
     );
 
@@ -953,7 +968,7 @@ describe("InferenceForm boolean checkbox false-state submission (Project Spec S0
 
     await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
     expect(executeInference).toHaveBeenCalledWith(slug, { consent: true });
-    expect(typeof executeInference.mock.calls[0][1].consent).toBe("boolean");
+    expect(typeof asScalarPayload(executeInference.mock.calls[0][1]).consent).toBe("boolean");
   });
 });
 
@@ -1273,7 +1288,7 @@ describe("InferenceForm typed select serialization and conditional blank policy 
     const executeInference = vi.fn(
       async (
         _slug: string,
-        _payload: Record<string, string | number | boolean>,
+        _payload: InferenceExecutorPayload,
       ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
     );
 
@@ -1292,14 +1307,14 @@ describe("InferenceForm typed select serialization and conditional blank policy 
 
     await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
     expect(executeInference).toHaveBeenLastCalledWith(slug, { account_id_flag: 1 });
-    expect(typeof executeInference.mock.calls[0][1].account_id_flag).toBe("number");
+    expect(typeof asScalarPayload(executeInference.mock.calls[0][1]).account_id_flag).toBe("number");
   });
 
   it("submits a string categorical select as a JSON string", async () => {
     const executeInference = vi.fn(
       async (
         _slug: string,
-        _payload: Record<string, string | number | boolean>,
+        _payload: InferenceExecutorPayload,
       ): Promise<InferenceExecutionResult> => ({ ok: true, result: validResult }),
     );
 
@@ -1318,7 +1333,7 @@ describe("InferenceForm typed select serialization and conditional blank policy 
 
     await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
     expect(executeInference).toHaveBeenLastCalledWith(slug, { plan_type: "pro" });
-    expect(typeof executeInference.mock.calls[0][1].plan_type).toBe("string");
+    expect(typeof asScalarPayload(executeInference.mock.calls[0][1]).plan_type).toBe("string");
   });
 
   it("submits the declared blank representation for a conditional blank field left empty, instead of omitting it", async () => {
@@ -1870,5 +1885,301 @@ describe("InferenceForm runtime diagnostic propagation (Project Spec S0151)", ()
     await screen.findByRole("alert");
 
     expect(events).toEqual([{ type: "started" }, { type: "execution_failed" }]);
+  });
+});
+
+// Project Spec S0250: forecasting input contract (public-contract v2
+// history_series) dispatch, submission, result rendering, and validation
+// normalization -- exercised independently of the scalar-feature coverage
+// above, which must remain unaffected (confirmed by every prior describe
+// block in this file still passing unchanged).
+describe("InferenceForm univariate-forecasting dispatch (Project Spec S0250)", () => {
+  const forecastingContract: ForecastingContractPayload = {
+    schema_version: "2.0.0",
+    problem_type: "univariate_forecasting",
+    input_kind: "history_series",
+    history_series: {
+      time_index_field: { name: "period", label: "Period", value_kind: "calendar_period", display_order: 1 },
+      target_field: { name: "passengers", label: "Passengers", value_kind: "number", display_order: 2 },
+      frequency: "Monthly",
+    },
+    forecast: { forecast_horizon: 3, horizon_user_editable: false },
+  };
+
+  const availableForecastingResultContract: ResultContract = {
+    status: "available",
+    semantics: {
+      schema_version: "univariate-forecasting-result-semantics.v1",
+      problem_type: "univariate_forecasting",
+      result_schema_version: "univariate-forecasting-result.v1",
+      primary_output: "forecast_series",
+      output_structure: "ordered_forecast_points",
+      forecast_value_kind: "continuous_numeric",
+      forecast_count_source: "forecast_horizon",
+      model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+    },
+  };
+
+  const forecastingPresentation: UnivariateForecastingResultPresentation = {
+    schema_version: "univariate-forecasting-result-presentation.v1",
+    forecast_series_label: "Forecast",
+    future_time_index_label: "Period",
+    forecast_value_label: "Passengers",
+    model_section_label: "Model",
+    decimal_places: 1,
+  };
+
+  const validForecastResult = {
+    schema_version: "univariate-forecasting-result.v1",
+    problem_type: "univariate_forecasting",
+    forecast_origin: "2026-01",
+    frequency: "Monthly",
+    forecast_horizon: 3,
+    forecast_points: [
+      { horizon_step: 1, future_time_index: "2026-02", forecast: 120.4 },
+      { horizon_step: 2, future_time_index: "2026-03", forecast: 121.1 },
+      { horizon_step: 3, future_time_index: "2026-04", forecast: 119.8 },
+    ],
+    model_descriptor: { model_family: "deterministic_seasonal_trend_ols", display_name: "Seasonal Trend" },
+  };
+
+  function fillFirstRow(periodValue: string, passengersValue: string) {
+    fireEvent.change(screen.getAllByLabelText("Period")[0], { target: { value: periodValue } });
+    fireEvent.change(screen.getAllByLabelText("Passengers")[0], { target: { value: passengersValue } });
+  }
+
+  it("renders HistorySeriesInput instead of the scalar field grid", () => {
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+      />,
+    );
+
+    expect(screen.getByLabelText("Period")).toBeInTheDocument();
+    expect(screen.getByLabelText("Passengers")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add row" })).toBeInTheDocument();
+  });
+
+  it("enables submit when the forecasting result contract is available", () => {
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Submit" })).not.toBeDisabled();
+  });
+
+  it("disables submit when a forecasting input contract is paired with a non-forecasting result contract", () => {
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        resultContract={availableContract}
+        resultPresentation={presentation}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+  });
+
+  it("disables submit when a scalar input contract is paired with a forecasting result contract", () => {
+    render(
+      <InferenceForm
+        contract={contract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+  });
+
+  it("submits the exact governed history payload shape, preserving user row order, with no horizon/frequency", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validForecastResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Add row" }));
+    fireEvent.change(screen.getAllByLabelText("Period")[1], { target: { value: "2025-12" } });
+    fireEvent.change(screen.getAllByLabelText("Passengers")[1], { target: { value: "95" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    expect(executeInference).toHaveBeenCalledWith(slug, {
+      history: [
+        { period: "2026-01", passengers: 100 },
+        { period: "2025-12", passengers: 95 },
+      ],
+    });
+  });
+
+  it("serializes an ordinal_time index as a JSON integer and the target as a JSON number", async () => {
+    const ordinalContract: ForecastingContractPayload = {
+      ...forecastingContract,
+      history_series: {
+        ...forecastingContract.history_series,
+        time_index_field: { name: "step", label: "Step", value_kind: "ordinal_time", display_order: 1 },
+      },
+    };
+    const executeInference = vi.fn(
+      async (_slug: string, _payload: InferenceExecutorPayload): Promise<InferenceExecutionResult> => ({
+        ok: true,
+        result: validForecastResult,
+      }),
+    );
+
+    render(
+      <InferenceForm
+        contract={ordinalContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Step"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Passengers"), { target: { value: "12.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(executeInference).toHaveBeenCalledTimes(1));
+    const payload = executeInference.mock.calls[0][1] as { history: Array<Record<string, unknown>> };
+    expect(payload.history[0].step).toBe(5);
+    expect(Number.isInteger(payload.history[0].step)).toBe(true);
+    expect(payload.history[0].passengers).toBe(12.5);
+    expect(typeof payload.history[0].passengers).toBe("number");
+  });
+
+  it("renders the shared UnivariateForecastingResult on a valid forecast response, never ContinuousRegressionResult", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: validForecastResult }),
+    );
+
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(screen.getByText("120.4")).toBeInTheDocument());
+    expect(screen.getByText("Seasonal Trend")).toBeInTheDocument();
+    expect(screen.queryByText(/Predicted value/)).not.toBeInTheDocument();
+  });
+
+  it("treats a malformed forecast success payload as the shared safe error state", async () => {
+    const malformed = { ...validForecastResult, forecast_points: [] };
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({ ok: true, result: malformed }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(events.some((event) => event.type === "execution_failed")).toBe(true);
+  });
+
+  it("normalizes forecasting validation issues into resolved-label lifecycle events with no raw submitted values", async () => {
+    const executeInference = vi.fn(
+      async (): Promise<InferenceExecutionResult> => ({
+        ok: false,
+        errorCode: "INVALID_PAYLOAD",
+        validationIssues: [
+          { field: "history", violation: "forecasting_invalid_history_shape" },
+          { field: "history[0]", violation: "forecasting_invalid_history_row" },
+          { field: "history[0].period", violation: "forecasting_invalid_time_index" },
+          { field: "history[0].passengers", violation: "forecasting_invalid_target_value" },
+          { field: "some_unrecognized_path", violation: "forecasting_unknown_top_level_field" },
+        ],
+      }),
+    );
+    const events: InferenceLifecycleEvent[] = [];
+
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+        onLifecycleEvent={(event) => events.push(event)}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    await waitFor(() => expect(events.some((event) => event.type === "validation_failed")).toBe(true));
+    const validationEvent = events.find((event) => event.type === "validation_failed") as Extract<
+      InferenceLifecycleEvent,
+      { type: "validation_failed" }
+    >;
+    expect(validationEvent.issues).toEqual([
+      { field: "history", fieldLabel: "History", violation: "forecasting_invalid_history_shape" },
+      { field: "history[0]", fieldLabel: "History row", violation: "forecasting_invalid_history_row" },
+      { field: "history[0].period", fieldLabel: "Period", violation: "forecasting_invalid_time_index" },
+      { field: "history[0].passengers", fieldLabel: "Passengers", violation: "forecasting_invalid_target_value" },
+      { field: "some_unrecognized_path", fieldLabel: "Field", violation: "forecasting_unknown_top_level_field" },
+    ]);
+    expect(JSON.stringify(validationEvent.issues)).not.toContain("2026-01");
+  });
+
+  it("never POSTs in previewMode, even for a forecasting contract", () => {
+    const executeInference = vi.fn();
+
+    render(
+      <InferenceForm
+        contract={forecastingContract}
+        slug={slug}
+        previewMode
+        resultContract={availableForecastingResultContract}
+        resultPresentation={forecastingPresentation}
+        executeInference={executeInference}
+      />,
+    );
+
+    fillFirstRow("2026-01", "100");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(executeInference).not.toHaveBeenCalled();
   });
 });

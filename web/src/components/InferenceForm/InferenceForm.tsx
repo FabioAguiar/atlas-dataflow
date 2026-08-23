@@ -3,12 +3,15 @@ import ResultCardShell from "../ResultCard/ResultCardShell";
 import BinaryClassificationResult from "../ResultCard/BinaryClassificationResult";
 import MulticlassClassificationResult from "../ResultCard/MulticlassClassificationResult";
 import ContinuousRegressionResult from "../ResultCard/ContinuousRegressionResult";
+import UnivariateForecastingResult from "../ResultCard/UnivariateForecastingResult";
 import {
   GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION,
   GENERIC_MULTICLASS_RESULT_PRESENTATION,
   GENERIC_RESULT_PRESENTATION,
+  GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION,
   isAvailableBinaryResultContract,
   isAvailableContinuousRegressionResultContract,
+  isAvailableForecastingResultContract,
   isAvailableMulticlassResultContract,
   projectBinaryClassificationResult,
   resultForContract,
@@ -16,6 +19,11 @@ import {
   type ResultContract,
   type ResultPresentation,
 } from "../ResultCard/types";
+import HistorySeriesInput, {
+  type ForecastGuidance,
+  type HistoryRowInput,
+  type HistorySeriesGuidance,
+} from "./HistorySeriesInput";
 
 export type FeatureOption = {
   value: string | number;
@@ -60,10 +68,40 @@ export type Feature = {
   conditional_blank_policy?: ConditionalBlankPolicy;
 };
 
-export type ContractPayload = {
+/** Project Spec S0246/S0250: strict univariate-forecasting history-series public contract branch. */
+export type ScalarContractPayload = {
   schema_version: string;
   features: Feature[];
 };
+
+export type ForecastingContractPayload = {
+  schema_version: "2.0.0";
+  problem_type: "univariate_forecasting";
+  input_kind: "history_series";
+  history_series: HistorySeriesGuidance;
+  forecast: ForecastGuidance;
+};
+
+/**
+ * Project Spec S0250: an additive strict discriminated union -- the
+ * historical scalar branch (ScalarContractPayload) is unchanged and remains
+ * compatible with every existing caller; ForecastingContractPayload is a
+ * new, exact branch. The active branch is never inferred from dataset slug,
+ * field names, frequency, result presentation, or performance focus -- only
+ * from this contract's own schema_version/problem_type/input_kind
+ * discriminants (see isForecastingContractPayload below).
+ */
+export type ContractPayload = ScalarContractPayload | ForecastingContractPayload;
+
+export function isForecastingContractPayload(
+  contract: ContractPayload,
+): contract is ForecastingContractPayload {
+  return (
+    contract.schema_version === "2.0.0" &&
+    (contract as ForecastingContractPayload).problem_type === "univariate_forecasting" &&
+    (contract as ForecastingContractPayload).input_kind === "history_series"
+  );
+}
 
 export type AdminInferenceFieldGuidance = {
   field_name: string;
@@ -181,7 +219,13 @@ function mapErrorCode(errorCode: string | undefined): string {
 export type InferenceValidationViolation =
   | "missing_required_field"
   | "type_mismatch"
-  | "domain_violation";
+  | "domain_violation"
+  | "forecasting_unknown_top_level_field"
+  | "forecasting_invalid_history_shape"
+  | "forecasting_invalid_history_row"
+  | "forecasting_invalid_time_index"
+  | "forecasting_invalid_target_value"
+  | "forecasting_minimum_history_not_met";
 
 /**
  * Project Spec S0147: one normalized, execution-level validation issue.
@@ -199,6 +243,12 @@ const VALIDATION_ISSUE_VIOLATIONS: ReadonlySet<string> = new Set<InferenceValida
   "missing_required_field",
   "type_mismatch",
   "domain_violation",
+  "forecasting_unknown_top_level_field",
+  "forecasting_invalid_history_shape",
+  "forecasting_invalid_history_row",
+  "forecasting_invalid_time_index",
+  "forecasting_invalid_target_value",
+  "forecasting_minimum_history_not_met",
 ]);
 
 const MAX_VALIDATION_ISSUE_FIELD_LENGTH = 200;
@@ -317,6 +367,27 @@ export type InferenceExecutionResult =
       runtimeDiagnostic?: InferenceRuntimeDiagnostic;
     };
 
+/** Project Spec S0143: the historical scalar-feature payload shape, unchanged. */
+export type ScalarInferencePayload = Record<string, string | number | boolean>;
+
+/**
+ * Project Spec S0250: a single history row carries exactly the governed
+ * time-index and target keys (sourced from the active forecasting contract,
+ * never caller-invented). The container key ("history") is fixed by the
+ * governed runtime/public contract relationship already established by
+ * S0246.
+ */
+export type ForecastingHistoryPayload = {
+  history: Array<Record<string, string | number>>;
+};
+
+/**
+ * Project Spec S0250: the closed executor payload union -- never widened to
+ * unconstrained `any`. A caller never invents an arbitrary top-level key
+ * beyond these two shapes.
+ */
+export type InferenceExecutorPayload = ScalarInferencePayload | ForecastingHistoryPayload;
+
 /**
  * Project Spec S0143: an injectable execution boundary so InferenceForm can
  * own one visual/state lifecycle while the caller chooses the authorized
@@ -328,12 +399,12 @@ export type InferenceExecutionResult =
  */
 export type InferenceExecutor = (
   slug: string,
-  payload: Record<string, string | number | boolean>,
+  payload: InferenceExecutorPayload,
 ) => Promise<InferenceExecutionResult>;
 
 async function defaultExecuteInference(
   slug: string,
-  payload: Record<string, string | number | boolean>,
+  payload: InferenceExecutorPayload,
 ): Promise<InferenceExecutionResult> {
   try {
     const res = await fetch(`${apiBaseUrl}/datasets/${encodeURIComponent(slug)}/inference`, {
@@ -555,6 +626,71 @@ function resolveLifecycleValidationIssues(
   return resolved.length > 0 ? resolved : undefined;
 }
 
+const HISTORY_ROOT_FIELD = "history";
+const HISTORY_ROW_PATH_PATTERN = /^history\[\d+\]$/;
+const HISTORY_ROW_FIELD_PATH_PATTERN = /^history\[\d+\]\.(.+)$/;
+
+// Project Spec S0250: deterministic field-path -> safe label mapping for
+// forecasting validation issues. "history" -> "History"; "history[n]" ->
+// "History row"; "history[n].<time field>"/"history[n].<target field>" ->
+// the effective (customization-hint-aware) label for that governed field.
+// Unlike resolveLifecycleValidationIssues above (which drops an issue for
+// an unrecognized field name), an unrecognized/malformed forecasting path
+// falls back to a generic safe label rather than being dropped -- every
+// forecasting validation issue reaching this form was already scoped to a
+// forecasting submission, so it is always plausibly this form's own.
+function resolveForecastingValidationFieldLabel(
+  fieldName: string,
+  historySeries: HistorySeriesGuidance,
+  hintMap: Map<string, FieldHint>,
+): string {
+  const custom = hintMap.get(fieldName)?.display_label?.trim();
+  if (custom) return boundValidationFieldLabel(custom);
+  if (fieldName === historySeries.time_index_field.name) {
+    return boundValidationFieldLabel(historySeries.time_index_field.label);
+  }
+  if (fieldName === historySeries.target_field.name) {
+    return boundValidationFieldLabel(historySeries.target_field.label);
+  }
+  return boundValidationFieldLabel(fieldName);
+}
+
+function resolveForecastingLifecycleValidationIssues(
+  issues: InferenceValidationIssue[] | undefined,
+  historySeries: HistorySeriesGuidance,
+  hintMap: Map<string, FieldHint>,
+): InferenceLifecycleValidationIssue[] | undefined {
+  if (!issues || issues.length === 0) return undefined;
+
+  const resolved: InferenceLifecycleValidationIssue[] = [];
+
+  for (const issue of issues) {
+    if (issue.field === HISTORY_ROOT_FIELD) {
+      resolved.push({ field: issue.field, fieldLabel: "History", violation: issue.violation });
+      continue;
+    }
+
+    if (HISTORY_ROW_PATH_PATTERN.test(issue.field)) {
+      resolved.push({ field: issue.field, fieldLabel: "History row", violation: issue.violation });
+      continue;
+    }
+
+    const rowFieldMatch = issue.field.match(HISTORY_ROW_FIELD_PATH_PATTERN);
+    if (rowFieldMatch) {
+      resolved.push({
+        field: issue.field,
+        fieldLabel: resolveForecastingValidationFieldLabel(rowFieldMatch[1], historySeries, hintMap),
+        violation: issue.violation,
+      });
+      continue;
+    }
+
+    resolved.push({ field: issue.field, fieldLabel: "Field", violation: issue.violation });
+  }
+
+  return resolved.length > 0 ? resolved : undefined;
+}
+
 function FieldInput({
   feature,
   hint,
@@ -691,20 +827,49 @@ export default function InferenceForm({
   }, [resetKey]);
 
   const hintMap = buildHintMap(customization);
+
+  // Project Spec S0250: the active branch is decided once, here, purely
+  // from the contract's own discriminants -- every subsequent branch below
+  // (guidance, sorting, submit dispatch, rendering) reuses this single
+  // decision rather than re-deriving it from dataset slug, field names, or
+  // any other signal.
+  const isForecastingContract = isForecastingContractPayload(contract);
+
+  // Project Spec S0250 Section W: the scalar Admin numeric-domain guidance
+  // projection is never invoked for a forecasting contract -- history-series
+  // fields have no per-field numeric_domain guidance concept.
   const guidanceMap = new Map(
-    normalizeAdminInferenceGuidance(adminInferenceGuidance, contract.features)
-      .map((entry) => [entry.field_name, entry]),
+    isForecastingContract
+      ? []
+      : normalizeAdminInferenceGuidance(adminInferenceGuidance, contract.features)
+        .map((entry) => [entry.field_name, entry]),
   );
+
   const binaryContractAvailable = isAvailableBinaryResultContract(resultContract);
   const multiclassContractAvailable = isAvailableMulticlassResultContract(resultContract);
   const continuousRegressionContractAvailable = isAvailableContinuousRegressionResultContract(resultContract);
-  const contractAvailable = !previewMode && (binaryContractAvailable || multiclassContractAvailable || continuousRegressionContractAvailable);
+  const forecastingContractAvailable = isAvailableForecastingResultContract(resultContract);
+
+  // Project Spec S0250: submission is enabled only when the active input
+  // contract family and the active result-contract family agree exactly --
+  // a forecasting input contract paired with a non-forecasting result
+  // contract (or vice versa) never satisfies either branch below, so a
+  // mismatched pairing fails closed automatically rather than needing a
+  // second explicit check.
+  const contractAvailable = !previewMode && (
+    isForecastingContract
+      ? forecastingContractAvailable
+      : (binaryContractAvailable || multiclassContractAvailable || continuousRegressionContractAvailable)
+  );
+
   const effectiveBinaryPresentation = resultPresentation?.schema_version === "binary-result-presentation.v1"
     ? resultPresentation : GENERIC_RESULT_PRESENTATION;
   const effectiveMulticlassPresentation = resultPresentation?.schema_version === "multiclass-result-presentation.v1"
     ? resultPresentation : GENERIC_MULTICLASS_RESULT_PRESENTATION;
   const effectiveContinuousRegressionPresentation = resultPresentation?.schema_version === "continuous-regression-result-presentation.v1"
     ? resultPresentation : GENERIC_CONTINUOUS_REGRESSION_RESULT_PRESENTATION;
+  const effectiveForecastingPresentation = resultPresentation?.schema_version === "univariate-forecasting-result-presentation.v1"
+    ? resultPresentation : GENERIC_UNIVARIATE_FORECASTING_RESULT_PRESENTATION;
 
   // Project Spec S0141: the local zero-probability initial projection is
   // built through the same shared technical-result boundary the real
@@ -716,11 +881,67 @@ export default function InferenceForm({
       ? projectBinaryClassificationResult(resultContract.semantics, initialResultProbability)
       : null;
 
-  const sortedForPresentation = [...contract.features].sort((a, b) => {
-    const hintA = hintMap.get(a.name);
-    const hintB = hintMap.get(b.name);
-    return presentationSortKey(a, hintA) - presentationSortKey(b, hintB);
-  });
+  const sortedForPresentation = isForecastingContract
+    ? []
+    : [...contract.features].sort((a, b) => {
+      const hintA = hintMap.get(a.name);
+      const hintB = hintMap.get(b.name);
+      return presentationSortKey(a, hintA) - presentationSortKey(b, hintB);
+    });
+
+  // Project Spec S0250: HistorySeriesInput owns its own controlled row
+  // state and reports every change here via onRowsChange, so handleSubmit
+  // can read the current rows synchronously (a ref, not React state, so no
+  // stale-closure risk across re-renders) and serialize them exactly once
+  // at submit time -- InferenceForm never re-derives or duplicates that
+  // state itself.
+  const historyRowsRef = useRef<HistoryRowInput[]>([]);
+
+  // Project Spec S0143: shared submit-outcome handling for both the scalar
+  // and forecasting branches -- executor invocation, stale-response
+  // detection, success/error state, and lifecycle event emission are never
+  // duplicated between the two branches.
+  async function submitAndHandle(
+    payload: InferenceExecutorPayload,
+    generation: number,
+    resolveIssues: (issues: InferenceValidationIssue[] | undefined) => InferenceLifecycleValidationIssue[] | undefined,
+  ) {
+    const executor = executeInference ?? defaultExecuteInference;
+    let outcome: InferenceExecutionResult;
+    try {
+      outcome = await executor(slug, payload);
+    } catch {
+      outcome = { ok: false };
+    }
+
+    // Project Spec S0143: the selected dataset/bound-view identity changed
+    // while this request was in flight -- this response belongs to a
+    // previous identity and must never overwrite the current one.
+    if (requestGenerationRef.current !== generation) {
+      return;
+    }
+
+    if (outcome.ok) {
+      const normalizedResult = resultForContract(resultContract, outcome.result);
+      if (normalizedResult) {
+        setSubmission({ status: "success", data: normalizedResult });
+        onLifecycleEvent?.({ type: "succeeded" });
+      } else {
+        // Malformed success payload: never falls back to a legacy
+        // body.prediction field, always becomes the existing safe error state.
+        setSubmission({ status: "error", message: FALLBACK_ERROR });
+        onLifecycleEvent?.({ type: "execution_failed" });
+      }
+    } else {
+      setSubmission({ status: "error", message: mapErrorCode(outcome.errorCode) });
+      if (outcome.errorCode === "INVALID_PAYLOAD") {
+        const issues = resolveIssues(outcome.validationIssues);
+        onLifecycleEvent?.(issues ? { type: "validation_failed", issues } : { type: "validation_failed" });
+      } else {
+        onLifecycleEvent?.({ type: "execution_failed", runtimeDiagnostic: outcome.runtimeDiagnostic });
+      }
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -741,8 +962,30 @@ export default function InferenceForm({
     onLifecycleEvent?.({ type: "started" });
     setSubmission({ status: "submitting" });
 
+    if (isForecastingContractPayload(contract)) {
+      // Project Spec S0250 Section L: read controlled rows in
+      // rendered/user order, serialize exactly once, using only the exact
+      // governed field names -- never sorted, deduplicated, gap-filled, or
+      // extended with an invented row/horizon/frequency/model metadata.
+      const { time_index_field, target_field } = contract.history_series;
+      const history = historyRowsRef.current.map((row) => ({
+        [time_index_field.name]:
+          time_index_field.value_kind === "ordinal_time"
+            ? Number(row.timeIndexValue)
+            : row.timeIndexValue,
+        [target_field.name]: Number(row.targetValue),
+      }));
+
+      await submitAndHandle(
+        { history },
+        generation,
+        (issues) => resolveForecastingLifecycleValidationIssues(issues, contract.history_series, hintMap),
+      );
+      return;
+    }
+
     const form = event.currentTarget;
-    const payload: Record<string, string | number | boolean> = {};
+    const payload: ScalarInferencePayload = {};
 
     for (const feature of sortedForPresentation) {
       if (feature.input_type === "checkbox") {
@@ -783,41 +1026,11 @@ export default function InferenceForm({
       }
     }
 
-    const executor = executeInference ?? defaultExecuteInference;
-    let outcome: InferenceExecutionResult;
-    try {
-      outcome = await executor(slug, payload);
-    } catch {
-      outcome = { ok: false };
-    }
-
-    // Project Spec S0143: the selected dataset/bound-view identity changed
-    // while this request was in flight -- this response belongs to a
-    // previous identity and must never overwrite the current one.
-    if (requestGenerationRef.current !== generation) {
-      return;
-    }
-
-    if (outcome.ok) {
-      const normalizedResult = resultForContract(resultContract, outcome.result);
-      if (normalizedResult) {
-        setSubmission({ status: "success", data: normalizedResult });
-        onLifecycleEvent?.({ type: "succeeded" });
-      } else {
-        // Malformed success payload: never falls back to a legacy
-        // body.prediction field, always becomes the existing safe error state.
-        setSubmission({ status: "error", message: FALLBACK_ERROR });
-        onLifecycleEvent?.({ type: "execution_failed" });
-      }
-    } else {
-      setSubmission({ status: "error", message: mapErrorCode(outcome.errorCode) });
-      if (outcome.errorCode === "INVALID_PAYLOAD") {
-        const issues = resolveLifecycleValidationIssues(outcome.validationIssues, contract.features, hintMap);
-        onLifecycleEvent?.(issues ? { type: "validation_failed", issues } : { type: "validation_failed" });
-      } else {
-        onLifecycleEvent?.({ type: "execution_failed", runtimeDiagnostic: outcome.runtimeDiagnostic });
-      }
-    }
+    await submitAndHandle(
+      payload,
+      generation,
+      (issues) => resolveLifecycleValidationIssues(issues, contract.features, hintMap),
+    );
   }
 
   function renderFields(features: Feature[]) {
@@ -881,7 +1094,16 @@ export default function InferenceForm({
       <div className="public-inference-surface__form-panel public-inference-form">
         <h2 className="public-inference-form__heading">Inference</h2>
         <form className="public-inference-form__form" onSubmit={handleSubmit}>
-          {hasGroups ? (
+          {isForecastingContract ? (
+            <HistorySeriesInput
+              historySeries={contract.history_series}
+              forecast={contract.forecast}
+              hintMap={hintMap}
+              onRowsChange={(rows) => {
+                historyRowsRef.current = rows;
+              }}
+            />
+          ) : hasGroups ? (
             renderGrouped()
           ) : (
             <div className="public-inference-form__field-grid">
@@ -915,6 +1137,8 @@ export default function InferenceForm({
             <BinaryClassificationResult result={submission.data} presentation={effectiveBinaryPresentation} />
           ) : submission.data.problem_type === "multiclass_classification" ? (
             <MulticlassClassificationResult result={submission.data} presentation={effectiveMulticlassPresentation} />
+          ) : submission.data.problem_type === "univariate_forecasting" ? (
+            <UnivariateForecastingResult result={submission.data} presentation={effectiveForecastingPresentation} />
           ) : (
             <ContinuousRegressionResult result={submission.data} presentation={effectiveContinuousRegressionPresentation} />
           )}

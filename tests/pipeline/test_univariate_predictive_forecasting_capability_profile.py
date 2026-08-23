@@ -4,12 +4,15 @@ Intent Contract.
 
 Proves the real, committed capability profile document at
 pipeline/capabilities/univariate-predictive-forecasting.v1.json is a
-governed, additive, non-operational capability profile, free of any
-dataset-specific coupling. Established with support_status:
-requires_future_contract_evolution -- Atlas authoring can identify and
-validate forecasting/univariate intent, but cannot yet derive or execute a
-forecasting contract, train/materialize a forecasting model, emit a
-forecasting inference bundle, or publish/serve forecasting.
+governed capability profile, free of any dataset-specific coupling.
+
+Project Spec S0250 flips support_status to current_supported once the
+forecasting interaction implementation (frontend history-series form,
+predict-view customization compatibility, capability activation) is
+complete and its focused tests pass -- Atlas authoring can now derive and
+execute a forecasting contract, train/materialize a forecasting model, emit
+a forecasting inference bundle, and publish/serve forecasting through the
+release-layer identity already recognized since S0247.
 
 Uses only the real repository profile files and the real capability-profile
 schema -- never a real model, never notebook execution, never a real
@@ -94,8 +97,8 @@ class TestIdentityVersionSupportStatus:
     def test_capability_profile_version(self):
         assert _load_profile()["capability_profile_version"] == "v1"
 
-    def test_support_status_is_requires_future_contract_evolution(self):
-        assert _load_profile()["support_status"] == "requires_future_contract_evolution"
+    def test_support_status_is_current_supported(self):
+        assert _load_profile()["support_status"] == "current_supported"
 
 
 class TestSemanticRuntimePublicationPolicy:
@@ -246,17 +249,22 @@ class TestExistingCapabilityProfilesRemainValidUnderSchemaExtension:
         assert _load_regression_profile()["prediction_runtime"]["mode"] == "single_model_continuous_regression"
 
 
-class TestForecastingDownstreamNonOperational:
-    """S0241 must not add univariate-predictive-forecasting to any
-    downstream operational supported-capability set."""
+class TestForecastingDownstreamOperationalStatus:
+    """Project Spec S0250: the release-layer identity was already recognized
+    since S0247 (independent of the real profile's own support_status); the
+    real profile itself now flips to current_supported, activating that
+    already-recognized identity end to end. The legacy source-contract
+    projection route remains architecturally unsupported for forecasting and
+    is untouched by S0250 -- univariate_forecasting is a history-series input
+    family, not a source-contract scalar-feature projection."""
 
     def test_absent_from_contract_projection_supported_capability_profile_ids(self):
         assert "univariate-predictive-forecasting" not in CONTRACT_PROJECTION_SUPPORTED_CAPABILITY_PROFILE_IDS
 
-    def test_absent_from_release_layer_supported_capability_profile_ids(self):
-        assert "univariate-predictive-forecasting" not in RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
+    def test_present_in_release_layer_supported_capability_profile_ids(self):
+        assert "univariate-predictive-forecasting" in RELEASE_LAYER_SUPPORTED_CAPABILITY_PROFILE_IDS
 
-    def test_profile_declares_requires_future_contract_evolution_not_current_supported(self):
+    def test_profile_declares_current_supported_not_requires_future_contract_evolution(self):
         profile = _load_profile()
-        assert profile["support_status"] == "requires_future_contract_evolution"
-        assert profile["support_status"] != "current_supported"
+        assert profile["support_status"] == "current_supported"
+        assert profile["support_status"] != "requires_future_contract_evolution"

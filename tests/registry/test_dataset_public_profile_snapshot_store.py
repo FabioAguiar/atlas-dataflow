@@ -1138,3 +1138,43 @@ def test_publish_rejects_regression_performance_focus_under_univariate_forecasti
 
     assert result["published"] is False
     assert "PERFORMANCE_FOCUS_PROBLEM_TYPE_MISMATCH" in _codes(result)
+
+
+# ---------------------------------------------------------------------------
+# Project Spec S0256: forecasting_performance Performance Focus publication
+# under an active univariate_forecasting release, mirroring the existing
+# regression_performance/continuous_regression coverage above.
+# ---------------------------------------------------------------------------
+
+
+def _forecasting_performance_focus() -> dict:
+    return {
+        "focus_id": "forecasting_performance",
+        "highlighted_score_id": "mae",
+        "visible_scores": [
+            {"score_id": "mae", "display_label": "MAE", "value": "1.0", "value_source": "manual", "order": 0},
+            {"score_id": "rmse", "display_label": "RMSE", "value": "1.5", "value_source": "manual", "order": 1},
+            {
+                "score_id": "seasonal_mase",
+                "display_label": "Seasonal MASE",
+                "value": "0.8",
+                "value_source": "manual",
+                "order": 2,
+            },
+        ],
+    }
+
+
+def test_publish_accepts_forecasting_performance_focus_under_univariate_forecasting_active_release(fake_repo):
+    _write_release_bundle(fake_repo, "release-20260101-001", "univariate_forecasting")
+    performance_focus = _forecasting_performance_focus()
+
+    result = publish_snapshot_from_payload(
+        "telco-customer-churn", _profile(performance_focus=performance_focus), repo_root=fake_repo
+    )
+
+    assert result["published"] is True
+    assert result["errors"] == []
+    assert result["snapshot"]["profile"]["performance_focus"]["focus_id"] == "forecasting_performance"
+    assert result["snapshot"]["profile"]["performance_focus"]["highlighted_score_id"] == "mae"
+    assert result["snapshot"]["profile"]["performance_focus"] == performance_focus

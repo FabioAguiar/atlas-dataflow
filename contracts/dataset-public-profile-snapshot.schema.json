@@ -188,7 +188,7 @@
       "properties": {
         "focus_id": {
           "type": "string",
-          "enum": ["overall_discrimination", "positive_class_detection", "balanced_classification", "probability_quality", "operational_decision", "regression_performance"]
+          "enum": ["overall_discrimination", "positive_class_detection", "balanced_classification", "probability_quality", "operational_decision", "regression_performance", "forecasting_performance"]
         },
         "highlighted_score_id": {
           "type": "string",

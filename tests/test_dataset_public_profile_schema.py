@@ -361,6 +361,82 @@ def test_forecasting_result_card_rejects_interval_and_history_fields():
         assert errors, f"expected {technical_field} to be rejected"
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0256: forecasting_performance Performance Focus enum
+# reconciliation between the draft profile and published snapshot schemas.
+# ---------------------------------------------------------------------------
+
+PERFORMANCE_FOCUS_IDS = [
+    "overall_discrimination",
+    "positive_class_detection",
+    "balanced_classification",
+    "probability_quality",
+    "operational_decision",
+    "regression_performance",
+    "forecasting_performance",
+]
+
+
+def _forecasting_performance_focus() -> dict:
+    return {
+        "focus_id": "forecasting_performance",
+        "highlighted_score_id": "mae",
+        "visible_scores": [
+            {"score_id": "mae", "display_label": "MAE", "value": "1.0", "value_source": "manual", "order": 0},
+        ],
+    }
+
+
+def test_draft_and_snapshot_performance_focus_enums_are_exactly_equal_and_include_forecasting():
+    draft_schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    draft_enum = draft_schema["properties"]["performance_focus"]["properties"]["focus_id"]["enum"]
+    snapshot_enum = (
+        snapshot_schema["definitions"]["performance_focus"]["properties"]["focus_id"]["enum"]
+    )
+
+    assert draft_enum == snapshot_enum
+    assert draft_enum.count("forecasting_performance") == 1
+    assert snapshot_enum.count("forecasting_performance") == 1
+    for historical_focus_id in [
+        "overall_discrimination",
+        "positive_class_detection",
+        "balanced_classification",
+        "probability_quality",
+        "operational_decision",
+        "regression_performance",
+    ]:
+        assert historical_focus_id in draft_enum
+        assert historical_focus_id in snapshot_enum
+
+
+def test_draft_and_snapshot_accept_forecasting_performance_focus():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    performance_focus = _forecasting_performance_focus()
+
+    jsonschema.validate(_base_profile(performance_focus=performance_focus), schema)
+    jsonschema.validate(_base_snapshot({"performance_focus": performance_focus}), snapshot_schema)
+
+
+def test_draft_and_snapshot_reject_unknown_performance_focus_id():
+    schema = _load_json(SCHEMA_PATH)
+    snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)
+    performance_focus = _forecasting_performance_focus()
+    performance_focus["focus_id"] = "forecast_accuracy"
+
+    assert list(
+        jsonschema.Draft7Validator(schema).iter_errors(
+            _base_profile(performance_focus=performance_focus)
+        )
+    )
+    assert list(
+        jsonschema.Draft7Validator(snapshot_schema).iter_errors(
+            _base_snapshot({"performance_focus": performance_focus})
+        )
+    )
+
+
 def test_forecasting_result_card_does_not_disturb_historical_result_card_schema_tests():
     schema = _load_json(SCHEMA_PATH)
     snapshot_schema = _load_json(SNAPSHOT_SCHEMA_PATH)

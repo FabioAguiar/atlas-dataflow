@@ -1,0 +1,45 @@
+{
+  "features": [
+    {
+      "name": "Cement",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Blast Furnace Slag",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Fly Ash",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Water",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Superplasticizer",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Coarse Aggregate",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Fine Aggregate",
+      "required": true,
+      "type": "numeric"
+    },
+    {
+      "name": "Age",
+      "required": true,
+      "type": "numeric"
+    }
+  ],
+  "schema_version": "1.0.0"
+}

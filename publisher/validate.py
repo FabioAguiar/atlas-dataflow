@@ -24,6 +24,11 @@ _DEFAULT_REPO_ROOT = Path(__file__).parent.parent
 _PUBLIC_CONTRACT_ROLE = "public_contract"
 _MODEL_ARTIFACT_ROLE = "model_artifact"
 
+# Project Spec S0255: the two governed inference-bundle contract_version
+# values the model-artifact resolver below dispatches on.
+_INFERENCE_BUNDLE_CONTRACT_VERSION_V1 = "inference_bundle.v1"
+_INFERENCE_BUNDLE_CONTRACT_VERSION_V2 = "inference_bundle.v2"
+
 _VISUALIZATIONS_ROLE = "visualizations"
 
 _REQUIRED_ROLES = (
@@ -652,6 +657,36 @@ def _early_predictive_bundle_provenance(artifact_roles_decl: dict | None, candid
     return origin if isinstance(origin, str) else None
 
 
+def _resolve_predictive_bundle_model_artifact(predictive_bundle_data: dict | None) -> dict | None:
+    """Project Spec S0255: return the governed model-artifact mapping from a
+    parsed predictive bundle, dispatched by the bundle's own declared
+    contract_version -- never dataset slug, never a recursive search for an
+    arbitrary nested model_artifact key.
+
+    inference_bundle.v2 resolves from frozen_model.model_artifact.
+    inference_bundle.v1, and a bundle that declares no contract_version at
+    all (the pre-S0255 default relied on by historical publisher fixtures
+    that predate this field), resolve from the top-level model_artifact.
+    Any other declared contract_version is treated as unsupported/unknown
+    and never falls back to either location. In every case the result is
+    None -- never a best-effort guess -- unless the resolved location is
+    itself a dict, so the existing path/hash comparison below fails closed
+    exactly as it already does for a bundle with no model_artifact
+    declaration at all.
+    """
+    if not isinstance(predictive_bundle_data, dict):
+        return None
+    contract_version = predictive_bundle_data.get("contract_version")
+    if contract_version == _INFERENCE_BUNDLE_CONTRACT_VERSION_V2:
+        frozen_model = predictive_bundle_data.get("frozen_model")
+        candidate = frozen_model.get("model_artifact") if isinstance(frozen_model, dict) else None
+    elif contract_version is None or contract_version == _INFERENCE_BUNDLE_CONTRACT_VERSION_V1:
+        candidate = predictive_bundle_data.get("model_artifact")
+    else:
+        candidate = None
+    return candidate if isinstance(candidate, dict) else None
+
+
 def validate_candidate(
     candidate: dict,
     candidate_dir: Path,
@@ -1069,11 +1104,7 @@ def validate_candidate(
     model_role_result = role_results.get(_MODEL_ARTIFACT_ROLE)
     if model_role_result is not None and model_role_result.get("status") == "present":
         predictive_bundle_data = json_artifacts.get("predictive_bundle")
-        bundle_model_artifact = (
-            predictive_bundle_data.get("model_artifact")
-            if isinstance(predictive_bundle_data, dict)
-            else None
-        )
+        bundle_model_artifact = _resolve_predictive_bundle_model_artifact(predictive_bundle_data)
 
         if not isinstance(bundle_model_artifact, dict) or not isinstance(
             bundle_model_artifact.get("path"), str

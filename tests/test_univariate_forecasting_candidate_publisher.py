@@ -636,6 +636,10 @@ def _forecasting_runtime_execution(**overrides) -> dict:
 def _forecasting_frozen_model(*, forecast_horizon: int = 6, **overrides) -> dict:
     frozen_model = {
         "state": "frozen",
+        # Project Spec S0255: the governed v2 model-artifact location. A real
+        # inference_bundle.v2 predictive bundle carries no top-level
+        # model_artifact -- only this nested one is authoritative.
+        "model_artifact": {"path": MODEL_ARTIFACT_PATH, "sha256": MODEL_ARTIFACT_SHA256},
         "model_family": "deterministic_seasonal_trend_ols",
         "temporal_identity": {
             "target_column": "example_target",
@@ -672,6 +676,11 @@ def _forecasting_predictive_bundle_overrides(
     output_schema.update(output_schema_overrides or {})
     frozen_model = _forecasting_frozen_model(forecast_horizon=forecast_horizon, **(frozen_model_overrides or {}))
     overrides = {
+        # Project Spec S0255: make the v2 contract identity explicit so the
+        # publisher's version-aware model-artifact resolver dispatches to
+        # frozen_model.model_artifact rather than relying on structural
+        # guesswork or a top-level model_artifact compatibility duplicate.
+        "contract_version": "inference_bundle.v2",
         "result_semantics": result_semantics,
         "runtime_execution": runtime_execution,
         "output_schema": output_schema,
@@ -1204,10 +1213,18 @@ def _write_forecasting_candidate(
     candidate_dir = _candidate_dir(tmp_path)
     candidate_dir.mkdir(parents=True, exist_ok=True)
 
+    predictive_bundle_payload = {**_base_artifact_payload("predictive_bundle"), **predictive_bundle}
+    if "frozen_model" in predictive_bundle:
+        # Project Spec S0255: an inference_bundle.v2-shaped predictive bundle
+        # (declares frozen_model) must not carry the generic base fixture's
+        # top-level model_artifact -- only frozen_model.model_artifact is
+        # authoritative for v2, matching the real producer's shape.
+        predictive_bundle_payload.pop("model_artifact", None)
+
     role_payloads = {
         "contracts": _base_artifact_payload("contracts"),
         "public_contract": dict(_VALID_PUBLIC_CONTRACT),
-        "predictive_bundle": {**_base_artifact_payload("predictive_bundle"), **predictive_bundle},
+        "predictive_bundle": predictive_bundle_payload,
         "metrics": {**_base_artifact_payload("metrics"), **metrics},
         "model_card": _base_artifact_payload("model_card"),
         "public_context": _base_artifact_payload("public_context"),
@@ -1309,6 +1326,138 @@ def test_forecasting_candidate_reaches_valid_true_with_complete_coherent_artifac
 
     assert result["valid"] is True, result["rejection_reasons"]
     assert result["schema_compatibility"]["visualizations"]["compatible"] is True
+
+
+# ===========================================================================
+# Section I (Project Spec S0255): inference_bundle.v2 model-artifact
+# cross-consistency. Proves the publisher's version-aware resolver reaches
+# frozen_model.model_artifact for a real v2-shaped candidate -- never a
+# top-level model_artifact compatibility duplicate -- and that the existing
+# S0107 path/hash comparison and rejection codes remain strict once
+# resolved.
+# ===========================================================================
+
+
+def test_forecasting_candidate_v2_resolves_model_artifact_from_frozen_model_no_top_level_duplicate(tmp_path):
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=_forecasting_predictive_bundle_overrides(),
+        metrics=_forecasting_metrics_overrides(),
+        visualizations=_valid_v4_visualizations_document(final_holdout_observations=12),
+    )
+    stored_bundle = json.loads((candidate_dir / _role_path("predictive_bundle")).read_text())
+    assert stored_bundle["contract_version"] == "inference_bundle.v2"
+    assert "model_artifact" not in stored_bundle
+    assert stored_bundle["frozen_model"]["model_artifact"] == {
+        "path": MODEL_ARTIFACT_PATH,
+        "sha256": MODEL_ARTIFACT_SHA256,
+    }
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is True, result["rejection_reasons"]
+
+
+def test_forecasting_candidate_v2_nested_model_path_mismatch_rejects(tmp_path):
+    bundle = _forecasting_predictive_bundle_overrides(
+        frozen_model_overrides={
+            "model_artifact": {"path": "models/a-different-model.pkl", "sha256": MODEL_ARTIFACT_SHA256},
+        }
+    )
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=bundle,
+        metrics=_forecasting_metrics_overrides(),
+        visualizations=_valid_v4_visualizations_document(final_holdout_observations=12),
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    codes = {reason["code"] for reason in result["rejection_reasons"]}
+    assert "model_bundle_path_mismatch" in codes
+    assert "model_bundle_hash_mismatch" not in codes
+
+
+def test_forecasting_candidate_v2_nested_model_hash_mismatch_rejects(tmp_path):
+    bundle = _forecasting_predictive_bundle_overrides(
+        frozen_model_overrides={
+            "model_artifact": {"path": MODEL_ARTIFACT_PATH, "sha256": "0" * 64},
+        }
+    )
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=bundle,
+        metrics=_forecasting_metrics_overrides(),
+        visualizations=_valid_v4_visualizations_document(final_holdout_observations=12),
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    codes = {reason["code"] for reason in result["rejection_reasons"]}
+    assert "model_bundle_hash_mismatch" in codes
+    assert "model_bundle_path_mismatch" not in codes
+
+
+def test_forecasting_candidate_v2_missing_nested_model_artifact_fails_closed(tmp_path):
+    bundle = _forecasting_predictive_bundle_overrides(frozen_model_overrides={"model_artifact": None})
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=bundle,
+        metrics=_forecasting_metrics_overrides(),
+        visualizations=_valid_v4_visualizations_document(final_holdout_observations=12),
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    codes = {reason["code"] for reason in result["rejection_reasons"]}
+    assert "model_bundle_path_mismatch" in codes
+    assert "model_bundle_hash_mismatch" in codes
+
+
+def test_forecasting_candidate_v2_malformed_nested_model_artifact_fails_closed(tmp_path):
+    bundle = _forecasting_predictive_bundle_overrides(
+        frozen_model_overrides={"model_artifact": "not-a-mapping"}
+    )
+    candidate_dir = _write_forecasting_candidate(
+        tmp_path,
+        predictive_bundle=bundle,
+        metrics=_forecasting_metrics_overrides(),
+        visualizations=_valid_v4_visualizations_document(final_holdout_observations=12),
+    )
+
+    result = validate.validate_candidate_file(candidate_dir)
+
+    assert result["valid"] is False
+    codes = {reason["code"] for reason in result["rejection_reasons"]}
+    assert "model_bundle_path_mismatch" in codes
+    assert "model_bundle_hash_mismatch" in codes
+
+
+def test_forecasting_v2_resolver_never_recursively_searches_nested_model_artifact():
+    # A model_artifact planted somewhere other than the governed frozen_model
+    # location must never be picked up by the v2 resolver -- dispatch is
+    # strictly contract_version-governed, not a best-effort structural
+    # search.
+    bundle = _forecasting_predictive_bundle_overrides(
+        frozen_model_overrides={"model_artifact": None},
+        extra_top_level={
+            "decoy_container": {"model_artifact": {"path": MODEL_ARTIFACT_PATH, "sha256": MODEL_ARTIFACT_SHA256}},
+        },
+    )
+    resolved = validate._resolve_predictive_bundle_model_artifact(bundle)
+    assert resolved is None
+
+
+def test_forecasting_v2_unknown_contract_version_does_not_fall_back(tmp_path):
+    bundle = dict(
+        _forecasting_predictive_bundle_overrides(),
+        contract_version="inference_bundle.v3",
+    )
+    resolved = validate._resolve_predictive_bundle_model_artifact(bundle)
+    assert resolved is None
 
 
 # ===========================================================================

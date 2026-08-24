@@ -1,0 +1,372 @@
+{
+  "actual_vs_predicted": {
+    "aggregation_method": "deterministic_equal_width_actual_bins",
+    "evaluation_count": 1,
+    "partition_role": "test",
+    "points": [
+      {
+        "actual_mean": 9.252857142857142,
+        "bin_lower": 7.51,
+        "bin_upper": 12.302666666666667,
+        "count": 14,
+        "predicted_mean": 9.746728362687348
+      },
+      {
+        "actual_mean": 14.137857142857142,
+        "bin_lower": 12.302666666666667,
+        "bin_upper": 17.095333333333333,
+        "count": 14,
+        "predicted_mean": 15.537188912199639
+      },
+      {
+        "actual_mean": 19.781250000000004,
+        "bin_lower": 17.095333333333333,
+        "bin_upper": 21.887999999999998,
+        "count": 16,
+        "predicted_mean": 19.477378632630856
+      },
+      {
+        "actual_mean": 25.294615384615383,
+        "bin_lower": 21.887999999999998,
+        "bin_upper": 26.680666666666667,
+        "count": 13,
+        "predicted_mean": 24.71361869437601
+      },
+      {
+        "actual_mean": 29.00714285714286,
+        "bin_lower": 26.680666666666667,
+        "bin_upper": 31.47333333333333,
+        "count": 14,
+        "predicted_mean": 29.096392640707286
+      },
+      {
+        "actual_mean": 33.638,
+        "bin_lower": 31.47333333333333,
+        "bin_upper": 36.266,
+        "count": 15,
+        "predicted_mean": 34.192086085435434
+      },
+      {
+        "actual_mean": 38.92421052631578,
+        "bin_lower": 36.266,
+        "bin_upper": 41.05866666666666,
+        "count": 19,
+        "predicted_mean": 38.00363751328702
+      },
+      {
+        "actual_mean": 43.02142857142856,
+        "bin_lower": 41.05866666666666,
+        "bin_upper": 45.85133333333333,
+        "count": 14,
+        "predicted_mean": 42.894228944147706
+      },
+      {
+        "actual_mean": 48.54875,
+        "bin_lower": 45.85133333333333,
+        "bin_upper": 50.644,
+        "count": 8,
+        "predicted_mean": 48.092805962673715
+      },
+      {
+        "actual_mean": 52.91999999999999,
+        "bin_lower": 50.644,
+        "bin_upper": 55.43666666666666,
+        "count": 11,
+        "predicted_mean": 53.64691600119502
+      },
+      {
+        "actual_mean": 55.95333333333334,
+        "bin_lower": 55.43666666666666,
+        "bin_upper": 60.22933333333333,
+        "count": 3,
+        "predicted_mean": 55.590181177072
+      },
+      {
+        "actual_mean": 63.10999999999999,
+        "bin_lower": 60.22933333333333,
+        "bin_upper": 65.022,
+        "count": 5,
+        "predicted_mean": 62.13944593210776
+      },
+      {
+        "actual_mean": 66.445,
+        "bin_lower": 65.022,
+        "bin_upper": 69.81466666666667,
+        "count": 4,
+        "predicted_mean": 64.13541939166845
+      },
+      {
+        "actual_mean": 72.015,
+        "bin_lower": 69.81466666666667,
+        "bin_upper": 74.60733333333333,
+        "count": 2,
+        "predicted_mean": 70.04188767781577
+      },
+      {
+        "actual_mean": 77.89666666666666,
+        "bin_lower": 74.60733333333333,
+        "bin_upper": 79.4,
+        "count": 3,
+        "predicted_mean": 74.19381456144711
+      }
+    ],
+    "reference_line": "identity"
+  },
+  "artifact_kind": "analytical_visualizations",
+  "charts": [
+    {
+      "data": [
+        {
+          "name": "2.33 to 7.681",
+          "value": 17
+        },
+        {
+          "name": "7.681 to 13.03",
+          "value": 63
+        },
+        {
+          "name": "13.03 to 18.38",
+          "value": 98
+        },
+        {
+          "name": "18.38 to 23.74",
+          "value": 80
+        },
+        {
+          "name": "23.74 to 29.09",
+          "value": 120
+        },
+        {
+          "name": "29.09 to 34.44",
+          "value": 137
+        },
+        {
+          "name": "34.44 to 39.79",
+          "value": 134
+        },
+        {
+          "name": "39.79 to 45.14",
+          "value": 113
+        },
+        {
+          "name": "45.14 to 50.49",
+          "value": 61
+        },
+        {
+          "name": "50.49 to 55.84",
+          "value": 75
+        },
+        {
+          "name": "55.84 to 61.19",
+          "value": 47
+        },
+        {
+          "name": "61.19 to 66.55",
+          "value": 30
+        },
+        {
+          "name": "66.55 to 71.9",
+          "value": 26
+        },
+        {
+          "name": "71.9 to 77.25",
+          "value": 15
+        },
+        {
+          "name": "77.25 to 82.6",
+          "value": 14
+        }
+      ],
+      "id": "target_distribution",
+      "title": "Target Distribution",
+      "type": "bar",
+      "x_label": "Concrete compressive strength",
+      "y_label": "Rows"
+    },
+    {
+      "data": [
+        {
+          "name": "Age",
+          "value": 0.29193506904278677
+        },
+        {
+          "name": "Cement",
+          "value": 0.26802895778752445
+        },
+        {
+          "name": "Water",
+          "value": 0.14558857041787424
+        },
+        {
+          "name": "Blast Furnace Slag",
+          "value": 0.12619183841806628
+        },
+        {
+          "name": "Superplasticizer",
+          "value": 0.0589375842415292
+        },
+        {
+          "name": "Fine Aggregate",
+          "value": 0.056914103691284496
+        },
+        {
+          "name": "Coarse Aggregate",
+          "value": 0.03422794744241538
+        },
+        {
+          "name": "Fly Ash",
+          "value": 0.01817592895851918
+        }
+      ],
+      "id": "feature_importance",
+      "title": "Feature Importance",
+      "type": "bar",
+      "x_label": "Feature",
+      "y_label": "Importance"
+    }
+  ],
+  "created_at": "2026-08-24T16:21:09.409941Z",
+  "evidence_policy": {
+    "model_bytes_embedded": false,
+    "notebook_state_embedded": false,
+    "raw_api_payloads_prohibited": true,
+    "raw_dataset_embedded": false,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "raw_transformed_matrices_embedded": false,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true,
+    "serialized_estimator_state_embedded": false
+  },
+  "feature_importance_method": {
+    "method": "permutation_importance",
+    "model_family": "hist_gradient_boosting",
+    "n_repeats": 5,
+    "omitted_source_feature_count": 0,
+    "population_kind": "final_fit_train_plus_validation",
+    "public_row_limit": 10,
+    "random_seed": 42,
+    "scoring": "neg_mean_absolute_error",
+    "source": "sklearn.inspection.permutation_importance",
+    "total_source_feature_count": 8
+  },
+  "regression_evidence": {
+    "output_value_kind": "continuous_numeric",
+    "problem_type": "continuous_regression",
+    "result_semantics_schema_version": "continuous-regression-result-semantics.v1"
+  },
+  "residual_distribution": {
+    "binning_method": "deterministic_equal_width",
+    "bins": [
+      {
+        "count": 1,
+        "label": "-13.9 to -12.24",
+        "lower_bound": -13.902868159676938,
+        "upper_bound": -12.240850103629423
+      },
+      {
+        "count": 0,
+        "label": "-12.24 to -10.58",
+        "lower_bound": -12.240850103629423,
+        "upper_bound": -10.578832047581908
+      },
+      {
+        "count": 0,
+        "label": "-10.58 to -8.917",
+        "lower_bound": -10.578832047581908,
+        "upper_bound": -8.916813991534394
+      },
+      {
+        "count": 4,
+        "label": "-8.917 to -7.255",
+        "lower_bound": -8.916813991534394,
+        "upper_bound": -7.25479593548688
+      },
+      {
+        "count": 1,
+        "label": "-7.255 to -5.593",
+        "lower_bound": -7.25479593548688,
+        "upper_bound": -5.592777879439366
+      },
+      {
+        "count": 2,
+        "label": "-5.593 to -3.931",
+        "lower_bound": -5.592777879439366,
+        "upper_bound": -3.930759823391851
+      },
+      {
+        "count": 15,
+        "label": "-3.931 to -2.269",
+        "lower_bound": -3.930759823391851,
+        "upper_bound": -2.268741767344336
+      },
+      {
+        "count": 24,
+        "label": "-2.269 to -0.6067",
+        "lower_bound": -2.268741767344336,
+        "upper_bound": -0.6067237112968211
+      },
+      {
+        "count": 50,
+        "label": "-0.6067 to 1.055",
+        "lower_bound": -0.6067237112968211,
+        "upper_bound": 1.0552943447506937
+      },
+      {
+        "count": 38,
+        "label": "1.055 to 2.717",
+        "lower_bound": 1.0552943447506937,
+        "upper_bound": 2.717312400798207
+      },
+      {
+        "count": 11,
+        "label": "2.717 to 4.379",
+        "lower_bound": 2.717312400798207,
+        "upper_bound": 4.379330456845722
+      },
+      {
+        "count": 7,
+        "label": "4.379 to 6.041",
+        "lower_bound": 4.379330456845722,
+        "upper_bound": 6.0413485128932365
+      },
+      {
+        "count": 1,
+        "label": "6.041 to 7.703",
+        "lower_bound": 6.0413485128932365,
+        "upper_bound": 7.703366568940751
+      },
+      {
+        "count": 0,
+        "label": "7.703 to 9.365",
+        "lower_bound": 7.703366568940751,
+        "upper_bound": 9.365384624988266
+      },
+      {
+        "count": 1,
+        "label": "9.365 to 11.03",
+        "lower_bound": 9.365384624988266,
+        "upper_bound": 11.027402681035781
+      }
+    ],
+    "evaluation_count": 1,
+    "partition_role": "test",
+    "residual_definition": "actual_minus_predicted"
+  },
+  "schema_version": "analytical-visualizations.v3",
+  "target_distribution_method": {
+    "bin_count": 15,
+    "binning_method": "deterministic_equal_width",
+    "distribution_kind": "continuous_histogram",
+    "max_value": 82.6,
+    "min_value": 2.33,
+    "population_kind": "prepared_dataset",
+    "row_count": 1030,
+    "target_column": "Concrete compressive strength"
+  },
+  "training_run_identity": {
+    "dataset_slug": "concrete-compressive-strength",
+    "output_directory": "pipeline/training-runs/concrete-compressive-strength/train-20260824T162109Z/",
+    "run_id": "train-20260824T162109Z"
+  }
+}

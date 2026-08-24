@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "execution_contract_version": "execution_contract.v2",
+  "preparation_recipe_version": "candidate-preparation-recipe.v2",
+  "runtime_contract_schema_version": "2.0.0",
+  "public_contract_schema_version": "2.0.0",
+  "problem_type": "univariate_forecasting",
+  "time_index_field_name": "period",
+  "target_field_name": "temperature",
+  "index_value_kind": "calendar_period",
+  "frequency": "monthly",
+  "forecast_horizon": 12,
+  "minimum_history_required_through": "1938-12",
+  "source_exogenous_predictors": "forbidden"
+}

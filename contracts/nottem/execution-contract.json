@@ -1,0 +1,72 @@
+{
+  "contract_version": "execution_contract.v2",
+  "dataset_id": "nottem",
+  "problem_type": "univariate_forecasting",
+  "target_column": "temperature",
+  "time_index_column": "period",
+  "index_value_kind": "calendar_period",
+  "frequency": "monthly",
+  "source_exogenous_predictors": "forbidden",
+  "forecast_horizon": 12,
+  "temporal_evaluation": {
+    "preparation_schema_version": "candidate-preparation-recipe.v2",
+    "backtesting_mode": "expanding_window",
+    "fold_count": 9,
+    "final_holdout_prospectively_sealed": true,
+    "final_holdout_used_for_backtesting": false,
+    "final_holdout_used_for_model_selection": false,
+    "random_shuffle_performed": false,
+    "future_targets_used_for_fold_fit": false,
+    "validation_targets_fed_back_within_fold": false,
+    "preprocessing_fit_on_validation_or_future": false
+  },
+  "evaluation_policy": {
+    "primary_metric": {
+      "metric_id": "mae",
+      "direction": "lower_is_better"
+    },
+    "secondary_metrics": [
+      {
+        "metric_id": "rmse",
+        "direction": "lower_is_better"
+      },
+      {
+        "metric_id": "seasonal_mase",
+        "direction": "lower_is_better",
+        "seasonal_period": 12
+      }
+    ]
+  },
+  "result_semantics": {
+    "schema_version": "univariate-forecasting-result-semantics.v1",
+    "problem_type": "univariate_forecasting",
+    "primary_output": "forecast_series",
+    "output_structure": "ordered_forecast_points",
+    "forecast_value_kind": "continuous_numeric",
+    "forecast_count_source": "forecast_horizon"
+  },
+  "training_policy": {
+    "schema_version": "univariate-forecasting-training-policy.v1",
+    "selection_mode": "fixed_configuration",
+    "model_selection_performed": false,
+    "model_family": "deterministic_seasonal_trend_ols",
+    "fixed_model_configuration": {
+      "include_intercept": true,
+      "linear_time_trend": true,
+      "seasonal_effects": "additive_indicators",
+      "seasonal_period": 12,
+      "reference_season_position": 0,
+      "trend_origin": "development_start"
+    },
+    "finalization_policy": {
+      "backtesting_refit_each_fold": true,
+      "final_fit_scope": "full_development",
+      "freeze_before_final_holdout_open": true,
+      "final_holdout_evaluation_count": 1,
+      "final_holdout_used_for_adjustment": false,
+      "final_holdout_used_for_model_selection": false,
+      "no_retuning_after_final_holdout": true
+    }
+  },
+  "random_seed": 42
+}

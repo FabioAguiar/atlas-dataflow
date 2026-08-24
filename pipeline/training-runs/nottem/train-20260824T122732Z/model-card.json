@@ -1,0 +1,41 @@
+{
+  "dataset_identity": {
+    "dataset_slug": "nottem"
+  },
+  "evaluation": {
+    "metrics": [
+      {
+        "name": "mae",
+        "value": 1.5265838206627549
+      },
+      {
+        "name": "rmse",
+        "value": 1.8599669114528057
+      },
+      {
+        "name": "seasonal_mase",
+        "value": 0.555495460348981
+      }
+    ],
+    "partition_role": "final_holdout"
+  },
+  "fixed_model_configuration": {
+    "include_intercept": true,
+    "linear_time_trend": true,
+    "reference_season_position": 0,
+    "seasonal_effects": "additive_indicators",
+    "seasonal_period": 12,
+    "trend_origin": "development_start"
+  },
+  "generated_at": "2026-08-23T00:00:00+00:00",
+  "input_features": [],
+  "model_family": "deterministic_seasonal_trend_ols",
+  "notes": "Univariate forecasting model card. Input is a governed period|temperature history series, not a tabular feature vector -- input_features is intentionally empty; this is not a missing-feature omission. No random/stratified split policy or classification/continuous-regression scalar-target semantics apply to this forecasting model.",
+  "prediction_target": "temperature",
+  "problem_type": "univariate_forecasting",
+  "release_identity": {
+    "release_id": "release-20260824t122732z"
+  },
+  "role": "model_card",
+  "schema_version": "model-card.v1"
+}

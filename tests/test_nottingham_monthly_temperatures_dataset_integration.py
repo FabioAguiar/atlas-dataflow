@@ -77,7 +77,7 @@ def test_notebook_has_the_seventeen_orchestration_stages_in_order():
     markdown = _source("markdown")
     stages = [
         "## 1. Orchestration boundary declaration and responsibility",
-        "## 2. Atlas source identity / local raw input verification",
+        "## 2. Atlas source identity / local raw input acquisition and verification",
         "## 3. Reduced Atlas discovery evidence",
         "## 4. Nottingham temporal semantic intent v4",
         "## 5. Governed temporal preparation / prepared series",
@@ -160,10 +160,23 @@ def test_notebook_uses_local_atlas_raw_source_only():
     assert 'scientific_source_columns = ["time", "value"]' in code
 
 
-def test_notebook_raw_source_missing_fails_closed():
+def test_notebook_delegates_source_acquisition_to_generic_helper():
     code = _source("code")
-    assert '"atlas_local_raw_source_missing"' in code
-    assert "if not dataset_path.is_file():" in code
+    assert (
+        "from pipeline.dataset_acquisition import acquire_rdataset_csv, DatasetAcquisitionError"
+        in code
+    )
+    assert "source_acquisition_result = acquire_rdataset_csv(" in code
+    assert "dataset_name=dataset_slug," in code
+    assert 'package="datasets",' in code
+    assert "destination_relative_path=dataset_relative_path," in code
+    assert "expected_columns=scientific_source_columns," in code
+    assert "expected_row_count=scientific_source_row_count," in code
+    assert "repo_root=repo_root," in code
+    assert "except DatasetAcquisitionError as exc:" in code
+    assert '"atlas_source_acquisition_failed"' in code
+    assert "atlas_local_raw_source_missing" not in code
+    assert "if not dataset_path.is_file():" not in code
 
 
 def test_notebook_never_reads_external_scientific_project_path_or_network():
@@ -583,6 +596,16 @@ def test_notebook_declares_predict_view_declared_true_and_no_activation_performe
     assert '"promotion_performed": False,' in code
     assert '"registry_activation_performed": False,' in code
     assert '"public_visibility_or_profile_activation_performed": False,' in code
+
+
+def test_notebook_final_summary_carries_reduced_source_acquisition_fields():
+    code = _source("code")
+    assert '"source_reference": source_acquisition_result.get("source_reference"),' in code
+    assert (
+        '"source_materialization_status": source_acquisition_result.get("materialization_status"),'
+        in code
+    )
+    assert '"source_relative_path": source_acquisition_result.get("relative_path"),' in code
 
 
 def test_notebook_never_references_repo_root_before_assignment():

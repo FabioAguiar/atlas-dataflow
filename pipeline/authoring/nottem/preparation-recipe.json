@@ -1,0 +1,147 @@
+{
+  "backtesting": {
+    "fold_count": 9,
+    "forecast_horizon": 12,
+    "initial_training_observations": 120,
+    "mode": "expanding_window",
+    "origin_step_observations": 12,
+    "validation_targets_overlap": false
+  },
+  "discovery_evidence_ref": {
+    "path": "pipeline/evidence/nottem/discovery-evidence.json",
+    "schema_version": "dataset-discovery-evidence.v1"
+  },
+  "evidence_policy": {
+    "private_source_paths_prohibited": true,
+    "raw_api_payloads_prohibited": true,
+    "raw_logs_prohibited": true,
+    "raw_runtime_prohibited": true,
+    "reduced_and_sanitized": true,
+    "secrets_prohibited": true
+  },
+  "fold_schedule": [
+    {
+      "fold_index": 1,
+      "forecast_origin": "1929-12",
+      "training_observations": 120,
+      "validation_end": "1930-12",
+      "validation_observations": 12,
+      "validation_start": "1930-01"
+    },
+    {
+      "fold_index": 2,
+      "forecast_origin": "1930-12",
+      "training_observations": 132,
+      "validation_end": "1931-12",
+      "validation_observations": 12,
+      "validation_start": "1931-01"
+    },
+    {
+      "fold_index": 3,
+      "forecast_origin": "1931-12",
+      "training_observations": 144,
+      "validation_end": "1932-12",
+      "validation_observations": 12,
+      "validation_start": "1932-01"
+    },
+    {
+      "fold_index": 4,
+      "forecast_origin": "1932-12",
+      "training_observations": 156,
+      "validation_end": "1933-12",
+      "validation_observations": 12,
+      "validation_start": "1933-01"
+    },
+    {
+      "fold_index": 5,
+      "forecast_origin": "1933-12",
+      "training_observations": 168,
+      "validation_end": "1934-12",
+      "validation_observations": 12,
+      "validation_start": "1934-01"
+    },
+    {
+      "fold_index": 6,
+      "forecast_origin": "1934-12",
+      "training_observations": 180,
+      "validation_end": "1935-12",
+      "validation_observations": 12,
+      "validation_start": "1935-01"
+    },
+    {
+      "fold_index": 7,
+      "forecast_origin": "1935-12",
+      "training_observations": 192,
+      "validation_end": "1936-12",
+      "validation_observations": 12,
+      "validation_start": "1936-01"
+    },
+    {
+      "fold_index": 8,
+      "forecast_origin": "1936-12",
+      "training_observations": 204,
+      "validation_end": "1937-12",
+      "validation_observations": 12,
+      "validation_start": "1937-01"
+    },
+    {
+      "fold_index": 9,
+      "forecast_origin": "1937-12",
+      "training_observations": 216,
+      "validation_end": "1938-12",
+      "validation_observations": 12,
+      "validation_start": "1938-01"
+    }
+  ],
+  "forecast_horizon": 12,
+  "generated_at": "2026-08-23T00:00:00+00:00",
+  "leakage_controls": {
+    "final_holdout_used_for_backtesting": false,
+    "final_holdout_used_for_model_selection": false,
+    "future_targets_used_for_fold_fit": false,
+    "preprocessing_fit_on_validation_or_future": false,
+    "random_shuffle_performed": false,
+    "validation_targets_fed_back_within_fold": false
+  },
+  "partitions": {
+    "development": {
+      "end_index_value": "1938-12",
+      "observation_count": 228,
+      "start_index_value": "1920-01"
+    },
+    "sealed_final_holdout": {
+      "end_index_value": "1939-12",
+      "observation_count": 12,
+      "prospectively_sealed": true,
+      "start_index_value": "1939-01",
+      "used_for_backtesting": false,
+      "used_for_model_selection": false
+    }
+  },
+  "preparation_boundary_confirmations": {
+    "hidden_notebook_transformations": false,
+    "model_training_performed": false,
+    "release_publication_performed": false
+  },
+  "problem_type": "univariate_forecasting",
+  "producer": "notebooks/datasets/nottem/dataset_integration.ipynb",
+  "schema_version": "candidate-preparation-recipe.v2",
+  "semantic_identity_mirror": {
+    "frequency": "monthly",
+    "index_value_kind": "calendar_period",
+    "target_field_name": "temperature",
+    "time_index_field_name": "period"
+  },
+  "semantic_intent_ref": {
+    "path": "pipeline/dataset-semantic-intent-instances/nottem.json",
+    "schema_version": "dataset-semantic-intent.v4",
+    "sha256": "ec60a2e80b9d92b7bc40ee06c18e7c4de09b9d8026bbf16720ec6ed37901120f"
+  },
+  "temporal_integrity": {
+    "frequency_contiguous": true,
+    "strictly_increasing_index": true,
+    "target_missing_values_absent": true,
+    "target_values_finite": true,
+    "unique_index": true
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "artifact_type": "execution_contract_materialization_evidence",
+  "contract_version": "execution_contract_materialization_evidence.v1",
+  "dataset_identity": {
+    "dataset_slug": "nottem",
+    "dataset_source_ref": "pipeline/prepared/nottem/prepared-data.csv"
+  },
+  "execution_contract_ref": "contracts/nottem/execution-contract.json",
+  "source_artifact_references": {
+    "discovery_evidence_ref": null,
+    "preparation_recipe_ref": null,
+    "prepared_data_metadata_ref": null,
+    "dataset_modeling_intent_ref": null,
+    "public_context_ref": null,
+    "raw_dataset_ref": null,
+    "semantic_intent_ref": null
+  },
+  "execution_contract_version": "execution_contract.v2",
+  "requested_variant": "univariate_forecasting",
+  "materialized_result_schema_version": "univariate-forecasting-result-semantics.v1",
+  "semantic_intent_schema_version": "dataset-semantic-intent.v4",
+  "preparation_recipe_schema_version": "candidate-preparation-recipe.v2",
+  "target_column": "temperature",
+  "time_index_column": "period",
+  "frequency": "monthly",
+  "forecast_horizon": 12,
+  "backtesting_mode": "expanding_window",
+  "fold_count": 9,
+  "primary_metric_id": "mae",
+  "secondary_metric_ids": [
+    "rmse",
+    "seasonal_mase"
+  ],
+  "training_policy_schema_version": "univariate-forecasting-training-policy.v1",
+  "training_policy_selection_mode": "fixed_configuration",
+  "training_policy_model_selection_performed": false,
+  "training_policy_model_family": "deterministic_seasonal_trend_ols",
+  "no_defaults_inferred": true,
+  "readiness": "materialized",
+  "blocking_reasons": [],
+  "execution_contract_boundary_confirmations": {
+    "is_runtime_contract": false,
+    "is_public_contract": false,
+    "is_release_candidate_input": false,
+    "is_publisher_input": false,
+    "is_registry_artifact": false,
+    "is_api_fixture": false,
+    "is_ui_fixture": false,
+    "model_training_performed": false,
+    "model_family_selected": false
+  },
+  "generated_at": "2026-08-23T00:00:00+00:00"
+}

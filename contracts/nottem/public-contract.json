@@ -1,0 +1,24 @@
+{
+  "schema_version": "2.0.0",
+  "problem_type": "univariate_forecasting",
+  "input_kind": "history_series",
+  "history_series": {
+    "time_index_field": {
+      "name": "period",
+      "label": "Period",
+      "value_kind": "calendar_period",
+      "display_order": 1
+    },
+    "target_field": {
+      "name": "temperature",
+      "label": "Temperature",
+      "value_kind": "number",
+      "display_order": 2
+    },
+    "frequency": "monthly"
+  },
+  "forecast": {
+    "forecast_horizon": 12,
+    "horizon_user_editable": false
+  }
+}

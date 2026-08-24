@@ -1,0 +1,51 @@
+{
+  "artifact_type": "dataset_semantic_intent",
+  "authored_public_meaning": {
+    "human_reviewed": true,
+    "safe_projection_intent": "Forecast Nottingham Castle monthly average air temperature twelve months ahead from its own governed monthly history."
+  },
+  "authoring_generation_id": "nottem-authoring-v1",
+  "dataset_identity": {
+    "dataset_logical_name": "Nottingham Monthly Temperatures",
+    "dataset_slug": "nottem"
+  },
+  "field_role_decisions": [
+    {
+      "field_name": "period",
+      "include_in_features": false,
+      "role": "temporal_index"
+    },
+    {
+      "exclusion_reason": "Governed univariate forecasting target.",
+      "field_name": "temperature",
+      "include_in_features": false,
+      "role": "target"
+    }
+  ],
+  "generated_at": "2026-08-23T00:00:00+00:00",
+  "governing_capability_profile": {
+    "capability_profile_id": "univariate-predictive-forecasting",
+    "capability_profile_version": "v1"
+  },
+  "schema_version": "dataset-semantic-intent.v4",
+  "semantic_boundary_confirmations": {
+    "model_bytes_embedded": false,
+    "observed_source_statistics_embedded": false,
+    "release_state_embedded": false,
+    "scientific_conclusions_embedded": false,
+    "training_outcome_embedded": false
+  },
+  "target_semantics": {
+    "forecasting_mode": "univariate",
+    "is_final_training_configuration": false,
+    "target_field_name": "temperature",
+    "target_value_kind": "numeric",
+    "task_type": "univariate_forecasting"
+  },
+  "temporal_semantics": {
+    "frequency": "monthly",
+    "index_value_kind": "calendar_period",
+    "source_exogenous_predictors": "forbidden",
+    "time_index_field_name": "period"
+  }
+}

@@ -77,6 +77,20 @@ const regressionResultContract = {
   },
 };
 
+const forecastingResultContract = {
+  status: "available" as const,
+  semantics: {
+    schema_version: "univariate-forecasting-result-semantics.v1" as const,
+    problem_type: "univariate_forecasting" as const,
+    result_schema_version: "univariate-forecasting-result.v1" as const,
+    primary_output: "forecast_series" as const,
+    output_structure: "ordered_forecast_points" as const,
+    forecast_value_kind: "continuous_numeric" as const,
+    forecast_count_source: "forecast_horizon" as const,
+    model_descriptor: { model_family: "seasonal_arima", display_name: "Seasonal ARIMA Forecaster" },
+  },
+};
+
 describe("release-derived multiclass problem type", () => {
   it("overrides historical binary context on both previews", () => {
     expect(projectHomeCardPreview(dataset, draftForm, context, multiclassResultContract).problemType)
@@ -92,6 +106,28 @@ describe("release-derived continuous regression problem type (Project Spec S0229
       .toBe("continuous_regression");
     expect(projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, regressionResultContract).analysisType)
       .toBe("continuous_regression");
+  });
+});
+
+// Project Spec S0253: an available forecasting result contract must resolve
+// univariate_forecasting on both previews and the same governed forecasting
+// model display name, through the existing shared availableResultProblemType/
+// resolveModelDisplayName authorities -- no forecasting-specific branch.
+describe("release-derived forecasting problem type (Project Spec S0253)", () => {
+  it("overrides historical binary context on both previews", () => {
+    expect(projectHomeCardPreview(dataset, draftForm, context, forecastingResultContract).problemType)
+      .toBe("univariate_forecasting");
+    expect(projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, forecastingResultContract).analysisType)
+      .toBe("univariate_forecasting");
+  });
+
+  it("derives the governed forecasting model display name on both previews", () => {
+    expect(projectHomeCardPreview(dataset, draftForm, context, forecastingResultContract).modelDisplayName)
+      .toBe("Seasonal ARIMA Forecaster");
+    expect(
+      projectDatasetDetailPreview(dataset, draftForm, context, contract, metrics, forecastingResultContract)
+        .modelDisplayName,
+    ).toBe("Seasonal ARIMA Forecaster");
   });
 });
 // Project Spec S0238: both Live Preview projection functions must derive the
@@ -825,6 +861,37 @@ describe("projectPerformanceFocusPreview", () => {
       focus_id: "overall_discrimination",
       highlighted_score_id: "roc_auc",
       scores: [{ score_id: "roc_auc", display_label: "ROC-AUC", value: "0.85", value_source: "manual", order: 0, visible: false }],
+    })).toBeNull();
+  });
+
+  // Project Spec S0253: forecasting_performance projects mae/rmse/seasonal_mase
+  // through the same deterministic checked-order/highlight-visibility rules as
+  // every other focus -- no forecasting-specific branch.
+  it("projects a forecasting_performance draft with deterministic mae/rmse/seasonal_mase order", () => {
+    expect(projectPerformanceFocusPreview({
+      focus_id: "forecasting_performance",
+      highlighted_score_id: "mae",
+      scores: [
+        { score_id: "seasonal_mase", display_label: "Seasonal MASE", value: "1.12", value_source: "canonical", order: 9, visible: true },
+        { score_id: "mae", display_label: "MAE", value: "3.21", value_source: "canonical", order: 8, visible: true },
+        { score_id: "rmse", display_label: "RMSE", value: "4.55", value_source: "canonical", order: 7, visible: true },
+      ],
+    })).toEqual({
+      focus_id: "forecasting_performance",
+      highlighted_score_id: "mae",
+      visible_scores: [
+        { score_id: "seasonal_mase", display_label: "Seasonal MASE", value: "1.12", value_source: "canonical", order: 0 },
+        { score_id: "mae", display_label: "MAE", value: "3.21", value_source: "canonical", order: 1 },
+        { score_id: "rmse", display_label: "RMSE", value: "4.55", value_source: "canonical", order: 2 },
+      ],
+    });
+  });
+
+  it("returns null when the highlighted forecasting score is not visible", () => {
+    expect(projectPerformanceFocusPreview({
+      focus_id: "forecasting_performance",
+      highlighted_score_id: "rmse",
+      scores: [{ score_id: "rmse", display_label: "RMSE", value: "4.55", value_source: "canonical", order: 0, visible: false }],
     })).toBeNull();
   });
 });

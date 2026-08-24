@@ -7,6 +7,7 @@ import {
   type BinaryResultSemantics,
   availableResultProblemType,
   type ContinuousRegressionResultSemantics,
+  type ForecastingResultSemantics,
   type MulticlassResultSemantics,
 } from "../components/ResultCard/types";
 import type { DatasetIconName } from "./datasetPresentation";
@@ -67,7 +68,7 @@ type PreviewMetrics = Record<string, unknown>;
 // existing convention, so it never imports a page type.
 type PreviewResultContract =
   | { status: "idle" | "loading" }
-  | { status: "available"; semantics: BinaryResultSemantics | MulticlassResultSemantics | ContinuousRegressionResultSemantics }
+  | { status: "available"; semantics: BinaryResultSemantics | MulticlassResultSemantics | ContinuousRegressionResultSemantics | ForecastingResultSemantics }
   | { status: "unavailable" | "transport_failure" | "incompatible"; message?: string };
 
 // Project Spec S0120: the draft fields required to feed the shared public

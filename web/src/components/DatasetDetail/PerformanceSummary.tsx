@@ -5,13 +5,14 @@ import {
   getPerformanceMetricMetadata,
   isPerformanceScoreApplicable,
   type OptimizationSemantics,
+  type PerformanceFocusId,
   type ProblemType,
 } from "../../lib/performanceMetricMetadata";
 
 type MetricsData = Record<string, unknown>;
 
 export type PerformanceFocus = {
-  focus_id: "overall_discrimination" | "positive_class_detection" | "balanced_classification" | "probability_quality" | "operational_decision" | "regression_performance";
+  focus_id: PerformanceFocusId;
   highlighted_score_id: string;
   visible_scores: Array<{
     score_id: string;
@@ -153,19 +154,25 @@ export default function PerformanceSummary({
   // that happens to still be persisted from before the release became
   // continuous_regression.
   const isContinuousRegression = problemType === "continuous_regression";
+  // Project Spec S0253: a univariate_forecasting release must only ever
+  // render the bounded mae/rmse/seasonal_mase catalog, never a stale
+  // classification-only score persisted from before the release became
+  // univariate_forecasting.
+  const isForecasting = problemType === "univariate_forecasting";
   // Project Spec S0215: for a multiclass release, never present an
   // ambiguous binary-only published score id (f1_score, precision, recall,
   // specificity, g_mean, ...) as multiclass-compatible -- even if it was
   // persisted by Admin before the release became multiclass. Binary
   // rendering is completely unaffected.
   const publishedScores = performanceFocus?.visible_scores
-    .filter((score) => (!isMulticlass && !isContinuousRegression) || isPerformanceScoreApplicable(score.score_id, problemType!))
+    .filter((score) => (!isMulticlass && !isContinuousRegression && !isForecasting) || isPerformanceScoreApplicable(score.score_id, problemType!))
     .slice()
     .sort((left, right) => left.order - right.order || left.score_id.localeCompare(right.score_id));
   const hasPublishedFocus = Boolean(performanceFocus && publishedScores?.length);
-  // Project Spec S0215/S0229: the canonical fallback path also only renders
-  // recognized explicit multiclass/regression ids for that release's problem type.
-  const fallbackOrder = isMulticlass || isContinuousRegression
+  // Project Spec S0215/S0229/S0253: the canonical fallback path also only
+  // renders recognized explicit multiclass/regression/forecasting ids for
+  // that release's problem type.
+  const fallbackOrder = isMulticlass || isContinuousRegression || isForecasting
     ? evaluation.order.filter((key) => isPerformanceScoreApplicable(key, problemType!))
     : evaluation.order;
   const hasAnyScore = fallbackOrder.length > 0;

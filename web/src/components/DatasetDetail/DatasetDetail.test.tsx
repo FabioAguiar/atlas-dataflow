@@ -452,6 +452,73 @@ describe("PerformanceSummary continuous-regression problem-type filtering and di
   });
 });
 
+// Project Spec S0253: the forecasting Performance Summary must recognize
+// mae/rmse/seasonal_mase with the correct lower-is-better orientation and
+// never present a stale classification-only score for a univariate_forecasting
+// release, using the same shared PerformanceFocusId/applicability authority
+// multiclass/regression already use above.
+describe("PerformanceSummary forecasting problem-type filtering and direction (Project Spec S0253)", () => {
+  const forecastingFocus = {
+    focus_id: "forecasting_performance" as const,
+    highlighted_score_id: "mae",
+    visible_scores: [
+      { score_id: "mae", display_label: "MAE", value: "3.21", value_source: "canonical" as const, order: 0 },
+      { score_id: "rmse", display_label: "RMSE", value: "4.55", value_source: "canonical" as const, order: 1 },
+      { score_id: "seasonal_mase", display_label: "Seasonal MASE", value: "1.12", value_source: "canonical" as const, order: 2 },
+    ],
+  };
+
+  it("renders the shared forecasting_performance focus label", () => {
+    render(
+      <PerformanceSummary metrics={{}} performanceFocus={forecastingFocus} problemType="univariate_forecasting" />,
+    );
+    expect(screen.getByText("Forecasting performance")).toBeInTheDocument();
+  });
+
+  it("renders mae/rmse/seasonal_mase with the correct lower-is-better arrow orientation", () => {
+    render(
+      <PerformanceSummary metrics={{}} performanceFocus={forecastingFocus} problemType="univariate_forecasting" />,
+    );
+
+    const mae = screen.getByText("MAE").closest(".performance-summary__score") as HTMLElement;
+    expect(mae.querySelector(".performance-summary__score-arrows")).toHaveAttribute("aria-label", "Lower is better");
+    const rmse = screen.getByText("RMSE").closest(".performance-summary__score") as HTMLElement;
+    expect(rmse.querySelector(".performance-summary__score-arrows")).toHaveAttribute("aria-label", "Lower is better");
+    const seasonalMase = screen.getByText("Seasonal MASE").closest(".performance-summary__score") as HTMLElement;
+    expect(seasonalMase.querySelector(".performance-summary__score-arrows")).toHaveAttribute("aria-label", "Lower is better");
+    // Project Spec S0221: never a visible "Higher/Lower is better" line.
+    expect(screen.queryByText("Higher is better")).not.toBeInTheDocument();
+    expect(screen.queryByText("Lower is better")).not.toBeInTheDocument();
+  });
+
+  it("filters a stale classification-only published score id out of a univariate_forecasting release", () => {
+    const staleClassificationFocus = {
+      focus_id: "forecasting_performance" as const,
+      highlighted_score_id: "mae",
+      visible_scores: [
+        { score_id: "mae", display_label: "MAE", value: "3.21", value_source: "canonical" as const, order: 0 },
+        { score_id: "accuracy", display_label: "Accuracy", value: "0.9", value_source: "manual" as const, order: 1 },
+      ],
+    };
+    render(
+      <PerformanceSummary
+        metrics={{}}
+        performanceFocus={staleClassificationFocus}
+        problemType="univariate_forecasting"
+      />,
+    );
+    expect(screen.getByText("MAE")).toBeInTheDocument();
+    expect(screen.queryByText("Accuracy")).not.toBeInTheDocument();
+  });
+
+  it("forecasting focus applicability remains bounded and does not spill into classification/regression foci", () => {
+    expect(isPerformanceFocusApplicable("forecasting_performance", "binary_classification")).toBe(false);
+    expect(isPerformanceFocusApplicable("forecasting_performance", "multiclass_classification")).toBe(false);
+    expect(isPerformanceFocusApplicable("forecasting_performance", "continuous_regression")).toBe(false);
+    expect(isPerformanceFocusApplicable("regression_performance", "univariate_forecasting")).toBe(false);
+  });
+});
+
 // Project Spec S0215: the shared normalized multiclass confusion-matrix
 // renderer used by both public Dataset Detail and Admin Live Preview.
 describe("ConfusionMatrix (Project Spec S0215)", () => {

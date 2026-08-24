@@ -1,0 +1,36 @@
+{
+  "artifact_kind": "training_metrics",
+  "created_at": "2026-08-11T00:00:00+00:00",
+  "cross_validation_summary": {
+    "metrics": [
+      {
+        "name": "average_precision",
+        "value": 0.6728264921781798
+      }
+    ],
+    "partition_role": "train",
+    "sealed_before_finalization": false,
+    "used_for_adjustment": false,
+    "used_for_fitting": true,
+    "used_for_model_selection": true,
+    "used_for_threshold_selection": false
+  },
+  "evidence_identity": {
+    "dataset_slug": "telco-customer-churn",
+    "model_source_mode": "validated_external_fitted_model"
+  },
+  "schema_version": "training-metrics.external-fitted-model.v1",
+  "validation_evaluation": {
+    "metrics": [
+      {
+        "name": "average_precision",
+        "value": 0.67082102305192
+      }
+    ],
+    "partition_role": "validation",
+    "sealed_before_finalization": false,
+    "used_for_fitting": false,
+    "used_for_model_selection": true,
+    "used_for_threshold_selection": true
+  }
+}

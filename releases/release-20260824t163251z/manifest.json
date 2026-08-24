@@ -2,74 +2,74 @@
   "schema_version": "release-manifest.v1",
   "manifest_kind": "release_manifest",
   "dataset_identity": {
-    "dataset_slug": "concrete-compressive-strength",
-    "dataset_title": "Concrete Compressive Strength"
+    "dataset_slug": "nottem",
+    "dataset_title": "Nottingham Monthly Temperatures"
   },
   "release_identity": {
-    "release_id": "release-20260824-001",
+    "release_id": "release-20260824t163251z",
     "release_version": "1.0.0-rc.1",
-    "created_at": "2026-08-24T16:21:10Z"
+    "created_at": "2026-08-24T16:32:52Z"
   },
   "artifacts": [
     {
       "role": "contracts",
       "reference": "contracts/runtime-contract.json",
       "hash_algorithm": "sha256",
-      "hash_value": "e7472a6563de4e2fdf6c60175e3a47ff4e8e472d504fc6098d9c73516da27850"
+      "hash_value": "01ade30408ab19b4f87bfe369c74a1df9948ff06e2124d544e36f52e05379b34"
     },
     {
       "role": "public_contract",
       "reference": "contracts/public-contract.json",
       "hash_algorithm": "sha256",
-      "hash_value": "73ebd2fd437d9c9335e5b320812ff255541cbab89849100c235f0131808f3a7c"
+      "hash_value": "695049dc6a937409059c0f558ba490ce2efadbedb641fb00e9b8a8a78b67dfc8"
     },
     {
       "role": "predictive_bundle",
       "reference": "predictions/bundle.json",
       "hash_algorithm": "sha256",
-      "hash_value": "54021d936c55a584f30c1ede4ec9f299d1b2f69ba8b26f55ec2c02e101cea8de"
+      "hash_value": "9fade2b86dd9224e96bb4e2ee412505a41d21df7101693935d651871d130a434"
     },
     {
       "role": "model_artifact",
       "reference": "models/model.pkl",
       "hash_algorithm": "sha256",
-      "hash_value": "91808cc4d150763ae3415aa202d2e25be1141c62039d5bcefd85991f12a0bae5"
+      "hash_value": "cec68ba3991dd74b2ee54bfcd062ccc093b5c3d70a5ef159fb8d62c9ee95ce5d"
     },
     {
       "role": "metrics",
       "reference": "metrics/metrics.json",
       "hash_algorithm": "sha256",
-      "hash_value": "eba3a57e011108a94297f2b39a825ba3886027c33e7337bca68bdb2374a826f4"
+      "hash_value": "c67f8e57d6db4af8e122b967d74c6db412efcedfa7edac04a07ef17a7e501bb4"
     },
     {
       "role": "model_card",
       "reference": "model-card.json",
       "hash_algorithm": "sha256",
-      "hash_value": "4ce82fdeda252519b4c624a9785ca16a38b8daea6a70f16a38ddf3af41bb6b16"
+      "hash_value": "ba676329ce27cca5a3d1fc2b90cc094a88fade70fdc8fe89379d9857e55971cc"
     },
     {
       "role": "public_context",
       "reference": "public-context.json",
       "hash_algorithm": "sha256",
-      "hash_value": "3d8b998a5b22a6b9413f6490809f164b013e89c0e2ebe69d6cce1e8269a9176b"
+      "hash_value": "f9c3a15c4a110fbbc9557c349a1a7ddb1cf0b598bde97ce8240f42a8139c103c"
     },
     {
       "role": "visualizations",
       "reference": "visualizations/visualizations.json",
       "hash_algorithm": "sha256",
-      "hash_value": "ed09833ad9b8a85a82f08d86aa72f157bbeccfb372410040058eff1446fc8543"
+      "hash_value": "a8ce0d2d69da6e6e3356d4309df5403986233d24f1edfd50395b1866f1fb247a"
     },
     {
       "role": "manifest_input",
       "reference": "manifest-input.json",
       "hash_algorithm": "sha256",
-      "hash_value": "67f27be94529d6139ee79116497008653e223cfd2dd3b90b221729214e0e7483"
+      "hash_value": "17ad60e9a57b776e3ae6c2d1594e89e74ffeb42f6e86bbcca7e09d05b163cf70"
     },
     {
       "role": "candidate_metadata",
       "reference": "release-candidate.json",
       "hash_algorithm": "sha256",
-      "hash_value": "91bc7b5251368e50ab3519f0df82725e9849c92d284c44c660f74bb083e197da"
+      "hash_value": "ec2cc18a40b835040211ab735999891ed902126800c1a1b0d6c1e59f599da653"
     }
   ],
   "required_hash_coverage": {

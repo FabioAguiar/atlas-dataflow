@@ -7,27 +7,27 @@
   },
   "durable_references": {
     "inference_bundle": {
-      "path": "pipeline/inference-bundles/concrete-compressive-strength/inference-bundle.json",
-      "sha256": "54021d936c55a584f30c1ede4ec9f299d1b2f69ba8b26f55ec2c02e101cea8de"
+      "path": "pipeline/inference-bundles/nottem/inference-bundle.json",
+      "sha256": "9fade2b86dd9224e96bb4e2ee412505a41d21df7101693935d651871d130a434"
     },
     "manifest": {
-      "path": "publisher/runs/validate-20260824T162110Z/manifest.json",
-      "sha256": "d37bece0a6e3fb30e3ca395ecc0af74280d0acca54b03b220d3d0b1ee812aef3"
+      "path": "publisher/runs/validate-20260824T163253Z/manifest.json",
+      "sha256": "3c16df66dd246bd60191664f5f77b8fc4130f3630cb0d8e1498afcaa8a28fc31"
     },
     "materialization_result": null,
     "operational_readiness_source": null,
     "publisher_validation_result": {
-      "path": "publisher/runs/validate-20260824T162110Z/validation-result.json",
-      "sha256": "ef9afdd34289564897d44b9732aa93b0eac6901b4a5446d38d96ce678f446aea"
+      "path": "publisher/runs/validate-20260824T163253Z/validation-result.json",
+      "sha256": "440c81fd5a0cfaf1b46f84ac4ea9aca64bb120c025b04d4481bd57e8707bfe56"
     },
     "release_candidate": {
-      "path": "releases/candidates/concrete-compressive-strength/release-20260824-001/release-candidate.json",
-      "sha256": "91bc7b5251368e50ab3519f0df82725e9849c92d284c44c660f74bb083e197da"
+      "path": "releases/candidates/nottem/release-20260824t163251z/release-candidate.json",
+      "sha256": "ec2cc18a40b835040211ab735999891ed902126800c1a1b0d6c1e59f599da653"
     }
   },
   "manifest_outcome": {
     "manifest_generated": true,
-    "manifest_path": "publisher/runs/validate-20260824T162110Z/manifest.json"
+    "manifest_path": "publisher/runs/validate-20260824T163253Z/manifest.json"
   },
   "model_source_mode": "atlas_internal_training",
   "operational_readiness": {
@@ -41,9 +41,9 @@
   "promotion_eligibility": true,
   "reasons": [],
   "run_identity": {
-    "created_at": "2026-08-24T16:21:10+00:00",
-    "dataset_slug": "concrete-compressive-strength",
-    "run_id": "train-20260824T162109Z"
+    "created_at": "2026-08-24T16:32:53+00:00",
+    "dataset_slug": "nottem",
+    "run_id": "train-20260824T163251Z"
   },
   "schema_version": "validated-run-terminal-result.v1",
   "status": "completed",

@@ -1095,6 +1095,33 @@ def validate_candidate(
                     json_artifacts.get("metrics"),
                 )
             )
+        elif (
+            isinstance(_native_result_semantics, dict)
+            and _native_result_semantics.get("problem_type") == "binary_classification"
+            and isinstance(json_artifacts.get("metrics"), dict)
+            and json_artifacts["metrics"].get("schema_version") == _INTERNAL_BINARY_V5_METRICS_SCHEMA_VERSION
+        ):
+            # Project Spec S0259: native binary fixed-configuration (v5)
+            # dispatch, gated on the metrics artifact's own declared
+            # training-metrics.v5 identity rather than the predictive
+            # bundle's content -- a legacy internal binary v1 candidate's
+            # metrics artifact declares training-metrics.v1, never v5, so it
+            # never reaches this branch.
+            rejection_reasons.extend(
+                _internal_native_binary_v5_predictive_bundle_compatibility(_native_predictive_bundle_data)
+            )
+            rejection_reasons.extend(
+                _internal_native_binary_v5_metrics_public_projection_check(
+                    json_artifacts.get("metrics"), _native_predictive_bundle_data
+                )
+            )
+            rejection_reasons.extend(
+                _internal_native_binary_v5_visualizations_compatibility(
+                    json_artifacts.get("visualizations"),
+                    _native_predictive_bundle_data,
+                    json_artifacts.get("metrics"),
+                )
+            )
 
     # --- Model artifact / predictive bundle cross-consistency (Project Spec
     # S0107). The model is binary and never JSON-parsed itself; only its
@@ -2407,6 +2434,238 @@ def _internal_native_multiclass_visualizations_compatibility(
             "visualizations",
             "native_multiclass_class_order_mismatch",
         )]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Internal native binary v5 (fixed-configuration) public-release
+# compatibility (Project Spec S0259). A native binary predictive bundle's
+# own result_semantics shape is structurally identical whether it was
+# produced from a legacy training-parameter-record.v1 record or a
+# training-parameter-record.v5 record (both project the same
+# binary-result-semantics.v1 shape), so the dispatch gate below never
+# inspects the predictive bundle's own content to distinguish the two --
+# instead it is gated on the candidate's own metrics artifact declaring
+# training-metrics.v5, the real governed bundle/provenance identity a v5
+# candidate always carries alongside training-metrics.v1 for the legacy
+# path. The legacy internal binary v1 path (whose metrics artifact declares
+# training-metrics.v1, never v5) never reaches these functions, so its
+# acceptance behavior is unchanged. Never recomputes predictions, metrics,
+# thresholds, or permutation importance -- only cross-checks already-
+# governed declarations.
+# ---------------------------------------------------------------------------
+
+_INTERNAL_BINARY_V5_RESULT_SEMANTICS_SCHEMA_VERSION = "binary-result-semantics.v1"
+_INTERNAL_BINARY_V5_METRICS_SCHEMA_VERSION = "training-metrics.v5"
+_INTERNAL_BINARY_V5_VISUALIZATIONS_SCHEMA_VERSION = "analytical-visualizations.v5"
+
+
+def _internal_native_binary_v5_predictive_bundle_compatibility(
+    predictive_bundle_data: dict | None,
+) -> list[dict]:
+    if not isinstance(predictive_bundle_data, dict):
+        return []
+    result_semantics = predictive_bundle_data.get("result_semantics")
+    if (
+        not isinstance(result_semantics, dict)
+        or result_semantics.get("schema_version") != _INTERNAL_BINARY_V5_RESULT_SEMANTICS_SCHEMA_VERSION
+        or result_semantics.get("problem_type") != "binary_classification"
+    ):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native binary fixed-configuration predictive bundle is missing compatible binary "
+            "result_semantics required for public release compatibility.",
+            "predictive_bundle",
+            "native_binary_v5_result_semantics_missing",
+        )]
+
+    positive_class = result_semantics.get("positive_class")
+    if not isinstance(positive_class, dict) or not isinstance(positive_class.get("class_id"), str):
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native binary fixed-configuration predictive bundle is missing a governed "
+            "result_semantics.positive_class.class_id.",
+            "predictive_bundle",
+            "native_binary_v5_positive_class_missing",
+        )]
+
+    model_descriptor = result_semantics.get("model_descriptor")
+    model_family = model_descriptor.get("model_family") if isinstance(model_descriptor, dict) else None
+    if model_family != "hist_gradient_boosting":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native binary fixed-configuration predictive bundle model_descriptor.model_family "
+            "must be hist_gradient_boosting.",
+            "predictive_bundle",
+            "native_binary_v5_model_family_mismatch",
+        )]
+
+    return []
+
+
+def _internal_native_binary_v5_metrics_public_projection_check(
+    metrics_data: dict | None, predictive_bundle_data: dict | None = None
+) -> list[dict]:
+    """Require a native binary fixed-configuration (v5) candidate's metrics
+    artifact to declare training-metrics.v5, agree with the predictive
+    bundle on the governed positive class, and contain at least one finite,
+    non-boolean, projectable binary metric in its selected public
+    evaluation partition (completed final_test_evaluation when present,
+    otherwise validation_evaluation -- training rows are never selected)."""
+    if not isinstance(metrics_data, dict):
+        return []
+    if metrics_data.get("schema_version") != _INTERNAL_BINARY_V5_METRICS_SCHEMA_VERSION:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            f"Native binary fixed-configuration candidate metrics artifact does not declare "
+            f"{_INTERNAL_BINARY_V5_METRICS_SCHEMA_VERSION!r}.",
+            "metrics",
+            "native_binary_v5_metrics_schema_version_missing",
+        )]
+
+    bundle_result_semantics = (
+        predictive_bundle_data.get("result_semantics") if isinstance(predictive_bundle_data, dict) else None
+    )
+    bundle_positive_class = (
+        bundle_result_semantics.get("positive_class") if isinstance(bundle_result_semantics, dict) else None
+    )
+    bundle_positive_class_id = (
+        bundle_positive_class.get("class_id") if isinstance(bundle_positive_class, dict) else None
+    )
+
+    metrics_classification_evidence = metrics_data.get("classification_evidence")
+    metrics_positive_class_id = (
+        metrics_classification_evidence.get("positive_class_id")
+        if isinstance(metrics_classification_evidence, dict)
+        else None
+    )
+    if (
+        not bundle_positive_class_id
+        or not metrics_positive_class_id
+        or bundle_positive_class_id != metrics_positive_class_id
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native binary fixed-configuration metrics artifact classification_evidence."
+            "positive_class_id does not match the predictive bundle's governed positive class.",
+            "metrics",
+            "native_binary_v5_positive_class_mismatch",
+        )]
+
+    final_test = metrics_data.get("final_test_evaluation")
+    validation = metrics_data.get("validation_evaluation")
+    selected = (
+        final_test
+        if isinstance(final_test, dict) and final_test.get("completed") is True
+        else validation
+    )
+
+    raw_metrics = selected.get("metrics") if isinstance(selected, dict) else None
+    has_projectable_metric = False
+    if isinstance(raw_metrics, list):
+        for item in raw_metrics:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if (
+                isinstance(name, str)
+                and name.strip().lower() in _PUBLIC_PROJECTABLE_METRIC_ALIASES
+                and _is_finite_numeric(item.get("value"))
+            ):
+                has_projectable_metric = True
+                break
+
+    if not has_projectable_metric:
+        return [_safe_rejection_reason(
+            "incomplete_required_artifact",
+            "Native binary fixed-configuration candidate metrics selected public evaluation "
+            "partition yields no supported public metric.",
+            "metrics",
+            "native_binary_v5_metrics_no_public_metric",
+        )]
+    return []
+
+
+def _internal_native_binary_v5_visualizations_compatibility(
+    visualizations_data: dict | None,
+    predictive_bundle_data: dict | None,
+    metrics_data: dict | None = None,
+) -> list[dict]:
+    """Require a native binary fixed-configuration (v5) candidate's
+    visualizations artifact to declare analytical-visualizations.v5, agree
+    with the predictive bundle on the governed positive class, agree on the
+    hist_gradient_boosting model family, and declare the truthful
+    permutation_importance feature-importance method."""
+    if not isinstance(visualizations_data, dict) or not isinstance(predictive_bundle_data, dict):
+        return []
+    if visualizations_data.get("schema_version") != _INTERNAL_BINARY_V5_VISUALIZATIONS_SCHEMA_VERSION:
+        return [_safe_rejection_reason(
+            "visualizations_provenance_mismatch",
+            "Native binary fixed-configuration visualizations schema profile does not match the "
+            "predictive bundle's problem type.",
+            "visualizations",
+            "native_binary_v5_visualizations_version_mismatch",
+        )]
+
+    bundle_result_semantics = predictive_bundle_data.get("result_semantics")
+    bundle_positive_class = (
+        bundle_result_semantics.get("positive_class") if isinstance(bundle_result_semantics, dict) else None
+    )
+    bundle_positive_class_id = (
+        bundle_positive_class.get("class_id") if isinstance(bundle_positive_class, dict) else None
+    )
+
+    viz_classification_evidence = visualizations_data.get("classification_evidence")
+    viz_positive_class_id = (
+        viz_classification_evidence.get("positive_class_id")
+        if isinstance(viz_classification_evidence, dict)
+        else None
+    )
+    if (
+        not bundle_positive_class_id
+        or not viz_positive_class_id
+        or bundle_positive_class_id != viz_positive_class_id
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native binary fixed-configuration visualizations artifact classification_evidence."
+            "positive_class_id does not match the predictive bundle's governed positive class.",
+            "visualizations",
+            "native_binary_v5_positive_class_mismatch",
+        )]
+
+    bundle_model_family = _first_nested(
+        predictive_bundle_data, (("result_semantics", "model_descriptor", "model_family"),)
+    )
+    feature_importance_method = visualizations_data.get("feature_importance_method")
+    visualizations_model_family = (
+        feature_importance_method.get("model_family") if isinstance(feature_importance_method, dict) else None
+    )
+    if (
+        bundle_model_family
+        and visualizations_model_family
+        and bundle_model_family != visualizations_model_family
+    ):
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native binary fixed-configuration predictive bundle model family does not match the "
+            "visualizations artifact's feature_importance_method model family.",
+            "visualizations",
+            "native_binary_v5_model_family_mismatch",
+        )]
+
+    method = (
+        feature_importance_method.get("method") if isinstance(feature_importance_method, dict) else None
+    )
+    if method != "permutation_importance":
+        return [_safe_rejection_reason(
+            "contradictory_candidate_artifact",
+            "Native binary fixed-configuration visualizations artifact feature_importance_method."
+            "method must be permutation_importance.",
+            "visualizations",
+            "native_binary_v5_feature_importance_method_mismatch",
+        )]
+
     return []
 
 

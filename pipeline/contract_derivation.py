@@ -626,7 +626,9 @@ _TRAINING_POLICY_SELECTION_MODE_VOCABULARY = frozenset({"evaluate_allowed_famili
 _HGB_REQUIRED_HYPERPARAMETERS = frozenset({
     "class_weight", "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf",
 })
-_HGB_OPTIONAL_HYPERPARAMETERS = frozenset({"early_stopping"})
+# Project Spec S0259: max_depth is optional (null or integer >= 1) for the
+# classification HGB shape -- never required, never dataset-specific.
+_HGB_OPTIONAL_HYPERPARAMETERS = frozenset({"early_stopping", "max_depth"})
 _HGB_ALLOWED_HYPERPARAMETERS = _HGB_REQUIRED_HYPERPARAMETERS | _HGB_OPTIONAL_HYPERPARAMETERS
 
 # Project Spec S0224: the two bounded fixed-parameter families this
@@ -735,6 +737,10 @@ def _validate_hgb_hyperparameters(hyperparameters: Any) -> list[str]:
             reasons.append("hyperparameters.min_samples_leaf must be an integer >= 1")
     if "early_stopping" in hyperparameters and hyperparameters["early_stopping"] not in ("auto", True, False):
         reasons.append("hyperparameters.early_stopping must be 'auto' or a boolean")
+    if "max_depth" in hyperparameters:
+        value = hyperparameters["max_depth"]
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
+            reasons.append("hyperparameters.max_depth must be null or an integer >= 1")
     return reasons
 
 

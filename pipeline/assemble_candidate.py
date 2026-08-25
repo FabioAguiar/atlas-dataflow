@@ -532,6 +532,20 @@ _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V3 = "analytical-visualizations.v3"
 _TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V4 = "training-parameter-record.v4"
 _TRAINING_METRICS_INTERNAL_VERSION_V4 = "training-metrics.v4"
 _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4 = "analytical-visualizations.v4"
+# Project Spec S0259: the v5 (native binary fixed-configuration) INTERNAL
+# Atlas-native training-record profile -- mirrors the v2 (multiclass), v3
+# (continuous-regression), and v4 (forecasting) recognition above exactly:
+# still an internal M24 candidate (never coerced to manual_governed_input),
+# never falls through to the legacy v1 governance constants, and requires
+# its own real declared training-metrics.v5 to be carried forward verbatim
+# rather than any other metrics version. The governed visualization role for
+# a v5 candidate is reserved as analytical-visualizations.v5 -- a caller
+# that instead points the visualizations role at a v1/v2/v3/v4
+# classification/regression/forecasting visualization is rejected as a
+# mismatch (fails closed), never silently substituted.
+_TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V5 = "training-parameter-record.v5"
+_TRAINING_METRICS_INTERNAL_VERSION_V5 = "training-metrics.v5"
+_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V5 = "analytical-visualizations.v5"
 _EXTERNAL_MODEL_SOURCE_STAGE = "manual_governed_input"
 
 
@@ -654,6 +668,24 @@ def _resolve_training_provenance(
             raise ValueError(
                 "visualizations contract_version does not agree with training_parameter_record "
                 f"provenance: expected {_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V4!r}, got "
+                f"{visualizations_version!r}"
+            )
+        return "M24", False, record_version, metrics_version, visualizations_version
+
+    if record_version == _TRAINING_PARAMETER_RECORD_INTERNAL_VERSION_V5:
+        training_metrics_path = repo_root / artifact_references["training_metrics"]
+        metrics_version = _read_declared_contract_version(training_metrics_path)
+        if metrics_version != _TRAINING_METRICS_INTERNAL_VERSION_V5:
+            raise ValueError(
+                "training_metrics contract_version does not agree with training_parameter_record "
+                f"provenance: expected {_TRAINING_METRICS_INTERNAL_VERSION_V5!r}, got {metrics_version!r}"
+            )
+        visualizations_path = repo_root / artifact_references["visualizations"]
+        visualizations_version = _read_declared_contract_version(visualizations_path)
+        if visualizations_version != _ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V5:
+            raise ValueError(
+                "visualizations contract_version does not agree with training_parameter_record "
+                f"provenance: expected {_ANALYTICAL_VISUALIZATIONS_INTERNAL_VERSION_V5!r}, got "
                 f"{visualizations_version!r}"
             )
         return "M24", False, record_version, metrics_version, visualizations_version

@@ -2039,6 +2039,88 @@ def test_historical_binary_evaluate_allowed_families_selection_behavior_unchange
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0259: optional max_depth on the reviewed fixed HGB
+# classification vocabulary, shared by the multiclass and binary
+# fixed_configuration paths. Never required, never dataset-specific.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_training_policy_intent_binary_accepts_valid_optional_max_depth():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 5
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert reasons == []
+
+
+def test_validate_training_policy_intent_binary_accepts_null_max_depth():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = None
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert reasons == []
+
+
+def test_validate_training_policy_intent_binary_omitted_max_depth_remains_valid():
+    reasons = _validate_training_policy_intent(
+        _approved_fixed_binary_training_policy_intent(), problem_type_hint="binary_classification",
+    )
+    assert reasons == []
+
+
+def test_validate_training_policy_intent_binary_rejects_zero_max_depth():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 0
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert any("max_depth" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_binary_rejects_negative_max_depth():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = -1
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert any("max_depth" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_binary_rejects_boolean_max_depth():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = True
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert any("max_depth" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_binary_rejects_non_integer_max_depth():
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 2.5
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert any("max_depth" in reason for reason in reasons)
+
+
+def test_validate_training_policy_intent_binary_max_depth_never_inferred_as_default():
+    """No dataset-specific value/default may be inserted for max_depth."""
+    policy = _approved_fixed_binary_training_policy_intent()
+    reasons = _validate_training_policy_intent(policy, problem_type_hint="binary_classification")
+    assert reasons == []
+    assert "max_depth" not in policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]
+
+
+def test_execution_contract_binary_fixed_policy_with_max_depth_still_validates_against_schema():
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed")
+    schema_path = Path(__file__).parent.parent / "contracts" / "execution-contract.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    policy = _approved_fixed_binary_training_policy_intent()
+    policy["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 5
+    modeling_intent = _modeling_intent_with_binary_training_policy(training_policy_intent=policy)
+    contract = _build_execution_contract(modeling_intent, _discovery_evidence_for_result_semantics(), None)
+    jsonschema.validate(contract, schema)
+    assert (
+        contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] == 5
+    )
+
+
+# ---------------------------------------------------------------------------
 # execution_contract.v2 -- strict univariate-forecasting materialization
 # (Project Spec S0243). Fixtures are synthetic and dataset-neutral, matching
 # the "campaign-response" precedent established above -- no Nottingham-

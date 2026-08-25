@@ -479,8 +479,84 @@ def test_repeated_deterministic_run_produces_identical_metrics_and_feature_impor
 
 
 # ---------------------------------------------------------------------------
+# Project Spec S0259: optional max_depth reaches the fitted estimator, and
+# omission remains backward compatible.
+# ---------------------------------------------------------------------------
+
+
+def test_max_depth_hyperparameter_reaches_estimator(fixed_training_environment: Path, tmp_path: Path) -> None:
+    contract = _fixed_binary_contract(hyperparameters=_hgb_hyperparameters(max_depth=4))
+    result, _ = _run(fixed_training_environment, tmp_path, contract=contract)
+
+    estimator = result.model.named_steps["model"]
+    assert estimator.max_depth == 4
+
+
+def test_omitted_max_depth_remains_backward_compatible(
+    fixed_training_environment: Path, tmp_path: Path,
+) -> None:
+    result, _ = _run(fixed_training_environment, tmp_path, contract=_fixed_binary_contract())
+
+    estimator = result.model.named_steps["model"]
+    assert estimator.max_depth is None
+    assert result.status == "trained"
+
+
+def test_null_max_depth_remains_backward_compatible(fixed_training_environment: Path, tmp_path: Path) -> None:
+    contract = _fixed_binary_contract(hyperparameters=_hgb_hyperparameters(max_depth=None))
+    result, _ = _run(fixed_training_environment, tmp_path, contract=contract)
+
+    estimator = result.model.named_steps["model"]
+    assert estimator.max_depth is None
+    assert result.status == "trained"
+
+
+def test_max_depth_configuration_deterministic_across_repeated_runs(
+    fixed_training_environment: Path, tmp_path_factory,
+) -> None:
+    contract = _fixed_binary_contract(hyperparameters=_hgb_hyperparameters(max_depth=3))
+    first_dir = tmp_path_factory.mktemp("max-depth-first-run")
+    second_dir = tmp_path_factory.mktemp("max-depth-second-run")
+
+    first_result, _ = _run(
+        fixed_training_environment, first_dir, contract=contract, run_id="train-20260819T000004Z",
+    )
+    second_result, _ = _run(
+        fixed_training_environment, second_dir, contract=contract, run_id="train-20260819T000005Z",
+    )
+
+    assert first_result.metrics == second_result.metrics
+    assert first_result.model.named_steps["model"].max_depth == 3
+    assert second_result.model.named_steps["model"].max_depth == 3
+
+
+# ---------------------------------------------------------------------------
 # Fail-closed validation before any fit
 # ---------------------------------------------------------------------------
+
+
+def test_invalid_max_depth_zero_fails_before_fit(fixed_training_environment: Path, tmp_path: Path) -> None:
+    contract = _fixed_binary_contract(hyperparameters=_hgb_hyperparameters(max_depth=0))
+    with pytest.raises(TrainingInputError):
+        _run(fixed_training_environment, tmp_path, contract=contract)
+
+
+def test_invalid_max_depth_negative_fails_before_fit(fixed_training_environment: Path, tmp_path: Path) -> None:
+    contract = _fixed_binary_contract(hyperparameters=_hgb_hyperparameters(max_depth=-1))
+    with pytest.raises(TrainingInputError):
+        _run(fixed_training_environment, tmp_path, contract=contract)
+
+
+def test_invalid_max_depth_boolean_fails_before_fit(fixed_training_environment: Path, tmp_path: Path) -> None:
+    contract = _fixed_binary_contract(hyperparameters=_hgb_hyperparameters(max_depth=True))
+    with pytest.raises(TrainingInputError):
+        _run(fixed_training_environment, tmp_path, contract=contract)
+
+
+def test_invalid_max_depth_non_integer_fails_before_fit(fixed_training_environment: Path, tmp_path: Path) -> None:
+    contract = _fixed_binary_contract(hyperparameters=_hgb_hyperparameters(max_depth=2.5))
+    with pytest.raises(TrainingInputError):
+        _run(fixed_training_environment, tmp_path, contract=contract)
 
 
 def test_invalid_configuration_fails_before_fit(fixed_training_environment: Path, tmp_path: Path) -> None:

@@ -830,7 +830,7 @@
       "type": "object",
       "required": ["class_weight", "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf"],
       "additionalProperties": false,
-      "description": "Project Spec S0216: the complete, explicit set of whitelisted hist_gradient_boosting hyperparameters for a fixed_configuration native multiclass run. No other estimator parameter name is ever accepted, and no field here may ever be a callable, module path, or class string.",
+      "description": "Project Spec S0216: the complete, explicit set of whitelisted hist_gradient_boosting hyperparameters for a fixed_configuration native multiclass run. No other estimator parameter name is ever accepted, and no field here may ever be a callable, module path, or class string. Project Spec S0259 adds optional max_depth (null or integer >= 1), also governing the same shape's use for native binary fixed_configuration training -- never required, never dataset-specific.",
       "properties": {
         "class_weight": {
           "type": ["string", "null"],
@@ -859,6 +859,10 @@
         "early_stopping": {
           "type": ["string", "boolean"],
           "enum": ["auto", true, false]
+        },
+        "max_depth": {
+          "type": ["integer", "null"],
+          "minimum": 1
         }
       }
     },

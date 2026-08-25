@@ -3000,7 +3000,11 @@ NATIVE_MULTICLASS_PERMUTATION_IMPORTANCE_SCORING = "f1_macro"
 _HGB_REQUIRED_HYPERPARAMETER_FIELDS = frozenset({
     "class_weight", "l2_regularization", "learning_rate", "max_iter", "max_leaf_nodes", "min_samples_leaf",
 })
-_HGB_ALLOWED_HYPERPARAMETER_FIELDS = _HGB_REQUIRED_HYPERPARAMETER_FIELDS | frozenset({"early_stopping"})
+# Project Spec S0259: max_depth is optional (null or integer >= 1) for the
+# classification HGB shape -- never required, never dataset-specific.
+_HGB_ALLOWED_HYPERPARAMETER_FIELDS = (
+    _HGB_REQUIRED_HYPERPARAMETER_FIELDS | frozenset({"early_stopping", "max_depth"})
+)
 
 
 def _validate_fixed_model_configuration(modeling_constraints: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -3056,6 +3060,15 @@ def _validate_fixed_model_configuration(modeling_constraints: dict[str, Any]) ->
             f"unsupported HGB hyperparameter(s): {sorted(unsupported)}.",
             field="modeling_constraints.fixed_model_configuration.hyperparameters",
         )
+    if "max_depth" in hyperparameters:
+        max_depth = hyperparameters["max_depth"]
+        if max_depth is not None and (isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 1):
+            raise TrainingInputError(
+                "invalid_contract_field",
+                "modeling_constraints.fixed_model_configuration.hyperparameters.max_depth must be "
+                "null or an integer >= 1.",
+                field="modeling_constraints.fixed_model_configuration.hyperparameters.max_depth",
+            )
     return model_family, hyperparameters
 
 
@@ -3076,6 +3089,7 @@ def _build_hgb_estimator(hyperparameters: dict[str, Any], random_seed: int | Non
         max_leaf_nodes=int(hyperparameters["max_leaf_nodes"]),
         min_samples_leaf=int(hyperparameters["min_samples_leaf"]),
         early_stopping=hyperparameters.get("early_stopping", "auto"),
+        max_depth=hyperparameters.get("max_depth"),
         random_state=random_seed,
     )
 

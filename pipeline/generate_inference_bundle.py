@@ -523,6 +523,103 @@ def _resolve_internal_result_semantics_model_descriptor(
     }
 
 
+_INTERNAL_BINARY_V1_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION = "training-parameter-record.v1"
+_INTERNAL_BINARY_V5_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION = "training-parameter-record.v5"
+
+
+def _resolve_internal_binary_v5_result_semantics_model_descriptor(
+    training_record: dict[str, Any],
+    positive_class_id: str,
+    class_labels: list[str],
+    effective_threshold: float,
+) -> dict[str, str]:
+    """training-parameter-record.v5 (internal Atlas-native binary
+    fixed-configuration) model_descriptor resolution (Project Spec S0259).
+
+    Never trusts legacy binary_classification_evidence -- that field does
+    not exist on the v5 profile. Instead cross-checks the record's own
+    governed classification_evidence: positive class, decision threshold,
+    ordered class labels against output_schema.class_labels, and model
+    family, all fail-closed on any mismatch. Never fabricates
+    binary_classification_evidence for a v5 record.
+    """
+    training_parameters = _require_mapping(training_record, "training_parameters")
+    model_family = _require_string(training_parameters, "model_family")
+    if model_family != "hist_gradient_boosting":
+        raise BundleGenerationError(
+            "unsupported_model_family",
+            "training-parameter-record.v5 model_family must be hist_gradient_boosting.",
+            field="training_parameters.model_family",
+        )
+
+    classification_evidence = training_record.get("classification_evidence")
+    if not isinstance(classification_evidence, dict):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training_parameter_record.classification_evidence is required when "
+            "result_semantics is present on a training-parameter-record.v5 record.",
+            field="classification_evidence",
+        )
+    if classification_evidence.get("problem_type") != "binary_classification":
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "classification_evidence.problem_type must be exactly binary_classification.",
+            field="classification_evidence.problem_type",
+        )
+    if classification_evidence.get("result_semantics_schema_version") != BINARY_RESULT_SEMANTICS_SCHEMA_VERSION:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "classification_evidence.result_semantics_schema_version must equal "
+            f"{BINARY_RESULT_SEMANTICS_SCHEMA_VERSION!r}.",
+            field="classification_evidence.result_semantics_schema_version",
+        )
+    if classification_evidence.get("positive_class_id") != positive_class_id:
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training evidence classification_evidence.positive_class_id does not match "
+            "result_semantics.positive_class.class_id.",
+            field="classification_evidence.positive_class_id",
+        )
+    threshold_value = classification_evidence.get("threshold")
+    if (
+        isinstance(threshold_value, bool)
+        or not isinstance(threshold_value, (int, float))
+        or threshold_value != effective_threshold
+    ):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "training evidence classification_evidence.threshold does not match "
+            "result_semantics.decision.threshold.",
+            field="classification_evidence.threshold",
+        )
+    ordered_class_labels = classification_evidence.get("ordered_class_labels")
+    if not isinstance(ordered_class_labels, list) or sorted(ordered_class_labels) != sorted(class_labels):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "classification_evidence.ordered_class_labels does not agree with "
+            "output_schema.class_labels.",
+            field="classification_evidence.ordered_class_labels",
+        )
+    positive_class_probability_index = classification_evidence.get("positive_class_probability_index")
+    if (
+        not isinstance(positive_class_probability_index, int)
+        or isinstance(positive_class_probability_index, bool)
+        or positive_class_probability_index not in (0, 1)
+        or ordered_class_labels[positive_class_probability_index] != positive_class_id
+    ):
+        raise BundleGenerationError(
+            "result_semantics_cross_artifact_mismatch",
+            "classification_evidence.positive_class_probability_index does not resolve to "
+            "positive_class_id within ordered_class_labels.",
+            field="classification_evidence.positive_class_probability_index",
+        )
+
+    return {
+        "model_family": model_family,
+        "display_name": MODEL_FAMILY_DISPLAY_NAMES[model_family],
+    }
+
+
 def _resolve_external_result_semantics_model_descriptor(
     training_record: dict[str, Any],
     model_selection: dict[str, Any] | None,
@@ -930,11 +1027,17 @@ def _resolve_result_semantics(
     parameter record's governed identity fields, blocking (raising, never
     writing a partial bundle) on any mismatch.
 
-    Supports exactly the two known training-parameter-record profiles
-    (Project Spec S0191), dispatched on `training_record["schema_version"]`:
-    `training-parameter-record.v1` (internal, unchanged validation against
-    `training_parameters.model_family` /
-    `binary_classification_evidence.positive_class_id`) and
+    Supports exactly the three known binary training-parameter-record
+    profiles, dispatched on `training_record["schema_version"]` via an
+    explicit closed dispatch (Project Spec S0259) -- an unrecognized
+    version fails closed rather than being silently treated as v1:
+    `training-parameter-record.v1` (internal, Project Spec S0191,
+    unchanged validation against `training_parameters.model_family` /
+    `binary_classification_evidence.positive_class_id`),
+    `training-parameter-record.v5` (internal, Project Spec S0259, Atlas-
+    native fixed-configuration binary training, validated against its own
+    governed `classification_evidence` -- see
+    `_resolve_internal_binary_v5_result_semantics_model_descriptor`), and
     `training-parameter-record.external-fitted-model.v1` (external,
     validated against its own governed identity fields -- see
     `_resolve_external_result_semantics_model_descriptor`).
@@ -1028,15 +1131,6 @@ def _resolve_result_semantics(
             field="output_schema.probability_output",
         )
 
-    if training_record.get("schema_version") == _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
-        model_descriptor = _resolve_external_result_semantics_model_descriptor(
-            training_record, model_selection, positive_class_id
-        )
-    else:
-        model_descriptor = _resolve_internal_result_semantics_model_descriptor(
-            training_record, positive_class_id
-        )
-
     decision = _require_mapping(result_semantics_source, "decision")
     threshold = decision.get("threshold")
     if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not (0.0 <= threshold <= 1.0):
@@ -1060,6 +1154,34 @@ def _resolve_result_semantics(
                 field="external_model_evidence.educational_threshold.value",
             )
         effective_threshold = decision_threshold_override
+
+    # Project Spec S0259: explicit closed dispatch on the internal binary
+    # training-parameter-record schema version. Unknown internal binary
+    # record versions fail closed here instead of silently being treated
+    # as v1 -- v5 is never classified as external/manual provenance, and a
+    # future unrecognized internal version is never silently accepted.
+    internal_binary_schema_version = training_record.get("schema_version")
+    if internal_binary_schema_version == _EXTERNAL_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
+        model_descriptor = _resolve_external_result_semantics_model_descriptor(
+            training_record, model_selection, positive_class_id
+        )
+    elif internal_binary_schema_version == _INTERNAL_BINARY_V1_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
+        model_descriptor = _resolve_internal_result_semantics_model_descriptor(
+            training_record, positive_class_id
+        )
+    elif internal_binary_schema_version == _INTERNAL_BINARY_V5_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION:
+        model_descriptor = _resolve_internal_binary_v5_result_semantics_model_descriptor(
+            training_record, positive_class_id, class_labels, effective_threshold
+        )
+    else:
+        raise BundleGenerationError(
+            "unsupported_training_parameter_record_schema_version",
+            "internal binary result_semantics requires a "
+            f"{_INTERNAL_BINARY_V1_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION!r} or "
+            f"{_INTERNAL_BINARY_V5_TRAINING_PARAMETER_RECORD_SCHEMA_VERSION!r} training parameter "
+            f"record, got {internal_binary_schema_version!r}.",
+            field="training_parameter_record.schema_version",
+        )
 
     interpretation = _require_mapping(result_semantics_source, "interpretation")
     bands = interpretation.get("bands")

@@ -2510,6 +2510,87 @@ def test_historical_binary_evaluate_allowed_families_remains_valid():
     jsonschema.validate(contract, schema)
 
 
+# ---------------------------------------------------------------------------
+# Project Spec S0259: optional max_depth on the classification
+# hist_gradient_boosting_hyperparameters shape (shared by native multiclass
+# and native binary fixed_configuration). Never required, never present on
+# the continuous-regression HGB shape.
+# ---------------------------------------------------------------------------
+
+
+def test_hgb_binary_accepts_optional_max_depth_integer():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 5
+    jsonschema.validate(contract, schema)
+
+
+def test_hgb_binary_accepts_optional_max_depth_null():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = None
+    jsonschema.validate(contract, schema)
+
+
+def test_hgb_binary_omitted_max_depth_remains_valid():
+    schema = _load_json(SCHEMA_PATH)
+    jsonschema.validate(_fixed_hgb_binary_contract(), schema)
+
+
+def test_hgb_multiclass_accepts_optional_max_depth_integer():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_configuration_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 3
+    jsonschema.validate(contract, schema)
+
+
+def test_hgb_max_depth_rejects_zero():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 0
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_max_depth_rejects_negative():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = -1
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_max_depth_rejects_boolean():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = True
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_max_depth_rejects_non_integer():
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_binary_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 2.5
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
+def test_hgb_regression_shape_never_accepts_max_depth():
+    """The continuous-regression HGB profile is never touched by S0259 --
+    max_depth is not part of its closed hyperparameter shape."""
+    schema = _load_json(SCHEMA_PATH)
+    contract = _fixed_hgb_regression_contract()
+    contract["modeling_constraints"]["fixed_model_configuration"]["hyperparameters"]["max_depth"] = 5
+
+    validator = jsonschema.Draft7Validator(schema)
+    assert list(validator.iter_errors(contract))
+
+
 def test_multiclass_and_continuous_regression_execution_contracts_remain_valid_alongside_binary_addition():
     schema = _load_json(SCHEMA_PATH)
     jsonschema.validate(_fixed_configuration_contract(), schema)

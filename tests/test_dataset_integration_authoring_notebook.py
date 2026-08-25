@@ -40,8 +40,8 @@ def _called_names() -> set[str]:
 
 def _referenced_attribute_paths() -> set[str]:
     """Dotted attribute access chains anywhere in the notebook's code cells,
-    e.g. `pipeline.materialize_external_fitted_model.materialize_external_fitted_model`
-    reduced to `materialize_external_fitted_model.materialize_external_fitted_model`."""
+    e.g. `pipeline.validated_run.materialize_validated_run_terminal_result`
+    reduced to `validated_run.materialize_validated_run_terminal_result`."""
     paths: set[str] = set()
     for cell in _notebook()["cells"]:
         if cell["cell_type"] != "code":
@@ -67,37 +67,42 @@ def test_notebook_is_valid_nbformat_json():
     assert notebook["cells"]
 
 
-def test_notebook_has_the_seventeen_orchestration_stages_in_order():
+def test_notebook_has_the_orchestration_stages_in_order():
     markdown = _source("markdown")
     stages = [
         "1. Orchestration boundary declaration and responsibility",
         "2. Dataset/source input identity",
         "3. Atlas-owned source verification and drift checks",
-        "4. External evidence discovery",
-        "5. External evidence integrity and provenance verification",
-        "6. Dataset-specific semantic interpretation",
-        "7. Capability-profile resolution",
-        "8. Deterministic preparation/input policy",
-        "9. Atlas authoring artifact materialization",
-        "10. Cross-artifact authoring validation",
-        "11. Capability-aware source/projection handoff",
-        "12. External fitted-model governed materialization",
-        "13. Governed inference-bundle generation",
-        "14. Release-candidate assembly from compatible governed roles",
-        "15. Publisher structural validation and conditional manifest generation",
-        "16. Validated-run terminal result",
-        "17. Orchestration stop confirmation",
+        "4. Dataset-specific semantic interpretation",
+        "5. Capability-profile resolution",
+        "6. Deterministic preparation/input policy",
+        "7. Reviewed native training-policy and binary result-semantics authoring",
+        "8. Atlas authoring artifact materialization",
+        "9. Cross-artifact authoring validation",
+        "10. Capability-aware execution contract materialization",
+        "11. Runtime/public contract and dataset-context compatibility confirmation",
+        "12. Native training readiness",
+        "13. Native binary fixed-configuration training run materialization",
+        "14. Native metrics/visualization evidence validation",
+        "15. Governed inference-bundle generation",
+        "16. Release-candidate assembly from compatible governed roles",
+        "17. Publisher Run materialization",
+        "18. Validated-run terminal result",
+        "19. Orchestration stop confirmation",
     ]
     offsets = [markdown.index(stage) for stage in stages]
     assert offsets == sorted(offsets)
 
 
-def test_notebook_declares_extended_orchestration_boundary_not_authoring_only():
+def test_notebook_declares_native_orchestration_boundary():
     code = _source("code")
     assert "ORCHESTRATION_BOUNDARY" in code
     assert "AUTHORING_BOUNDARY" not in code
     for allowed in (
-        "external_fitted_model_governed_materialization",
+        "reviewed_native_training_policy_authoring",
+        "execution_contract_materialization",
+        "native_binary_fixed_configuration_training_run_materialization",
+        "native_metrics_visualization_evidence_validation",
         "inference_bundle_materialization",
         "release_candidate_assembly",
         "publisher_structural_validation",
@@ -106,8 +111,8 @@ def test_notebook_declares_extended_orchestration_boundary_not_authoring_only():
     ):
         assert allowed in code
     for forbidden in (
-        "external_eda_rerun",
-        "model_fitting_or_retraining",
+        "external_scientific_project_read_at_runtime",
+        "external_model_load",
         "model_selection",
         "threshold_optimization",
         "model_deserialization_or_inference_execution",
@@ -126,31 +131,152 @@ def test_notebook_resolves_repository_root_without_cwd_override():
     assert "from pipeline.discovery_evidence import resolve_repository_root, resolve_repository_path" in code
 
 
-def test_notebook_converges_on_real_external_evidence_index_contract():
-    code = _source("code")
-    assert 'external_evidence_index_relative_path = "artifacts/telco-customer-churn/external-evidence-index.json"' in code
-    assert 'external_evidence_index.get("schema_version") == "external-evidence-index.v1"' in code
-    assert 'external_evidence_index.get("artifact_type") == "external_evidence_index"' in code
-    assert 'external_evidence_index.get("dataset_slug") == dataset_slug' in code
-    assert 'provenance.get("logical_producer_project_id")' in code
-    assert "evidence_inventory = external_evidence_index.get(\"evidence_inventory\")" in code
-    assert 'missing_artifacts = external_evidence_index.get("missing_artifacts", [])' in code
-    assert "required_missing" in code
+# --- Project Spec S0260: external study/evidence dependency removal --------
 
 
-def test_external_evidence_is_hash_verified_and_only_reduced_provenance_is_durable():
+def test_notebook_no_longer_requires_external_scientific_analysis_root():
     code = _source("code")
-    assert "safe_external_relative_path" in code
-    assert "sha256_file(evidence_path) == reference[\"sha256\"]" in code
-    assert '"relative_path": relative_path' in code
-    assert '"producer_revision_known"' in code
-    manifest_source = code[code.index("manifest = {"):code.index("manifest_ref =")]
-    assert "external_scientific_analysis_root" not in manifest_source
-    assert '"external_root"' not in manifest_source
-    assert (
-        'assert all("external_scientific_analysis_root" not in json.dumps(item) '
-        'for item in selected_external_evidence)'
-    ) in code
+    assert "external_scientific_analysis_root" not in code
+
+
+def test_notebook_no_longer_reads_external_evidence_index():
+    code = _source("code")
+    assert "external_evidence_index" not in code
+    assert "external-evidence-index.json" not in code
+    assert "load_verified_external_evidence" not in code
+
+
+def test_notebook_no_longer_imports_external_fitted_model_materializer():
+    code = _source("code")
+    assert "materialize_external_fitted_model" not in code
+    assert "pipeline.materialize_external_fitted_model" not in code
+
+
+def test_notebook_no_longer_imports_external_analytical_visualization_modules():
+    code = _source("code")
+    assert "materialize_external_analytical_visualizations" not in code
+    assert "derive_external_analytical_visualization_evidence" not in code
+
+
+def test_notebook_no_longer_imports_external_candidate_support_materializer():
+    code = _source("code")
+    assert "materialize_external_candidate_support" not in code
+
+
+def test_notebook_never_loads_external_study_model_bytes():
+    code = _source("code")
+    for forbidden in ("joblib.load", "pickle.load", ".fit(", ".predict(", ".predict_proba(", "model_artifact_path"):
+        assert forbidden not in code
+
+
+def test_notebook_carries_no_absolute_external_study_path():
+    code = _source("code")
+    assert "dataset-study-telco-customer-churn" not in code
+    assert "/home/" not in code
+    assert "/workspace/" not in code
+
+
+def test_notebook_no_longer_declares_external_run_root():
+    code = _source("code")
+    assert "external_fitted_model_run_root_relative_path" not in code
+    assert "external_fitted_model_run_relative_path" not in code
+
+
+# --- Atlas-local source is the only dataset input ---------------------------
+
+
+def test_notebook_uses_only_atlas_local_raw_source():
+    code = _source("code")
+    assert 'dataset_relative_path = "data/raw/telco-customer-churn.csv"' in code
+    assert "resolve_repository_path(dataset_relative_path, repo_root=repo_root)" in code
+
+
+def test_notebook_source_verification_fails_closed_without_network_fallback():
+    code = _source("code")
+    for forbidden in ("requests.get", "urllib.request", "urlopen", "download"):
+        assert forbidden not in code
+    assert "load_dataset_csv(dataset_path)" in code
+
+
+# --- fixed_configuration training policy authoring --------------------------
+
+
+def test_notebook_authors_approved_fixed_configuration_training_policy():
+    code = _source("code")
+    assert '"review_status": "approved"' in code
+    assert '"selection_mode": "fixed_configuration"' in code
+    assert '"allowed_model_families": ["hist_gradient_boosting"]' in code
+    assert '"model_family": "hist_gradient_boosting"' in code
+    assert '"no_automl": True' in code
+
+
+def test_notebook_freezes_the_historical_hgb_hyperparameters():
+    code = _source("code")
+    for fragment in (
+        '"class_weight": None',
+        '"l2_regularization": 1.0',
+        '"learning_rate": 0.03',
+        '"max_iter": 200',
+        '"max_leaf_nodes": 7',
+        '"min_samples_leaf": 40',
+        '"max_depth": 3',
+    ):
+        assert fragment in code
+
+
+def test_notebook_preserves_split_and_seed_identity():
+    code = _source("code")
+    assert '"strategy": "stratified"' in code
+    assert '"train_ratio": 0.70' in code
+    assert '"val_ratio": 0.15' in code
+    assert '"test_ratio": 0.15' in code
+
+
+def test_notebook_performs_no_model_selection_or_threshold_optimization():
+    code = _source("code")
+    for forbidden in (
+        "GridSearchCV",
+        "RandomizedSearchCV",
+        "cross_val_score",
+        "cross_validate",
+        "model_selection_candidates",
+        "practical_tie",
+        "tie_break",
+        "threshold_analysis",
+        "educational_threshold",
+    ):
+        assert forbidden not in code
+    calls = _called_names()
+    assert calls.isdisjoint({"GridSearchCV", "RandomizedSearchCV", "cross_val_score", "cross_validate"})
+
+
+def test_notebook_does_not_promote_the_educational_threshold():
+    code = _source("code")
+    assert "0.2577809673219062" not in code
+    assert "threshold=0.5," in code
+    assert 'execution_contract["result_semantics"]["decision"]["threshold"] == 0.5' in code
+
+
+# --- binary result-semantics authoring --------------------------------------
+
+
+def test_notebook_authors_binary_result_semantics_with_existing_governed_values():
+    code = _source("code")
+    assert "build_binary_result_semantics_intent" in code
+    assert 'positive_class_id="Yes"' in code
+    assert 'event_label="Churn"' in code
+    assert 'primary_output="positive_class_probability"' in code
+    assert "threshold=0.5" in code
+    assert 'preset="risk"' in code
+    for band in (
+        '{"band_id": "low", "lower_bound": 0.0, "upper_bound": 0.35}',
+        '{"band_id": "medium", "lower_bound": 0.35, "upper_bound": 0.65}',
+        '{"band_id": "high", "lower_bound": 0.65, "upper_bound": 1.0}',
+    ):
+        assert band in code
+
+
+# --- authoring artifact materialization / cross-artifact validation --------
 
 
 def test_notebook_materializes_and_validates_authoring_contracts():
@@ -161,322 +287,145 @@ def test_notebook_materializes_and_validates_authoring_contracts():
     assert '"current_supported"' in code
     assert "write_governed_json" in code
     assert "validate_authoring_contracts" in code
-
-
-def test_notebook_uses_preparation_recipe_role_and_filename_not_preparation_policy():
-    code = _source("code")
-    assert '"role": "preparation_recipe"' in code
-    assert "preparation-recipe.json" in code
-    assert '"role": "preparation_policy"' not in code
-    assert "preparation-policy.json" not in code
-
-
-def test_notebook_manifest_does_not_predeclare_model_artifact_before_materialization():
-    code = _source("code")
-    manifest_source = code[code.index("manifest = {"):code.index("manifest_ref =")]
-    assert "model_artifact" not in manifest_source
-
-
-def test_notebook_authoring_validation_precedes_external_fitted_model_materialization():
-    code = _source("code")
-    assert code.index("validate_authoring_contracts(") < code.index("materialize_external_fitted_model(")
-
-
-def test_notebook_keeps_authoring_validation_assert():
-    code = _source("code")
     assert "assert authoring_validation.valid, authoring_validation.failures" in code
 
 
-def test_notebook_constructs_the_capability_aware_boundary_with_canonical_ref():
+def test_notebook_manifest_carries_no_external_provenance():
     code = _source("code")
-    for field in (
-        "authoring_generation_id",
-        "authoring_manifest_ref",
-        "capability_profile_id",
-        "capability_profile_version",
-        "capability_profile_ref",
-    ):
-        assert field in code
-    assert "project_capability_aware_source_contract" in code
-    assert '"source_notebook_ref": canonical_notebook_ref' in code
+    manifest_source = code[code.index("manifest = {"):code.index("manifest_ref =")]
+    assert '"provenance": []' in manifest_source
+    assert "external_scientific_analysis_root" not in manifest_source
+    assert "selected_external_evidence" not in manifest_source
+
+
+def test_notebook_authoring_validation_precedes_execution_contract_materialization():
+    code = _source("code")
+    assert code.index("validate_authoring_contracts(") < code.index("materialize_execution_contract(")
+
+
+# --- canonical execution-contract materialization ---------------------------
+
+
+def test_notebook_materializes_execution_contract_via_canonical_derivation():
+    code = _source("code")
+    assert "from pipeline.contract_derivation import materialize_execution_contract" in code
+    assert "materialize_execution_contract(" in code
+    assert "from pipeline.discovery_evidence import build_dataset_modeling_intent" in code
+    assert "build_dataset_modeling_intent(" in code
+    assert "binary_result_semantics_intent=binary_result_semantics_intent," in code
+    assert "training_policy_intent=training_policy_intent," in code
+    assert "project_capability_aware_source_contract" not in code
+
+
+def test_notebook_execution_contract_is_fixed_configuration_and_never_external():
+    code = _source("code")
+    assert 'execution_contract["modeling_constraints"]["selection_mode"] == "fixed_configuration"' in code
     assert (
-        'canonical_notebook_ref = "notebooks/datasets/telco-customer-churn/dataset_integration.ipynb"'
-        in code
-    )
+        'execution_contract["modeling_constraints"]["fixed_model_configuration"]["model_family"] == '
+        '"hist_gradient_boosting"'
+    ) in code
+    assert '"model_source_mode" not in execution_contract' in code
+    assert '"validated_external_fitted_model"' not in code
+    assert 'execution_contract["result_semantics"]["schema_version"] == "binary-result-semantics.v1"' in code
 
 
-def test_notebook_orchestrates_external_fitted_model_materialization():
+def test_notebook_confirms_runtime_public_contract_and_context_compatibility():
     code = _source("code")
-    assert "from pipeline.materialize_external_fitted_model import materialize_external_fitted_model" in code
-    assert "materialize_external_fitted_model(" in _called_names() or "materialize_external_fitted_model" in code
-    assert 'external_materialization_result["status"] == "materialized"' in code
-    assert "for reason in external_materialization_result[\"blocking_reasons\"]" in code
-    assert "record_block(reason[\"code\"], reason[\"message\"], reason.get(\"field\"))" in code
+    assert '[f["name"] for f in runtime_contract["features"]] == execution_contract["feature_columns"]' in code
+    assert '[f["name"] for f in public_contract["features"]] == execution_contract["feature_columns"]' in code
+    assert "dataset_context = json.loads((repo_root / dataset_context_relative_path).read_text" in code
+    # This notebook never rewrites these three already-governed files.
+    contract_section_start = code.index("runtime_contract = json.loads(")
+    contract_section_end = code.index("prepare_training_invocation_readiness")
+    contract_section = code[contract_section_start:contract_section_end]
+    assert "write_governed_json(runtime_contract_relative_path" not in contract_section
+    assert "write_governed_json(public_contract_relative_path" not in contract_section
+    assert "write_governed_json(dataset_context_relative_path" not in contract_section
 
 
-def test_external_materialization_never_trains_or_deserializes():
+# --- native training run materialization ------------------------------------
+
+
+def test_notebook_uses_train_from_paths_as_the_training_entrypoint():
+    code = _source("code")
+    referenced = _referenced_attribute_paths()
+    assert "pipeline_training.materialize_training_run_from_prepared_metadata" in referenced
+    assert "materialize_training_run_from_prepared_metadata(" in code
+    assert "from pipeline import training as pipeline_training" in code
+
+
+def test_notebook_never_hand_rolls_a_second_training_path():
     code = _source("code")
     for forbidden in (
-        "train_from_paths",
-        "joblib.load",
-        "pickle.load",
-        ".fit(",
-        ".predict(",
-        ".predict_proba(",
+        "HistGradientBoostingClassifier(",
+        "from sklearn",
+        "import sklearn",
     ):
         assert forbidden not in code
-    # The notebook is allowed to reuse pipeline.training's governed,
-    # side-effect-free prepared-dataset metadata resolver -- the same one
-    # pipeline/generate_inference_bundle.py already imports for its own
-    # internal-training branch -- but never the real training entrypoint.
-    assert "from pipeline.training import _prepared_dataset_metadata_blocking_reasons" in code
-    assert "pipeline.training.train_from_paths" not in code
 
 
-def test_notebook_orchestrates_governed_inference_bundle_generation():
+def test_notebook_training_call_is_gated_on_run_state():
+    code = _source("code")
+    section_start = code.index("from pipeline import training as pipeline_training")
+    section_end = code.index("training_run_materialization_result[\"status\"] != \"trained\"")
+    section = code[section_start:section_end]
+    assert 'if not run_state["blocked"]:' in section
+
+
+# --- v5 evidence validation ---------------------------------------------
+
+
+def test_notebook_requires_v5_training_evidence():
+    code = _source("code")
+    assert 'training_parameter_record["schema_version"] == "training-parameter-record.v5"' in code
+    assert 'training_metrics["schema_version"] == "training-metrics.v5"' in code
+    assert 'analytical_visualizations["schema_version"] == "analytical-visualizations.v5"' in code
+
+
+def test_notebook_verifies_positive_class_from_real_fitted_evidence():
+    code = _source("code")
+    assert 'real_fitted_classification_evidence = training_parameter_record["classification_evidence"]' in code
+    assert 'real_fitted_classification_evidence["positive_class_id"] == "Yes"' in code
+    assert 'analytical_visualizations["classification_evidence"]["positive_class_id"] == "Yes"' in code
+
+
+def test_notebook_confirms_sealed_single_test_evaluation():
+    code = _source("code")
+    assert 'training_metrics["final_test_evaluation"]["completed"] is True' in code
+    assert 'training_metrics["final_test_evaluation"]["evaluation_count"] == 1' in code
+
+
+# --- inference-bundle materialization (internal-training branch only) ------
+
+
+def test_notebook_orchestrates_governed_inference_bundle_generation_internally():
     code = _source("code")
     assert "generate_inference_bundle.materialize_governed_inference_bundle(" in code
-    assert "external_fitted_model_materialization_result=external_materialization_result" in code
-    assert '"training_evidence"' not in code
+    assert "training_run_materialization_result=training_run_materialization_result," in code
+    assert "external_fitted_model_materialization_result" not in code
     assert 'inference_bundle_result["status"] != "generated"' in code
 
 
-# --- prepared-dataset / inference-bundle blocker fix -------------------------
-
-
-def test_notebook_resolves_prepared_dataset_from_atlas_owned_metadata():
+def test_notebook_bundle_call_passes_prepared_data_metadata_and_class_labels():
     code = _source("code")
-    assert "from pipeline.training import _prepared_dataset_metadata_blocking_reasons" in code
-    assert "prepared_dataset_metadata_full_path = repo_root / prepared_data_metadata_relative_path" in code
-    assert (
-        'prepared_dataset_metadata = json.loads(\n'
-        "            prepared_dataset_metadata_full_path.read_text(encoding=\"utf-8\")\n"
-        "        )"
-    ) in code
-    assert "governed_reasons, governed_reference = _prepared_dataset_metadata_blocking_reasons(" in code
-
-
-def test_notebook_verifies_prepared_dataset_existence_and_integrity_before_bundle_call():
-    code = _source("code")
-    # Existence/integrity (including governed content_sha256) is enforced by
-    # the same reused `_prepared_dataset_metadata_blocking_reasons` boundary
-    # -- the notebook must not skip or duplicate that check, and must fail
-    # closed (via the existing record_block mechanism) rather than continue
-    # with an unresolved/invalid prepared dataset.
-    assert "prepared_dataset_blocking_reasons.extend(governed_reasons)" in code
-    assert 'record_block("prepared_dataset_unresolved", reason)' in code
-    resolution_index = code.index(
-        "_prepared_dataset_metadata_blocking_reasons(\n            prepared_dataset_metadata"
-    )
-    bundle_call_index = code.index("materialize_governed_inference_bundle(")
-    assert resolution_index < bundle_call_index
-
-
-def test_notebook_checks_prepared_dataset_metadata_dataset_identity():
-    code = _source("code")
-    assert (
-        '(prepared_dataset_metadata.get("dataset_identity") or {}).get(\n'
-        '            "dataset_slug"\n'
-        "        )"
-    ) in code
-    assert "if metadata_dataset_slug != dataset_slug:" in code
-
-
-def test_notebook_passes_resolved_prepared_dataset_path_and_ref_to_bundle_call():
-    code = _source("code")
-    assert "prepared_dataset_path=prepared_dataset_path," in code
-    assert "prepared_dataset_ref=prepared_dataset_ref," in code
-    resolution_index = code.index("prepared_dataset_path = None\nprepared_dataset_ref = None")
-    bundle_call_index = code.index("materialize_governed_inference_bundle(")
-    assert resolution_index < bundle_call_index
-
-
-def test_notebook_does_not_use_raw_dataset_as_prepared_dataset():
-    code = _source("code")
-    bundle_section_start = code.index("prepared_dataset_path = None\nprepared_dataset_ref = None")
-    bundle_call_end = code.index("materialize_governed_inference_bundle(")
-    bundle_section = code[bundle_section_start:bundle_call_end]
-    assert "dataset_relative_path" not in bundle_section
-    assert "data/raw" not in bundle_section
-
-
-def test_notebook_never_persists_absolute_prepared_dataset_path():
-    code = _source("code")
-    # The resolved reference used for the durable bundle artifact is always
-    # the governed repository-relative string returned by
-    # _prepared_dataset_metadata_blocking_reasons -- never str(repo_root) or
-    # any other absolute-path construction.
-    assert "prepared_dataset_ref = governed_reference" in code
-    assert "str(repo_root / governed_reference)" not in code
-    assert "str(prepared_dataset_path)" not in code
-
-
-# --- Project Spec S0193: external analytical-visualization evidence and
-# release materialization ---
-# --- Project Spec S0194: Atlas-owned derivation fallback when the external
-# analytical_visualizations role is absent ---
-
-
-def test_notebook_consumes_analytical_visualizations_external_evidence_role():
-    code = _source("code")
-    assert (
-        "from pipeline.materialize_external_analytical_visualizations import "
-        "materialize_external_analytical_visualizations" in code
-    )
-    assert '"analytical_visualizations" in evidence_by_role' in code
-    assert 'load_verified_external_evidence(\n            "analytical_visualizations"\n        )' in code
-    assert "materialize_external_analytical_visualizations" in _called_names()
-
-
-def test_notebook_imports_and_calls_the_generic_derivation_module():
-    code = _source("code")
-    assert (
-        "from pipeline.derive_external_analytical_visualization_evidence import "
-        "derive_external_analytical_visualization_evidence" in code
-    )
-    assert "derive_external_analytical_visualization_evidence" in _called_names()
-
-
-def test_notebook_direct_role_has_precedence_and_role_absence_selects_derivation():
-    code = _source("code")
-    visualizations_section_start = code.index('analytical_visualizations_relative_path = ""')
-    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
-    visualizations_section = code[visualizations_section_start:candidate_assembly_index]
-    # Role absence no longer terminates unconditionally with
-    # external_visual_evidence_role_missing -- it selects the Atlas-owned
-    # derivation fallback instead, and the direct external role (when
-    # present) still takes precedence over ever attempting derivation.
-    assert '"external_visual_evidence_role_missing"' not in visualizations_section
-    if_present_index = visualizations_section.index('if "analytical_visualizations" in evidence_by_role:')
-    else_index = visualizations_section.index("\n    else:\n")
-    derivation_call_index = visualizations_section.index("derive_external_analytical_visualization_evidence(")
-    assert if_present_index < else_index < derivation_call_index
-
-
-def test_notebook_calls_visualizations_materializer_only_after_external_model_materialization_succeeds():
-    code = _source("code")
-    materialization_call_index = code.index("materialize_external_fitted_model(\n")
-    visualizations_call_index = code.index("materialize_external_analytical_visualizations(\n")
-    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
-    assert materialization_call_index < visualizations_call_index < candidate_assembly_index
-    # Gated by the same run_state["blocked"] boundary every other
-    # post-materialization stage uses -- never an unconditional call.
-    visualizations_section_start = code.index(
-        "analytical_visualizations_relative_path = \"\""
-    )
-    visualizations_section = code[visualizations_section_start:visualizations_call_index]
-    assert 'if not run_state["blocked"]:' in visualizations_section
-
-
-def test_notebook_direct_path_visualizations_materializer_receives_external_materialization_result():
-    code = _source("code")
-    assert "materialization_result=external_materialization_result," in code
-    assert "external_visual_evidence=analytical_visual_evidence," in code
-    assert 'external_evidence_reference=analytical_visual_evidence_ref["relative_path"],' in code
-    assert 'external_evidence_sha256=analytical_visual_evidence_ref["sha256"],' in code
-    assert 'visual_evidence_origin="external_evidence_index",' in code
-
-
-def test_notebook_visualizations_materializer_writes_beneath_external_fitted_model_run_directory():
-    code = _source("code")
-    assert (
-        'analytical_visualizations_output_relative_path = (\n'
-        '        f"{external_fitted_model_run_relative_path}/analytical-visualizations.json"\n'
-        "    )"
-    ) in code
-    assert "output_visualizations_path=analytical_visualizations_output_relative_path," in code
-
-
-def test_notebook_split_identity_is_hash_verified_before_derivation():
-    code = _source("code")
-    assert 'split_manifest, split_manifest_ref = load_verified_external_evidence("split_identity")' in code
-    split_load_index = code.index('load_verified_external_evidence("split_identity")')
-    derivation_call_index = code.index("derive_external_analytical_visualization_evidence(\n")
-    assert split_load_index < derivation_call_index
-
-
-def test_notebook_derivation_receives_governed_inputs_without_absolute_external_root_in_output():
-    code = _source("code")
-    section_start = code.index("visual_evidence_derivation_result = derive_external_analytical_visualization_evidence(")
-    section_end = code.index("if visual_evidence_derivation_result[\"status\"] == \"derived\":")
+    section_start = code.index("materialize_governed_inference_bundle(")
+    section_end = code.index("if inference_bundle_result[\"status\"] != \"generated\":")
     section = code[section_start:section_end]
-    assert "dataset_slug=dataset_slug," in section
-    assert "external_root=external_root," in section
-    assert "split_manifest=split_manifest," in section
-    assert 'split_manifest_reference=split_manifest_ref["relative_path"],' in section
-    assert 'split_manifest_sha256=split_manifest_ref["sha256"],' in section
-    assert "final_model_manifest=final_model_manifest," in section
-    assert 'final_model_manifest_reference=final_model_manifest_ref["relative_path"],' in section
-    assert 'final_model_manifest_sha256=final_model_manifest_ref["sha256"],' in section
-    assert "materialization_result=external_materialization_result," in section
-    assert "output_derivation_evidence_path=derived_evidence_output_relative_path," in section
+    assert "prepared_data_metadata_path=repo_root / prepared_data_metadata_relative_path," in section
+    assert "class_labels=real_fitted_class_order," in section
+    assert 'prediction_type="number",' in section
+    assert "probability_output=True," in section
 
 
-def test_notebook_derived_evidence_path_and_hash_feed_the_materializer():
+def test_notebook_confirms_bundle_result_semantics():
     code = _source("code")
-    assert 'external_evidence_reference=visual_evidence_derivation_result["derivation_evidence_path"],' in code
-    assert 'external_evidence_sha256=visual_evidence_derivation_result["derivation_evidence_sha256"],' in code
-    assert 'visual_evidence_origin="atlas_reference_derivation",' in code
-    # The materializer's external_visual_evidence for the derived path is
-    # built only from the derivation result's own reduced fields -- never a
-    # different, re-guessed shape.
-    payload_start = code.index('external_visual_evidence={\n                    "dataset_slug"')
-    payload_end = code.index("},\n                external_evidence_reference=visual_evidence_derivation_result")
-    payload_section = code[payload_start:payload_end]
-    assert 'visual_evidence_derivation_result["dataset_slug"]' in payload_section
-    assert 'visual_evidence_derivation_result["model_family"]' in payload_section
-    assert 'visual_evidence_derivation_result["target_distribution"]' in payload_section
-    assert 'visual_evidence_derivation_result["feature_importance"]' in payload_section
-    assert 'visual_evidence_derivation_result["feature_importance_method"]' in payload_section
+    assert 'inference_bundle["result_semantics"]["schema_version"] == "binary-result-semantics.v1"' in code
+    assert 'inference_bundle["result_semantics"]["positive_class"]["class_id"] == "Yes"' in code
+    assert 'inference_bundle["result_semantics"]["decision"]["threshold"] == 0.5' in code
+    assert 'inference_bundle["result_semantics"]["model_descriptor"]["model_family"] == "hist_gradient_boosting"' in code
 
 
-def test_notebook_derivation_block_is_recorded_and_stops_before_candidate_assembly():
-    code = _source("code")
-    section_start = code.index('if visual_evidence_derivation_result["status"] == "derived":')
-    section_end = code.index("if visual_evidence_materialization_result is not None:")
-    section = code[section_start:section_end]
-    assert "else:" in section
-    assert 'for reason in visual_evidence_derivation_result["blocking_reasons"]:' in section
-    assert 'record_block(reason["code"], reason["message"], reason.get("field"))' in section
-    block_else_index = code.index('for reason in visual_evidence_derivation_result["blocking_reasons"]:')
-    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
-    assert block_else_index < candidate_assembly_index
-
-
-def test_notebook_records_block_and_leaves_visualizations_path_unresolved_when_materializer_blocks():
-    code = _source("code")
-    section_start = code.index("if visual_evidence_materialization_result is not None:")
-    section_end = code.index("candidate_release_id = provisional_release_id")
-    section = code[section_start:section_end]
-    assert 'if visual_evidence_materialization_result["status"] == "materialized":' in section
-    assert (
-        'analytical_visualizations_relative_path = visual_evidence_materialization_result["visualizations_path"]'
-        in section
-    )
-    assert 'for reason in visual_evidence_materialization_result["blocking_reasons"]:' in section
-    assert 'record_block(reason["code"], reason["message"], reason.get("field"))' in section
-    # A present-but-invalid external role is never silently bypassed: the
-    # direct-path materializer call result flows into this exact same
-    # blocked-vs-materialized branch, whether it came from the direct
-    # external_evidence_index path or the atlas_reference_derivation
-    # fallback path.
-    assert section.startswith("if visual_evidence_materialization_result is not None:")
-
-
-def test_notebook_does_not_mutate_the_external_evidence_index_or_write_into_the_external_project():
-    code = _source("code")
-    visualizations_section_start = code.index('analytical_visualizations_relative_path = ""')
-    candidate_assembly_index = code.index("assemble_candidate.build_release_candidate_handoff_readiness(")
-    visualizations_section = code[visualizations_section_start:candidate_assembly_index]
-    # "external_evidence_index" appears only inside the
-    # visual_evidence_origin="external_evidence_index" provenance-label
-    # string literal, never as a mutation of the actual index artifact.
-    assert 'external_evidence_index_relative_path' not in visualizations_section
-    assert "external_evidence_index.json" not in visualizations_section
-    assert ".write_text(" not in visualizations_section
-    assert "write_governed_json" not in visualizations_section
-    assert "external_root /" not in visualizations_section
-    assert "external_root.write" not in visualizations_section
+# --- release-candidate assembly ---------------------------------------------
 
 
 def test_notebook_orchestrates_release_candidate_assembly_from_compatible_roles():
@@ -485,78 +434,74 @@ def test_notebook_orchestrates_release_candidate_assembly_from_compatible_roles(
     assert "assemble_candidate.build_release_candidate_input(" in code
     assert "assemble_candidate.assemble_release_candidate(" in code
     assert "publisher.validate.materialize_telco_validation_run" not in code
-    # Project Spec S0188: model_card is materialized via the generic external
-    # candidate-support materializer and public_context references the
-    # governed dataset-context document directly -- neither is left as an
-    # unresolved "" placeholder. Project Spec S0193: visualizations is now
-    # resolved the same way, via the external analytical-visualizations
-    # materializer, rather than left unresolved.
-    assert '"model_card": model_card_relative_path' in code
-    assert '"public_context": dataset_context_relative_path' in code
-    assert '"visualizations": analytical_visualizations_relative_path' in code
-    assert "model-card.json" in code
-    assert "candidate_handoff_readiness[\"is_release_candidate_input_ready\"]" in code
+    assert "materialize_telco_validation_run" not in code
 
 
-def test_notebook_materializes_external_model_card_via_generic_support_materializer():
-    code = _source("code")
-    assert (
-        "from pipeline.materialize_external_candidate_support import "
-        "materialize_external_candidate_support" in code
-    )
-    assert "materialize_external_candidate_support" in _called_names()
-    assert 'external_candidate_support_result["status"] == "materialized"' in code
-    assert (
-        "model_card_relative_path = external_candidate_support_result[\"model_card_path\"]"
-        in code
-    )
-    materializer_call_index = code.index("materialize_external_candidate_support(\n")
-    candidate_references_index = code.index("candidate_artifact_references = {")
-    assert materializer_call_index < candidate_references_index
-
-
-def test_notebook_candidate_block_reasons_use_scalar_field_per_missing_role():
-    code = _source("code")
-    # Project Spec S0188: one record_block() call per unready role, each
-    # with a scalar string field -- never the whole not_ready_roles list
-    # passed as a single field value (that collapses the terminal
-    # validated-run artifact to terminal_result_schema_invalid).
-    assert 'candidate_handoff_readiness["not_ready_roles"],' not in code
-    assert "for unready_role in candidate_handoff_readiness[\"not_ready_roles\"]:" in code
-    assert (
-        'record_block(\n                "candidate_role_unavailable",'
-    ) in code
-    block_section_start = code.index("for unready_role in candidate_handoff_readiness")
-    block_section = code[block_section_start:block_section_start + 900]
-    assert "unready_role,\n            )" in block_section
-
-
-def test_notebook_does_not_borrow_historical_model_card_or_visualizations():
+def test_notebook_candidate_roles_use_current_native_run_artifacts():
     code = _source("code")
     candidate_section_start = code.index("candidate_artifact_references = {")
     candidate_section_end = code.index("candidate_handoff_readiness = assemble_candidate")
     candidate_section = code[candidate_section_start:candidate_section_end]
-    assert "pipeline/training-runs" not in candidate_section
-    assert "releases/candidates" not in candidate_section
-    assert "releases/release-" not in candidate_section
+    assert '"training_parameter_record": training_result["training_parameter_record_path"],' in candidate_section
+    assert '"model_artifact": training_result["serialized_model_path"],' in candidate_section
+    assert '"training_metrics": training_result["metrics_path"],' in candidate_section
+    assert '"model_card": training_result["model_card_path"],' in candidate_section
+    assert '"visualizations": training_result["analytical_visualizations_path"],' in candidate_section
+    assert '"inference_bundle": inference_bundle_relative_path,' in candidate_section
+    assert '"public_context": dataset_context_relative_path,' in candidate_section
+    # Never a borrowed historical external-fitted-model artifact.
+    assert "external_materialization_result" not in candidate_section
+    assert "external_fitted_model_run" not in candidate_section
 
 
-def test_notebook_orchestrates_publisher_structural_validation_and_conditional_manifest():
+def test_notebook_candidate_block_reasons_use_scalar_field_per_missing_role():
     code = _source("code")
-    assert "publisher_validate.run(" in code
-    assert "publisher_manifest.run(" in code
-    assert "publisher_validation_result.get(\"validation_outcome\") == \"accepted\"" in code
-    assert "new_run_dirs = sorted(" in code
-    assert "assert len(new_run_dirs) == 1" in code
-    assert "materialize_telco_validation_run" not in code
+    assert 'candidate_handoff_readiness["not_ready_roles"],' not in code
+    assert "for unready_role in candidate_handoff_readiness[\"not_ready_roles\"]:" in code
 
 
-def test_notebook_materializes_one_validated_run_terminal_result():
+# --- Publisher Run materialization (modern, dataset-agnostic path) ---------
+
+
+def test_notebook_uses_materialize_validation_run_not_manual_filesystem_scanning():
+    code = _source("code")
+    assert "publisher_validate.materialize_validation_run(" in code
+    assert "publisher_validate.run(" not in code
+    assert "publisher_manifest.run(" not in code
+    assert "new_run_dirs" not in code
+    assert "existing_run_dirs" not in code
+
+
+def test_notebook_publisher_materialization_checks_accepted_and_manifest_generated():
+    code = _source("code")
+    assert 'publisher_materialization_result["materialization_status"] != "materialized"' in code
+    assert "publisher_validation_outcome != \"accepted\"" in code
+    assert 'not publisher_materialization_result["manifest_generated"]' in code
+    assert '(publisher_run_dir / "validation-result.json").is_file()' in code
+    assert '(publisher_run_dir / "manifest.json").is_file()' in code
+
+
+# --- validated-run terminal result ------------------------------------------
+
+
+def test_notebook_materializes_one_validated_run_terminal_result_as_atlas_internal_training():
     code = _source("code")
     assert "from pipeline import validated_run" in code
     assert "validated_run.materialize_validated_run_terminal_result(" in code
+    assert 'model_source_mode="atlas_internal_training",' in code
     assert 'terminal_status = "blocked" if run_state["blocked"] else "completed"' in code
     assert "write_governed_json(terminal_result_relative_path, validated_run_terminal_result)" in code
+
+
+def test_notebook_completed_terminal_result_is_promotion_eligible():
+    code = _source("code")
+    assert (
+        'if validated_run_terminal_result["status"] == "completed":\n'
+        '        assert validated_run_terminal_result["promotion_eligibility"] is True'
+    ) in code
+
+
+# --- forbidden active behavior ----------------------------------------------
 
 
 def test_notebook_has_no_active_modeling_or_runtime_calls():
@@ -588,21 +533,19 @@ def test_notebook_has_no_promotion_or_registry_activation_calls():
     assert not any(path.startswith("promote.") for path in referenced)
 
 
-def test_notebook_now_requires_the_extended_orchestration_calls():
+def test_notebook_requires_the_native_orchestration_calls():
     code = _source("code")
-    calls = _called_names()
     referenced = _referenced_attribute_paths()
-    assert "materialize_external_fitted_model" in calls
     required_paths = {
+        "pipeline_training.materialize_training_run_from_prepared_metadata",
         "generate_inference_bundle.materialize_governed_inference_bundle",
         "assemble_candidate.build_release_candidate_input",
         "assemble_candidate.assemble_release_candidate",
-        "publisher_validate.run",
-        "publisher_manifest.run",
+        "publisher_validate.materialize_validation_run",
         "validated_run.materialize_validated_run_terminal_result",
     }
     assert required_paths.issubset(referenced), required_paths - referenced
-    assert "from pipeline.materialize_external_fitted_model import materialize_external_fitted_model" in code
+    assert "materialize_external_fitted_model" not in code
 
 
 def test_notebook_tests_are_static_and_need_no_external_files_or_model_bytes():
@@ -611,231 +554,11 @@ def test_notebook_tests_are_static_and_need_no_external_files_or_model_bytes():
     assert all(cell.get("outputs") == [] for cell in notebook["cells"] if cell["cell_type"] == "code")
 
 
-# --- Project Spec S0186: canonical tie-break projection ---------------------
-
-
-def test_notebook_does_not_assign_raw_criteria_applied_to_tie_break_criteria():
-    code = _source("code")
-    assert '"tie_break_criteria": selection_choice["criteria_applied"]' not in code
-    assert '"tie_break_criteria": canonical_tie_break_criteria' in code
-
-
-def test_notebook_maps_producer_brier_score_criterion_to_canonical_criterion():
-    code = _source("code")
-    assert '"lower_validation_brier_score": "brier_score"' in code
-    assert "CANONICAL_TIE_BREAK_CRITERION_MAP" in code
-
-
-def test_notebook_tie_break_projection_produces_order_and_observed_values():
-    code = _source("code")
-    assert '"order": order,' in code
-    assert '"observed_values": [' in code
-    assert '{"candidate_id": first_candidate_id, "value": first_value}' in code
-    assert '{"candidate_id": second_candidate_id, "value": second_value}' in code
-
-
-def test_notebook_resolves_tie_break_candidate_identities_from_verified_candidate_evidence():
-    code = _source("code")
-    assert "def project_tie_break_criteria(criteria_applied, candidates):" in code
-    assert "def _resolve_candidate_id_by_validation_metric(value, metric_name, candidates):" in code
-    assert (
-        'project_tie_break_criteria(\n        selection_choice["criteria_applied"], '
-        'model_selection_candidates["candidates"]\n    )'
-    ) in code
-
-
-def test_notebook_retains_all_four_scientific_selection_candidates():
-    code = _source("code")
-    assert (
-        '"candidates": [{"candidate_id": c["model_id"], "model_family": c["model_id"], '
-        '"estimator_identity": {"library": "scikit-learn", "class_name": c["family"]}} '
-        'for c in model_selection_candidates["candidates"]]'
-    ) in code
-    # No HGB-only filter applied before this list comprehension consumes the
-    # full verified candidates array.
-    assert "if c[\"model_id\"] == \"hist_gradient_boosting\"" not in code
-
-
-def test_notebook_blocks_unsupported_or_ambiguous_tie_break_projection():
-    code = _source("code")
-    assert "class TieBreakProjectionBlocked(Exception):" in code
-    for reason_code in (
-        "unsupported_tie_break_criterion",
-        "ambiguous_tie_break_candidate_match",
-        "tie_break_winner_not_declared_candidate",
-        "tie_break_winner_inconsistent_with_canonical_observation",
-    ):
-        assert reason_code in code
-    assert "except TieBreakProjectionBlocked as exc:" in code
-    assert "tie_break_projection_blocked_reason = {" in code
-    # Project Spec S0195: the tie-break block and the governed positive-class
-    # resolution block now share a single combined gate before staging/
-    # materializing -- see test_notebook_blocks_missing_or_invalid_positive_class_before_materialization.
-    assert (
-        "external_record_blocked_reason = positive_class_resolution_blocked_reason "
-        "or tie_break_projection_blocked_reason"
-    ) in code
-    assert "if external_record_blocked_reason is None:" in code
-
-
-def test_notebook_invokes_materializer_only_after_staging_evidence_is_built():
-    code = _source("code")
-    staged_index = code.index('staged_selection_path = _write_staged_json("model-selection-evidence.json"')
-    materializer_call_index = code.index("external_materialization_result = materialize_external_fitted_model(")
-    assert staged_index < materializer_call_index
-    projection_index = code.index("canonical_tie_break_criteria = project_tie_break_criteria(")
-    assert projection_index < staged_index < materializer_call_index
-
-
-# --- Project Spec S0195: governed external positive-class resolution -------
-
-
-def test_notebook_resolves_positive_class_from_execution_contract_result_semantics():
-    code = _source("code")
-    assert "def resolve_external_positive_class_id(execution_contract, final_model_manifest):" in code
-    assert 'result_semantics = execution_contract.get("result_semantics")' in code
-    assert 'result_semantics.get("problem_type") != "binary_classification"' in code
-    assert 'positive_class = result_semantics.get("positive_class")' in code
-    assert 'positive_class.get("class_id") if isinstance(positive_class, dict) else None' in code
-    assert (
-        "resolved_positive_class_id = resolve_external_positive_class_id(\n"
-        "        execution_contract_for_positive_class, final_model_manifest\n"
-        "    )"
-    ) in code
-
-
-def test_notebook_checks_final_model_target_classes_and_target_encoding():
-    code = _source("code")
-    assert 'target_classes = final_model_manifest.get("target_classes")' in code
-    assert "len(set(target_classes)) != 2" in code
-    assert "class_id not in target_classes" in code
-    assert 'target_encoding = final_model_manifest.get("target_encoding")' in code
-    assert "class_id not in target_encoding" in code
-
-
-def test_notebook_requires_positive_class_to_match_governed_model_outcome_not_encoding_order():
-    code = _source("code")
-    assert 'governed_positive_class = final_model_manifest.get("positive_class")' in code
-    assert "class_id != governed_positive_class" in code
-    assert '"positive_class_disagrees_with_governed_model_outcome"' in code
-
-
-def test_notebook_does_not_hardcode_positive_class_literal():
-    code = _source("code")
-    assert 'positive_class_id = "Yes"' not in code
-    assert '"positive_class_id": "Yes"' not in code
-    assert '"positive_class_id": resolved_positive_class_id,' in code
-
-
-def test_notebook_writes_resolved_positive_class_id_into_external_training_record():
-    code = _source("code")
-    record_start = code.index('external_training_parameter_record = {')
-    record_end = code.index('external_training_metrics = {')
-    record_section = code[record_start:record_end]
-    assert '"positive_class_id": resolved_positive_class_id,' in record_section
-    assert '"schema_version": "training-parameter-record.external-fitted-model.v1"' in record_section
-
-
-def test_notebook_blocks_missing_or_invalid_positive_class_before_materialization():
-    code = _source("code")
-    assert "class PositiveClassResolutionBlocked(Exception):" in code
-    for reason_code in (
-        "result_semantics_absent",
-        "result_semantics_not_binary",
-        "result_semantics_positive_class_id_missing",
-        "final_model_target_classes_not_binary",
-        "positive_class_absent_from_target_classes",
-        "positive_class_absent_from_target_encoding",
-        "final_model_governed_positive_class_missing",
-        "positive_class_disagrees_with_governed_model_outcome",
-    ):
-        assert reason_code in code
-    assert "except PositiveClassResolutionBlocked as exc:" in code
-    assert "positive_class_resolution_blocked_reason = {" in code
-    resolution_index = code.index("resolved_positive_class_id = resolve_external_positive_class_id(")
-    record_index = code.index("external_training_parameter_record = {")
-    gate_index = code.index("if external_record_blocked_reason is None:")
-    materializer_call_index = code.index("external_materialization_result = materialize_external_fitted_model(")
-    assert resolution_index < record_index < gate_index < materializer_call_index
-
-
-def test_notebook_positive_class_resolution_does_not_mutate_external_project():
-    code = _source("code")
-    resolution_section_start = code.index("class PositiveClassResolutionBlocked(Exception):")
-    resolution_section_end = code.index("execution_contract_for_positive_class = json.loads(")
-    resolution_section = code[resolution_section_start:resolution_section_end]
-    assert "write_governed_json" not in resolution_section
-    assert ".write_text(" not in resolution_section
-    assert "external_root" not in resolution_section
-
-
-def test_notebook_preserves_visualization_orchestration_after_positive_class_resolution():
-    code = _source("code")
-    gate_index = code.index("if external_record_blocked_reason is None:")
-    visualizations_call_index = code.index("materialize_external_analytical_visualizations(\n")
-    assert gate_index < visualizations_call_index
-
-
-# --- Project Spec S0187: execution-contract source-mode precondition -------
-
-
-def test_notebook_checks_execution_contract_source_mode_before_bundle_generation():
-    code = _source("code")
-    precondition_index = code.index(
-        "execution_contract_precondition_full = json.loads(\n"
-        "        (repo_root / execution_contract_relative_path).read_text(encoding=\"utf-8\")\n"
-        "    )"
-    )
-    bundle_call_index = code.index(
-        "generate_inference_bundle.materialize_governed_inference_bundle("
-    )
-    assert precondition_index < bundle_call_index
-    assert 'execution_contract_precondition_full.get("contract_version") != "execution_contract.v1"' in code
-    assert (
-        'execution_contract_precondition_full.get("model_source_mode") != '
-        '"validated_external_fitted_model"'
-    ) in code
-
-
-def test_notebook_records_block_and_skips_bundle_generation_on_precondition_failure():
-    code = _source("code")
-    assert 'record_block(\n            "execution_contract_version_invalid",' in code
-    assert 'record_block(\n            "execution_contract_model_source_mode_invalid",' in code
-    # The bundle-generation block is reguarded by its own `if not
-    # run_state["blocked"]:` after the precondition check, so a block
-    # recorded there skips the producer call entirely.
-    precondition_block_index = code.index('if not run_state["blocked"]:\n    execution_contract_precondition_full')
-    reguard_index = code.index(
-        'if not run_state["blocked"]:\n    inference_bundle_output_relative_path'
-    )
-    assert precondition_block_index < reguard_index
-
-
-def test_notebook_precondition_does_not_mutate_execution_contract():
-    code = _source("code")
-    precondition_section_start = code.index("execution_contract_precondition_full = json.loads(")
-    bundle_call_index = code.index(
-        "generate_inference_bundle.materialize_governed_inference_bundle("
-    )
-    precondition_section = code[precondition_section_start:bundle_call_index]
-    assert "write_governed_json" not in precondition_section
-    assert ".write_text(" not in precondition_section
-
-
-def test_notebook_precondition_uses_repository_rooted_relative_path_not_hardcoded_absolute():
-    code = _source("code")
-    precondition_section_start = code.index("execution_contract_precondition_full = json.loads(")
-    precondition_section_end = code.index("record_block(\n            \"execution_contract_model_source_mode_invalid\"")
-    precondition_section = code[precondition_section_start:precondition_section_end]
-    assert "repo_root / execution_contract_relative_path" in precondition_section
-    assert "/home/" not in precondition_section
-    assert "/workspace/" not in precondition_section
-
-
 def test_notebook_never_requires_real_telco_checkout_or_model_bytes_to_be_parsed():
     # The notebook is valid, parseable Python source in every code cell --
     # this test itself never executes the notebook or touches the external
-    # Telco project, matching the static/synthetic requirement for S0184.
+    # Telco study project, matching the static/synthetic requirement for
+    # S0260 (and, before it, S0184).
     for cell in _notebook()["cells"]:
         if cell["cell_type"] != "code":
             continue

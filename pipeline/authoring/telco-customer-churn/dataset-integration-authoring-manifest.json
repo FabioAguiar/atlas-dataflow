@@ -10,7 +10,7 @@
       "contract_version": "dataset-semantic-intent.v1",
       "path": "pipeline/authoring/telco-customer-churn/dataset-semantic-intent.json",
       "role": "semantic_intent",
-      "sha256": "2305acdef9835296e850dd91166c7209071fa34d85b6206200884dd1f3e4b9b6"
+      "sha256": "b76298c303408bfabbc0ee6103dabe05072d619cfe0357ba84c00b298d68264a"
     },
     {
       "contract_version": "candidate-preparation-recipe.v1",
@@ -21,8 +21,8 @@
   ],
   "artifact_type": "dataset_integration_authoring_manifest",
   "authoring_generation": {
-    "authoring_generation_id": "telco-authoring-v1",
-    "generated_at": "2026-08-11T00:00:00+00:00",
+    "authoring_generation_id": "telco-authoring-v2",
+    "generated_at": "2026-08-25T00:00:00+00:00",
     "immutable": true
   },
   "boundary_confirmations": {
@@ -50,92 +50,7 @@
     "dataset_logical_name": "Telco Customer Churn",
     "dataset_slug": "telco-customer-churn"
   },
-  "generated_at": "2026-08-11T00:00:00+00:00",
-  "provenance": [
-    {
-      "artifact_role": "external_scientific_evidence",
-      "artifact_type": "final_model_manifest",
-      "artifact_version": "final-model-manifest.v1",
-      "generation_timestamp": null,
-      "input_references": [],
-      "logical_producer_project_id": "dataset-study-telco-customer-churn",
-      "producer_revision": "46d3685e0330c9b5baaa7dfa2285fed43ab97b1e",
-      "producer_revision_known": true,
-      "relative_path": "artifacts/models/telco-customer-churn/final-model-manifest.json",
-      "sha256": "ae4c2a17b2e0bea5de1fb8405dd071ea70bd2e4d090e4fc99e2c9d7877856d45"
-    },
-    {
-      "artifact_role": "external_scientific_evidence",
-      "artifact_type": "final_test_evidence",
-      "artifact_version": "final-test-evidence.v1",
-      "generation_timestamp": null,
-      "input_references": [],
-      "logical_producer_project_id": "dataset-study-telco-customer-churn",
-      "producer_revision": "46d3685e0330c9b5baaa7dfa2285fed43ab97b1e",
-      "producer_revision_known": true,
-      "relative_path": "artifacts/models/telco-customer-churn/final-test-evidence.json",
-      "sha256": "a3bf99f40f7f7b0ade4ae7f136459b91b2044dd10b3d9659941d0ffe2e391d0e"
-    },
-    {
-      "artifact_role": "external_scientific_evidence",
-      "artifact_type": "model_selection_manifest",
-      "artifact_version": "model-selection-manifest.v1",
-      "generation_timestamp": null,
-      "input_references": [],
-      "logical_producer_project_id": "dataset-study-telco-customer-churn",
-      "producer_revision": "46d3685e0330c9b5baaa7dfa2285fed43ab97b1e",
-      "producer_revision_known": true,
-      "relative_path": "artifacts/model-selection/telco-customer-churn/model-selection-manifest.json",
-      "sha256": "52fbae1a5a7ac2e8a1759cba1cfb5b7510f185d63b51f0e28af6ad7f39f5dc94"
-    },
-    {
-      "artifact_role": "external_scientific_evidence",
-      "artifact_type": "candidate_results",
-      "artifact_version": "candidate-results.v1",
-      "generation_timestamp": null,
-      "input_references": [],
-      "logical_producer_project_id": "dataset-study-telco-customer-churn",
-      "producer_revision": "46d3685e0330c9b5baaa7dfa2285fed43ab97b1e",
-      "producer_revision_known": true,
-      "relative_path": "artifacts/model-selection/telco-customer-churn/candidate-results.json",
-      "sha256": "0de96246913c3de3933defaa22937d77420bac1f6c1d698820cdc802eb84a038"
-    },
-    {
-      "artifact_role": "external_scientific_evidence",
-      "artifact_type": "threshold_analysis",
-      "artifact_version": "threshold-analysis.v1",
-      "generation_timestamp": null,
-      "input_references": [],
-      "logical_producer_project_id": "dataset-study-telco-customer-churn",
-      "producer_revision": "46d3685e0330c9b5baaa7dfa2285fed43ab97b1e",
-      "producer_revision_known": true,
-      "relative_path": "artifacts/model-selection/telco-customer-churn/threshold-analysis.json",
-      "sha256": "ee5d286eb067e1f90c7ec0c604b014027015f26303fca2b9b029a7ea8b406b5c"
-    },
-    {
-      "artifact_role": "external_scientific_evidence",
-      "artifact_type": "final_model_handoff",
-      "artifact_version": "final-model-handoff.v1",
-      "generation_timestamp": null,
-      "input_references": [],
-      "logical_producer_project_id": "dataset-study-telco-customer-churn",
-      "producer_revision": "46d3685e0330c9b5baaa7dfa2285fed43ab97b1e",
-      "producer_revision_known": true,
-      "relative_path": "artifacts/models/telco-customer-churn/final-model-handoff.json",
-      "sha256": "81983b3d8bdfec02d940f459219642c6a0e449d499545780165f78108bfe2ae7"
-    },
-    {
-      "artifact_role": "external_scientific_evidence",
-      "artifact_type": "readiness_and_limitations",
-      "artifact_version": "readiness-and-limitations.v1",
-      "generation_timestamp": null,
-      "input_references": [],
-      "logical_producer_project_id": "dataset-study-telco-customer-churn",
-      "producer_revision": "46d3685e0330c9b5baaa7dfa2285fed43ab97b1e",
-      "producer_revision_known": true,
-      "relative_path": "artifacts/readiness/telco-customer-churn/readiness-and-limitations.json",
-      "sha256": "92c0e40269c6dc5a51df0b6e6231c98f49343ecd1632da87f65d12a8c205400c"
-    }
-  ],
+  "generated_at": "2026-08-25T00:00:00+00:00",
+  "provenance": [],
   "schema_version": "dataset-integration-authoring-manifest.v1"
 }

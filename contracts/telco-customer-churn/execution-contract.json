@@ -51,13 +51,7 @@
   ],
   "feature_definitions": {
     "gender": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "Female",
-          "Male"
-        ]
-      }
+      "type": "categorical"
     },
     "SeniorCitizen": {
       "type": "boolean"
@@ -79,108 +73,37 @@
       "type": "boolean"
     },
     "MultipleLines": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "No",
-          "No phone service",
-          "Yes"
-        ]
-      }
+      "type": "categorical"
     },
     "InternetService": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "DSL",
-          "Fiber optic",
-          "No"
-        ]
-      }
+      "type": "categorical"
     },
     "OnlineSecurity": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "No",
-          "No internet service",
-          "Yes"
-        ]
-      }
+      "type": "categorical"
     },
     "OnlineBackup": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "No",
-          "No internet service",
-          "Yes"
-        ]
-      }
+      "type": "categorical"
     },
     "DeviceProtection": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "No",
-          "No internet service",
-          "Yes"
-        ]
-      }
+      "type": "categorical"
     },
     "TechSupport": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "No",
-          "No internet service",
-          "Yes"
-        ]
-      }
+      "type": "categorical"
     },
     "StreamingTV": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "No",
-          "No internet service",
-          "Yes"
-        ]
-      }
+      "type": "categorical"
     },
     "StreamingMovies": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "No",
-          "No internet service",
-          "Yes"
-        ]
-      }
+      "type": "categorical"
     },
     "Contract": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "Month-to-month",
-          "One year",
-          "Two year"
-        ]
-      }
+      "type": "categorical"
     },
     "PaperlessBilling": {
       "type": "boolean"
     },
     "PaymentMethod": {
-      "type": "categorical",
-      "domain_constraints": {
-        "values": [
-          "Bank transfer (automatic)",
-          "Credit card (automatic)",
-          "Electronic check",
-          "Mailed check"
-        ]
-      }
+      "type": "categorical"
     },
     "MonthlyCharges": {
       "type": "numeric",
@@ -217,14 +140,22 @@
   ],
   "modeling_constraints": {
     "allowed_model_families": [
-      "logistic_regression",
-      "gradient_boosting",
-      "random_forest",
-      "xgboost",
-      "lightgbm"
+      "hist_gradient_boosting"
     ],
     "no_automl": true,
-    "max_training_time_seconds": null
+    "selection_mode": "fixed_configuration",
+    "fixed_model_configuration": {
+      "model_family": "hist_gradient_boosting",
+      "hyperparameters": {
+        "class_weight": null,
+        "l2_regularization": 1.0,
+        "learning_rate": 0.03,
+        "max_iter": 200,
+        "max_leaf_nodes": 7,
+        "min_samples_leaf": 40,
+        "max_depth": 3
+      }
+    }
   },
   "result_semantics": {
     "schema_version": "binary-result-semantics.v1",
@@ -257,6 +188,5 @@
         }
       ]
     }
-  },
-  "model_source_mode": "validated_external_fitted_model"
+  }
 }

@@ -463,6 +463,43 @@ def test_valid_bundle_field_values(valid_chain):
     assert bundle["boundary_confirmations"]["final_holdout_used_for_adjustment"] is False
 
 
+# ---------------------------------------------------------------------------
+# Explicit release_id propagation (Project Spec S0263): the internal
+# execution_contract.v2 -> inference_bundle.v2 branch honors an explicit,
+# schema-valid caller-supplied release_id exactly; an invalid explicit
+# release_id fails closed; omitting it preserves the existing deterministic
+# provisional fallback unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_release_id_honored_in_v2_bundle(valid_chain):
+    root, contract_path, _recipe_path, _dataset_path, result = valid_chain
+    outcome = _generate(
+        root, result, execution_contract_path=contract_path, release_id="release-20260101-002"
+    )
+    assert outcome["status"] == "generated"
+    assert outcome["provisional_release_id"] == "release-20260101-002"
+    bundle = json.loads(Path(outcome["output_path"]).read_text())
+    assert bundle["release_context"]["release_id"] == "release-20260101-002"
+
+
+def test_invalid_explicit_release_id_fails_closed_for_v2_bundle(valid_chain):
+    root, contract_path, _recipe_path, _dataset_path, result = valid_chain
+    outcome = _generate(
+        root, result, execution_contract_path=contract_path, release_id="not-a-release-id"
+    )
+    _assert_blocked(outcome)
+
+
+def test_no_explicit_release_id_preserves_provisional_fallback_for_v2_bundle(valid_chain):
+    root, contract_path, _recipe_path, _dataset_path, result = valid_chain
+    outcome = _generate(root, result, execution_contract_path=contract_path)
+    assert outcome["status"] == "generated"
+    assert outcome["provisional_release_id"] == "release-20260101-001"
+    bundle = json.loads(Path(outcome["output_path"]).read_text())
+    assert bundle["release_context"]["release_id"] == "release-20260101-001"
+
+
 def test_v2_has_no_feature_order_and_no_preprocessing(valid_chain):
     root, contract_path, _recipe_path, _dataset_path, result = valid_chain
     outcome = _generate(root, result, execution_contract_path=contract_path)

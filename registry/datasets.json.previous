@@ -57,6 +57,34 @@
       },
       "review_status": "ready",
       "dataset_detail_updated_at": "2026-08-19T18:22:21Z"
+    },
+    {
+      "dataset_slug": "nottem",
+      "active_release": "release-20260824t163251z",
+      "public_metadata": {
+        "title": "Nottingham Monthly Temperatures",
+        "summary": "Forecast Nottingham Castle monthly average air temperature twelve months ahead using Atlas's native univariate forecasting capability.",
+        "domain": "climate",
+        "visibility": "public",
+        "tags": []
+      },
+      "review_status": "needs_review"
+    },
+    {
+      "dataset_slug": "telco-customer-churn1",
+      "active_release": "release-20260825-002",
+      "public_metadata": {
+        "title": "Telco Customer Churn",
+        "summary": "Customer churn prediction dataset for a telecommunications provider. Predicts whether a customer will churn based on service usage and account features.",
+        "domain": "telco",
+        "visibility": "public",
+        "tags": [
+          "telco",
+          "churn",
+          "classification"
+        ]
+      },
+      "review_status": "needs_review"
     }
   ]
 }

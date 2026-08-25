@@ -2742,6 +2742,31 @@ def _derive_provisional_release_id(run_id: str) -> str:
     return f"release-{date_part}-001"
 
 
+def _resolve_effective_internal_release_id(explicit_release_id: str | None, run_id: str) -> str:
+    """Resolve the release id an internal governed bundle branch writes.
+
+    Project Spec S0263: an explicit, schema-valid ``release_id`` supplied by
+    the orchestrating caller (already allocated via
+    ``pipeline.release_identity.allocate_release_id``) is authoritative and
+    is used exactly as given -- this function never calls the allocator
+    itself, since allocation depends on repository reservation state only
+    the caller can safely observe. An invalid explicit ``release_id`` fails
+    closed (raises) rather than silently falling back to the derived
+    placeholder. Only when no explicit ``release_id`` is supplied does this
+    fall back to the existing deterministic ``_derive_provisional_release_id``
+    placeholder, unchanged from prior behavior.
+    """
+    if explicit_release_id is not None:
+        if not RELEASE_ID_RE.fullmatch(explicit_release_id):
+            raise BundleGenerationError(
+                "invalid_release_identity",
+                f"release_id must match release-YYYYMMDD-NNN, got: {explicit_release_id!r}",
+                field="release_id",
+            )
+        return explicit_release_id
+    return _derive_provisional_release_id(run_id)
+
+
 def materialize_governed_inference_bundle(
     *,
     training_run_materialization_result: dict[str, Any] | None = None,
@@ -2942,7 +2967,7 @@ def materialize_governed_inference_bundle(
 
         run_id = Path(training_result["output_directory"]).name
         try:
-            provisional_release_id = _derive_provisional_release_id(run_id)
+            effective_release_id = _resolve_effective_internal_release_id(release_id, run_id)
         except BundleGenerationError as exc:
             return {"status": "blocked", "blocking_reasons": [str(exc)]}
 
@@ -2958,7 +2983,7 @@ def materialize_governed_inference_bundle(
             output=str(Path(output_path)),
             release_package_reference=GOVERNED_INFERENCE_BUNDLE_RELEASE_PACKAGE_REFERENCE,
             model_package_reference=model_package_reference or DEFAULT_MODEL_PACKAGE_REFERENCE,
-            release_id=provisional_release_id,
+            release_id=effective_release_id,
             dataset_slug=dataset_slug,
             dataset_context=str(Path(dataset_context_path)),
             candidate_id=None,
@@ -2992,7 +3017,7 @@ def materialize_governed_inference_bundle(
             "bundle_id": bundle["bundle_identity"]["bundle_id"],
             "bundle_contract_version": INFERENCE_BUNDLE_VERSION_V2,
             "training_run_id": run_id,
-            "provisional_release_id": provisional_release_id,
+            "provisional_release_id": effective_release_id,
             "prepared_dataset_reference": bundle["prepared_dataset"]["prepared_dataset_reference"]["path"],
         }
 
@@ -3019,7 +3044,7 @@ def materialize_governed_inference_bundle(
 
     run_id = Path(training_result["output_directory"]).name
     try:
-        provisional_release_id = _derive_provisional_release_id(run_id)
+        effective_release_id = _resolve_effective_internal_release_id(release_id, run_id)
     except BundleGenerationError as exc:
         return {"status": "blocked", "blocking_reasons": [str(exc)]}
 
@@ -3039,7 +3064,7 @@ def materialize_governed_inference_bundle(
         release_package_reference=GOVERNED_INFERENCE_BUNDLE_RELEASE_PACKAGE_REFERENCE,
         model_package_reference=model_package_reference or DEFAULT_MODEL_PACKAGE_REFERENCE,
         prediction_type=prediction_type,
-        release_id=provisional_release_id,
+        release_id=effective_release_id,
         dataset_slug=dataset_slug,
         dataset_context=str(Path(dataset_context_path)),
         model_selection_evidence=(
@@ -3085,7 +3110,7 @@ def materialize_governed_inference_bundle(
         "bundle_id": bundle["bundle_identity"]["bundle_id"],
         "bundle_contract_version": INFERENCE_BUNDLE_VERSION,
         "training_run_id": run_id,
-        "provisional_release_id": provisional_release_id,
+        "provisional_release_id": effective_release_id,
         "prepared_dataset_reference": prepared_reference,
     }
 

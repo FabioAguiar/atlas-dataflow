@@ -43,7 +43,7 @@ _REAL_TELCO_CANDIDATE_DIRS_BEFORE = (
     else set()
 )
 
-from pipeline import assemble_candidate, generate_inference_bundle, training, validated_run  # noqa: E402
+from pipeline import assemble_candidate, generate_inference_bundle, release_identity, training, validated_run  # noqa: E402
 from publisher import validate as publisher_validate  # noqa: E402
 
 FEATURE_COLUMNS = [
@@ -283,6 +283,17 @@ def telco_v5_native_bundle(telco_v5_native_run):
         "training_result": result.to_summary(),
     }
 
+    # Project Spec S0263: reserve release-YYYYMMDD-001 for this run's own
+    # date first, so the generic pipeline.release_identity allocator is
+    # forced to select -002 -- proving collision-safe reexecution rather
+    # than ever reusing the internal branch's fixed -001 provisional
+    # fallback as the candidate authority.
+    run_id = Path(result.output_directory.rstrip("/")).name
+    date_part = run_id[len("train-"):len("train-") + 8]
+    (tmp_repo / "releases" / f"release-{date_part}-001").mkdir(parents=True, exist_ok=True)
+    allocated_release_id = release_identity.allocate_release_id(run_id, tmp_repo)
+    assert allocated_release_id == f"release-{date_part}-002"
+
     bundle_output_path = tmp_repo / "pipeline" / "inference-bundles" / DATASET_SLUG / "inference-bundle.json"
     bundle_result = generate_inference_bundle.materialize_governed_inference_bundle(
         training_run_materialization_result=training_run_materialization_result,
@@ -303,15 +314,19 @@ def telco_v5_native_bundle(telco_v5_native_run):
         dataset_context_ref=f"contracts/{DATASET_SLUG}/dataset-context.json",
         inference_bundle_schema_path=str(REPO_ROOT / "contracts" / "inference-bundle.schema.json"),
         model_package_reference="models/model.pkl",
+        release_id=allocated_release_id,
     )
 
     assert bundle_result["status"] == "generated", bundle_result
+
+    bundle = json.loads(bundle_output_path.read_text())
+    assert bundle["release_context"]["release_id"] == allocated_release_id
 
     return {
         **telco_v5_native_run,
         "bundle_result": bundle_result,
         "bundle_output_path": bundle_output_path,
-        "release_id": bundle_result["provisional_release_id"],
+        "release_id": allocated_release_id,
         "runtime_contract_path": runtime_contract_path,
         "public_contract_path": public_contract_path,
         "dataset_context_path": dataset_context_path,
@@ -324,6 +339,19 @@ def test_inference_bundle_is_real_valid_v1_sourced_from_v5(telco_v5_native_bundl
     assert bundle["result_semantics"]["schema_version"] == "binary-result-semantics.v1"
     assert bundle["result_semantics"]["positive_class"] == {"class_id": "Yes", "event_label": "Churn"}
     assert bundle["result_semantics"]["model_descriptor"]["model_family"] == "hist_gradient_boosting"
+
+
+def test_collision_safe_allocator_selects_dash_002_with_dash_001_reserved(telco_v5_native_bundle):
+    """Project Spec S0263: with release-YYYYMMDD-001 already reserved for
+    this run's date, pipeline.release_identity.allocate_release_id selects
+    -002, and that -002 identity -- not the internal branch's fixed -001
+    provisional fallback -- is the one actually written to the bundle."""
+    release_id = telco_v5_native_bundle["release_id"]
+    assert release_id.endswith("-002")
+
+    bundle = json.loads(telco_v5_native_bundle["bundle_output_path"].read_text())
+    assert bundle["release_context"]["release_id"] == release_id
+    assert telco_v5_native_bundle["bundle_result"]["provisional_release_id"] == release_id
 
 
 @pytest.fixture(scope="module")
@@ -422,6 +450,15 @@ class TestTelcoNativeBinaryV5CandidateAssemblyAndPublisher:
     def test_candidate_assembly_accepted(self, telco_v5_native_candidate):
         assembly_result = telco_v5_native_candidate["assembly_result"]
         assert assembly_result["status"] == "accepted", assembly_result
+
+    def test_candidate_carries_the_collision_safe_dash_002_release_id(self, telco_v5_native_candidate):
+        release_id = telco_v5_native_candidate["release_id"]
+        assert release_id.endswith("-002")
+        assert telco_v5_native_candidate["candidate_input"]["release_identity"]["release_id"] == release_id
+
+        candidate_dir = Path(telco_v5_native_candidate["assembly_result"]["candidate_dir"])
+        predictive_bundle = json.loads((candidate_dir / "predictions" / "bundle.json").read_text())
+        assert predictive_bundle["release_context"]["release_id"] == release_id
 
     def test_release_candidate_carries_binary_result_semantics(self, telco_v5_native_candidate):
         candidate_dir = Path(telco_v5_native_candidate["assembly_result"]["candidate_dir"])

@@ -425,6 +425,62 @@ def test_notebook_confirms_bundle_result_semantics():
     assert 'inference_bundle["result_semantics"]["model_descriptor"]["model_family"] == "hist_gradient_boosting"' in code
 
 
+# --- generic collision-safe release-id allocation (Project Spec S0263) -----
+
+
+def test_notebook_imports_and_uses_generic_release_identity_allocator():
+    code = _source("code")
+    assert "from pipeline import generate_inference_bundle, release_identity" in code
+    assert "release_identity.allocate_release_id(run_id, repo_root)" in code
+
+
+def test_notebook_allocates_release_id_exactly_once_before_bundle_generation():
+    code = _source("code")
+    assert code.count("release_identity.allocate_release_id(") == 1
+
+    run_id_index = code.index('run_id = Path(training_run_relative_path.rstrip("/")).name')
+    allocation_index = code.index(
+        "allocated_release_id = release_identity.allocate_release_id(run_id, repo_root)"
+    )
+    bundle_call_index = code.index("generate_inference_bundle.materialize_governed_inference_bundle(")
+    assert run_id_index < allocation_index < bundle_call_index
+
+
+def test_notebook_passes_allocated_release_id_to_bundle_generation():
+    code = _source("code")
+    section_start = code.index("materialize_governed_inference_bundle(")
+    section_end = code.index('if inference_bundle_result["status"] != "generated":')
+    section = code[section_start:section_end]
+    assert "release_id=allocated_release_id," in section
+
+
+def test_notebook_passes_allocated_release_id_to_candidate_input():
+    code = _source("code")
+    section_start = code.index("candidate_input = assemble_candidate.build_release_candidate_input(")
+    section_end = code.index(
+        "release_candidate_assembly_result = assemble_candidate.assemble_release_candidate("
+    )
+    section = code[section_start:section_end]
+    assert "release_id=allocated_release_id," in section
+
+
+def test_notebook_never_uses_provisional_release_id_as_candidate_authority():
+    code = _source("code")
+    assert "provisional_release_id" not in code
+    assert "_derive_provisional_release_id" not in code
+
+
+def test_notebook_asserts_bundle_candidate_release_identity_consistency_before_assembly():
+    code = _source("code")
+    assertion = 'assert inference_bundle["release_context"]["release_id"] == allocated_release_id'
+    assert assertion in code
+    assertion_index = code.index(assertion)
+    assembly_call_index = code.index(
+        "release_candidate_assembly_result = assemble_candidate.assemble_release_candidate("
+    )
+    assert assertion_index < assembly_call_index
+
+
 # --- release-candidate assembly ---------------------------------------------
 
 

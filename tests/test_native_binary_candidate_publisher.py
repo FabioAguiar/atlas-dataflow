@@ -546,6 +546,138 @@ class TestNativeBinaryV5CandidateAssemblyAndPublisher:
 
 
 # ===========================================================================
+# Section B2 (Project Spec S0263): generic collision-safe explicit
+# release_id propagation. Reuses the real synthetic binary-v5 training run
+# and the already-accepted -001 candidate from `binary_v5_native_candidate`
+# (which reserves release-YYYYMMDD-001 for this run's real date) to force
+# `pipeline.release_identity.allocate_release_id` to select -002, then
+# proves the internal-training branch of
+# `generate_inference_bundle.materialize_governed_inference_bundle` honors
+# that explicit -002 identity exactly, through the bundle and into a fresh
+# accepted candidate's own lineage. Nothing here is Telco-specific -- this
+# reuses the same generic synthetic dataset/training fixtures as the rest
+# of this module.
+# ===========================================================================
+
+
+@pytest.fixture(scope="module")
+def binary_v5_collision_safe_bundle(binary_v5_native_candidate):
+    from pipeline import release_identity
+
+    tmp_repo = binary_v5_native_candidate["tmp_repo"]
+    result = binary_v5_native_candidate["result"]
+    run_id = Path(result.output_directory.rstrip("/")).name
+    reserved_release_id = binary_v5_native_candidate["release_id"]
+    assert reserved_release_id.endswith("-001")
+
+    allocated_release_id = release_identity.allocate_release_id(run_id, tmp_repo)
+    assert allocated_release_id == reserved_release_id[: -len("-001")] + "-002"
+
+    runtime_contract_path = binary_v5_native_candidate["runtime_contract_path"]
+    public_contract_path = binary_v5_native_candidate["public_contract_path"]
+    dataset_context_path = binary_v5_native_candidate["dataset_context_path"]
+    prepared_data_metadata_path = binary_v5_native_candidate["prepared_data_metadata_path"]
+
+    training_run_materialization_result = {
+        "artifact_type": "training_run_materialization_result",
+        "contract_version": "training_run_materialization_result.v1",
+        "status": "trained",
+        "training_result": result.to_summary(),
+    }
+
+    bundle_output_path = (
+        tmp_repo / "pipeline" / "inference-bundles" / DATASET_SLUG / "inference-bundle-collision-safe.json"
+    )
+    bundle_result = generate_inference_bundle.materialize_governed_inference_bundle(
+        training_run_materialization_result=training_run_materialization_result,
+        execution_contract_path=binary_v5_native_candidate["contract_path"],
+        runtime_contract_path=runtime_contract_path,
+        public_contract_path=public_contract_path,
+        dataset_context_path=dataset_context_path,
+        prepared_data_metadata_path=prepared_data_metadata_path,
+        output_path=bundle_output_path,
+        prediction_type="string",
+        repo_root=tmp_repo,
+        dataset_slug=DATASET_SLUG,
+        class_labels=["no", "yes"],
+        probability_output=True,
+        execution_contract_ref=f"contracts/{DATASET_SLUG}/execution-contract.json",
+        runtime_contract_ref=str(runtime_contract_path.relative_to(tmp_repo)),
+        public_contract_ref=str(public_contract_path.relative_to(tmp_repo)),
+        dataset_context_ref=str(dataset_context_path.relative_to(tmp_repo)),
+        inference_bundle_schema_path=str(REPO_ROOT / "contracts" / "inference-bundle.schema.json"),
+        model_package_reference="models/model.pkl",
+        release_id=allocated_release_id,
+    )
+    assert bundle_result["status"] == "generated", bundle_result
+
+    return {
+        **binary_v5_native_candidate,
+        "collision_safe_release_id": allocated_release_id,
+        "collision_safe_bundle_result": bundle_result,
+        "collision_safe_bundle_output_path": bundle_output_path,
+    }
+
+
+def test_explicit_collision_safe_release_id_honored_in_bundle(binary_v5_collision_safe_bundle):
+    fixture = binary_v5_collision_safe_bundle
+    allocated_release_id = fixture["collision_safe_release_id"]
+
+    assert fixture["collision_safe_bundle_result"]["provisional_release_id"] == allocated_release_id
+    bundle = json.loads(fixture["collision_safe_bundle_output_path"].read_text())
+    assert bundle["release_context"]["release_id"] == allocated_release_id
+
+
+def test_explicit_collision_safe_release_id_propagates_to_candidate_lineage(binary_v5_collision_safe_bundle):
+    fixture = binary_v5_collision_safe_bundle
+    tmp_repo = fixture["tmp_repo"]
+    result = fixture["result"]
+    allocated_release_id = fixture["collision_safe_release_id"]
+
+    discovery_evidence_path = tmp_repo / "pipeline" / "evidence" / DATASET_SLUG / "discovery-evidence.json"
+    preparation_recipe_path = tmp_repo / "pipeline" / "authoring" / DATASET_SLUG / "preparation-recipe.json"
+    assert discovery_evidence_path.is_file()
+    assert preparation_recipe_path.is_file()
+
+    artifact_references = {
+        "discovery_evidence": str(discovery_evidence_path.relative_to(tmp_repo)),
+        "execution_contract": str(fixture["contract_path"].relative_to(tmp_repo)),
+        "runtime_contract": str(fixture["runtime_contract_path"].relative_to(tmp_repo)),
+        "public_contract": str(fixture["public_contract_path"].relative_to(tmp_repo)),
+        "preparation_recipe": str(preparation_recipe_path.relative_to(tmp_repo)),
+        "prepared_data_metadata": str(fixture["prepared_data_metadata_path"].relative_to(tmp_repo)),
+        "training_parameter_record": result.training_parameter_record_path,
+        "model_artifact": result.serialized_model_path,
+        "training_metrics": result.metrics_path,
+        "model_card": result.model_card_path,
+        "public_context": str(fixture["dataset_context_path"].relative_to(tmp_repo)),
+        "visualizations": result.analytical_visualizations_path,
+        "inference_bundle": str(fixture["collision_safe_bundle_output_path"].relative_to(tmp_repo)),
+    }
+
+    candidate_input = assemble_candidate.build_release_candidate_input(
+        dataset_slug=DATASET_SLUG,
+        release_id=allocated_release_id,
+        source_run_id=Path(result.output_directory.rstrip("/")).name,
+        artifact_references=artifact_references,
+        repo_root=tmp_repo,
+        release_version="1.0.0-rc.2",
+        dataset_title="Synthetic Binary V5 Fixture",
+    )
+    assert candidate_input["release_identity"]["release_id"] == allocated_release_id
+
+    candidate_output_dir = tmp_repo / "releases" / "candidates"
+    assembly_result = assemble_candidate.assemble_release_candidate(
+        candidate_input, candidate_output_dir, repo_root=tmp_repo,
+    )
+    assert assembly_result["status"] == "accepted", assembly_result
+
+    candidate_dir = Path(assembly_result["candidate_dir"])
+    predictive_bundle = json.loads((candidate_dir / "predictions" / "bundle.json").read_text())
+    assert predictive_bundle["release_context"]["release_id"] == allocated_release_id
+
+
+# ===========================================================================
 # Section C: publisher cross-artifact rejections -- mutated copies of the
 # real, already-accepted v5 candidate directory (never a hand-fabricated
 # schema-invalid document).

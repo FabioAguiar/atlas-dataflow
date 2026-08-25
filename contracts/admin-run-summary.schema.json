@@ -31,7 +31,7 @@
     "status": {
       "type": "string",
       "enum": ["available", "unavailable", "invalid", "promoted"],
-      "description": "Deterministic readiness/status of this summary. 'available' means the source run evidence was found and is well-formed. 'unavailable' means no source run evidence could be located. 'invalid' means source run evidence was located but is malformed or incomplete. 'promoted' means the source run evidence is well-formed and its promotion-result.json records a valid promotion_outcome: promoted -- a promoted run must never continue to be reflected as 'available' (pending promotion). This field is distinct from the underlying run_status (accepted/rejected/failed) carried inside validation_summary."
+      "description": "Deterministic readiness/status of this summary. 'available' means the source run evidence was found and is well-formed -- this includes a run whose promotion-result.json records promotion_outcome: promoted but whose registry activation has not (yet) completed, so it remains a pending/retryable promotion target rather than a finished one. 'unavailable' means no source run evidence could be located. 'invalid' means source run evidence was located but is malformed or incomplete. 'promoted' means the source run evidence is well-formed and its promotion has completion evidence: either the live dataset registry currently binds this release, or promotion-result.json's registry_update_record carries proven historical applied evidence (update_applied: true with a matching new_active_release_id) even if the live binding was later removed. A completed promoted run must never continue to be reflected as 'available' (pending promotion). This field is distinct from the underlying run_status (accepted/rejected/failed) carried inside validation_summary."
     },
     "dataset_candidate": {
       "type": ["string", "null"],
@@ -81,7 +81,7 @@
         "can_promote",
         "can_remove"
       ],
-      "description": "Sanitized promoted-state projection derived from this run's promotion-result.json, re-checked against the live dataset registry for a safe idempotence/reuse signal. Required and non-null when status is 'promoted'; absent otherwise. Must never expose raw filesystem paths, raw registry dumps, or promotion-result.json's internal registry_update_record.",
+      "description": "Sanitized promoted-state projection derived from this run's promotion-result.json, re-checked against the live dataset registry for a safe idempotence/reuse signal. Required and non-null when status is 'promoted'; absent otherwise. Present only for a registry-completed promotion -- see the 'status' field and 'registry_bound' below for how completion is resolved. Must never expose raw filesystem paths, raw registry dumps, or promotion-result.json's internal registry_update_record verbatim.",
       "properties": {
         "promotion_outcome": {
           "type": "string",
@@ -111,7 +111,7 @@
         },
         "registry_bound": {
           "type": "boolean",
-          "description": "True when the live dataset registry (registry/datasets.json) still has a Dataset Detail whose active_release matches release_id -- a 'registry_bound_promoted' run. False when no current registry entry points to this release -- a 'promotion_result_orphaned' run: historical promotion evidence exists, but the Dataset Detail is gone, so the run is promotable again."
+          "description": "True when the live dataset registry (registry/datasets.json) still has a Dataset Detail whose active_release matches release_id -- a 'registry_bound_promoted' run. False when no current registry entry points to this release, but proven historical applied evidence still exists -- a 'promotion_result_orphaned' run: the promotion completed historically, but the Dataset Detail is gone, so the run is promotable again. This object is present only for a completed promotion; registry_bound: false is never produced from a never-completed/unapplied provisional record -- that case leaves the run's top-level status as 'available' instead, with no promotion_summary at all."
         },
         "can_promote": {
           "type": "boolean",

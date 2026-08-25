@@ -1458,6 +1458,80 @@ describe("DashboardPage", () => {
     });
   });
 
+  describe("Registry-unapplied provisional promotion Dashboard consistency (Project Spec S0262)", () => {
+    // Project Spec S0262: the Admin API now only ever projects status ==
+    // "promoted" once registry activation has genuine completion evidence
+    // (a live registry binding or proven historical applied evidence). A
+    // release-materialized / registry-unapplied run whose registry
+    // activation never completed keeps surfacing as an ordinary "available"
+    // run -- production DashboardPage.tsx is unmodified by S0262 (it already
+    // derives every counter/badge/action from run.status), so this suite
+    // proves that existing status-driven contract stays consistent for the
+    // exact run across both states.
+    function runFixture(status: "available" | "promoted") {
+      return status === "available"
+        ? {
+            schema_version: "admin-run-summary.v1" as const,
+            run_id: "run-registry-unapplied",
+            status: "available" as const,
+            dataset_candidate: "synthetic-telco-churn",
+            created_at: "2026-08-25T13:08:41Z",
+            trace_reference: "trace/run-registry-unapplied",
+            validation_summary: { outcome: "accepted" as const },
+          }
+        : {
+            schema_version: "admin-run-summary.v1" as const,
+            run_id: "run-registry-unapplied",
+            status: "promoted" as const,
+            dataset_candidate: "synthetic-telco-churn",
+            created_at: "2026-08-25T13:08:41Z",
+            trace_reference: "trace/run-registry-unapplied",
+            validation_summary: { outcome: "accepted" as const },
+            promotion_summary: {
+              promotion_outcome: "promoted" as const,
+              release_id: "release-20260825-001",
+              dataset_slug: "synthetic-telco-churn",
+              public_dataset_slug: "synthetic-telco-churn",
+              registry_action: "reused" as const,
+              registry_bound: true,
+              can_promote: false,
+              can_remove: true,
+              reason: "This run has already been promoted as a Dataset Detail.",
+            },
+          };
+    }
+
+    it("does not count, badge, or informationalize a retryable registry-unapplied run as promoted", async () => {
+      installRunsFetchMock(jsonResponse({ runs_root_status: "available", runs: [runFixture("available")] }));
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+
+      expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "0");
+      expect(within(table).queryByText("Promoted")).not.toBeInTheDocument();
+
+      const promoteButton = within(table).getByRole("button", { name: "Promote" });
+      expect(promoteButton).not.toBeDisabled();
+    });
+
+    it("counts, badges, and informationalizes the same run once the API projects it as registry-completed", async () => {
+      installRunsFetchMock(jsonResponse({ runs_root_status: "available", runs: [runFixture("promoted")] }));
+      render(<DashboardPage />);
+      await loadRuns();
+
+      const table = await screen.findByRole("table", { name: "Run summaries" });
+
+      expect(screen.getByLabelText("Promoted runs")).toHaveAttribute("data-summary-count", "1");
+      // Both the status badge and the relabeled Promote button read "Promoted".
+      expect(within(table).getAllByText("Promoted")).toHaveLength(2);
+
+      const promotedButton = within(table).getByRole("button", { name: "Promoted" });
+      expect(promotedButton).not.toBeDisabled();
+      expect(within(table).queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+    });
+  });
+
   describe("Dataset registry reflection", () => {
     function installRunsAndRegistryFetchMock(registryResponse: MockResponse) {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

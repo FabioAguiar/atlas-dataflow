@@ -208,14 +208,29 @@ _REGISTRY_ORPHANED_REASON = (
 def _promotion_summary_from(run_dir: Path) -> dict | None:
     """Sanitized promoted-state projection from this run's promotion-result.json.
 
-    Only candidate_identity/promotion_outcome are ever trusted from the
-    persisted file. promote_admin_run() below does synchronize
-    registry_update_record onto promotion-result.json once a registry update
-    is confirmed (Project Spec S0046), but this function deliberately still
-    never reads that nested object: this projection must also stay accurate
-    when a run was promoted by some other path (a monkeypatched test fixture,
-    a hand-authored promotion-result.json, a future caller) that never went
-    through finalize_promotion_result_after_registry_update() at all.
+    Project Spec S0262: promotion_outcome == "promoted" alone is no longer
+    sufficient evidence of a *completed* Admin promotion -- publisher/promote.py
+    writes promotion_outcome: promoted for the provisional
+    release-materialized / registry-unapplied substate too (before any
+    registry activation has been attempted). Completion evidence is resolved
+    conservatively from two sources, checked in order:
+
+      1. current live evidence: registry/datasets.json has an entry whose
+         active_release == release_id (re-derived below via
+         _public_dataset_slug_for_release, unchanged from before S0262);
+      2. historical persisted evidence: registry_update_record.update_applied
+         is true and registry_update_record.new_active_release_id equals
+         this run's own release_id -- proof a registry activation completed
+         at some point in the past, even if the live registry entry was
+         later removed (preserves S0048's re-promotable orphan semantics).
+
+    A run with neither -- update_applied is false/missing, or no live
+    binding and no matching historical record -- is a never-completed
+    registry activation, not a completed promotion: this function returns
+    None so the run keeps surfacing in its existing retryable Admin state
+    (see _derive_run_summary below) instead of being misreported as
+    "promoted".
+
     public_dataset_slug/registry_action are populated only when the live
     registry (registry/datasets.json) confirms this release is still the
     dataset's current active_release: a freshly re-derived idempotence signal
@@ -228,7 +243,8 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
     public_dataset_slug alone: registry_bound is true exactly when the live
     registry still points at this promoted release (a "registry_bound_promoted"
     run -- Promote stays clickable but only informational, Remove stays
-    active), and false when it no longer does (a "promotion_result_orphaned"
+    active), and false when it no longer does but historical applied evidence
+    proves the promotion completed at some point (a "promotion_result_orphaned"
     run -- historical promotion evidence exists but the Dataset Detail is
     gone, so the run is promotable again). can_remove is always true here:
     removing a run only ever deletes its run artifact/directory (see
@@ -252,6 +268,16 @@ def _promotion_summary_from(run_dir: Path) -> dict | None:
 
     public_dataset_slug = _public_dataset_slug_for_release(release_id)
     registry_bound = public_dataset_slug is not None
+
+    if not registry_bound:
+        registry_update_record = promotion_result.get("registry_update_record")
+        historically_applied = (
+            isinstance(registry_update_record, dict)
+            and registry_update_record.get("update_applied") is True
+            and registry_update_record.get("new_active_release_id") == release_id
+        )
+        if not historically_applied:
+            return None
 
     summary = {
         "promotion_outcome": "promoted",
@@ -310,9 +336,12 @@ def _derive_run_summary(run_dir: Path, runs_root: Path) -> dict:
         "validation_summary": validation_summary,
     }
 
-    # Project Spec S0045: a well-formed, promoted run must never continue to
-    # be reflected as an available/pending promotion target once
-    # promotion-result.json records promotion_outcome: promoted.
+    # Project Spec S0045 (refined by S0262): a well-formed run whose
+    # promotion has genuine completion evidence (live registry binding or
+    # historical applied evidence) must never continue to be reflected as an
+    # available/pending promotion target. A run whose registry activation
+    # never completed stays "available"/retryable -- see
+    # _promotion_summary_from's completion-evidence resolution above.
     promotion_summary = _promotion_summary_from(run_dir)
     if promotion_summary is not None:
         entry["status"] = "promoted"

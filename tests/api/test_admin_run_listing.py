@@ -149,11 +149,20 @@ _PROMOTED_PROMOTION_RESULT = {
         "candidate_state_was_valid": True,
         "all_preconditions_met": True,
     },
+    # Project Spec S0262: models a historically *completed* promotion (real
+    # applied evidence -- update_applied: true with a matching
+    # new_active_release_id) rather than a never-completed provisional one,
+    # so this fixture keeps meaning "this run was genuinely promoted" across
+    # every test below, including the no-live-registry-match/orphan case.
+    # See _NEVER_COMPLETED_PROMOTION_RESULT below for the distinct
+    # never-completed provisional substate.
     "registry_update_record": {
-        "update_applied": False,
-        "new_active_release_id": None,
+        "update_applied": True,
+        "new_active_release_id": "release-20260701-001",
         "previous_active_release_id": None,
         "previous_release_preserved": True,
+        "promoted_at": "2026-07-01T00:00:00Z",
+        "registry_action": "created",
     },
     "evidence_safety": {
         "reduced_evidence_only": True,
@@ -176,6 +185,20 @@ _PROMOTED_PROMOTION_RESULT = {
         "web_administration_required": False,
         "github_mutation_performed": False,
     },
+}
+
+
+# Project Spec S0262: the provisional release-materialized /
+# registry-unapplied substate -- promotion_outcome: promoted with
+# update_applied still false and no matching historical evidence. Distinct
+# from _PROMOTED_PROMOTION_RESULT above, which models a promotion that
+# genuinely completed (possibly historically, possibly orphaned since).
+_NEVER_COMPLETED_PROMOTION_RESULT = json.loads(json.dumps(_PROMOTED_PROMOTION_RESULT))
+_NEVER_COMPLETED_PROMOTION_RESULT["registry_update_record"] = {
+    "update_applied": False,
+    "new_active_release_id": None,
+    "previous_active_release_id": None,
+    "previous_release_preserved": True,
 }
 
 
@@ -567,6 +590,36 @@ def test_run_with_missing_candidate_identity_in_promotion_result_remains_availab
     assert "promotion_summary" not in entry
 
 
+def test_run_with_never_completed_promotion_result_remains_available_and_retryable(tmp_path):
+    """Project Spec S0262: promotion_outcome == "promoted" alone is no longer
+    sufficient for status == "promoted". A run whose registry activation
+    never completed -- update_applied is still false, and no historical
+    applied evidence or live registry binding exists -- must keep surfacing
+    in its existing retryable "available" state, with no promotion_summary
+    at all, instead of a misleading "promoted" projection."""
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_run_dir(root, "never-completed", _VALID_MANIFEST, _ACCEPTED_VALIDATION_RESULT)
+    _write_json(run_dir / "promotion-result.json", _NEVER_COMPLETED_PROMOTION_RESULT)
+    _write_registry(repo_root, [])
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        result = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    entry = result["runs"][0]
+    assert entry["status"] == "available"
+    assert "promotion_summary" not in entry
+    _assert_no_private_markers(entry)
+
+
 # ---------------------------------------------------------------------------
 # list_admin_run_summaries / promote_admin_run / remove_admin_run: registry-
 # bound promoted vs. registry-missing re-promotable action semantics
@@ -689,6 +742,109 @@ def test_promoted_run_becomes_repromotable_after_registry_entry_removed(tmp_path
 
         registry = json.loads((repo_root / "registry" / "datasets.json").read_text())
         assert any(entry["dataset_slug"] == "orphan-dataset" for entry in registry["datasets"])
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_run_with_live_registry_binding_projects_promoted_even_when_finalizer_evidence_lags(tmp_path):
+    """Project Spec S0262 (objective 17): the live registry must remain
+    authoritative for a current binding, so a successful registry mutation
+    followed by a failed evidence-finalizer write does not make a real,
+    currently-bound Dataset Detail look unpromoted. Materializes the release
+    and mutates the live registry directly through the real
+    registry_update.run(), exactly as promote_admin_run() does up through
+    that point, but deliberately skips
+    finalize_promotion_result_after_registry_update() -- simulating an
+    evidence-finalizer write failure after the registry mutation already
+    genuinely happened."""
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    run_dir = _write_promotable_run(
+        root, repo_root, "promote-finalizer-lag", "finalizer-lag-dataset", "release-20260710t101438z"
+    )
+
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        admin_runs.publisher_promote.run(str(run_dir), repo_root=repo_root)
+        admin_runs.registry_update.run(str(run_dir), repo_root=repo_root)
+
+        record = json.loads((run_dir / "promotion-result.json").read_text())["registry_update_record"]
+        assert record["update_applied"] is False
+
+        lagging = admin_runs.list_admin_run_summaries()
+        entry = lagging["runs"][0]
+        assert entry["status"] == "promoted"
+        assert entry["promotion_summary"]["registry_bound"] is True
+        assert entry["promotion_summary"]["can_promote"] is False
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+
+def test_promote_admin_run_retry_completes_registry_binding_and_run_becomes_promoted(tmp_path, monkeypatch):
+    """Project Spec S0262 end-to-end retry coverage: a registry-update
+    failure leaves the run retryable/available (not promoted), the retry
+    reuses the existing materialized release rather than copying/overwriting
+    it, and a successful retry performs the registry update, finalizes
+    registry_update_record, and becomes Admin status == "promoted"."""
+    root = tmp_path / "runs"
+    repo_root = tmp_path / "repo"
+    root.mkdir()
+    _write_promotable_run(
+        root, repo_root, "promote-then-retry", "retry-dataset", "release-20260710t101438z"
+    )
+
+    def raising_run(*args, **kwargs):
+        raise RuntimeError("simulated registry update failure")
+
+    real_registry_update_run = admin_runs.registry_update.run
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+
+        monkeypatch.setattr(admin_runs.registry_update, "run", raising_run)
+        first = admin_runs.promote_admin_run("promote-then-retry")
+        assert first["promoted"] is False
+        assert first["errors"][0]["code"] == "REGISTRY_UPDATE_FAILED"
+
+        blocked = admin_runs.list_admin_run_summaries()
+        blocked_entry = blocked["runs"][0]
+        assert blocked_entry["status"] == "available"
+        assert "promotion_summary" not in blocked_entry
+
+        release_dir = repo_root / "releases" / "release-20260710t101438z"
+        assert release_dir.is_dir()
+        manifest_before_retry = (release_dir / "manifest.json").read_text(encoding="utf-8")
+
+        monkeypatch.setattr(admin_runs.registry_update, "run", real_registry_update_run)
+        second = admin_runs.promote_admin_run("promote-then-retry")
+        assert second["promoted"] is True
+        assert second["registry_action"] == "created"
+
+        # Retry reused the existing materialized release rather than
+        # re-copying/overwriting it.
+        assert (release_dir / "manifest.json").read_text(encoding="utf-8") == manifest_before_retry
+
+        completed = admin_runs.list_admin_run_summaries()
+        assert len(completed["runs"]) == 1
+        completed_entry = completed["runs"][0]
+        assert completed_entry["status"] == "promoted"
+        assert completed_entry["promotion_summary"]["registry_bound"] is True
+        assert completed_entry["promotion_summary"]["can_promote"] is False
+
+        record = json.loads((root / "promote-then-retry" / "promotion-result.json").read_text())[
+            "registry_update_record"
+        ]
+        assert record["update_applied"] is True
+        assert record["new_active_release_id"] == "release-20260710t101438z"
     finally:
         admin_runs._admin_runs_root = original_root
         admin_runs._REPO_ROOT = original_repo_root
@@ -1353,6 +1509,25 @@ def test_promote_admin_run_registry_update_failure_leaves_promotion_result_unsyn
     assert record["update_applied"] is False
     assert record["new_active_release_id"] is None
     assert "registry_action" not in record
+
+    # Project Spec S0262: promotion_outcome == "promoted" alone is no longer
+    # sufficient for Admin status == "promoted" -- with no live registry
+    # binding and update_applied still false, the subsequent listing must not
+    # report this run as promoted, and it must remain promotion-eligible for
+    # a retry.
+    original_root = admin_runs._admin_runs_root
+    original_repo_root = admin_runs._REPO_ROOT
+    try:
+        admin_runs._admin_runs_root = lambda: root
+        admin_runs._REPO_ROOT = repo_root
+        listing = admin_runs.list_admin_run_summaries()
+    finally:
+        admin_runs._admin_runs_root = original_root
+        admin_runs._REPO_ROOT = original_repo_root
+
+    entry = listing["runs"][0]
+    assert entry["status"] == "available"
+    assert "promotion_summary" not in entry
 
 
 def test_promote_admin_run_updates_existing_registry_entry(tmp_path):

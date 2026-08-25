@@ -921,6 +921,59 @@ def test_finalize_rejects_a_rejected_promotion_result(tmp_path):
         )
 
 
+def test_provisional_promotion_result_validates_against_schema_before_registry_update(tmp_path):
+    """Project Spec S0262: promote.run()'s provisional result -- written
+    immediately after release materialization, before any registry update is
+    attempted -- represents the release-materialized / registry-unapplied
+    substate that promotion-result.schema.json now explicitly allows. It
+    must be schema-valid on its own, not merely tolerated by non-blocking
+    validation."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (REPO_ROOT / "publisher" / "promotion" / "promotion-result.schema.json").read_text()
+    )
+
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    run_dir = _validate_manifest_promote(tmp_repo)
+    result = _read_promotion_result(run_dir)
+
+    assert result["promotion_outcome"] == "promoted"
+    assert result["registry_update_record"]["update_applied"] is False
+    assert result["registry_update_record"]["new_active_release_id"] is None
+    assert "registry_action" not in result["registry_update_record"]
+    assert "promoted_at" not in result["registry_update_record"]
+
+    jsonschema.validate(result, schema)
+
+
+def test_rejected_promotion_result_still_validates_against_schema(tmp_path):
+    """Project Spec S0262: rejected promotion semantics/schema-safety are
+    preserved unchanged by the provisional-substate reconciliation above."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (REPO_ROOT / "publisher" / "promotion" / "promotion-result.schema.json").read_text()
+    )
+
+    tmp_repo = _prepare_tmp_repo(tmp_path)
+    run_dir = _validate_manifest_promote(tmp_repo)
+    result = _read_promotion_result(run_dir)
+
+    rejected = json.loads(json.dumps(result))
+    rejected["promotion_outcome"] = "rejected"
+    rejected["preconditions_verified"]["all_preconditions_met"] = False
+    rejected["preconditions_verified"]["rejection_reasons"] = [
+        {"code": "manifest_invalid", "message": "Fixture rejection for schema round-trip."}
+    ]
+    rejected["registry_update_record"] = {
+        "update_applied": False,
+        "new_active_release_id": None,
+        "previous_active_release_id": None,
+        "previous_release_preserved": True,
+    }
+
+    jsonschema.validate(rejected, schema)
+
+
 def test_synchronized_promotion_result_validates_against_schema_for_both_release_id_formats(tmp_path):
     jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads(

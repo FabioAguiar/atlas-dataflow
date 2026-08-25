@@ -131,8 +131,10 @@ def _build_promotion_result(validation_result: dict, manifest: dict) -> dict:
     Initial write, immediately after the release artifact copy succeeds and
     before any registry update has been attempted: update_applied is always
     false and previous_active_release_id is null here, since this module
-    never reads registry/datasets.json. This is deliberately provisional --
-    finalize_promotion_result_after_registry_update() below rewrites
+    never reads registry/datasets.json. This is deliberately the provisional
+    release-materialized / registry-unapplied substate that
+    promotion-result.schema.json explicitly represents (Project Spec S0262)
+    -- finalize_promotion_result_after_registry_update() below rewrites
     registry_update_record once the real registry outcome is known
     (Project Spec S0046), so a promotion-result.json left at this initial
     state (update_applied still false) honestly means "registry update not
@@ -204,10 +206,13 @@ def _build_promotion_result(validation_result: dict, manifest: dict) -> dict:
 def _validate_result_schema(result: dict, schema_path: Path) -> list:
     """Validate result against promotion-result.schema.json.
 
-    Returns a list of errors (informational). Non-blocking for M11-04 because
-    update_applied=false diverges from the schema's allOf constraint that links
-    promotion_outcome='promoted' to update_applied=true. M11-05 will produce
-    results that fully satisfy the schema's registry_update_record constraints.
+    Returns a list of errors (informational). Non-blocking: this is a
+    defense-in-depth check, not the promotion gate itself. Project Spec
+    S0262 reconciled the schema so both promoted substates this module
+    produces are schema-valid: the provisional release-materialized /
+    registry-unapplied result written by _build_promotion_result()
+    (update_applied=false) and the registry-applied result written by
+    finalize_promotion_result_after_registry_update() (update_applied=true).
     """
     try:
         import jsonschema
@@ -225,7 +230,7 @@ def _validate_result_schema(result: dict, schema_path: Path) -> list:
         return [_err(
             "RESULT_SCHEMA_VALIDATION_NOTE",
             None,
-            f"Promotion result schema note (M11-04 boundary): {exc.message}",
+            f"Promotion result schema note: {exc.message}",
         )]
 
 
@@ -339,7 +344,7 @@ def run(result_path_or_run_dir: str, repo_root: Path | None = None) -> dict:
         # --- Build promotion result ---
         result = _build_promotion_result(validation_result, manifest)
 
-        # --- Validate result against schema (informational; non-blocking for M11-04 boundary) ---
+        # --- Validate result against schema (informational; non-blocking) ---
         schema_path = repo_root / "publisher" / "promotion" / "promotion-result.schema.json"
         _validate_result_schema(result, schema_path)
 
